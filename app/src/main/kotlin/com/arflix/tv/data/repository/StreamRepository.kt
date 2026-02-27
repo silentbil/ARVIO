@@ -740,7 +740,7 @@ class StreamRepository @Inject constructor(
         title: String = "",
         year: Int? = null,
         tmdbId: Int? = null,
-        timeoutMs: Long = 8_000L
+        timeoutMs: Long = 15_000L
     ): StreamSource? = withContext(Dispatchers.IO) {
         withTimeoutOrNull(timeoutMs.coerceIn(500L, 90_000L)) {
             runCatching {
@@ -751,6 +751,8 @@ class StreamRepository @Inject constructor(
                     tmdbId = tmdbId,
                     allowNetwork = true
                 )
+            }.onFailure { e ->
+                System.err.println("[VOD] resolveMovieVodOnly failed: ${e.message}")
             }.getOrNull()
         }
     }
@@ -969,7 +971,7 @@ class StreamRepository @Inject constructor(
         episode: Int,
         title: String = "",
         tmdbId: Int? = null,
-        timeoutMs: Long = 12_000L
+        timeoutMs: Long = 20_000L
     ): StreamSource? = withContext(Dispatchers.IO) {
         val result = withTimeoutOrNull(timeoutMs.coerceIn(500L, 90_000L)) {
             runCatching {
@@ -981,9 +983,9 @@ class StreamRepository @Inject constructor(
                     tmdbId = tmdbId,
                     allowNetwork = true
                 )
-            }.getOrElse { e ->
-                null
-            }
+            }.onFailure { e ->
+                System.err.println("[VOD] resolveEpisodeVodOnly failed: ${e.message}")
+            }.getOrNull()
         }
         result
     }
