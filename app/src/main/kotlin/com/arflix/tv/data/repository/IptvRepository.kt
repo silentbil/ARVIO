@@ -957,6 +957,8 @@ class IptvRepository @Inject constructor(
         xtreamSeriesEpisodeInFlight = emptyMap()
         cacheOwnerProfileId = null
         cacheOwnerConfigSig = null
+        // Clear disk-cached VOD/series catalogs
+        runCatching { xtreamDiskCacheDir().deleteRecursively() }
     }
 
     private fun ensureCacheOwnership(profileId: String, config: IptvConfig) {
@@ -1200,6 +1202,7 @@ class IptvRepository @Inject constructor(
 
     private inner class IptvSeriesResolverService {
         private val prefs by lazy { context.getSharedPreferences("iptv_series_resolver_cache_v1", Context.MODE_PRIVATE) }
+        private val catalogLoadMutex = Mutex()
         private val catalogTtlMs = 24 * 60 * 60_000L
         private val resolvedTtlMs = 24 * 60 * 60_000L
         private val seriesInfoTtlMs = 24 * 60 * 60_000L
@@ -1286,16 +1289,20 @@ class IptvRepository @Inject constructor(
             year: Int?,
             allowNetwork: Boolean
         ): ResolverCachedResolvedEpisode? {
+            val resolveStart = System.currentTimeMillis()
+            System.err.println("[VOD-Resolver] resolveEpisode start: '$showTitle' S${season}E${episode} tmdb=$tmdbId imdb=$imdbId")
             val normalizedShow = normalizeLookupText(showTitle)
             val normalizedTmdb = normalizeTmdbId(tmdbId)
             val normalizedImdb = normalizeImdbId(imdbId)
             if (normalizedShow.isBlank() && normalizedTmdb.isNullOrBlank() && normalizedImdb.isNullOrBlank()) {
+                System.err.println("[VOD-Resolver] No identifiers, returning null")
                 return null
             }
 
             val cacheKey = buildResolvedCacheKey(providerKey, normalizedTmdb, normalizedImdb, normalizedShow, season, episode)
             readResolved(cacheKey)?.let { cached ->
                 if (System.currentTimeMillis() - cached.savedAtMs < resolvedTtlMs) {
+                    System.err.println("[VOD-Resolver] Hit resolved cache (method=${cached.method}, streamId=${cached.streamId}) in ${System.currentTimeMillis() - resolveStart}ms")
                     return cached
                 }
             }
@@ -1307,12 +1314,15 @@ class IptvRepository @Inject constructor(
                 normalizedShow = normalizedShow
             )
             readSeriesBinding(bindingKeys)?.let { boundSeriesId ->
+                System.err.println("[VOD-Resolver] Found series binding: seriesId=$boundSeriesId, loading info...")
+                val bindStart = System.currentTimeMillis()
                 val boundEpisodes = loadSeriesInfo(
                     providerKey = providerKey,
                     creds = creds,
                     seriesId = boundSeriesId,
                     allowNetwork = allowNetwork
                 )
+                System.err.println("[VOD-Resolver] loadSeriesInfo for binding took ${System.currentTimeMillis() - bindStart}ms, got ${boundEpisodes.size} episodes")
                 val boundHit = matchEpisode(boundEpisodes, season, episode)
                 if (boundHit != null) {
                     val resolved = ResolverCachedResolvedEpisode(
@@ -1325,15 +1335,28 @@ class IptvRepository @Inject constructor(
                     )
                     writeResolved(cacheKey, resolved)
                     writeSeriesBinding(bindingKeys, boundSeriesId)
+                    System.err.println("[VOD-Resolver] Resolved via binding in ${System.currentTimeMillis() - resolveStart}ms")
                     return resolved
                 }
+                System.err.println("[VOD-Resolver] Binding didn't match S${season}E${episode}")
             }
 
+            System.err.println("[VOD-Resolver] Loading catalog...")
+            val catalogStart = System.currentTimeMillis()
             val catalog = loadCatalog(providerKey, creds, allowNetwork = allowNetwork, forceRefresh = false)
-            if (catalog.entries.isEmpty()) return null
+            System.err.println("[VOD-Resolver] loadCatalog took ${System.currentTimeMillis() - catalogStart}ms, entries=${catalog.entries.size}")
+            if (catalog.entries.isEmpty()) {
+                System.err.println("[VOD-Resolver] Empty catalog, returning null")
+                return null
+            }
 
+            val candidateStart = System.currentTimeMillis()
             val candidates = buildCandidates(catalog, normalizedShow, normalizedTmdb, normalizedImdb, year)
-            if (candidates.isEmpty()) return null
+            System.err.println("[VOD-Resolver] buildCandidates took ${System.currentTimeMillis() - candidateStart}ms, found ${candidates.size} candidates")
+            if (candidates.isEmpty()) {
+                System.err.println("[VOD-Resolver] No candidates, returning null after ${System.currentTimeMillis() - resolveStart}ms")
+                return null
+            }
             val probeList = if (
                 candidates.first().method == "tmdb_id" ||
                 candidates.first().method == "imdb_id" ||
@@ -1343,17 +1366,25 @@ class IptvRepository @Inject constructor(
             } else {
                 candidates.take(2)
             }
+            System.err.println("[VOD-Resolver] Probing ${probeList.size} candidates: ${probeList.map { "${it.entry.name}(${it.method},${it.confidence})" }}")
 
+            val probeStart = System.currentTimeMillis()
             val hits = coroutineScope {
                 probeList.map { candidate ->
                     async {
+                        val infoStart = System.currentTimeMillis()
                         val episodes = loadSeriesInfo(providerKey, creds, candidate.entry.seriesId, allowNetwork)
+                        System.err.println("[VOD-Resolver] loadSeriesInfo(${candidate.entry.seriesId}) took ${System.currentTimeMillis() - infoStart}ms, got ${episodes.size} episodes")
                         val hit = matchEpisode(episodes, season, episode) ?: return@async null
                         Triple(candidate, hit.episode, hit.score)
                     }
                 }.awaitAll().filterNotNull()
             }
-            if (hits.isEmpty()) return null
+            System.err.println("[VOD-Resolver] Probing took ${System.currentTimeMillis() - probeStart}ms, hits=${hits.size}")
+            if (hits.isEmpty()) {
+                System.err.println("[VOD-Resolver] No hits, returning null after ${System.currentTimeMillis() - resolveStart}ms")
+                return null
+            }
 
             val best = hits.maxByOrNull { it.first.confidence * 1000f + it.third } ?: return null
             val resolved = ResolverCachedResolvedEpisode(
@@ -1366,6 +1397,7 @@ class IptvRepository @Inject constructor(
             )
             writeResolved(cacheKey, resolved)
             writeSeriesBinding(bindingKeys, best.first.entry.seriesId)
+            System.err.println("[VOD-Resolver] Resolved via ${best.first.method} (conf=${best.first.confidence}) in ${System.currentTimeMillis() - resolveStart}ms")
             return resolved
         }
 
@@ -1375,85 +1407,111 @@ class IptvRepository @Inject constructor(
             allowNetwork: Boolean,
             forceRefresh: Boolean
         ): ResolverCatalogIndex {
+            // Fast path: check in-memory cache (no lock needed)
             val now = System.currentTimeMillis()
             val inMem = catalogMemory[providerKey]
             if (!forceRefresh && inMem != null && now - inMem.createdAtMs < catalogTtlMs) return inMem
 
-            var stalePersisted: ResolverPersistedCatalog? = null
-            if (!forceRefresh) {
-                val persistedRaw = prefs.getString(catalogPrefKey(providerKey), null)
+            if (!allowNetwork) {
+                if (inMem != null) return inMem
+                // Try SharedPreferences for stale data
+                val persistedRaw = runCatching { prefs.getString(catalogPrefKey(providerKey), null) }.getOrNull()
                 if (!persistedRaw.isNullOrBlank()) {
                     val persisted = runCatching { gson.fromJson(persistedRaw, ResolverPersistedCatalog::class.java) }.getOrNull()
                     if (persisted != null && persisted.entries.isNotEmpty()) {
-                        stalePersisted = persisted
-                        if (now - persisted.createdAtMs < catalogTtlMs) {
-                            val built = buildCatalogIndex(persisted.createdAtMs, persisted.entries)
-                            catalogMemory[providerKey] = built
-                            return built
-                        }
+                        val built = buildCatalogIndex(persisted.createdAtMs, persisted.entries)
+                        catalogMemory[providerKey] = built
+                        return built
                     }
-                }
-            }
-
-            if (!allowNetwork) {
-                if (inMem != null) return inMem
-                val stale = stalePersisted
-                if (stale != null && stale.entries.isNotEmpty()) {
-                    val built = buildCatalogIndex(stale.createdAtMs, stale.entries)
-                    catalogMemory[providerKey] = built
-                    return built
                 }
                 return ResolverCatalogIndex(now, emptyList(), emptyMap(), emptyMap(), emptyMap(), emptyMap())
             }
 
-            val entries = withContext(Dispatchers.Default) {
-                withTimeoutOrNull(8_000L) {
-                    getXtreamSeriesList(creds, allowNetwork = true, fast = true)
-                        .mapNotNull { item ->
-                            val seriesId = item.seriesId ?: return@mapNotNull null
-                            val name = item.name?.trim().orEmpty()
-                            if (name.isBlank()) return@mapNotNull null
-                            val normalizedName = normalizeLookupText(name)
-                            ResolverSeriesEntry(
-                                seriesId = seriesId,
-                                name = name,
-                                normalizedName = normalizedName,
-                                canonicalTitleKey = toCanonicalTitleKey(normalizedName),
-                                titleTokens = extractTitleTokens(normalizedName),
-                                tmdb = normalizeTmdbId(item.tmdb),
-                                imdb = normalizeImdbId(item.imdb),
-                                year = parseYear(item.name ?: "")
-                            )
+            // Serialize catalog builds — only one thread does the expensive work,
+            // others wait and get the result from memory.
+            // Use NonCancellable so a cancelled coroutine doesn't abandon the build
+            // while holding the mutex, leaving catalogMemory empty for everyone.
+            return withContext(kotlinx.coroutines.NonCancellable) { catalogLoadMutex.withLock {
+                // Re-check memory inside lock — another thread may have built it while we waited
+                val afterLockMem = catalogMemory[providerKey]
+                val lockNow = System.currentTimeMillis()
+                if (!forceRefresh && afterLockMem != null && lockNow - afterLockMem.createdAtMs < catalogTtlMs) {
+                    System.err.println("[VOD-Resolver] loadCatalog: found in memory after lock wait (${afterLockMem.entries.size} entries)")
+                    return@withLock afterLockMem
+                }
+
+                // Try SharedPreferences persisted catalog
+                var stalePersisted: ResolverPersistedCatalog? = null
+                if (!forceRefresh) {
+                    val persistedRaw = runCatching { prefs.getString(catalogPrefKey(providerKey), null) }.getOrNull()
+                    if (!persistedRaw.isNullOrBlank()) {
+                        val persisted = runCatching { gson.fromJson(persistedRaw, ResolverPersistedCatalog::class.java) }.getOrNull()
+                        if (persisted != null && persisted.entries.isNotEmpty()) {
+                            stalePersisted = persisted
+                            if (lockNow - persisted.createdAtMs < catalogTtlMs) {
+                                System.err.println("[VOD-Resolver] loadCatalog: building from persisted prefs (${persisted.entries.size} entries)")
+                                val built = buildCatalogIndex(persisted.createdAtMs, persisted.entries)
+                                catalogMemory[providerKey] = built
+                                return@withLock built
+                            }
                         }
+                    }
+                }
+
+                System.err.println("[VOD-Resolver] loadCatalog: fetching series list from network...")
+                val fetchStart = System.currentTimeMillis()
+                val entries = withTimeoutOrNull(45_000L) {
+                    val rawList = getXtreamSeriesList(creds, allowNetwork = true, fast = false)
+                    System.err.println("[VOD-Resolver] loadCatalog: got ${rawList.size} raw series in ${System.currentTimeMillis() - fetchStart}ms, building entries...")
+                    rawList.mapNotNull { item ->
+                        val seriesId = item.seriesId ?: return@mapNotNull null
+                        val name = item.name?.trim().orEmpty()
+                        if (name.isBlank()) return@mapNotNull null
+                        val normalizedName = normalizeLookupText(name)
+                        val tokens = extractTitleTokensFromNormalized(normalizedName)
+                        ResolverSeriesEntry(
+                            seriesId = seriesId,
+                            name = name,
+                            normalizedName = normalizedName,
+                            canonicalTitleKey = toCanonicalTitleKeyFromTokens(tokens),
+                            titleTokens = tokens,
+                            tmdb = normalizeTmdbId(item.tmdb),
+                            imdb = normalizeImdbId(item.imdb),
+                            year = parseYear(item.name ?: "")
+                        )
+                    }
                 }.orEmpty()
-            }
+                System.err.println("[VOD-Resolver] loadCatalog: entries=${entries.size} in ${System.currentTimeMillis() - fetchStart}ms")
 
-            if (entries.isEmpty()) {
-                val stale = stalePersisted
-                if (stale != null && stale.entries.isNotEmpty()) {
-                    val built = buildCatalogIndex(stale.createdAtMs, stale.entries)
-                    catalogMemory[providerKey] = built
-                    return built
+                if (entries.isEmpty()) {
+                    val stale = stalePersisted
+                    if (stale != null && stale.entries.isNotEmpty()) {
+                        System.err.println("[VOD-Resolver] loadCatalog: network empty, using stale persisted (${stale.entries.size})")
+                        val built = buildCatalogIndex(stale.createdAtMs, stale.entries)
+                        catalogMemory[providerKey] = built
+                        return@withLock built
+                    }
                 }
-            }
 
-            val built = withContext(Dispatchers.Default) {
-                buildCatalogIndex(now, entries)
-            }
-            catalogMemory[providerKey] = built
-            if (entries.isNotEmpty()) {
-                runCatching {
-                    prefs.edit().putString(catalogPrefKey(providerKey), gson.toJson(ResolverPersistedCatalog(now, entries))).apply()
+                val buildStart = System.currentTimeMillis()
+                val built = buildCatalogIndex(lockNow, entries)
+                System.err.println("[VOD-Resolver] loadCatalog: buildCatalogIndex took ${System.currentTimeMillis() - buildStart}ms")
+                catalogMemory[providerKey] = built
+                // Persist to SharedPreferences in background — don't block resolution
+                if (entries.isNotEmpty() && entries.size <= 50_000) {
+                    runCatching {
+                        prefs.edit().putString(catalogPrefKey(providerKey), gson.toJson(ResolverPersistedCatalog(lockNow, entries))).apply()
+                    }
                 }
-            }
-            return built
+                built
+            } }
         }
 
         private fun buildCatalogIndex(createdAtMs: Long, entries: List<ResolverSeriesEntry>): ResolverCatalogIndex {
             val normalizedEntries = entries.map { entry ->
                 val normalizedName = entry.normalizedName.ifBlank { normalizeLookupText(entry.name) }
-                val canonicalTitleKey = entry.canonicalTitleKey.ifBlank { toCanonicalTitleKey(normalizedName) }
-                val titleTokens = if (entry.titleTokens.isEmpty()) extractTitleTokens(normalizedName) else entry.titleTokens
+                val titleTokens = if (entry.titleTokens.isEmpty()) extractTitleTokensFromNormalized(normalizedName) else entry.titleTokens
+                val canonicalTitleKey = entry.canonicalTitleKey.ifBlank { toCanonicalTitleKeyFromTokens(titleTokens) }
                 entry.copy(
                     normalizedName = normalizedName,
                     canonicalTitleKey = canonicalTitleKey,
@@ -1612,8 +1670,8 @@ class IptvRepository @Inject constructor(
                 }
                 return persisted.episodes
             }
-            val episodes = withTimeoutOrNull(5_000L) {
-                getXtreamSeriesEpisodes(creds, seriesId, allowNetwork = allowNetwork, fast = true)
+            val episodes = withTimeoutOrNull(10_000L) {
+                getXtreamSeriesEpisodes(creds, seriesId, allowNetwork = allowNetwork, fast = false)
             }.orEmpty()
             if (episodes.isNotEmpty()) {
                 synchronized(seriesInfoLock) {
@@ -2051,28 +2109,120 @@ class IptvRepository @Inject constructor(
         xtreamSeriesEpisodeInFlight = emptyMap()
     }
 
+    // ── Disk cache helpers for Xtream VOD / Series catalogs ──────────────
+    // Persists catalogs to JSON files so they survive app restarts, avoiding
+    // 15-28 s re-downloads on cold start for large providers.
+
+    private data class XtreamDiskCache<T>(val savedAtMs: Long, val items: List<T>)
+
+    private fun xtreamDiskCacheDir(): File = File(context.filesDir, "xtream_vod_disk_cache").also { it.mkdirs() }
+
+    private fun xtreamDiskCacheHash(creds: XtreamCredentials): String {
+        val raw = "${creds.baseUrl}|${creds.username}|${creds.password}"
+        return MessageDigest.getInstance("MD5").digest(raw.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    private fun vodDiskCacheFile(creds: XtreamCredentials): File =
+        File(xtreamDiskCacheDir(), "vod_${xtreamDiskCacheHash(creds)}.json")
+
+    private fun seriesDiskCacheFile(creds: XtreamCredentials): File =
+        File(xtreamDiskCacheDir(), "series_${xtreamDiskCacheHash(creds)}.json")
+
+    private fun <T> readDiskCache(file: File, type: Type): XtreamDiskCache<T>? {
+        val parentExists = file.parentFile?.exists() == true
+        val parentFiles = runCatching { file.parentFile?.listFiles()?.map { it.name } }.getOrNull()
+        if (!file.exists()) {
+            System.err.println("[VOD-Cache] Disk cache file not found: ${file.absolutePath} (parent exists=$parentExists, parent files=$parentFiles)")
+            return null
+        }
+        val sizeKb = file.length() / 1024
+        System.err.println("[VOD-Cache] Reading disk cache: ${file.name} (${sizeKb}KB)")
+        return runCatching {
+            file.bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                gson.fromJson<XtreamDiskCache<T>>(reader, type)
+            }
+        }.onFailure { e ->
+            System.err.println("[VOD-Cache] Failed to read disk cache: ${file.name}: ${e.message}")
+        }.getOrNull()
+    }
+
+    private fun <T> writeDiskCache(file: File, savedAtMs: Long, items: List<T>) {
+        runCatching {
+            java.io.FileOutputStream(file).use { fos ->
+                java.io.BufferedWriter(java.io.OutputStreamWriter(fos, StandardCharsets.UTF_8)).use { writer ->
+                    gson.toJson(XtreamDiskCache(savedAtMs, items), writer)
+                    writer.flush()
+                }
+                runCatching { fos.fd.sync() }  // Best-effort flush to disk; may fail on emulator
+            }
+            System.err.println("[VOD-Cache] Wrote disk cache: ${file.name} (${file.length() / 1024}KB), exists=${file.exists()}")
+        }.onFailure { e ->
+            System.err.println("[VOD-Cache] Failed to write disk cache: ${file.name}: ${e.message}")
+        }
+    }
+
+    private val vodDiskCacheType: Type by lazy {
+        object : TypeToken<XtreamDiskCache<XtreamVodStream>>() {}.type
+    }
+    private val seriesDiskCacheType: Type by lazy {
+        object : TypeToken<XtreamDiskCache<XtreamSeriesItem>>() {}.type
+    }
+
+    // ── Restructured load methods: disk cache + non-blocking network ─────
+
     private suspend fun loadXtreamVodStreams(
         creds: XtreamCredentials,
         fast: Boolean = false
     ): List<XtreamVodStream> {
         return withContext(Dispatchers.IO) {
-            xtreamDataMutex.withLock {
-                ensureXtreamVodCacheOwnership(creds)
-                val now = System.currentTimeMillis()
-                if (cachedXtreamVodStreams.isNotEmpty() && now - xtreamVodLoadedAtMs < xtreamVodCacheMs) {
-                    return@withLock cachedXtreamVodStreams
-                }
-                val url = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action=get_vod_streams"
-                val vod: List<XtreamVodStream> =
-                    requestJson(
-                        url,
-                        object : TypeToken<List<XtreamVodStream>>() {}.type,
-                        client = if (fast) xtreamLookupHttpClient else iptvHttpClient
-                    ) ?: emptyList()
-                cachedXtreamVodStreams = vod
-                xtreamVodLoadedAtMs = now
-                vod
+            // 1. Fast check: in-memory cache (no lock needed, fields are @Volatile)
+            ensureXtreamVodCacheOwnership(creds)
+            val now = System.currentTimeMillis()
+            if (cachedXtreamVodStreams.isNotEmpty() && now - xtreamVodLoadedAtMs < xtreamVodCacheMs) {
+                return@withContext cachedXtreamVodStreams
             }
+
+            // 2. Check disk cache (fast — reading a file, not a network call)
+            val diskFile = vodDiskCacheFile(creds)
+            val diskCache: XtreamDiskCache<XtreamVodStream>? = readDiskCache(diskFile, vodDiskCacheType)
+            if (diskCache != null && diskCache.items.isNotEmpty() && now - diskCache.savedAtMs < xtreamVodCacheMs) {
+                System.err.println("[VOD-Cache] Loaded ${diskCache.items.size} VOD streams from disk cache (age ${(now - diskCache.savedAtMs) / 1000}s)")
+                cachedXtreamVodStreams = diskCache.items
+                xtreamVodLoadedAtMs = diskCache.savedAtMs
+                return@withContext diskCache.items
+            }
+
+            // 3. Download from network — NO mutex held during download
+            System.err.println("[VOD-Cache] Downloading VOD streams from network...")
+            val downloadStart = System.currentTimeMillis()
+            val url = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action=get_vod_streams"
+            val vod: List<XtreamVodStream> =
+                requestJson(
+                    url,
+                    object : TypeToken<List<XtreamVodStream>>() {}.type,
+                    client = if (fast) xtreamLookupHttpClient else iptvHttpClient
+                ) ?: emptyList()
+            val elapsed = System.currentTimeMillis() - downloadStart
+            System.err.println("[VOD-Cache] Downloaded ${vod.size} VOD streams in ${elapsed}ms")
+
+            // 4. Swap into memory cache
+            if (vod.isNotEmpty()) {
+                val writeTime = System.currentTimeMillis()
+                cachedXtreamVodStreams = vod
+                xtreamVodLoadedAtMs = writeTime
+                // 5. Persist to disk in background
+                runCatching { writeDiskCache(diskFile, writeTime, vod) }
+                System.err.println("[VOD-Cache] Saved VOD streams to disk cache")
+            } else if (diskCache != null && diskCache.items.isNotEmpty()) {
+                // Network returned empty — use stale disk cache
+                System.err.println("[VOD-Cache] Network returned empty, using stale disk cache (${diskCache.items.size} items)")
+                cachedXtreamVodStreams = diskCache.items
+                xtreamVodLoadedAtMs = diskCache.savedAtMs
+                return@withContext diskCache.items
+            }
+
+            vod
         }
     }
 
@@ -2082,8 +2232,20 @@ class IptvRepository @Inject constructor(
         fast: Boolean = false
     ): List<XtreamVodStream> {
         if (allowNetwork) return loadXtreamVodStreams(creds, fast = fast)
+        // If no network allowed, try memory first, then disk
         ensureXtreamVodCacheOwnership(creds)
-        return cachedXtreamVodStreams
+        if (cachedXtreamVodStreams.isNotEmpty()) return cachedXtreamVodStreams
+        // Try disk cache even when network not allowed
+        return withContext(Dispatchers.IO) {
+            val diskCache: XtreamDiskCache<XtreamVodStream>? = readDiskCache(vodDiskCacheFile(creds), vodDiskCacheType)
+            if (diskCache != null && diskCache.items.isNotEmpty()) {
+                cachedXtreamVodStreams = diskCache.items
+                xtreamVodLoadedAtMs = diskCache.savedAtMs
+                diskCache.items
+            } else {
+                emptyList()
+            }
+        }
     }
 
     private suspend fun loadXtreamSeriesList(
@@ -2091,23 +2253,52 @@ class IptvRepository @Inject constructor(
         fast: Boolean = false
     ): List<XtreamSeriesItem> {
         return withContext(Dispatchers.IO) {
-            xtreamDataMutex.withLock {
-                ensureXtreamVodCacheOwnership(creds)
-                val now = System.currentTimeMillis()
-                if (cachedXtreamSeries.isNotEmpty() && now - xtreamSeriesLoadedAtMs < xtreamVodCacheMs) {
-                    return@withLock cachedXtreamSeries
-                }
-                val url = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action=get_series"
-                val series: List<XtreamSeriesItem> =
-                    requestJson(
-                        url,
-                        object : TypeToken<List<XtreamSeriesItem>>() {}.type,
-                        client = if (fast) xtreamLookupHttpClient else iptvHttpClient
-                    ) ?: emptyList()
-                cachedXtreamSeries = series
-                xtreamSeriesLoadedAtMs = now
-                series
+            // 1. Fast check: in-memory cache
+            ensureXtreamVodCacheOwnership(creds)
+            val now = System.currentTimeMillis()
+            if (cachedXtreamSeries.isNotEmpty() && now - xtreamSeriesLoadedAtMs < xtreamVodCacheMs) {
+                return@withContext cachedXtreamSeries
             }
+
+            // 2. Check disk cache
+            val diskFile = seriesDiskCacheFile(creds)
+            val diskCache: XtreamDiskCache<XtreamSeriesItem>? = readDiskCache(diskFile, seriesDiskCacheType)
+            if (diskCache != null && diskCache.items.isNotEmpty() && now - diskCache.savedAtMs < xtreamVodCacheMs) {
+                System.err.println("[VOD-Cache] Loaded ${diskCache.items.size} series from disk cache (age ${(now - diskCache.savedAtMs) / 1000}s)")
+                cachedXtreamSeries = diskCache.items
+                xtreamSeriesLoadedAtMs = diskCache.savedAtMs
+                return@withContext diskCache.items
+            }
+
+            // 3. Download from network — NO mutex held
+            System.err.println("[VOD-Cache] Downloading series list from network...")
+            val downloadStart = System.currentTimeMillis()
+            val url = "${creds.baseUrl}/player_api.php?username=${creds.username}&password=${creds.password}&action=get_series"
+            val series: List<XtreamSeriesItem> =
+                requestJson(
+                    url,
+                    object : TypeToken<List<XtreamSeriesItem>>() {}.type,
+                    client = if (fast) xtreamLookupHttpClient else iptvHttpClient
+                ) ?: emptyList()
+            val elapsed = System.currentTimeMillis() - downloadStart
+            System.err.println("[VOD-Cache] Downloaded ${series.size} series in ${elapsed}ms")
+
+            // 4. Swap into memory cache
+            if (series.isNotEmpty()) {
+                val writeTime = System.currentTimeMillis()
+                cachedXtreamSeries = series
+                xtreamSeriesLoadedAtMs = writeTime
+                // 5. Persist to disk
+                runCatching { writeDiskCache(diskFile, writeTime, series) }
+                System.err.println("[VOD-Cache] Saved series list to disk cache")
+            } else if (diskCache != null && diskCache.items.isNotEmpty()) {
+                System.err.println("[VOD-Cache] Network returned empty, using stale disk cache (${diskCache.items.size} items)")
+                cachedXtreamSeries = diskCache.items
+                xtreamSeriesLoadedAtMs = diskCache.savedAtMs
+                return@withContext diskCache.items
+            }
+
+            series
         }
     }
 
@@ -2117,8 +2308,19 @@ class IptvRepository @Inject constructor(
         fast: Boolean = false
     ): List<XtreamSeriesItem> {
         if (allowNetwork) return loadXtreamSeriesList(creds, fast = fast)
+        // If no network allowed, try memory first, then disk
         ensureXtreamVodCacheOwnership(creds)
-        return cachedXtreamSeries
+        if (cachedXtreamSeries.isNotEmpty()) return cachedXtreamSeries
+        return withContext(Dispatchers.IO) {
+            val diskCache: XtreamDiskCache<XtreamSeriesItem>? = readDiskCache(seriesDiskCacheFile(creds), seriesDiskCacheType)
+            if (diskCache != null && diskCache.items.isNotEmpty()) {
+                cachedXtreamSeries = diskCache.items
+                xtreamSeriesLoadedAtMs = diskCache.savedAtMs
+                diskCache.items
+            } else {
+                emptyList()
+            }
+        }
     }
 
     private suspend fun loadXtreamSeriesEpisodes(
@@ -2360,24 +2562,36 @@ class IptvRepository @Inject constructor(
             .replace(multiSpaceRegex, " ")
     }
 
+    private val titleTokenNoise = setOf(
+        "the", "a", "an", "and", "of", "to", "in", "on",
+        "complete", "series", "tv", "show", "season", "seasons",
+        "episode", "episodes", "part", "collection", "pack"
+    )
+
     private fun extractTitleTokens(value: String): Set<String> {
         val normalized = normalizeLookupText(value)
+        return extractTitleTokensFromNormalized(normalized)
+    }
+
+    /** Fast version: skips redundant normalizeLookupText when input is already normalized. */
+    private fun extractTitleTokensFromNormalized(normalized: String): Set<String> {
         if (normalized.isBlank()) return emptySet()
-        val noise = setOf(
-            "the", "a", "an", "and", "of", "to", "in", "on",
-            "complete", "series", "tv", "show", "season", "seasons",
-            "episode", "episodes", "part", "collection", "pack"
-        )
         return normalized
             .split(' ')
             .asSequence()
             .map { it.trim() }
-            .filter { it.length >= 3 && it !in noise }
+            .filter { it.length >= 3 && it !in titleTokenNoise }
             .toSet()
     }
 
     private fun toCanonicalTitleKey(value: String): String {
         val tokens = extractTitleTokens(value)
+        if (tokens.isEmpty()) return ""
+        return tokens.sorted().joinToString(" ")
+    }
+
+    /** Fast version: uses pre-computed tokens. */
+    private fun toCanonicalTitleKeyFromTokens(tokens: Set<String>): String {
         if (tokens.isEmpty()) return ""
         return tokens.sorted().joinToString(" ")
     }

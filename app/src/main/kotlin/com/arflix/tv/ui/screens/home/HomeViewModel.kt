@@ -552,9 +552,20 @@ class HomeViewModel @Inject constructor(
             }
         }
         loadHomeData()
-        // Note: VOD cache warmup is NOT done here because loadXtreamVodStreams/loadXtreamSeriesList
-        // use a mutex — warming up would block all concurrent VOD lookups for 20-30s on large providers.
-        // Instead, VOD functions download on-demand and cache in memory for 6 hours.
+        // Warm up VOD caches in background. Downloads are now non-blocking (no mutex held
+        // during network I/O) so this won't stall concurrent VOD lookups. With disk caching,
+        // this will be near-instant on warm starts and will pre-populate for cold starts.
+        // Use NonCancellable so warmup survives even if user navigates away from Home.
+        viewModelScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                try {
+                    iptvRepository.warmXtreamVodCachesIfPossible()
+                    System.err.println("HomeVM: VOD cache warmup completed")
+                } catch (e: Exception) {
+                    System.err.println("HomeVM: VOD cache warmup failed: ${e.message}")
+                }
+            }
+        }
         viewModelScope.launch {
             try {
                 // Ensure Continue Watching appears once Trakt tokens are loaded

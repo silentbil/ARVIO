@@ -832,9 +832,9 @@ class DetailsViewModel @Inject constructor(
                 // Start VOD append in background - runs parallel to addon stream fetch
                 vodAppendJob?.cancel()
                 vodAppendJob = viewModelScope.launch {
-                    // VOD needs time to download catalog on first access (3-10s cold, <1s warm).
-                    // TV shows need extra time for series info resolution.
-                    val vodTimeout = if (currentMediaType == MediaType.MOVIE) 15_000L else 20_000L
+                    // VOD lookups use disk-cached catalogs (near-instant on warm starts).
+                    // On rare true cold starts, catalog download can take 15-30s for large providers.
+                    val vodTimeout = if (currentMediaType == MediaType.MOVIE) 30_000L else 45_000L
                     appendVodSourceInBackground(
                         imdbId = imdbId,
                         season = season,

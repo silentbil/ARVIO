@@ -971,7 +971,7 @@ class StreamRepository @Inject constructor(
         episode: Int,
         title: String = "",
         tmdbId: Int? = null,
-        timeoutMs: Long = 20_000L
+        timeoutMs: Long = 45_000L
     ): StreamSource? = withContext(Dispatchers.IO) {
         val result = withTimeoutOrNull(timeoutMs.coerceIn(500L, 90_000L)) {
             runCatching {

@@ -315,14 +315,14 @@ class PlayerViewModel @Inject constructor(
                 // Start VOD append in background - single fast attempt, no retries blocking UI
                 vodAppendJob?.cancel()
                 vodAppendJob = launch {
-                    // VOD runs in parallel with addon streams — give it enough time
-                    // to fetch catalog on first access (cache is usually warm from HomeVM).
+                    // VOD runs in parallel with addon streams — catalog is disk-cached
+                    // so lookups are usually fast. Give enough time for series info calls.
                     appendVodSourceInBackground(
                         mediaType = mediaType,
                         imdbId = imdbId,
                         seasonNumber = seasonNumber,
                         episodeNumber = episodeNumber,
-                        timeoutMs = 10_000L
+                        timeoutMs = 15_000L
                     )
                 }
 
