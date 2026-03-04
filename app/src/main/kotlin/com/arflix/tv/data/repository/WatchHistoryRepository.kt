@@ -49,15 +49,16 @@ class WatchHistoryRepository @Inject constructor(
     private val profileManager: ProfileManager
 ) {
     private fun profileHistorySource(base: String): String {
-        // Use profile NAME (not UUID) so entries are matched across devices
-        val profileName = profileManager.getProfileNameSync()
-        return "profile:$profileName:$base"
+        // Use stable profile ID so rename/case changes do not split history.
+        // Profile IDs are synced via cloud profile sync.
+        val profileId = profileManager.getProfileIdSync()
+        return "profile:$profileId:$base"
     }
 
     private fun profileHistorySourceFilter(): String {
         // PostgREST wildcard for LIKE is '*'
-        val profileName = profileManager.getProfileNameSync()
-        return "like.profile:$profileName:*"
+        val profileId = profileManager.getProfileIdSync()
+        return "like.profile:$profileId:*"
     }
 
     /**

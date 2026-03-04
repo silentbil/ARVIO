@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.search
 import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -96,6 +97,7 @@ fun SearchScreen(
     val maxSidebarIndex = if (hasProfile) SidebarItem.entries.size else SidebarItem.entries.size - 1
     var sidebarFocusIndex by remember { mutableIntStateOf(if (hasProfile) 1 else 0) } // SEARCH
     var currentRowIndex by remember { mutableIntStateOf(0) } // 0 = Movies, 1 = TV Shows
+    var suggestionIndex by remember { mutableIntStateOf(0) }
     var movieItemIndex by remember { mutableIntStateOf(0) }
     var tvItemIndex by remember { mutableIntStateOf(0) }
     var isSearchInputFocused by remember { mutableStateOf(false) }
@@ -130,6 +132,12 @@ fun SearchScreen(
         }
     }
 
+    LaunchedEffect(uiState.suggestions) {
+        if (suggestionIndex >= uiState.suggestions.size) {
+            suggestionIndex = 0
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -143,6 +151,14 @@ fun SearchScreen(
                                 FocusZone.SEARCH_INPUT -> {
                                     focusZone = FocusZone.SIDEBAR
                                 }
+                                FocusZone.SUGGESTIONS -> {
+                                    if (suggestionIndex > 0) {
+                                        suggestionIndex -= 1
+                                    } else {
+                                        focusZone = FocusZone.SEARCH_INPUT
+                                        searchFocusRequester.requestFocus()
+                                    }
+                                }
                                 FocusZone.RESULTS -> {
                                     focusZone = FocusZone.SEARCH_INPUT
                                     searchFocusRequester.requestFocus()
@@ -153,6 +169,10 @@ fun SearchScreen(
                         Key.DirectionLeft -> {
                             when (focusZone) {
                                 FocusZone.SEARCH_INPUT -> {
+                                    focusZone = FocusZone.SIDEBAR
+                                    true
+                                }
+                                FocusZone.SUGGESTIONS -> {
                                     focusZone = FocusZone.SIDEBAR
                                     true
                                 }
@@ -175,6 +195,7 @@ fun SearchScreen(
                                     searchFocusRequester.requestFocus()
                                     true
                                 }
+                                FocusZone.SUGGESTIONS -> true
                                 FocusZone.RESULTS -> {
                                     val maxIndex = if (currentRowIndex == 0) uiState.movieResults.size - 1 else uiState.tvResults.size - 1
                                     val currentIndex = if (currentRowIndex == 0) movieItemIndex else tvItemIndex
@@ -199,6 +220,10 @@ fun SearchScreen(
                                         searchFocusRequester.requestFocus()
                                     }
                                 }
+                                FocusZone.SUGGESTIONS -> {
+                                    focusZone = FocusZone.SEARCH_INPUT
+                                    searchFocusRequester.requestFocus()
+                                }
                                 else -> {}
                             }
                             true
@@ -209,7 +234,18 @@ fun SearchScreen(
                                     sidebarFocusIndex = (sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
                                 }
                                 FocusZone.SEARCH_INPUT -> {
-                                    if (uiState.movieResults.isNotEmpty() || uiState.tvResults.isNotEmpty()) {
+                                    if (uiState.suggestions.isNotEmpty()) {
+                                        focusZone = FocusZone.SUGGESTIONS
+                                        suggestionIndex = suggestionIndex.coerceIn(0, uiState.suggestions.lastIndex)
+                                    } else if (uiState.movieResults.isNotEmpty() || uiState.tvResults.isNotEmpty()) {
+                                        focusZone = FocusZone.RESULTS
+                                        currentRowIndex = if (uiState.movieResults.isNotEmpty()) 0 else 1
+                                    }
+                                }
+                                FocusZone.SUGGESTIONS -> {
+                                    if (suggestionIndex < uiState.suggestions.lastIndex) {
+                                        suggestionIndex += 1
+                                    } else if (uiState.movieResults.isNotEmpty() || uiState.tvResults.isNotEmpty()) {
                                         focusZone = FocusZone.RESULTS
                                         currentRowIndex = if (uiState.movieResults.isNotEmpty()) 0 else 1
                                     }
@@ -246,6 +282,13 @@ fun SearchScreen(
                                     // Let the TextField handle center/enter so users can
                                     // re-enter edit mode instead of forcing a re-search.
                                     false
+                                }
+                                FocusZone.SUGGESTIONS -> {
+                                    uiState.suggestions.getOrNull(suggestionIndex)?.let { suggestion ->
+                                        viewModel.applySuggestion(suggestion)
+                                        onNavigateToDetails(suggestion.mediaType, suggestion.mediaId)
+                                    }
+                                    true
                                 }
                                 FocusZone.RESULTS -> {
                                     val item = if (currentRowIndex == 0) {
@@ -346,6 +389,20 @@ fun SearchScreen(
                 }
 
                 // Results Area
+                val showSuggestions = uiState.query.isNotBlank() && uiState.suggestions.isNotEmpty()
+                if (showSuggestions) {
+                    SuggestionList(
+                        suggestions = uiState.suggestions,
+                        focusedIndex = suggestionIndex,
+                        isFocused = focusZone == FocusZone.SUGGESTIONS,
+                        onSuggestionClick = { suggestion ->
+                            viewModel.applySuggestion(suggestion)
+                            onNavigateToDetails(suggestion.mediaType, suggestion.mediaId)
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(if (isCompactHeight) 14.dp else 20.dp))
+                }
+
                 if (uiState.isLoading) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -436,7 +493,15 @@ private fun SearchResultRow(
         if (!isCurrentRow || items.isEmpty()) return@LaunchedEffect
         val targetIndex = focusedItemIndex.coerceIn(0, items.lastIndex)
         if (lastScrollIndex == targetIndex) return@LaunchedEffect
-        rowState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
+        val currentFirst = rowState.firstVisibleItemIndex
+        val currentLast = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: currentFirst
+        val outsideViewport = targetIndex < currentFirst || targetIndex > currentLast
+        val jumpDistance = kotlin.math.abs(targetIndex - currentFirst)
+        if (targetIndex == 0 || outsideViewport || jumpDistance > 1 || lastScrollIndex == -1) {
+            rowState.scrollToItem(index = targetIndex, scrollOffset = 0)
+        } else {
+            rowState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
+        }
         lastScrollIndex = targetIndex
     }
 
@@ -497,5 +562,52 @@ private fun SearchResultRow(
 }
 
 private enum class FocusZone {
-    SIDEBAR, SEARCH_INPUT, RESULTS
+    SIDEBAR, SEARCH_INPUT, SUGGESTIONS, RESULTS
+}
+
+@Composable
+private fun SuggestionList(
+    suggestions: List<SearchSuggestion>,
+    focusedIndex: Int,
+    isFocused: Boolean,
+    onSuggestionClick: (SearchSuggestion) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BackgroundCard.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        suggestions.forEachIndexed { index, suggestion ->
+            val rowFocused = isFocused && index == focusedIndex
+            val mediaLabel = if (suggestion.mediaType == MediaType.TV) "TV" else "Movie"
+            val yearText = suggestion.year.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        if (rowFocused) Color.White else Color.Transparent,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .clickable { onSuggestionClick(suggestion) }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = suggestion.title,
+                    style = ArflixTypography.body,
+                    color = if (rowFocused) Color.Black else TextPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "$mediaLabel$yearText",
+                    style = ArflixTypography.caption,
+                    color = if (rowFocused) Color.Black.copy(alpha = 0.7f) else TextSecondary
+                )
+            }
+        }
+    }
 }

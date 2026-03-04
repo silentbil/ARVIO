@@ -19,4 +19,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "ARVIO"
 include(":app")
-include(":baselineprofile")
+include(":benchmark")

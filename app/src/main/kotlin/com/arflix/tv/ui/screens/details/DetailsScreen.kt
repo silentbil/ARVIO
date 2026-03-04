@@ -116,14 +116,11 @@ import com.arflix.tv.ui.components.TopBarClock
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
-import com.arflix.tv.ui.theme.AccentRed
 import com.arflix.tv.ui.theme.AnimationConstants
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundCard
 import com.arflix.tv.ui.theme.BackgroundDark
 import com.arflix.tv.ui.theme.Pink
-import com.arflix.tv.ui.theme.PrimeBlue
-import com.arflix.tv.ui.theme.PrimeBlueDark
 import com.arflix.tv.ui.theme.Purple
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
@@ -315,17 +312,24 @@ fun DetailsScreen(
                                 sidebarFocusIndex = (sidebarFocusIndex - 1).coerceIn(0, maxSidebarIndex)
                                 true
                             } else {
-                                // Navigation: BUTTONS -> EPISODES -> SEASONS -> CAST -> REVIEWS -> SIMILAR
+                                // Navigation: BUTTONS -> SEASONS -> EPISODES -> CAST -> REVIEWS -> SIMILAR
                                 val isTV = mediaType == MediaType.TV
+                                val hasEpisodes = uiState.episodes.isNotEmpty()
                                 val hasCast = uiState.cast.isNotEmpty()
                                 val hasReviews = uiState.reviews.isNotEmpty()
                                 focusedSection = when (focusedSection) {
                                     FocusSection.BUTTONS -> FocusSection.BUTTONS  // Stay on buttons (top)
-                                    FocusSection.EPISODES -> FocusSection.BUTTONS  // Go up to buttons
-                                    FocusSection.SEASONS -> FocusSection.EPISODES  // Go up to episodes
+                                    FocusSection.SEASONS -> FocusSection.BUTTONS
+                                    FocusSection.EPISODES -> {
+                                        if (uiState.totalSeasons > 1) FocusSection.SEASONS else FocusSection.BUTTONS
+                                    }
                                     FocusSection.CAST -> {
                                         if (isTV) {
-                                            if (uiState.totalSeasons > 1) FocusSection.SEASONS else FocusSection.EPISODES
+                                            when {
+                                                hasEpisodes -> FocusSection.EPISODES
+                                                uiState.totalSeasons > 1 -> FocusSection.SEASONS
+                                                else -> FocusSection.BUTTONS
+                                            }
                                         } else FocusSection.BUTTONS
                                     }
                                     FocusSection.REVIEWS -> if (hasCast) FocusSection.CAST else FocusSection.BUTTONS
@@ -339,32 +343,34 @@ fun DetailsScreen(
                                 sidebarFocusIndex = (sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
                                 true
                             } else {
-                                // Navigation: BUTTONS -> EPISODES -> SEASONS -> CAST -> REVIEWS -> SIMILAR
+                                // Navigation: BUTTONS -> SEASONS -> EPISODES -> CAST -> REVIEWS -> SIMILAR
                                 val isTV = mediaType == MediaType.TV
                                 val hasEpisodes = uiState.episodes.isNotEmpty()
+                                val hasSeasons = uiState.totalSeasons > 1
                                 val hasCast = uiState.cast.isNotEmpty()
                                 val hasReviews = uiState.reviews.isNotEmpty()
                                 val hasSimilar = uiState.similar.isNotEmpty()
                                 focusedSection = when (focusedSection) {
                                     FocusSection.BUTTONS -> {
-                                        if (isTV && hasEpisodes) FocusSection.EPISODES
+                                        if (isTV && hasSeasons) FocusSection.SEASONS
+                                        else if (isTV && hasEpisodes) FocusSection.EPISODES
                                         else if (hasCast) FocusSection.CAST
                                         else if (hasReviews) FocusSection.REVIEWS
                                         else if (hasSimilar) FocusSection.SIMILAR
                                         else FocusSection.BUTTONS
                                     }
-                                    FocusSection.EPISODES -> {
-                                        if (uiState.totalSeasons > 1) FocusSection.SEASONS
+                                    FocusSection.SEASONS -> {
+                                        if (hasEpisodes) FocusSection.EPISODES
                                         else if (hasCast) FocusSection.CAST
                                         else if (hasReviews) FocusSection.REVIEWS
                                         else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.EPISODES
+                                        else FocusSection.SEASONS
                                     }
-                                    FocusSection.SEASONS -> {
+                                    FocusSection.EPISODES -> {
                                         if (hasCast) FocusSection.CAST
                                         else if (hasReviews) FocusSection.REVIEWS
                                         else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.SEASONS
+                                        else FocusSection.EPISODES
                                     }
                                     FocusSection.CAST -> {
                                         if (hasReviews) FocusSection.REVIEWS
@@ -540,6 +546,7 @@ fun DetailsScreen(
                     similarIndex = similarIndex,
                     isInWatchlist = uiState.isInWatchlist,
                     genres = uiState.genres,
+                    budget = uiState.budget,
                     seasonProgress = uiState.seasonProgress,
                     playLabel = uiState.playLabel,
                     usePosterCards = usePosterCards
@@ -743,6 +750,7 @@ private fun DetailsContent(
     similarIndex: Int,
     isInWatchlist: Boolean,
     genres: List<String> = emptyList(),
+    budget: String? = null,
     seasonProgress: Map<Int, Pair<Int, Int>> = emptyMap(),
     playLabel: String? = null,
     usePosterCards: Boolean = false
@@ -822,7 +830,6 @@ private fun DetailsContent(
         // Layer 4 removed for performance - radial gradients are expensive on TV
 
         // Hero metadata positioned above the content rows
-        val heroBottomPadding = 306.dp
         val heroStartPadding = 68.dp  // 56dp sidebar + 12dp gap
         val heroEndPadding = 400.dp
         val configuration = LocalConfiguration.current
@@ -830,6 +837,7 @@ private fun DetailsContent(
         val contentRowBottomPadding = 12.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
+        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 54.dp else 62.dp
 
         Box(
             modifier = Modifier
@@ -841,7 +849,6 @@ private fun DetailsContent(
                 )
         ) {
             Column(verticalArrangement = Arrangement.Bottom) {
-                // Logo or Title (same size as HomePage)
                 val showInCinema = remember(item.releaseDate, item.mediaType) {
                     isInCinema(item)
                 }
@@ -902,10 +909,17 @@ private fun DetailsContent(
                 val genreText = genres.take(2).joinToString(" / ").ifEmpty {
                     if (item.mediaType == MediaType.TV) "TV Series" else "Movie"
                 }
+                val isCompactHeight = configuration.screenHeightDp < 720
                 val displayDate = item.releaseDate?.takeIf { it.isNotEmpty() } ?: item.year
                 val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
                 val rating = item.imdbRating.ifEmpty { item.tmdbRating }
                 val ratingValue = parseRatingValue(rating)
+                val budgetText = budget?.trim()?.takeIf { it.isNotEmpty() && item.mediaType == MediaType.MOVIE }
+                val maxOverviewLines = run {
+                    val base = if (isCompactHeight) 4 else 6
+                    base.coerceAtLeast(3)
+                }
+
                 val separatorStyle = ArflixTypography.caption.copy(
                     fontSize = 14.sp,
                     shadow = textShadow
@@ -972,33 +986,37 @@ private fun DetailsContent(
                             )
                         }
                     }
+
+                    if (!budgetText.isNullOrBlank()) {
+                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                        Text(
+                            text = "Budget $budgetText",
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                shadow = textShadow
+                            ),
+                            color = Color.White
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Overview text - show episode description when episode is focused
-                val focusedEpisode = if (focusedSection == FocusSection.EPISODES && episodes.isNotEmpty()) {
-                    episodes.getOrNull(episodeIndex)
-                } else null
-
-                val displayOverview = if (focusedEpisode != null && focusedEpisode.overview.isNotEmpty()) {
-                    focusedEpisode.overview
-                } else {
-                    item.overview
-                }
+                val displayOverview = item.overview
 
                 Text(
                     text = displayOverview,
                     style = ArflixTypography.body.copy(
-                        fontSize = 14.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        lineHeight = 22.sp,
+                        lineHeight = 20.sp,
                         shadow = textShadow
                     ),
                     color = Color.White,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.width(340.dp)
+                    maxLines = maxOverviewLines,
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier.width(560.dp)
                 )
 
             }
@@ -1076,9 +1094,9 @@ private fun DetailsContent(
 
         // Build index map for each section (accounting for spacer items)
         var idx = 0
-        val episodesIdx = if (hasEpisodes) idx.also { idx++ } else -1
-        // Seasons follows episodes directly (no spacer)
         val seasonsIdx = if (hasSeasons) idx.also { idx++ } else -1
+        // Episodes follows seasons directly (no spacer)
+        val episodesIdx = if (hasEpisodes) idx.also { idx++ } else -1
         // Cast has a spacer before it
         if (hasCast) idx++  // spacer
         val castIdx = if (hasCast) idx.also { idx++ } else -1
@@ -1133,42 +1151,8 @@ private fun DetailsContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(top = 12.dp)
         ) {
-            // Episodes row (for TV shows)
+            // TV rows: Seasons first, then Episodes
             if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
-                item {
-                    val episodeRowState = rememberTvLazyListState()
-                    HomeStyleRowAutoScroll(
-                        rowState = episodeRowState,
-                        isCurrentRow = focusedSection == FocusSection.EPISODES,
-                        focusedItemIndex = episodeIndex,
-                        totalItems = episodes.size,
-                        itemWidth = 210.dp,
-                        itemSpacing = 14.dp
-                    )
-
-                    // Use rememberUpdatedState to ensure items recompose when focus changes
-                    val currentFocusedSection by rememberUpdatedState(focusedSection)
-                    val currentEpisodeIndex by rememberUpdatedState(episodeIndex)
-
-                    TvLazyRow(
-                        state = episodeRowState,
-                        contentPadding = PaddingValues(start = contentStartPadding, end = 400.dp),  // Extra padding to ensure last items visible
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        itemsIndexed(
-                            episodes,
-                            key = { index, ep -> "${ep.seasonNumber}_${ep.episodeNumber}_$index" }
-                        ) { index, episode ->
-                            // Read state inside item to ensure recomposition on focus change
-                            val isFocused = currentFocusedSection == FocusSection.EPISODES && index == currentEpisodeIndex
-                            EpisodeCard(
-                                episode = episode,
-                                isFocused = isFocused
-                            )
-                        }
-                    }
-                }
-
                 // Season buttons row
                 if (totalSeasons > 1) {
                     item {
@@ -1179,7 +1163,7 @@ private fun DetailsContent(
                             isCurrentRow = focusedSection == FocusSection.SEASONS,
                             focusedItemIndex = seasonIndex,
                             totalItems = totalSeasons,
-                            itemWidth = 120.dp,
+                            itemWidth = 128.dp,
                             itemSpacing = 8.dp
                         )
 
@@ -1191,7 +1175,7 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = seasonRowState,
-                            contentPadding = PaddingValues(start = contentStartPadding, end = 150.dp),  // 120dp button + 30dp margin
+                            contentPadding = PaddingValues(start = contentStartPadding, end = 150.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             itemsIndexed(seasonItems, key = { _, s -> s }) { index, season ->
@@ -1204,6 +1188,39 @@ private fun DetailsContent(
                                     totalCount = progress?.second ?: 0
                                 )
                             }
+                        }
+                    }
+                }
+
+                item {
+                    val episodeCardWidth = if (configuration.screenWidthDp < 1400) 300.dp else 320.dp
+                    val episodeRowState = rememberTvLazyListState()
+                    HomeStyleRowAutoScroll(
+                        rowState = episodeRowState,
+                        isCurrentRow = focusedSection == FocusSection.EPISODES,
+                        focusedItemIndex = episodeIndex,
+                        totalItems = episodes.size,
+                        itemWidth = episodeCardWidth,
+                        itemSpacing = 16.dp
+                    )
+
+                    val currentFocusedSection by rememberUpdatedState(focusedSection)
+                    val currentEpisodeIndex by rememberUpdatedState(episodeIndex)
+
+                    TvLazyRow(
+                        state = episodeRowState,
+                        contentPadding = PaddingValues(start = contentStartPadding, end = 520.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        itemsIndexed(
+                            episodes,
+                            key = { index, ep -> "${ep.seasonNumber}_${ep.episodeNumber}_$index" }
+                        ) { index, episode ->
+                            val isFocused = currentFocusedSection == FocusSection.EPISODES && index == currentEpisodeIndex
+                            EpisodeCard(
+                                episode = episode,
+                                isFocused = isFocused
+                            )
                         }
                     }
                 }
@@ -1421,22 +1438,23 @@ private fun HomeStyleRowAutoScroll(
         }
 
         if (focusedItemIndex == 0 && scrollTargetIndex == 0) {
-            rowState.animateScrollToItem(index = 0, scrollOffset = 0)
+            rowState.scrollToItem(index = 0, scrollOffset = 0)
             lastScrollIndex = 0
             return@LaunchedEffect
         }
 
         if (lastScrollIndex == scrollTargetIndex && extraOffset == 0) return@LaunchedEffect
         if (lastScrollIndex == -1) {
-            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
             lastScrollIndex = scrollTargetIndex
             return@LaunchedEffect
         }
-        val delta = scrollTargetIndex - lastScrollIndex
-        if (delta == 0 && extraOffset > 0) {
-            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-        } else if (abs(delta) > 1) {
-            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+        val currentFirst = rowState.firstVisibleItemIndex
+        val currentLast = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: currentFirst
+        val targetOutsideViewport = focusedItemIndex < currentFirst || focusedItemIndex > currentLast
+        val delta = scrollTargetIndex - currentFirst
+        if (extraOffset > 0 || targetOutsideViewport || abs(delta) > 1) {
+            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         } else if (delta != 0) {
             rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         }
@@ -1600,7 +1618,12 @@ private fun EpisodeCard(
     episode: Episode,
     isFocused: Boolean
 ) {
-    // Same styling as MediaCard on home screen
+    val configuration = LocalConfiguration.current
+    val cardWidth = if (configuration.screenWidthDp < 1400) 300.dp else 320.dp
+    val aspectRatio = 16f / 9f
+    val context = LocalContext.current
+    val density = LocalDensity.current
+
     val shape = rememberArvioCardShape(ArvioSkin.radius.md)
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.02f else 1f,
@@ -1612,11 +1635,6 @@ private fun EpisodeCard(
     )
     val borderWidth = if (isFocused || scale != 1f) 3.dp else 0.dp
 
-    // Same width as home screen cards (210dp)
-    val cardWidth = 210.dp
-    val context = LocalContext.current
-    val density = LocalDensity.current
-    val aspectRatio = 16f / 9f
     val imageRequest = remember(episode.stillPath, cardWidth, context, density) {
         val widthPx = with(density) { cardWidth.roundToPx() }
         val heightPx = (widthPx / aspectRatio).toInt().coerceAtLeast(1)
@@ -1629,103 +1647,169 @@ private fun EpisodeCard(
             .build()
     }
 
-    Column(modifier = Modifier.width(cardWidth)) {
-        val scaleModifier = if (scale != 1f) {
-            Modifier.graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
-            }
-        } else {
-            Modifier
-        }
-        ArvioFocusableSurface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(aspectRatio)
-                .then(scaleModifier),
-            shape = shape,
-            backgroundColor = ArvioSkin.colors.surface,
-            outlineColor = ArvioSkin.colors.focusOutline,  // Same focus border as MediaCard
-            outlineWidth = borderWidth,
-            focusedScale = 1f,
-            pressedScale = 1f,
-            enableSystemFocus = false,
-            isFocusedOverride = isFocused,
-            onClick = null,
-        ) { _ ->
-            Box(modifier = Modifier.fillMaxSize()) {
-                AsyncImage(
-                    model = imageRequest,
-                    contentDescription = episode.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+    val episodeCode = "S${episode.seasonNumber} • E${String.format("%02d", episode.episodeNumber)}"
+    val ratingLabel = if (episode.voteAverage > 0f) {
+        "${String.format("%.1f", episode.voteAverage)}"
+    } else {
+        null
+    }
+    val previewText = episode.overview
+        .trim()
+        .ifEmpty { "No episode synopsis available." }
 
-                // Gradient overlay (same as MediaCard)
+    val scaleModifier = if (scale != 1f) {
+        Modifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+        }
+    } else {
+        Modifier
+    }
+
+    ArvioFocusableSurface(
+        modifier = Modifier
+            .width(cardWidth)
+            .aspectRatio(aspectRatio)
+            .then(scaleModifier),
+        shape = shape,
+        backgroundColor = ArvioSkin.colors.surface,
+        outlineColor = ArvioSkin.colors.focusOutline,
+        outlineWidth = borderWidth,
+        focusedScale = 1f,
+        pressedScale = 1f,
+        enableSystemFocus = false,
+        isFocusedOverride = isFocused,
+        onClick = null,
+    ) { _ ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = episode.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.18f),
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.28f),
+                                Color.Black.copy(alpha = 0.86f)
+                            )
+                        )
+                    )
+            )
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color.Transparent,
-                                    ArvioSkin.colors.background.copy(alpha = 0.55f),
-                                    ArvioSkin.colors.background.copy(alpha = 0.85f),
-                                )
-                            )
-                        )
-                )
-
-                // Subtle green watched badge
-                if (episode.isWatched) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(bottom = 6.dp, end = 6.dp)
-                            .size(14.dp)
-                            .background(
-                                color = ArvioSkin.colors.watchedGreen.copy(alpha = 0.2f),
-                                shape = CircleShape
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = ArvioSkin.colors.watchedGreen,
-                                shape = CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = ArvioSkin.colors.watchedGreen,
-                            modifier = Modifier.size(8.dp)
-                        )
-                    }
+                        .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = episodeCode,
+                        style = ArvioSkin.typography.caption.copy(
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.3.sp
+                        ),
+                        color = Color.White.copy(alpha = 0.95f),
+                        maxLines = 1
+                    )
                 }
+            }
 
+            ratingLabel?.let { rating ->
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = null,
+                        tint = Color(0xFFF5C518),
+                        modifier = Modifier.size(10.dp)
+                    )
+                    Text(
+                        text = rating,
+                        style = ArvioSkin.typography.caption.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                        color = Color.White
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = episode.name,
+                    style = ArvioSkin.typography.cardTitle.copy(
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = previewText,
+                    style = ArvioSkin.typography.caption.copy(
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = Color.White.copy(alpha = 0.92f),
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            if (episode.isWatched) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 8.dp, end = 8.dp)
+                        .size(16.dp)
+                        .background(
+                            color = ArvioSkin.colors.watchedGreen.copy(alpha = 0.22f),
+                            shape = CircleShape
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = ArvioSkin.colors.watchedGreen,
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = ArvioSkin.colors.watchedGreen,
+                        modifier = Modifier.size(9.dp)
+                    )
+                }
             }
         }
-
-        // Episode title (same style as MediaCard)
-        Text(
-            text = episode.name,
-            style = ArvioSkin.typography.cardTitle,
-            color = if (isFocused) ArvioSkin.colors.textPrimary else ArvioSkin.colors.textMuted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-
-        // Subtitle: episode number and air date (same style as MediaCard subtitle)
-        Text(
-            text = "${episode.seasonNumber}x${String.format("%02d", episode.episodeNumber)}" +
-                    if (episode.airDate.isNotEmpty()) " | ${episode.airDate}" else "",
-            style = ArvioSkin.typography.caption,
-            color = ArvioSkin.colors.textMuted.copy(alpha = 0.85f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 

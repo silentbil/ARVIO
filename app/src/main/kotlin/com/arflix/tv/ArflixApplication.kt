@@ -17,6 +17,8 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.arflix.tv.network.OkHttpProvider
+import com.arflix.tv.data.repository.AuthRepository
+import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.CrashlyticsProvider
@@ -25,6 +27,7 @@ import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -40,6 +43,10 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
     lateinit var workerFactory: HiltWorkerFactory
     @Inject
     lateinit var profileManager: ProfileManager
+    @Inject
+    lateinit var authRepository: AuthRepository
+    @Inject
+    lateinit var cloudSyncRepository: CloudSyncRepository
 
     override fun onCreate() {
         super.onCreate()
@@ -53,6 +60,11 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         // Initialize active profile asynchronously to avoid blocking cold start.
         appScope.launch {
             runCatching { profileManager.initialize() }
+            if (!authRepository.getCurrentUserId().isNullOrBlank()) {
+                // Keep cold-start smooth: perform first cloud pull after startup settles.
+                delay(12_000L)
+                runCatching { cloudSyncRepository.pullFromCloud() }
+            }
         }
     }
 

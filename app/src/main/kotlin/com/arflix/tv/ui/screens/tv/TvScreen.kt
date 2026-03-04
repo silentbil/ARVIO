@@ -770,8 +770,11 @@ fun TvScreen(
 
 private suspend fun smoothScrollTo(state: LazyListState, targetIndex: Int) {
     val safe = targetIndex.coerceAtLeast(0)
-    val distance = abs(state.firstVisibleItemIndex - safe)
-    if (distance > 12) {
+    val firstVisible = state.firstVisibleItemIndex
+    val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstVisible
+    val outsideViewport = safe < firstVisible || safe > lastVisible
+    val distance = abs(firstVisible - safe)
+    if (safe == 0 || outsideViewport || distance > 12) {
         state.scrollToItem(safe)
     } else {
         state.animateScrollToItem(safe)

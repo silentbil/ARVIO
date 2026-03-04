@@ -1,0 +1,21 @@
+id,area,test_case,expected_result,priority
+RC-001,Startup,Cold app launch to home,Home screen interactive within budget and no crash,P0
+RC-002,Startup,Switch profile and open home,Profile-specific data loads with no leakage and no jank spikes,P0
+RC-003,Playback,Auto-selected stream startup (movie),Playback reaches first frame and audio starts without manual retry,P0
+RC-004,Playback,Auto-selected stream startup (episode),Playback reaches first frame and subtitle menu opens without freeze,P0
+RC-005,Playback,Fallback on startup timeout,App retries/falls back to next source and recovers or shows clear error,P0
+RC-006,Playback,Manual source selection,Selected source starts or fails with actionable message and no app crash,P0
+RC-007,Playback,Subtitle switch during playback,Subtitle track changes without playback restart loop,P1
+RC-008,Playback,Audio track switch during playback,Audio track changes with stable video and synced position,P1
+RC-009,Playback,Seek and resume,Seek responds quickly and resume starts near saved position,P1
+RC-010,Addon,Add custom stream addon,Manifest loads and addon appears enabled in settings,P0
+RC-011,Addon,Remove custom addon,Addon is removed and no stale streams remain in selector,P1
+RC-012,Addon,Addon with mixed/uppercase resources,Addon compatibility parsing still detects stream capability,P0
+RC-013,Addon,Subtitle addon fetch with stream hints,Subtitle fetch succeeds or degrades gracefully without blocking playback,P1
+RC-014,Network,Temporary network loss during startup,App recovers with retry/fallback and no hard crash,P0
+RC-015,Network,Temporary network loss mid-playback,Playback error is handled gracefully and controls remain responsive,P0
+RC-016,Watch history,Progress save while playing,Progress persists locally/cloud without blocking playback thread,P1
+RC-017,Search,Typing query with TV keyboard,Results update quickly after short debounce and no UI hitching,P1
+RC-018,Settings,Open Addons settings and navigate rows,Focus movement is smooth and no dropped-frame spikes,P1
+RC-019,Background sync,Periodic Trakt worker execution,Worker runs without instantiation failure and exits cleanly,P0
+RC-020,Regression,Open/close player repeatedly,No memory leak symptoms or progressive slowdown across cycles,P0

@@ -12,6 +12,7 @@ import com.arflix.tv.data.model.Review
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.api.TmdbApi
+import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.StreamRepository
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.Locale
 import javax.inject.Inject
 
 data class DetailsUiState(
@@ -67,6 +69,9 @@ data class DetailsUiState(
     val budget: String? = null,
     // Show status
     val showStatus: String? = null,
+    // Streaming services from TMDB watch providers
+    val streamingServices: List<StreamingServiceUi> = emptyList(),
+    val providerRegion: String? = null,
     // Initial positions for Continue Watching navigation
     val initialEpisodeIndex: Int = 0,
     val initialSeasonIndex: Int = 0,
@@ -78,6 +83,11 @@ data class DetailsUiState(
     val playPositionMs: Long? = null,
     val autoPlaySingleSource: Boolean = true,
     val autoPlayMinQuality: String = "Any"
+)
+
+data class StreamingServiceUi(
+    val name: String,
+    val logoUrl: String? = null
 )
 
 private data class PlayTarget(
@@ -150,7 +160,8 @@ class DetailsViewModel @Inject constructor(
     private val streamRepository: StreamRepository,
     private val tmdbApi: TmdbApi,
     private val watchHistoryRepository: WatchHistoryRepository,
-    private val watchlistRepository: WatchlistRepository
+    private val watchlistRepository: WatchlistRepository,
+    private val cloudSyncRepository: CloudSyncRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DetailsUiState())
@@ -256,6 +267,13 @@ class DetailsViewModel @Inject constructor(
                 val similarDeferred = async { mediaRepository.getSimilar(mediaType, mediaId) }
                 val watchlistDeferred = async { watchlistRepository.isInWatchlist(mediaType, mediaId) }
                 val reviewsDeferred = async { mediaRepository.getReviews(mediaType, mediaId) }
+                val streamingServicesDeferred = async {
+                    mediaRepository.getStreamingServices(
+                        mediaType = mediaType,
+                        mediaId = mediaId,
+                        preferredRegion = Locale.getDefault().country
+                    )
+                }
 
                 // Fetch real IMDB ID and TVDB ID from TMDB external_ids endpoint
                 val externalIdsDeferred = async { resolveExternalIds(mediaType, mediaId) }
@@ -397,6 +415,23 @@ class DetailsViewModel @Inject constructor(
                     val reviews = runCatching { reviewsDeferred.await() }.getOrNull()
                     if (!reviews.isNullOrEmpty()) {
                         updateState { state -> state.copy(reviews = reviews) }
+                    }
+                }
+
+                launch {
+                    val servicesResult = runCatching { streamingServicesDeferred.await() }.getOrNull()
+                    if (servicesResult != null) {
+                        updateState { state ->
+                            state.copy(
+                                streamingServices = servicesResult.services.map {
+                                    StreamingServiceUi(
+                                        name = it.name,
+                                        logoUrl = it.logoUrl
+                                    )
+                                },
+                                providerRegion = servicesResult.region
+                            )
+                        }
                     }
                 }
 
@@ -687,6 +722,7 @@ class DetailsViewModel @Inject constructor(
                 } else {
                     watchlistRepository.removeFromWatchlist(currentMediaType, currentMediaId)
                 }
+                runCatching { cloudSyncRepository.pushToCloud() }
 
                 _uiState.value = _uiState.value.copy(
                     isInWatchlist = newInWatchlist,

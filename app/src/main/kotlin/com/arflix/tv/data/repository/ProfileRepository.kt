@@ -190,14 +190,11 @@ class ProfileRepository @Inject constructor(
         val userId = authRepository.getCurrentUserId() ?: return
         val profiles = getProfiles()
         val activeProfileId = getActiveProfileId()
-        val existingPayload = authRepository.loadAccountSyncPayload().getOrNull().orEmpty()
-        val root = if (existingPayload.isBlank()) JSONObject() else runCatching { JSONObject(existingPayload) }.getOrElse { JSONObject() }
-        root.put("version", root.optInt("version", 1))
-        root.put("updatedAt", System.currentTimeMillis())
-        root.put("activeProfileId", activeProfileId ?: JSONObject.NULL)
-        root.put("profiles", JSONArray(gson.toJson(profiles)))
-        root.put("userId", userId)
-        authRepository.saveAccountSyncPayload(root.toString())
+        authRepository.mutateAccountSyncPayload { root ->
+            root.put("activeProfileId", activeProfileId ?: JSONObject.NULL)
+            root.put("profiles", JSONArray(gson.toJson(profiles)))
+            root.put("userId", userId)
+        }
     }
 
     /**

@@ -9,6 +9,7 @@ import com.arflix.tv.data.api.TmdbMovieDetails
 import com.arflix.tv.data.api.TmdbPersonDetails
 import com.arflix.tv.data.api.TmdbSeasonDetails
 import com.arflix.tv.data.api.TmdbTvDetails
+import com.arflix.tv.data.api.TmdbWatchProviderRegion
 import com.arflix.tv.data.api.TraktApi
 import com.arflix.tv.data.api.TraktPublicListItem
 import com.arflix.tv.data.api.StremioMetaPreview
@@ -40,6 +41,17 @@ import com.arflix.tv.util.ParsedCatalogUrl
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class StreamingServiceInfo(
+    val id: Int,
+    val name: String,
+    val logoUrl: String? = null
+)
+
+data class StreamingServicesResult(
+    val region: String,
+    val services: List<StreamingServiceInfo>
+)
+
 /**
  * Repository for media data from TMDB
  * Cross-references with Trakt for watched status
@@ -70,6 +82,7 @@ class MediaRepository @Inject constructor(
     private val similarCache = mutableMapOf<String, CacheEntry<List<MediaItem>>>()
     private val logoCache = mutableMapOf<String, CacheEntry<String?>>()
     private val reviewsCache = mutableMapOf<String, CacheEntry<List<Review>>>()
+    private val watchProvidersCache = mutableMapOf<String, CacheEntry<StreamingServicesResult?>>()
     private val seasonEpisodesCache = mutableMapOf<String, CacheEntry<List<Episode>>>()
     private val imdbIdCache = ConcurrentHashMap<String, String>()
     private val addonImdbToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
@@ -1119,7 +1132,7 @@ class MediaRepository @Inject constructor(
             null
         }
     }
-    
+
     /**
      * Get person details
      */
@@ -1176,6 +1189,122 @@ class MediaRepository @Inject constructor(
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    suspend fun getStreamingServices(
+        mediaType: MediaType,
+        mediaId: Int,
+        preferredRegion: String? = null
+    ): StreamingServicesResult? {
+        val region = normalizeWatchRegion(preferredRegion)
+        val cacheKey = "${mediaType}_watch_providers_${mediaId}_$region"
+        val cachedEntry = watchProvidersCache[cacheKey]
+        if (cachedEntry != null) {
+            if (System.currentTimeMillis() - cachedEntry.timestamp < CACHE_TTL_MS) {
+                return cachedEntry.data
+            }
+            watchProvidersCache.remove(cacheKey)
+        }
+
+        val response = runCatching {
+            when (mediaType) {
+                MediaType.MOVIE -> tmdbApi.getMovieWatchProviders(mediaId, apiKey)
+                MediaType.TV -> tmdbApi.getTvWatchProviders(mediaId, apiKey)
+            }
+        }.getOrNull()
+
+        val results = response?.results.orEmpty()
+        if (results.isEmpty()) {
+            watchProvidersCache[cacheKey] = CacheEntry(null, System.currentTimeMillis())
+            return null
+        }
+
+        val requestedRegion = normalizeWatchRegion(preferredRegion)
+        val localeRegion = normalizeWatchRegion(Locale.getDefault().country)
+        val candidateRegions = listOf(requestedRegion, localeRegion, "US")
+            .distinct()
+
+        val resolvedFromPreferred = candidateRegions.firstNotNullOfOrNull { regionKey ->
+            val regionData = findRegionProviders(results, regionKey) ?: return@firstNotNullOfOrNull null
+            val services = toStreamingServiceList(regionData)
+            if (services.isEmpty()) null else StreamingServicesResult(region = regionKey, services = services)
+        }
+
+        val resolved = resolvedFromPreferred ?: results.entries.firstNotNullOfOrNull { (regionKey, regionData) ->
+            val services = toStreamingServiceList(regionData)
+            if (services.isEmpty()) null else StreamingServicesResult(region = normalizeWatchRegion(regionKey), services = services)
+        }
+
+        watchProvidersCache[cacheKey] = CacheEntry(resolved, System.currentTimeMillis())
+        return resolved
+    }
+
+    private fun findRegionProviders(
+        allRegions: Map<String, TmdbWatchProviderRegion>,
+        region: String
+    ): TmdbWatchProviderRegion? {
+        return allRegions.entries.firstOrNull { (key, _) ->
+            key.equals(region, ignoreCase = true)
+        }?.value
+    }
+
+    private fun toStreamingServiceList(regionData: TmdbWatchProviderRegion): List<StreamingServiceInfo> {
+        val prioritizedLists = listOf(
+            regionData.flatrate,
+            regionData.free,
+            regionData.ads,
+            regionData.rent,
+            regionData.buy
+        )
+
+        val deduped = LinkedHashMap<String, StreamingServiceInfo>()
+        prioritizedLists.forEach { providers ->
+            providers
+                .sortedBy { it.displayPriority }
+                .forEach providerLoop@{ provider ->
+                    val canonicalName = canonicalStreamingServiceName(provider.providerName)
+                    if (canonicalName.isBlank()) return@providerLoop
+                    val key = canonicalName.lowercase(Locale.US)
+                    if (deduped.containsKey(key)) return@providerLoop
+
+                    val stableId = provider.providerId.takeIf { it > 0 } ?: canonicalName.hashCode()
+                    val logoUrl = provider.logoPath?.let { path ->
+                        "https://image.tmdb.org/t/p/w92$path"
+                    }
+                    deduped[key] = StreamingServiceInfo(
+                        id = stableId,
+                        name = canonicalName,
+                        logoUrl = logoUrl
+                    )
+                }
+        }
+
+        return deduped.values.take(10)
+    }
+
+    private fun canonicalStreamingServiceName(raw: String?): String {
+        val name = raw?.trim().orEmpty()
+        if (name.isBlank()) return ""
+
+        val normalized = name.lowercase(Locale.US)
+        return when {
+            normalized == "max" || normalized.contains("hbo") -> "HBO Max"
+            normalized.contains("netflix") -> "Netflix"
+            normalized.contains("prime") || normalized.contains("amazon") -> "Prime Video"
+            normalized.contains("disney") -> "Disney+"
+            normalized.contains("apple tv") -> "Apple TV+"
+            normalized.contains("paramount") -> "Paramount+"
+            normalized.contains("hulu") -> "Hulu"
+            normalized.contains("peacock") -> "Peacock"
+            normalized.contains("crunchyroll") -> "Crunchyroll"
+            normalized.contains("youtube") -> "YouTube"
+            else -> name
+        }
+    }
+
+    private fun normalizeWatchRegion(region: String?): String {
+        val value = region?.trim()?.uppercase(Locale.US).orEmpty()
+        return value.takeIf { it.length == 2 } ?: "US"
     }
 
     private suspend fun loadTraktCatalogRefs(sourceUrl: String?, sourceRef: String? = null): List<Pair<MediaType, Int>> {

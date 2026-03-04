@@ -1,13 +1,14 @@
 package com.arflix.tv.worker
 
 import android.content.Context
-import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.TraktSyncService
-import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.flow.first
 
 /**
@@ -17,13 +18,24 @@ import kotlinx.coroutines.flow.first
  * - Trakt playback progress (Continue Watching)
  * - Pending outbox writes
  */
-@HiltWorker
-class TraktSyncWorker @AssistedInject constructor(
-    @Assisted private val context: Context,
-    @Assisted params: WorkerParameters,
-    private val traktRepository: TraktRepository,
-    private val traktSyncService: TraktSyncService
-) : CoroutineWorker(context, params) {
+class TraktSyncWorker(
+    appContext: Context,
+    params: WorkerParameters
+) : CoroutineWorker(appContext, params) {
+
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface TraktSyncWorkerEntryPoint {
+        fun traktRepository(): TraktRepository
+        fun traktSyncService(): TraktSyncService
+    }
+
+    private val deps: TraktSyncWorkerEntryPoint by lazy {
+        EntryPointAccessors.fromApplication(
+            applicationContext,
+            TraktSyncWorkerEntryPoint::class.java
+        )
+    }
 
     companion object {
         const val TAG = "TraktSyncWorker"
@@ -37,7 +49,7 @@ class TraktSyncWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         // Check if user is authenticated
-        val isAuth = traktRepository.isAuthenticated.first()
+        val isAuth = deps.traktRepository().isAuthenticated.first()
         if (!isAuth) {
             return Result.success()
         }
@@ -46,8 +58,8 @@ class TraktSyncWorker @AssistedInject constructor(
 
         return try {
             when (syncMode) {
-                SYNC_MODE_FULL -> traktSyncService.performFullSync()
-                else -> traktSyncService.performIncrementalSync()
+                SYNC_MODE_FULL -> deps.traktSyncService().performFullSync()
+                else -> deps.traktSyncService().performIncrementalSync()
             }
             Result.success()
         } catch (e: Exception) {

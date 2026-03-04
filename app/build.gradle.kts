@@ -24,8 +24,8 @@ android {
         // Lower minSdk to maximize compatibility and avoid "There was a problem parsing the package".
         minSdk = 21
         targetSdk = 34
-        versionCode = 183
-        versionName = "1.8.2"
+        versionCode = 184
+        versionName = "1.8.3"
 
         // Support both 32-bit and 64-bit devices (required for Google Play since 2019)
         ndk {
@@ -250,7 +250,7 @@ dependencies {
     implementation("com.google.firebase:firebase-crashlytics-ktx")
     implementation("com.google.firebase:firebase-analytics-ktx")
 
-    baselineProfile(project(":baselineprofile"))
+    baselineProfile(project(":benchmark"))
 
     // Unit Testing
     testImplementation("junit:junit:4.13.2")
@@ -262,6 +262,7 @@ dependencies {
 
     // Android Instrumented Testing
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:core-ktx:1.5.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation("io.mockk:mockk-android:1.13.8")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

@@ -395,11 +395,17 @@ class CloudSyncRepository @Inject constructor(
         }
 
         // ── IPTV config + favorites ──
+        var importedActiveProfileIptv = false
+        var importedActiveProfileM3u = ""
         root.optJSONObject("iptvByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
             val type = object : TypeToken<Map<String, IptvCloudProfileState>>() {}.type
             val map: Map<String, IptvCloudProfileState> = gson.fromJson(json, type) ?: emptyMap()
             map.forEach { (profileId, state) ->
                 iptvRepository.importCloudConfigForProfile(profileId, state)
+                if (profileId == activeProfileId) {
+                    importedActiveProfileIptv = true
+                    importedActiveProfileM3u = state.m3uUrl
+                }
             }
         }
 
@@ -423,8 +429,23 @@ class CloudSyncRepository @Inject constructor(
         val localIptv = iptvRepository.observeConfig().first()
         val cloudHasIptvData = m3u.isNotBlank() || epg.isNotBlank() || favorites.isNotEmpty() || favoriteChannels.isNotEmpty()
         val localHasIptvData = localIptv.m3uUrl.isNotBlank() || localIptv.epgUrl.isNotBlank()
+        var importedLegacyIptv = false
         if (!root.has("iptvByProfile") && cloudHasIptvKeys && (cloudHasIptvData || !localHasIptvData)) {
             iptvRepository.importCloudConfig(m3u, epg, favorites, favoriteChannels)
+            importedLegacyIptv = true
+            importedActiveProfileM3u = m3u
+        }
+
+        if (importedActiveProfileIptv || importedLegacyIptv) {
+            runCatching {
+                iptvRepository.invalidateCache()
+                if (importedActiveProfileM3u.isNotBlank()) {
+                    iptvRepository.loadSnapshot(
+                        forcePlaylistReload = false,
+                        forceEpgReload = false
+                    )
+                }
+            }
         }
 
         // ── Watchlist ──

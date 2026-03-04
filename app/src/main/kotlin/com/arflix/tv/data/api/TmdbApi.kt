@@ -125,6 +125,18 @@ interface TmdbApi {
         @Path("tv_id") tvId: Int,
         @Query("api_key") apiKey: String
     ): TmdbExternalIds
+
+    @GET("movie/{movie_id}/watch/providers")
+    suspend fun getMovieWatchProviders(
+        @Path("movie_id") movieId: Int,
+        @Query("api_key") apiKey: String
+    ): TmdbWatchProvidersResponse
+
+    @GET("tv/{tv_id}/watch/providers")
+    suspend fun getTvWatchProviders(
+        @Path("tv_id") tvId: Int,
+        @Query("api_key") apiKey: String
+    ): TmdbWatchProvidersResponse
     
     @GET("search/multi")
     suspend fun searchMulti(
@@ -279,6 +291,27 @@ data class TmdbVideo(
 data class TmdbExternalIds(
     @SerializedName("imdb_id") val imdbId: String? = null,
     @SerializedName("tvdb_id") val tvdbId: Int? = null
+)
+
+data class TmdbWatchProvidersResponse(
+    val id: Int = 0,
+    val results: Map<String, TmdbWatchProviderRegion> = emptyMap()
+)
+
+data class TmdbWatchProviderRegion(
+    val link: String? = null,
+    val flatrate: List<TmdbWatchProvider> = emptyList(),
+    val free: List<TmdbWatchProvider> = emptyList(),
+    val ads: List<TmdbWatchProvider> = emptyList(),
+    val rent: List<TmdbWatchProvider> = emptyList(),
+    val buy: List<TmdbWatchProvider> = emptyList()
+)
+
+data class TmdbWatchProvider(
+    @SerializedName("provider_id") val providerId: Int = 0,
+    @SerializedName("provider_name") val providerName: String = "",
+    @SerializedName("logo_path") val logoPath: String? = null,
+    @SerializedName("display_priority") val displayPriority: Int = 0
 )
 
 data class TmdbPersonDetails(

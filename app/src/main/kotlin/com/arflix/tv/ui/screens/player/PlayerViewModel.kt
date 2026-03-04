@@ -11,6 +11,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.data.repository.PlaybackTelemetryRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.data.repository.SkipIntroRepository
@@ -69,7 +70,8 @@ class PlayerViewModel @Inject constructor(
     private val traktRepository: TraktRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
     private val tmdbApi: TmdbApi,
-    private val skipIntroRepository: SkipIntroRepository
+    private val skipIntroRepository: SkipIntroRepository,
+    private val playbackTelemetryRepository: PlaybackTelemetryRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -91,6 +93,7 @@ class PlayerViewModel @Inject constructor(
     private var currentStartPositionMs: Long? = null
     private var currentPreferredAddonId: String? = null
     private var currentPreferredSourceName: String? = null
+    private var currentPreferredBingeGroup: String? = null
     private var lastScrobbleTime: Long = 0
     private var lastWatchHistorySaveTime: Long = 0
     private var lastIsPlaying: Boolean = false
@@ -99,6 +102,10 @@ class PlayerViewModel @Inject constructor(
     // Skip intro
     private var skipIntervals: List<SkipInterval> = emptyList()
     private var lastActiveSkipType: String? = null
+
+    private val SKIP_INTERVAL_SHOW_EARLY_MS = 1_200L
+    private val SKIP_INTERVAL_END_GUARD_MS = 500L
+    private val SKIP_INTERVAL_MIN_VISIBLE_MS = 250L
 
     private val SCROBBLE_UPDATE_INTERVAL_MS = 20_000L
     private val WATCH_HISTORY_UPDATE_INTERVAL_MS = 15_000L
@@ -125,6 +132,7 @@ class PlayerViewModel @Inject constructor(
         providedStreamUrl: String?,
         preferredAddonId: String?,
         preferredSourceName: String?,
+        preferredBingeGroup: String?,
         startPositionMs: Long?
     ) {
         currentMediaType = mediaType
@@ -134,6 +142,7 @@ class PlayerViewModel @Inject constructor(
         currentStartPositionMs = startPositionMs
         currentPreferredAddonId = preferredAddonId?.trim()?.takeIf { it.isNotBlank() }
         currentPreferredSourceName = preferredSourceName?.trim()?.takeIf { it.isNotBlank() }
+        currentPreferredBingeGroup = preferredBingeGroup?.trim()?.takeIf { it.isNotBlank() }
         currentEpisodeTitle = null
         hasMarkedWatched = false
         lastIsPlaying = false
@@ -392,6 +401,15 @@ class PlayerViewModel @Inject constructor(
                 // Auto-select: respect explicit navigation preference, otherwise choose
                 // the most playback-stable stream profile.
                 if (mergedStreams.isNotEmpty()) {
+                    val preferredFromBingeGroup = currentPreferredBingeGroup?.let { preferredGroup ->
+                        mergedStreams.firstOrNull { stream ->
+                            stream.behaviorHints?.bingeGroup == preferredGroup &&
+                                (currentPreferredAddonId?.let { stream.addonId == it } ?: true)
+                        } ?: mergedStreams.firstOrNull { stream ->
+                            stream.behaviorHints?.bingeGroup == preferredGroup
+                        }
+                    }
+
                     val preferredFromNavigation = mergedStreams.firstOrNull { s ->
                         val addonMatch = currentPreferredAddonId?.let { s.addonId == it } ?: true
                         val sourceMatch = currentPreferredSourceName?.let { s.source == it } ?: true
@@ -402,7 +420,7 @@ class PlayerViewModel @Inject constructor(
 
                     val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { resolvePreferredAudioLanguage() }
                     val stabilitySelected = pickPreferredStream(mergedStreams, preferredLanguage)
-                    val selected = preferredFromNavigation ?: stabilitySelected ?: mergedStreams.first()
+                    val selected = preferredFromBingeGroup ?: preferredFromNavigation ?: stabilitySelected ?: mergedStreams.first()
                     selectStream(selected)
                 }
 
@@ -540,7 +558,12 @@ class PlayerViewModel @Inject constructor(
             return
         }
 
-        val active = skipIntervals.firstOrNull { it.startMs <= positionMs && positionMs < (it.endMs - 500L) }
+        val active = skipIntervals.firstOrNull { interval ->
+            val effectiveEnd = (interval.endMs - SKIP_INTERVAL_END_GUARD_MS)
+                .coerceAtLeast(interval.startMs + SKIP_INTERVAL_MIN_VISIBLE_MS)
+            val startsSoonOrStarted = positionMs >= (interval.startMs - SKIP_INTERVAL_SHOW_EARLY_MS)
+            startsSoonOrStarted && positionMs < effectiveEnd
+        }
         val currentActive = _uiState.value.activeSkipInterval
 
         if (active != null) {
@@ -674,8 +697,45 @@ class PlayerViewModel @Inject constructor(
         if (stream.behaviorHints?.notWebReady == true) score -= 260
         if (!stream.url.isNullOrBlank() && stream.url.startsWith("http", ignoreCase = true)) score += 80
         if (stream.url?.startsWith("magnet:", ignoreCase = true) == true) score -= 500
+        score += streamRepository.getAddonHealthBias(stream.addonId)
 
         return score
+    }
+
+    fun onPlaybackStarted(startupMs: Long, startupRetries: Int, autoFailovers: Int) {
+        val addonId = _uiState.value.selectedStream?.addonId?.trim().orEmpty()
+        if (addonId.isNotBlank()) {
+            streamRepository.noteAddonPlaybackStarted(addonId, startupMs)
+        }
+        viewModelScope.launch {
+            playbackTelemetryRepository.recordStartup(
+                startupMs = startupMs,
+                retries = startupRetries,
+                failoversBeforeStart = autoFailovers
+            )
+        }
+    }
+
+    fun onSelectedStreamPlaybackFailure() {
+        val addonId = _uiState.value.selectedStream?.addonId?.trim().orEmpty()
+        if (addonId.isNotBlank()) {
+            streamRepository.noteAddonPlaybackFailure(addonId)
+        }
+        viewModelScope.launch {
+            playbackTelemetryRepository.recordPlaybackFailure()
+        }
+    }
+
+    fun onFailoverAttempt(success: Boolean) {
+        viewModelScope.launch {
+            playbackTelemetryRepository.recordFailoverAttempt(success)
+        }
+    }
+
+    fun onLongRebufferDetected() {
+        viewModelScope.launch {
+            playbackTelemetryRepository.recordLongRebuffer()
+        }
     }
 
     private suspend fun resolvePreferredAudioLanguage(): String {
@@ -1100,26 +1160,43 @@ class PlayerViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(error = message)
     }
 
-    fun updateEmbeddedSubtitles(embedded: List<Subtitle>) {
-        val current = _uiState.value.subtitles.filter { !it.isEmbedded }
-        // Avoid duplicates based on ID
-        val newEmbedded = embedded.filter { new ->
-            current.none { it.id == new.id }
+    fun updatePlayerTextTracks(playerTextTracks: List<Subtitle>) {
+        val current = _uiState.value.subtitles
+        val trackBackedIds = playerTextTracks.map { it.id }.toSet()
+
+        // Keep external subtitle entries that haven't been mapped to concrete track indices yet.
+        val unresolvedExternal = current.filter { subtitle ->
+            !subtitle.isEmbedded && subtitle.url.isNotBlank() && subtitle.id !in trackBackedIds
         }
 
-        if (newEmbedded.isEmpty()) return
+        val merged = (unresolvedExternal + playerTextTracks)
+            .distinctBy { subtitle ->
+                val normalizedId = subtitle.id.trim()
+                if (normalizedId.isNotBlank()) normalizedId
+                else "${subtitle.lang}|${subtitle.label}|${subtitle.url}"
+            }
 
-        val merged = current + newEmbedded
+        val selected = _uiState.value.selectedSubtitle
+        val resolvedSelected = if (selected != null) {
+            merged.firstOrNull { it.id == selected.id }
+                ?: merged.firstOrNull {
+                    selected.url.isNotBlank() && it.url == selected.url
+                }
+                ?: selected
+        } else {
+            null
+        }
 
-        _uiState.value = _uiState.value.copy(subtitles = merged)
+        _uiState.value = _uiState.value.copy(
+            subtitles = merged,
+            selectedSubtitle = resolvedSelected
+        )
 
-        // Re-apply preference if currently selected is null or we are in initial state
-        // This ensures embedded English subs get picked up if external ones failed
         if (_uiState.value.selectedSubtitle == null) {
-             viewModelScope.launch {
-                 val preferred = getDefaultSubtitle()
-                 applyPreferredSubtitle(preferred, merged, currentOriginalLanguage)
-             }
+            viewModelScope.launch {
+                val preferred = getDefaultSubtitle()
+                applyPreferredSubtitle(preferred, merged, currentOriginalLanguage)
+            }
         }
     }
 
@@ -1173,6 +1250,7 @@ class PlayerViewModel @Inject constructor(
             null,
             currentPreferredAddonId,
             currentPreferredSourceName,
+            currentPreferredBingeGroup,
             currentStartPositionMs
         )
     }

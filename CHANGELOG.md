@@ -7,6 +7,27 @@ All notable changes to this project are documented in this file.
 ### Added
 - (Nothing yet)
 
+## [1.8.3] - 2026-03-04
+
+### Added
+- Search suggestions/typeahead flow with D-pad navigation and quick open from suggestion list.
+- Player binge-group-aware next-episode preference handoff for more consistent source continuity.
+- TMDB watch-provider data support in repository layer (used for details enrichment and future UI extensions).
+
+### Changed
+- Home vertical catalog navigation tuned for smoother up/down transitions and lower frame-skip risk.
+- Home focus retention now survives category/custom-catalog list updates more reliably.
+- Custom catalog incremental load starts earlier to reduce time-to-visible after entering Home.
+- Details page layout overhauled for cleaner hierarchy (actions -> seasons -> episodes) with larger, richer episode cards.
+- Home and Details metadata/description spacing and typography refined for improved readability.
+
+### Fixed
+- Focus could drift off-screen on some pages when navigating back across rows/lists; viewport correction logic now clamps and recenters focus targets.
+- Source-switch flow hardened in Player to reduce black/stuck states during stream changes.
+- Subtitle switching no longer requires full media-source rebuild in normal track-switch cases.
+- Home hero metadata (time/budget/rating) now appears much faster when focus changes.
+- Cross-screen focus loss regressions when custom catalogs finished loading on Home.
+
 ## [1.8.2] - 2026-03-02
 
 ### Changed

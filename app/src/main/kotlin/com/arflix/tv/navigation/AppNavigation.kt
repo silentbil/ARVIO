@@ -60,7 +60,7 @@ sealed class Screen(val route: String) {
         }
     }
     
-    object Player : Screen("player/{mediaType}/{mediaId}?seasonNumber={seasonNumber}&episodeNumber={episodeNumber}&imdbId={imdbId}&streamUrl={streamUrl}&preferredAddonId={preferredAddonId}&preferredSourceName={preferredSourceName}&startPositionMs={startPositionMs}") {
+    object Player : Screen("player/{mediaType}/{mediaId}?seasonNumber={seasonNumber}&episodeNumber={episodeNumber}&imdbId={imdbId}&streamUrl={streamUrl}&preferredAddonId={preferredAddonId}&preferredSourceName={preferredSourceName}&preferredBingeGroup={preferredBingeGroup}&startPositionMs={startPositionMs}") {
         fun createRoute(
             mediaType: MediaType,
             mediaId: Int,
@@ -70,6 +70,7 @@ sealed class Screen(val route: String) {
             streamUrl: String? = null,
             preferredAddonId: String? = null,
             preferredSourceName: String? = null,
+            preferredBingeGroup: String? = null,
             startPositionMs: Long? = null
         ): String {
             val base = "player/${mediaType.name.lowercase()}/$mediaId"
@@ -80,6 +81,7 @@ sealed class Screen(val route: String) {
             streamUrl?.let { params.add("streamUrl=${java.net.URLEncoder.encode(it, "UTF-8")}") }
             preferredAddonId?.let { params.add("preferredAddonId=${java.net.URLEncoder.encode(it, "UTF-8")}") }
             preferredSourceName?.let { params.add("preferredSourceName=${java.net.URLEncoder.encode(it, "UTF-8")}") }
+            preferredBingeGroup?.let { params.add("preferredBingeGroup=${java.net.URLEncoder.encode(it, "UTF-8")}") }
             startPositionMs?.let { params.add("startPositionMs=$it") }
             return if (params.isNotEmpty()) "$base?${params.joinToString("&")}" else base
         }
@@ -370,6 +372,10 @@ fun AppNavigation(
                     type = NavType.StringType
                     defaultValue = ""
                 },
+                navArgument("preferredBingeGroup") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
                 navArgument("startPositionMs") {
                     type = NavType.LongType
                     defaultValue = -1L
@@ -384,6 +390,7 @@ fun AppNavigation(
             val streamUrl = backStackEntry.arguments?.getString("streamUrl")?.takeIf { it.isNotEmpty() }
             val preferredAddonId = backStackEntry.arguments?.getString("preferredAddonId")?.takeIf { it.isNotBlank() }
             val preferredSourceName = backStackEntry.arguments?.getString("preferredSourceName")?.takeIf { it.isNotBlank() }
+            val preferredBingeGroup = backStackEntry.arguments?.getString("preferredBingeGroup")?.takeIf { it.isNotBlank() }
             val startPositionMs = backStackEntry.arguments?.getLong("startPositionMs")?.takeIf { it >= 0L }
             val mediaType = if (mediaTypeStr == "tv") MediaType.TV else MediaType.MOVIE
             
@@ -396,9 +403,10 @@ fun AppNavigation(
                 streamUrl = streamUrl,
                 preferredAddonId = preferredAddonId,
                 preferredSourceName = preferredSourceName,
+                preferredBingeGroup = preferredBingeGroup,
                 startPositionMs = startPositionMs,
                 onBack = { navController.popBackStack() },
-                onPlayNext = { nextSeason, nextEpisode, nextPreferredAddonId, nextPreferredSourceName ->
+                onPlayNext = { nextSeason, nextEpisode, nextPreferredAddonId, nextPreferredSourceName, nextPreferredBingeGroup ->
                     // Navigate to next episode
                     navController.navigate(
                         Screen.Player.createRoute(
@@ -407,7 +415,8 @@ fun AppNavigation(
                             seasonNumber = nextSeason,
                             episodeNumber = nextEpisode,
                             preferredAddonId = nextPreferredAddonId,
-                            preferredSourceName = nextPreferredSourceName
+                            preferredSourceName = nextPreferredSourceName,
+                            preferredBingeGroup = nextPreferredBingeGroup
                         )
                     ) {
                         popUpTo(Screen.Player.route) { inclusive = true }

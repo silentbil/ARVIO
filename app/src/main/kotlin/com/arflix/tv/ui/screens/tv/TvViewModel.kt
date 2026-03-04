@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.IptvSnapshot
-import com.arflix.tv.data.repository.AuthRepository
+import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -17,8 +17,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import javax.inject.Inject
 
 private const val FAVORITES_GROUP_NAME = "My Favorites"
@@ -82,7 +80,7 @@ data class TvUiState(
 @HiltViewModel
 class TvViewModel @Inject constructor(
     private val iptvRepository: IptvRepository,
-    private val authRepository: AuthRepository
+    private val cloudSyncRepository: CloudSyncRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvUiState(isLoading = true))
@@ -306,21 +304,6 @@ class TvViewModel @Inject constructor(
     }
 
     private suspend fun syncIptvFavoritesToCloud() {
-        if (authRepository.getCurrentUserId().isNullOrBlank()) return
-        runCatching {
-            val config = iptvRepository.observeConfig().first()
-            val favoriteGroups = iptvRepository.observeFavoriteGroups().first()
-            val favoriteChannels = iptvRepository.observeFavoriteChannels().first()
-            val existingPayload = authRepository.loadAccountSyncPayload().getOrNull().orEmpty()
-            val root = if (existingPayload.isNotBlank()) JSONObject(existingPayload) else JSONObject().apply {
-                put("version", 1)
-            }
-            root.put("updatedAt", System.currentTimeMillis())
-            root.put("iptvM3uUrl", config.m3uUrl)
-            root.put("iptvEpgUrl", config.epgUrl)
-            root.put("iptvFavoriteGroups", JSONArray(favoriteGroups))
-            root.put("iptvFavoriteChannels", JSONArray(favoriteChannels))
-            authRepository.saveAccountSyncPayload(root.toString())
-        }
+        runCatching { cloudSyncRepository.pushToCloud() }
     }
 }

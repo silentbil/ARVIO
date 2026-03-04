@@ -12,6 +12,7 @@ import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.data.repository.IptvRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -97,6 +98,7 @@ class ProfileViewModel @Inject constructor(
         // Update ProfileManager's cache with the new profile ID
         // This ensures all profile-scoped keys use the correct prefix immediately
         profileManager.setCurrentProfileId(profile.id)
+        profileManager.setCurrentProfileName(profile.name)
 
         // Activate preloaded cache for instant Continue Watching display
         // This transfers any preloaded data to the active cache before HomeViewModel loads
@@ -107,21 +109,20 @@ class ProfileViewModel @Inject constructor(
             profileRepository.setActiveProfile(profile.id)
         }
 
-        // Pull latest cloud state so cross-device changes (IPTV, addons, catalogs,
-        // watchlist, settings) are applied before the Home screen loads.
+        // Pull latest cloud state shortly after entering Home so profile selection stays fast.
         viewModelScope.launch(Dispatchers.IO) {
+            delay(4_000L)
+            if (profileRepository.getActiveProfileId() != profile.id) return@launch
             runCatching { cloudSyncRepository.pullFromCloud() }
         }
 
-        // Warm IPTV caches immediately for this profile so VOD can appear in stream sources
-        // without requiring the user to open IPTV settings/pages first.
+        // Defer IPTV warmup/network parse to keep initial Home navigation smooth.
         viewModelScope.launch(Dispatchers.IO) {
-            // Small delay to let cloud pull finish writing IPTV config first
-            kotlinx.coroutines.delay(1500)
+            delay(6_000L)
+            if (profileRepository.getActiveProfileId() != profile.id) return@launch
             runCatching {
                 iptvRepository.warmupFromCacheOnly()
-                // Also trigger a non-forced background refresh so Live TV starts loading
-                // as soon as profile is selected.
+                // Trigger a non-forced background refresh after startup settles.
                 iptvRepository.loadSnapshot(
                     forcePlaylistReload = false,
                     forceEpgReload = false
@@ -237,6 +238,7 @@ class ProfileViewModel @Inject constructor(
                 watchlistRepository.clearWatchlistCache()
                 iptvRepository.invalidateCache()
                 profileManager.setCurrentProfileId("default")
+                profileManager.setCurrentProfileName("default")
             }
         }
     }

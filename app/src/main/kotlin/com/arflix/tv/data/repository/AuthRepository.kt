@@ -40,6 +40,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -97,6 +99,7 @@ class AuthRepository @Inject constructor(
     private val traktRepositoryProvider: Provider<TraktRepository>
 ) {
     private val TAG = "AuthRepository"
+    private val accountSyncMutationMutex = Mutex()
 
     // DataStore keys
     private object PrefsKeys {
@@ -835,6 +838,25 @@ class AuthRepository @Inject constructor(
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    suspend fun mutateAccountSyncPayload(mutator: (JSONObject) -> Unit): Result<Unit> {
+        return accountSyncMutationMutex.withLock {
+            val userId = getCurrentUserId() ?: return@withLock Result.failure(Exception("Not logged in"))
+            val existingPayload = loadAccountSyncPayload().getOrNull().orEmpty()
+            val root = if (existingPayload.isBlank()) {
+                JSONObject()
+            } else {
+                runCatching { JSONObject(existingPayload) }.getOrElse { JSONObject() }
+            }
+
+            root.put("version", root.optInt("version", 1))
+            root.put("userId", userId)
+            mutator(root)
+            root.put("updatedAt", System.currentTimeMillis())
+
+            saveAccountSyncPayload(root.toString())
         }
     }
 }

@@ -5,7 +5,6 @@ package com.arflix.tv.ui.screens.home
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -399,7 +398,7 @@ fun HomeScreen(
 
     // ── IPTV hero live-player state ──
     val isHeroIptv = displayHeroItem != null && viewModel.isIptvItem(displayHeroItem)
-    val heroStreamUrl = displayHeroItem?.let { if (isHeroIptv) viewModel.getIptvStreamUrl(it.id) else null }
+    val heroVideoUrl = displayHeroItem?.let { if (isHeroIptv) viewModel.getIptvStreamUrl(it.id) else null }
 
     val heroOkHttp = remember {
         OkHttpClient.Builder()
@@ -435,23 +434,24 @@ fun HomeScreen(
     }
     DisposableEffect(Unit) { onDispose { heroExoPlayer.release() } }
 
-    LaunchedEffect(heroStreamUrl) {
-        if (heroStreamUrl != null) {
+    LaunchedEffect(heroVideoUrl) {
+        if (heroVideoUrl != null) {
             heroExoPlayer.stop()
             heroExoPlayer.clearMediaItems()
             val mi = androidx.media3.common.MediaItem.Builder()
-                .setUri(heroStreamUrl)
+                .setUri(heroVideoUrl)
                 .setLiveConfiguration(
                     androidx.media3.common.MediaItem.LiveConfiguration.Builder()
                         .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
                         .setTargetOffsetMs(4_000).build()
                 ).build()
-            val lower = heroStreamUrl.lowercase()
+            val lower = heroVideoUrl.lowercase()
             if (lower.contains(".m3u8") || lower.contains("/hls") || lower.contains("format=hls")) {
                 heroExoPlayer.setMediaSource(heroHlsFactory.createMediaSource(mi))
             } else {
                 heroExoPlayer.setMediaItem(mi)
             }
+            heroExoPlayer.volume = 1f
             heroExoPlayer.prepare()
             heroExoPlayer.playWhenReady = true
         } else {
@@ -479,8 +479,32 @@ fun HomeScreen(
                     )
             )
 
-            // Show live ExoPlayer for IPTV hero, static image for everything else
-            if (isHeroIptv && heroStreamUrl != null) {
+            Crossfade(
+                targetState = currentBackdrop,
+                animationSpec = tween(durationMillis = 320),
+                label = "hero_backdrop_crossfade"
+            ) { backdropUrl ->
+                if (backdropUrl != null) {
+                    val (backdropWidthPx, backdropHeightPx) = backdropSize
+                    val request = remember(backdropUrl, backdropWidthPx, backdropHeightPx) {
+                        ImageRequest.Builder(context)
+                            .data(backdropUrl)
+                            .size(backdropWidthPx, backdropHeightPx)
+                            .precision(Precision.INEXACT)
+                            .allowHardware(true)
+                            .crossfade(false)
+                            .build()
+                    }
+                    AsyncImage(
+                        model = request,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+
+            if (heroVideoUrl != null) {
                 AndroidView(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
@@ -494,31 +518,6 @@ fun HomeScreen(
                     update = { pv -> pv.player = heroExoPlayer },
                     modifier = Modifier.fillMaxSize()
                 )
-            } else {
-                Crossfade(
-                    targetState = currentBackdrop,
-                    animationSpec = tween(durationMillis = 300),
-                    label = "hero_backdrop_crossfade"
-                ) { backdropUrl ->
-                    if (backdropUrl != null) {
-                        val (backdropWidthPx, backdropHeightPx) = backdropSize
-                        val request = remember(backdropUrl, backdropWidthPx, backdropHeightPx) {
-                            ImageRequest.Builder(context)
-                                .data(backdropUrl)
-                                .size(backdropWidthPx, backdropHeightPx)
-                                .precision(Precision.INEXACT)
-                                .allowHardware(true)
-                                .crossfade(false)
-                                .build()
-                        }
-                        AsyncImage(
-                            model = request,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                }
             }
 
             // === SCRIM SYSTEM ===
@@ -687,10 +686,6 @@ private fun HeroSection(
     // But the frosted pill provides additional protection
     val textShadow = textShadowPrimary
 
-    // Phase 2.2 & 2.4: Animate content changes with fade
-    // Use item.id as key to trigger animations on content change
-    val contentKey = remember(item.id, logoUrl) { "${item.id}_${logoUrl != null}" }
-
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.Bottom
@@ -814,6 +809,14 @@ private fun HeroSection(
                 val displayDate = currentItem.releaseDate?.takeIf { it.isNotEmpty() } ?: currentItem.year
                 val hasDuration = currentItem.duration.isNotEmpty() && currentItem.duration != "0m"
                 val hasGenre = genreText.isNotEmpty()
+                val budgetText = remember(currentItem.mediaType, currentItem.budget) {
+                    val budgetValue = currentItem.budget
+                    if (currentItem.mediaType == MediaType.MOVIE && budgetValue != null && budgetValue > 0L) {
+                        formatBudgetCompact(budgetValue)
+                    } else {
+                        null
+                    }
+                }
 
                 // Metadata row: Date | Genre | Duration | IMDb rating
                 Row(
@@ -916,6 +919,29 @@ private fun HeroSection(
                             )
                         }
                     }
+
+                    if (!budgetText.isNullOrBlank()) {
+                        if (displayDate.isNotEmpty() || hasGenre || hasDuration || ratingValue > 0f) {
+                            Text(
+                                text = "|",
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 14.sp,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                        }
+
+                        Text(
+                            text = "Budget $budgetText",
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                shadow = textShadow
+                            ),
+                            color = Color.White
+                        )
+                    }
                 }
                 } // end else (non-IPTV metadata)
 
@@ -925,18 +951,27 @@ private fun HeroSection(
                 Text(
                     text = currentItem.overview,
                     style = ArflixTypography.body.copy(
-                        fontSize = 14.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        lineHeight = 22.sp,
+                        lineHeight = 20.sp,
                         shadow = textShadow
                     ),
                     color = Color.White,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.width(340.dp)
+                    maxLines = Int.MAX_VALUE,
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier.width(560.dp)
                 )
             }
         }
+    }
+}
+
+private fun formatBudgetCompact(budget: Long): String {
+    return when {
+        budget >= 1_000_000_000 -> "$${budget / 1_000_000_000.0}B"
+        budget >= 1_000_000 -> "$${budget / 1_000_000}M"
+        budget >= 1_000 -> "$${budget / 1_000}K"
+        else -> "$$budget"
     }
 }
 
@@ -986,6 +1021,8 @@ private fun HomeInputLayer(
 ) {
     val focusRequester = remember { FocusRequester() }
     var selectPressedInHome by remember { mutableStateOf(false) }
+    var rootHasFocus by remember { mutableStateOf(false) }
+    var preferredCategoryId by rememberSaveable { mutableStateOf<String?>(null) }
     val hasProfile = currentProfile != null
     val maxSidebarIndex = if (hasProfile) SidebarItem.entries.size else SidebarItem.entries.size - 1  // 5 or 4
 
@@ -996,12 +1033,38 @@ private fun HomeInputLayer(
         if (hasProfile) focusState.sidebarFocusIndex = 2
     }
 
+    LaunchedEffect(focusState.currentRowIndex, categories) {
+        preferredCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
+    }
+
     LaunchedEffect(categories) {
-        val boundedRow = focusState.currentRowIndex.coerceIn(0, (categories.size - 1).coerceAtLeast(0))
+        if (categories.isEmpty()) {
+            focusState.currentRowIndex = 0
+            focusState.currentItemIndex = 0
+            return@LaunchedEffect
+        }
+
+        val restoredRow = preferredCategoryId
+            ?.let { id -> categories.indexOfFirst { it.id == id } }
+            ?.takeIf { it >= 0 }
+        val boundedRow = (restoredRow ?: focusState.currentRowIndex)
+            .coerceIn(0, (categories.size - 1).coerceAtLeast(0))
         focusState.currentRowIndex = boundedRow
-        val maxItems = categories.getOrNull(boundedRow)?.items?.size ?: 0
-        if (maxItems > 0 && focusState.currentItemIndex > maxItems - 1) {
-            focusState.currentItemIndex = maxItems - 1
+
+        val currentRowItems = categories.getOrNull(boundedRow)?.items.orEmpty()
+        if (currentRowItems.isEmpty()) {
+            val fallbackRow = categories.indexOfFirst { it.items.isNotEmpty() }.takeIf { it >= 0 } ?: 0
+            focusState.currentRowIndex = fallbackRow
+            focusState.currentItemIndex = 0
+            preferredCategoryId = categories.getOrNull(fallbackRow)?.id
+        } else if (focusState.currentItemIndex > currentRowItems.lastIndex) {
+            focusState.currentItemIndex = currentRowItems.lastIndex
+        } else if (focusState.currentItemIndex < 0) {
+            focusState.currentItemIndex = 0
+        }
+
+        if (!focusState.isSidebarFocused && !rootHasFocus) {
+            runCatching { focusRequester.requestFocus() }
         }
     }
 
@@ -1009,6 +1072,7 @@ private fun HomeInputLayer(
         modifier = Modifier
             .fillMaxSize()
             .focusRequester(focusRequester)
+            .onFocusChanged { rootHasFocus = it.hasFocus }
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (isContextMenuOpen) {
@@ -1219,10 +1283,13 @@ private fun HomeRowsLayer(
         LaunchedEffect(targetIndex) {
             val currentIndex = listState.firstVisibleItemIndex
             if (currentIndex == targetIndex) return@LaunchedEffect
-            listState.animateScrollToItem(
-                index = targetIndex,
-                scrollOffset = 0
-            )
+
+            val jumpDistance = kotlin.math.abs(targetIndex - currentIndex)
+            if (jumpDistance <= 1) {
+                listState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
+            } else {
+                listState.scrollToItem(index = targetIndex, scrollOffset = 0)
+            }
         }
         // Viewport is only the bottom 50%: selected row stays at same height, rows above disappear
         Box(
@@ -1237,7 +1304,8 @@ private fun HomeRowsLayer(
                 contentPadding = PaddingValues(bottom = halfHeight),
                 modifier = Modifier
                     .fillMaxSize()
-                    .clipToBounds(),
+                    .clipToBounds()
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
             itemsIndexed(
@@ -1245,9 +1313,12 @@ private fun HomeRowsLayer(
                 key = { _, category -> category.id },
                 contentType = { _, _ -> "home_category_row" }
             ) { index, category ->
-                    // Performance: Use graphicsLayer instead of animateFloatAsState per row
-                    // This avoids creating animation state for every row which causes lag
-                    val rowAlpha = if (index <= currentRowIndex) 1f else 0.25f
+                    val targetAlpha = if (index <= currentRowIndex) 1f else 0.25f
+                    val rowAlpha = androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = targetAlpha,
+                        animationSpec = tween(durationMillis = 300),
+                        label = "homeRowAlpha"
+                    ).value
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1504,7 +1575,7 @@ private fun ContentRow(
         // FIX: When scrolling back to first item, ensure we reset to position 0 with no offset
         // This prevents focus from disappearing on the left side
         if (focusedItemIndex == 0 && scrollTargetIndex == 0) {
-            rowState.animateScrollToItem(index = 0, scrollOffset = 0)
+            rowState.scrollToItem(index = 0, scrollOffset = 0)
             lastScrollIndex = 0
             return@LaunchedEffect
         }
@@ -1517,8 +1588,13 @@ private fun ContentRow(
             return@LaunchedEffect
         }
 
-        // Always use a smooth animated scroll for D‑pad navigation between items
-        rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+        val currentFirstIndex = rowState.firstVisibleItemIndex
+        val jumpDistance = kotlin.math.abs(scrollTargetIndex - currentFirstIndex)
+        if (isFastScrolling || jumpDistance > 1) {
+            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+        } else {
+            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+        }
         lastScrollIndex = scrollTargetIndex
     }
 
@@ -1546,12 +1622,18 @@ private fun ContentRow(
         if (pageIndex != lastPageIndex) {
             lastPageIndex = pageIndex
             rowFade.snapTo(0.8f)
-            rowFade.animateTo(1f, animationSpec = tween(durationMillis = 300))
+            rowFade.animateTo(1f, animationSpec = tween(durationMillis = 180))
         }
     }
 
+    val rowAlpha = if (isCurrentRow) 1f else 0.95f
+    val rowOffsetY = if (isCurrentRow) 0.dp else 2.dp
+
     Column(
-        modifier = Modifier.padding(bottom = 12.dp)
+        modifier = Modifier
+            .padding(bottom = 12.dp)
+            .offset(y = rowOffsetY)
+            .graphicsLayer { alpha = rowAlpha }
     ) {
         // Section title - clean white text, aligned with cards
         Text(

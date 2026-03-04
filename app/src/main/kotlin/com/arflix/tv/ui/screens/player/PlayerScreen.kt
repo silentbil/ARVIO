@@ -57,6 +57,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -138,13 +139,15 @@ fun PlayerScreen(
     streamUrl: String? = null,
     preferredAddonId: String? = null,
     preferredSourceName: String? = null,
+    preferredBingeGroup: String? = null,
     startPositionMs: Long? = null,
     viewModel: PlayerViewModel = hiltViewModel(),
     onBack: () -> Unit = {},
-    onPlayNext: (Int, Int, String?, String?) -> Unit = { _, _, _, _ -> }
+    onPlayNext: (Int, Int, String?, String?, String?) -> Unit = { _, _, _, _, _ -> }
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val latestUiState by rememberUpdatedState(uiState)
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -231,7 +234,7 @@ fun PlayerScreen(
     var playerReleased by remember { mutableStateOf(false) }
 
     // Load media
-    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, imdbId, preferredAddonId, preferredSourceName, startPositionMs) {
+    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, imdbId, preferredAddonId, preferredSourceName, preferredBingeGroup, startPositionMs) {
         playbackIssueReported = false
         startupRecoverAttempted = false
         startupHardFailureReported = false
@@ -254,6 +257,7 @@ fun PlayerScreen(
             providedStreamUrl = streamUrl,
             preferredAddonId = preferredAddonId,
             preferredSourceName = preferredSourceName,
+            preferredBingeGroup = preferredBingeGroup,
             startPositionMs = startPositionMs
         )
     }
@@ -263,6 +267,7 @@ fun PlayerScreen(
     val tryAdvanceToNextStream: () -> Boolean = {
         val streams = uiState.streams
         if (streams.size <= 1) {
+            viewModel.onFailoverAttempt(success = false)
             false
         } else {
             val nextIndex = (1 until streams.size)
@@ -273,8 +278,10 @@ fun PlayerScreen(
                 } ?: -1
 
             if (nextIndex < 0) {
+                viewModel.onFailoverAttempt(success = false)
                 false
             } else {
+                viewModel.onFailoverAttempt(success = true)
                 autoAdvanceAttempts += 1
                 currentStreamIndex = nextIndex
                 triedStreamIndexes = triedStreamIndexes + nextIndex
@@ -436,7 +443,7 @@ fun PlayerScreen(
                             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT
 
                         if (isSourceError) {
-                            val sourceLikelyDv = isLikelyDolbyVisionStream(uiState.selectedStream)
+                            val sourceLikelyDv = isLikelyDolbyVisionStream(latestUiState.selectedStream)
                             if (!hasPlaybackStarted && sourceLikelyDv && dvStartupFallbackStage < 2) {
                                 val selector = this@apply.trackSelector as? androidx.media3.exoplayer.trackselection.DefaultTrackSelector
                                 val preferredMime = if (dvStartupFallbackStage == 0) {
@@ -458,7 +465,7 @@ fun PlayerScreen(
                                 this@apply.playWhenReady = keepPlaying
                                 return
                             }
-                            val heavy = isLikelyHeavyStream(uiState.selectedStream)
+                            val heavy = isLikelyHeavyStream(latestUiState.selectedStream)
                             val timeoutMessage = buildString {
                                 append(error.message.orEmpty())
                                 append(' ')
@@ -485,7 +492,7 @@ fun PlayerScreen(
                                 // One-time full re-resolve of same source to refresh debrid URL/headers.
                                 if (!startupSameSourceRefreshAttempted) {
                                     startupSameSourceRefreshAttempted = true
-                                    uiState.selectedStream?.let { viewModel.selectStream(it) }
+                                    latestUiState.selectedStream?.let { viewModel.selectStream(it) }
                                     return
                                 }
                             }
@@ -499,7 +506,8 @@ fun PlayerScreen(
                             }
                             if (!playbackIssueReported) {
                                 playbackIssueReported = true
-                                viewModel.reportPlaybackError("This source failed to play. Please choose another source.")
+                                viewModel.onSelectedStreamPlaybackFailure()
+                                viewModel.reportPlaybackError(playbackErrorMessageFor(error, hasPlaybackStarted))
                             }
                         }
                     }
@@ -545,29 +553,38 @@ fun PlayerScreen(
                         }
                         
                         // Extract embedded subtitles
-                        val embeddedSubs = mutableListOf<Subtitle>()
+                        val textTracks = mutableListOf<Subtitle>()
+                        val subtitleByTrackId = latestUiState.subtitles.associateBy { subtitleTrackId(it) }
                         tracks.groups.forEachIndexed { groupIndex, group ->
                             if (group.type == C.TRACK_TYPE_TEXT) {
                                 for (i in 0 until group.length) {
                                     val format = group.getTrackFormat(i)
-                                    val lang = format.language ?: "und"
-                                    val label = format.label ?: getFullLanguageName(lang)
-                                    
-                                    embeddedSubs.add(Subtitle(
-                                        id = "embedded_${groupIndex}_$i",
-                                        url = "", 
+                                    val formatTrackId = format.id?.trim().orEmpty()
+                                    val matched = if (formatTrackId.isNotBlank()) {
+                                        subtitleByTrackId[formatTrackId]
+                                    } else {
+                                        latestUiState.subtitles.firstOrNull { candidate ->
+                                            !candidate.isEmbedded &&
+                                                candidate.label.equals(format.label, ignoreCase = true) &&
+                                                candidate.lang.equals(format.language ?: candidate.lang, ignoreCase = true)
+                                        }
+                                    }
+                                    val lang = format.language ?: matched?.lang ?: "und"
+                                    val label = format.label ?: matched?.label ?: getFullLanguageName(lang)
+                                    val isExternal = matched?.url?.isNotBlank() == true
+                                    textTracks.add(Subtitle(
+                                        id = matched?.id ?: formatTrackId.ifBlank { "embedded_${groupIndex}_$i" },
+                                        url = matched?.url.orEmpty(),
                                         lang = lang,
                                         label = label,
-                                        isEmbedded = true,
+                                        isEmbedded = !isExternal,
                                         groupIndex = groupIndex,
                                         trackIndex = i
                                     ))
                                 }
                             }
                         }
-                        if (embeddedSubs.isNotEmpty()) {
-                            viewModel.updateEmbeddedSubtitles(embeddedSubs)
-                        }
+                        viewModel.updatePlayerTextTracks(textTracks)
                     }
                 })
             }
@@ -644,11 +661,8 @@ fun PlayerScreen(
         }
     }
 
-    // Keep track of the last external subtitle URL applied to the current media item.
-    var lastAppliedExternalSubtitleUrl by remember { mutableStateOf<String?>(null) }
-    var lastAppliedExternalSubtitleNonce by remember { mutableIntStateOf(-1) }
-
-    // Update player when stream URL changes - also add subtitle if selected
+    // Update player when stream URL changes. Attach currently-known external subtitle tracks once,
+    // then switch subtitle tracks via track overrides (no media source rebuild needed).
     LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
         if (playerReleased) return@LaunchedEffect
         val url = uiState.selectedStreamUrl
@@ -682,15 +696,13 @@ fun PlayerScreen(
             rebufferRecoverAttempted = false
             longRebufferCount = 0
 
-            // New stream means any previously-applied external subtitle config is stale.
-            lastAppliedExternalSubtitleUrl = null
-            lastAppliedExternalSubtitleNonce = -1
+            val subtitleConfigs = buildExternalSubtitleConfigurations(uiState.subtitles)
+            val mediaItemBuilder = MediaItem.Builder().setUri(Uri.parse(url))
+            if (subtitleConfigs.isNotEmpty()) {
+                mediaItemBuilder.setSubtitleConfigurations(subtitleConfigs)
+            }
+            val mediaItem = mediaItemBuilder.build()
 
-            // Always start playback with video-only media item first.
-            // External subtitles are applied after startup to avoid blocking stream start.
-            val mediaItem = MediaItem.Builder()
-                .setUri(Uri.parse(url))
-                .build()
             // Use protocol-specific media source for faster startup:
             // - HLS: chunkless preparation enabled (saves 1-3s)
             // - DASH/Progressive: dedicated factories for optimal handling
@@ -702,6 +714,14 @@ fun PlayerScreen(
                     dashFactory.createMediaSource(mediaItem)
                 else -> mediaSourceFactory.createMediaSource(mediaItem)
             }
+
+            // Source-switch hardening: stop+clear before loading next source.
+            runCatching {
+                exoPlayer.playWhenReady = false
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
+            }
+
             val resumePosition = uiState.savedPosition
             if (resumePosition > 0L) {
                 exoPlayer.setMediaSource(mediaSource, resumePosition)
@@ -713,149 +733,66 @@ fun PlayerScreen(
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
 
-            // Enable text track display
+            // Prefer currently selected subtitle language (if any), otherwise keep text disabled.
             val subtitle = uiState.selectedSubtitle
             if (subtitle != null) {
                 exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
                     .buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                     .setPreferredTextLanguage(subtitle.lang)
                     .setSelectUndeterminedTextLanguage(true)
                     .setIgnoredTextSelectionFlags(0)
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                     .build()
+            } else {
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .build()
             }
 
         }
     }
-    // Apply subtitle when user selects a different one.
-    LaunchedEffect(uiState.selectedSubtitle, uiState.subtitleSelectionNonce, hasPlaybackStarted, currentPosition / 5_000L) {
+
+    // Apply subtitle changes without reloading the media source.
+    LaunchedEffect(uiState.selectedSubtitle, uiState.subtitleSelectionNonce, uiState.subtitles) {
         if (playerReleased) return@LaunchedEffect
-        val streamUrl = uiState.selectedStreamUrl ?: return@LaunchedEffect
         val subtitle = uiState.selectedSubtitle
 
+        val params = exoPlayer.trackSelectionParameters
+            .buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+
         if (subtitle == null) {
-            // Disable text tracks. If we previously injected an external subtitle config into the media item,
-            // rebuild without it so ExoPlayer doesn't keep trying to load it.
-            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                .buildUpon()
+            exoPlayer.trackSelectionParameters = params
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                 .build()
-
-            if (lastAppliedExternalSubtitleUrl != null && hasPlaybackStarted) {
-                val currentPosition = exoPlayer.currentPosition
-                val wasPlaying = exoPlayer.isPlaying
-                val clearMediaItem = MediaItem.Builder()
-                    .setUri(Uri.parse(streamUrl))
-                    .build()
-                val clearUrlLower = streamUrl.lowercase()
-                val clearSource: MediaSource = when {
-                    clearUrlLower.contains(".m3u8") || clearUrlLower.contains("/hls") || clearUrlLower.contains("format=hls") ->
-                        hlsFactory.createMediaSource(clearMediaItem)
-                    clearUrlLower.contains(".mpd") || clearUrlLower.contains("/dash") || clearUrlLower.contains("format=dash") ->
-                        dashFactory.createMediaSource(clearMediaItem)
-                    else -> mediaSourceFactory.createMediaSource(clearMediaItem)
-                }
-                exoPlayer.setMediaSource(clearSource, currentPosition)
-                lastAppliedExternalSubtitleUrl = null
-                lastAppliedExternalSubtitleNonce = -1
-                exoPlayer.prepare()
-                exoPlayer.playWhenReady = wasPlaying
-            }
             return@LaunchedEffect
         }
 
-        if (subtitle.isEmbedded) {
-            // Embedded subtitle selection via track override.
-            lastAppliedExternalSubtitleUrl = null
-            val groupIndex = subtitle.groupIndex
-            val trackIndex = subtitle.trackIndex
-            if (groupIndex != null && trackIndex != null) {
-                val tracks = exoPlayer.currentTracks
-                if (groupIndex < tracks.groups.size) {
-                    val trackGroup = tracks.groups[groupIndex].mediaTrackGroup
-                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                        .buildUpon()
-                        .setOverrideForType(
-                            androidx.media3.common.TrackSelectionOverride(trackGroup, trackIndex)
-                        )
-                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                        .build()
-                }
-            } else {
-                // Fallback: enable text tracks; ExoPlayer will pick based on parameters/flags.
-                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                    .buildUpon()
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                    .build()
-            }
-            return@LaunchedEffect
-        }
+        val resolvedSubtitle = uiState.subtitles.firstOrNull {
+            it.id == subtitle.id && it.groupIndex != null && it.trackIndex != null
+        } ?: uiState.subtitles.firstOrNull {
+            subtitle.url.isNotBlank() && it.url == subtitle.url && it.groupIndex != null && it.trackIndex != null
+        } ?: subtitle
 
-        // External subtitle: rebuild media item.
-        if (!hasPlaybackStarted) {
-            // Do not rebuild media item before initial playback starts.
-            // This prevents startup loops on slow/debrid streams.
-            return@LaunchedEffect
-        }
-        if (currentPosition < 6_000L && lastAppliedExternalSubtitleUrl == null) {
-            // Avoid immediate post-start re-prepare (common source of first-second buffering).
-            // We'll retry via the coarse time key once playback is stable.
-            return@LaunchedEffect
-        }
-        val subtitleUrl = subtitle.url.trim().let { if (it.startsWith("//")) "https:$it" else it }
-        if (subtitleUrl.isBlank()) return@LaunchedEffect
-
-        // Fast path only when this exact subtitle has already been applied for the same explicit selection action.
-        if (subtitleUrl == lastAppliedExternalSubtitleUrl &&
-            uiState.subtitleSelectionNonce == lastAppliedExternalSubtitleNonce
+        val groupIndex = resolvedSubtitle.groupIndex
+        val trackIndex = resolvedSubtitle.trackIndex
+        val groups = exoPlayer.currentTracks.groups
+        if (groupIndex != null && trackIndex != null &&
+            groupIndex in groups.indices &&
+            groups[groupIndex].type == C.TRACK_TYPE_TEXT
         ) {
-            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                .buildUpon()
-                .setPreferredTextLanguage(subtitle.lang)
-                .setSelectUndeterminedTextLanguage(true)
-                .setIgnoredTextSelectionFlags(0)
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                .build()
-            return@LaunchedEffect
+            params.setOverrideForType(
+                androidx.media3.common.TrackSelectionOverride(
+                    groups[groupIndex].mediaTrackGroup,
+                    trackIndex
+                )
+            )
         }
 
-        val cleanUrl = subtitleUrl.substringBefore('?')
-        val mimeType = when {
-            cleanUrl.endsWith(".vtt", ignoreCase = true) -> MimeTypes.TEXT_VTT
-            cleanUrl.endsWith(".srt", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
-            cleanUrl.endsWith(".srt.gz", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
-            cleanUrl.endsWith(".ass", ignoreCase = true) -> MimeTypes.TEXT_SSA
-            cleanUrl.endsWith(".ssa", ignoreCase = true) -> MimeTypes.TEXT_SSA
-            cleanUrl.endsWith(".ttml", ignoreCase = true) -> MimeTypes.APPLICATION_TTML
-            cleanUrl.endsWith(".dfxp", ignoreCase = true) -> MimeTypes.APPLICATION_TTML
-            else -> MimeTypes.APPLICATION_SUBRIP
-        }
-
-        val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUrl))
-            .setMimeType(mimeType)
-            .setLanguage(subtitle.lang)
-            .setLabel(subtitle.label)
-            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-            .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
-            .build()
-
-        val currentPosition = exoPlayer.currentPosition
-        val wasPlaying = exoPlayer.isPlaying
-
-        val subMediaItem = MediaItem.Builder()
-            .setUri(Uri.parse(streamUrl))
-            .setSubtitleConfigurations(listOf(subtitleConfig))
-            .build()
-        // Subtitle media items use DefaultMediaSourceFactory since they carry
-        // SubtitleConfigurations that need the composite factory to handle properly.
-        exoPlayer.setMediaSource(mediaSourceFactory.createMediaSource(subMediaItem), currentPosition)
-        lastAppliedExternalSubtitleUrl = subtitleUrl
-        lastAppliedExternalSubtitleNonce = uiState.subtitleSelectionNonce
-        exoPlayer.playWhenReady = wasPlaying
-        exoPlayer.prepare()
-
-        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-            .buildUpon()
+        exoPlayer.trackSelectionParameters = params
             .setPreferredTextLanguage(subtitle.lang)
             .setSelectUndeterminedTextLanguage(true)
             .setIgnoredTextSelectionFlags(0)
@@ -953,6 +890,7 @@ fun PlayerScreen(
                     if (bufferingDuration > bufferingTimeoutMs) {
                         bufferingStartTime = null
                         longRebufferCount += 1
+                        viewModel.onLongRebufferDetected()
                         if (allowMidPlaybackSourceFallback &&
                             !userSelectedSourceManually &&
                             longRebufferCount >= 1 &&
@@ -1009,8 +947,13 @@ fun PlayerScreen(
                     } else {
                         startupHardFailureReported = true
                         playbackIssueReported = true
+                        viewModel.onSelectedStreamPlaybackFailure()
                         viewModel.reportPlaybackError(
-                            "Source did not start in time. Try another source."
+                            if (autoAdvanceAttempts > 0 || startupSameSourceRetryCount > 0) {
+                                "Source did not start after retries/fallback. Try another source."
+                            } else {
+                                "Source did not start in time. Try another source."
+                            }
                         )
                     }
                 }
@@ -1068,6 +1011,14 @@ fun PlayerScreen(
                 exoPlayer.isPlaying
             ) {
                 hasPlaybackStarted = true
+                val startupMs = streamSelectedTime?.let { startedAt ->
+                    (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+                } ?: 0L
+                viewModel.onPlaybackStarted(
+                    startupMs = startupMs,
+                    startupRetries = startupSameSourceRetryCount + if (startupSameSourceRefreshAttempted) 1 else 0,
+                    autoFailovers = autoAdvanceAttempts
+                )
             }
 
             if (currentPosition > 0 && duration > 0) {
@@ -1097,12 +1048,18 @@ fun PlayerScreen(
                         seasonNumber,
                         episodeNumber + 1,
                         selected?.addonId?.takeIf { it.isNotBlank() },
-                        selected?.source?.takeIf { it.isNotBlank() }
+                        selected?.source?.takeIf { it.isNotBlank() },
+                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
                     )
                 }
             }
 
-            delay(if (hasPlaybackStarted) 1000L else 150L)
+            val tickDelayMs = when {
+                !hasPlaybackStarted -> 150L
+                uiState.activeSkipInterval != null && !uiState.skipIntervalDismissed -> 200L
+                else -> 500L
+            }
+            delay(tickDelayMs)
         }
     }
 
@@ -1885,7 +1842,8 @@ fun PlayerScreen(
                                         season,
                                         episode + 1,
                                         selected?.addonId?.takeIf { it.isNotBlank() },
-                                        selected?.source?.takeIf { it.isNotBlank() }
+                                        selected?.source?.takeIf { it.isNotBlank() },
+                                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
                                     )
                                 },
                                 onLeftKey = {
@@ -2721,6 +2679,54 @@ private fun detectAudioCodecLabel(codec: String?, trackLabel: String?): String? 
     }
 }
 
+private fun subtitleTrackId(subtitle: Subtitle): String {
+    val explicit = subtitle.id.trim()
+    if (explicit.isNotBlank()) return explicit
+
+    val normalizedUrl = subtitle.url.trim().ifBlank {
+        "${subtitle.lang.trim().lowercase()}|${subtitle.label.trim().lowercase()}"
+    }
+    val stableHash = normalizedUrl.hashCode().toUInt().toString(16)
+    return "ext_$stableHash"
+}
+
+private fun buildExternalSubtitleConfigurations(subtitles: List<Subtitle>): List<MediaItem.SubtitleConfiguration> {
+    return subtitles
+        .asSequence()
+        .filter { !it.isEmbedded }
+        .mapNotNull { subtitle ->
+            val rawUrl = subtitle.url.trim()
+            if (rawUrl.isBlank()) return@mapNotNull null
+            val normalizedUrl = if (rawUrl.startsWith("//")) "https:$rawUrl" else rawUrl
+            runCatching {
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(normalizedUrl))
+                    .setId(subtitleTrackId(subtitle))
+                    .setMimeType(subtitleMimeTypeFromUrl(normalizedUrl))
+                    .setLanguage(subtitle.lang)
+                    .setLabel(subtitle.label)
+                    .setSelectionFlags(0)
+                    .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
+                    .build()
+            }.getOrNull()
+        }
+        .distinctBy { it.id ?: "${it.uri}" }
+        .toList()
+}
+
+private fun subtitleMimeTypeFromUrl(url: String): String {
+    val cleanUrl = url.substringBefore('?')
+    return when {
+        cleanUrl.endsWith(".vtt", ignoreCase = true) -> MimeTypes.TEXT_VTT
+        cleanUrl.endsWith(".srt", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
+        cleanUrl.endsWith(".srt.gz", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
+        cleanUrl.endsWith(".ass", ignoreCase = true) -> MimeTypes.TEXT_SSA
+        cleanUrl.endsWith(".ssa", ignoreCase = true) -> MimeTypes.TEXT_SSA
+        cleanUrl.endsWith(".ttml", ignoreCase = true) -> MimeTypes.APPLICATION_TTML
+        cleanUrl.endsWith(".dfxp", ignoreCase = true) -> MimeTypes.APPLICATION_TTML
+        else -> MimeTypes.APPLICATION_SUBRIP
+    }
+}
+
 private fun estimateInitialStartupTimeoutMs(
     stream: StreamSource?,
     isManualSelection: Boolean
@@ -2758,6 +2764,39 @@ private fun estimateInitialStartupTimeoutMs(
     }
 
     return timeoutMs.coerceAtMost(120_000L)
+}
+
+private fun playbackErrorMessageFor(
+    error: androidx.media3.common.PlaybackException,
+    hasPlaybackStarted: Boolean
+): String {
+    val reason = when (error.errorCode) {
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+            "Codec not supported by this device"
+
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ->
+            "Network timeout while loading source"
+
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+            "Source server rejected playback request"
+
+        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
+            "Source format is invalid or unsupported"
+
+        else -> "Source failed to play"
+    }
+
+    return if (hasPlaybackStarted) {
+        "$reason. Try another source."
+    } else {
+        "$reason during startup. Trying another source may work."
+    }
 }
 
 private fun parseSizeToBytes(sizeStr: String): Long {

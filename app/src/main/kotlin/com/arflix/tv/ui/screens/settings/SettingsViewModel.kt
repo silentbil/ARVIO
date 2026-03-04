@@ -12,6 +12,7 @@ import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.AuthRepository
 import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.data.repository.CatalogRepository
+import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
@@ -22,8 +23,6 @@ import com.arflix.tv.data.repository.TvDeviceAuthStatusType
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.TraktSyncService
 import com.arflix.tv.data.repository.WatchlistRepository
-import com.arflix.tv.data.repository.IptvCloudProfileState
-import com.arflix.tv.data.repository.LocalWatchlistItem
 import com.arflix.tv.data.repository.SyncProgress
 import com.arflix.tv.data.repository.SyncStatus
 import com.arflix.tv.data.repository.SyncResult
@@ -43,8 +42,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
 import javax.inject.Inject
 
 enum class ToastType {
@@ -114,19 +111,9 @@ class SettingsViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val profileRepository: ProfileRepository,
     private val tvDeviceAuthRepository: TvDeviceAuthRepository,
-    private val traktSyncService: TraktSyncService
+    private val traktSyncService: TraktSyncService,
+    private val cloudSyncRepository: CloudSyncRepository
 ) : ViewModel() {
-
-    private data class CloudProfileSettings(
-        val defaultSubtitle: String = "Off",
-        val defaultAudioLanguage: String = "Auto (Original)",
-        val cardLayoutMode: String = CARD_LAYOUT_MODE_LANDSCAPE,
-        val frameRateMatchingMode: String = "Off",
-        val autoPlayNext: Boolean = true,
-        val autoPlaySingleSource: Boolean = true,
-        val autoPlayMinQuality: String = "Any",
-        val includeSpecials: Boolean = false
-    )
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -194,20 +181,6 @@ class SettingsViewModel @Inject constructor(
             val autoPlaySingleSource = prefs[autoPlaySingleSourceKey()] ?: true
             val autoPlayMinQuality = normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()])
             val includeSpecials = prefs[includeSpecialsKey()] ?: false
-
-            // Try to load from cloud profile (takes priority if user is logged in)
-            val cloudSubtitle = authRepository.getDefaultSubtitleFromProfile()
-            val cloudAutoPlay = authRepository.getAutoPlayNextFromProfile()
-
-            // Use cloud values if available, sync to local
-            if (cloudSubtitle != null && cloudSubtitle != defaultSub) {
-                defaultSub = cloudSubtitle
-                context.settingsDataStore.edit { it[defaultSubtitleKey()] = defaultSub }
-            }
-            if (cloudAutoPlay != null && cloudAutoPlay != autoPlay) {
-                autoPlay = cloudAutoPlay
-                context.settingsDataStore.edit { it[autoPlayNextKey()] = autoPlay }
-            }
 
             // Check auth statuses
             val authState = authRepository.authState.first()
@@ -1271,102 +1244,16 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private suspend fun buildCloudSnapshotJson(): String {
-        val prefs = context.settingsDataStore.data.first()
-        val root = JSONObject()
-        val profiles = profileRepository.getProfiles()
-        val profileSettingsById = buildMap<String, CloudProfileSettings> {
-            profiles.forEach { profile ->
-                put(
-                    profile.id,
-                    CloudProfileSettings(
-                        defaultSubtitle = prefs[defaultSubtitleKeyFor(profile.id)] ?: "Off",
-                        defaultAudioLanguage = prefs[defaultAudioLanguageKeyFor(profile.id)] ?: "Auto (Original)",
-                        cardLayoutMode = normalizeCardLayoutMode(
-                            prefs[cardLayoutModeKeyFor(profile.id)] ?: CARD_LAYOUT_MODE_LANDSCAPE
-                        ),
-                        frameRateMatchingMode = normalizeFrameRateMode(
-                            prefs[frameRateMatchingModeKeyFor(profile.id)] ?: "Off"
-                        ),
-                        autoPlayNext = prefs[autoPlayNextKeyFor(profile.id)] ?: true,
-                        autoPlaySingleSource = prefs[autoPlaySingleSourceKeyFor(profile.id)] ?: true,
-                        autoPlayMinQuality = normalizeAutoPlayMinQuality(
-                            prefs[autoPlayMinQualityKeyFor(profile.id)] ?: "Any"
-                        ),
-                        includeSpecials = prefs[includeSpecialsKeyFor(profile.id)] ?: false
-                    )
-                )
-            }
-        }
-        root.put("version", 1)
-        root.put("updatedAt", System.currentTimeMillis())
-        root.put("defaultSubtitle", prefs[defaultSubtitleKey()] ?: _uiState.value.defaultSubtitle)
-        root.put("defaultAudioLanguage", prefs[defaultAudioLanguageKey()] ?: _uiState.value.defaultAudioLanguage)
-        root.put("cardLayoutMode", normalizeCardLayoutMode(prefs[cardLayoutModeKey()] ?: _uiState.value.cardLayoutMode))
-        root.put("frameRateMatchingMode", prefs[frameRateMatchingModeKey()] ?: _uiState.value.frameRateMatchingMode)
-        root.put("autoPlayNext", prefs[autoPlayNextKey()] ?: _uiState.value.autoPlayNext)
-        root.put("autoPlaySingleSource", prefs[autoPlaySingleSourceKey()] ?: _uiState.value.autoPlaySingleSource)
-        root.put("autoPlayMinQuality", normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()] ?: _uiState.value.autoPlayMinQuality))
-        root.put("includeSpecials", prefs[includeSpecialsKey()] ?: _uiState.value.includeSpecials)
-        root.put("activeProfileId", profileRepository.getActiveProfileId() ?: JSONObject.NULL)
-        root.put("profiles", JSONArray(gson.toJson(profiles)))
-        root.put("profileSettingsById", JSONObject(gson.toJson(profileSettingsById)))
-        // Trakt tokens are profile-scoped. Store a map keyed by profileId.
-        val traktTokens = traktRepository.exportTokensForProfiles(profiles.map { it.id })
-        root.put("traktTokens", JSONObject(gson.toJson(traktTokens)))
-        val addonsByProfile = buildMap<String, List<Addon>> {
-            profiles.forEach { profile ->
-                put(profile.id, streamRepository.getAddonsForProfile(profile.id))
-            }
-        }
-        root.put("addonsByProfile", JSONObject(gson.toJson(addonsByProfile)))
-        val catalogsByProfile = buildMap<String, List<CatalogConfig>> {
-            profiles.forEach { profile ->
-                put(profile.id, catalogRepository.getCatalogsForProfile(profile.id))
-            }
-        }
-        root.put("catalogsByProfile", JSONObject(gson.toJson(catalogsByProfile)))
-        val hiddenPreinstalledByProfile = buildMap<String, List<String>> {
-            profiles.forEach { profile ->
-                put(profile.id, catalogRepository.getHiddenPreinstalledCatalogIdsForProfile(profile.id))
-            }
-        }
-        root.put("hiddenPreinstalledByProfile", JSONObject(gson.toJson(hiddenPreinstalledByProfile)))
-        val iptvByProfile = buildMap<String, IptvCloudProfileState> {
-            profiles.forEach { profile ->
-                put(profile.id, iptvRepository.exportCloudConfigForProfile(profile.id))
-            }
-        }
-        root.put("iptvByProfile", JSONObject(gson.toJson(iptvByProfile)))
-        val watchlistByProfile = buildMap<String, List<LocalWatchlistItem>> {
-            profiles.forEach { profile ->
-                put(profile.id, watchlistRepository.exportWatchlistForProfile(profile.id))
-            }
-        }
-        root.put("watchlistByProfile", JSONObject(gson.toJson(watchlistByProfile)))
-        // Backward compatibility fields (legacy clients).
-        root.put("addons", JSONArray(gson.toJson(streamRepository.installedAddons.first())))
-        root.put("catalogs", JSONArray(gson.toJson(catalogRepository.getCatalogs())))
-        root.put(
-            "hiddenPreinstalledCatalogs",
-            JSONArray(gson.toJson(catalogRepository.getHiddenPreinstalledCatalogIdsForActiveProfile()))
-        )
-        val iptvConfig = iptvRepository.observeConfig().first()
-        root.put("iptvM3uUrl", iptvConfig.m3uUrl)
-        root.put("iptvEpgUrl", iptvConfig.epgUrl)
-        root.put("iptvFavoriteGroups", JSONArray(gson.toJson(iptvRepository.observeFavoriteGroups().first())))
-        root.put("iptvFavoriteChannels", JSONArray(gson.toJson(iptvRepository.observeFavoriteChannels().first())))
-        root.put("traktLinked", _uiState.value.isTraktAuthenticated)
-        root.put("traktExpiration", _uiState.value.traktExpiration ?: JSONObject.NULL)
-        return root.toString()
-    }
-
     fun syncLocalStateToCloud(silent: Boolean = false, force: Boolean = false) {
         if (!force && !_uiState.value.isLoggedIn) return
         if (authRepository.getCurrentUserId().isNullOrBlank()) return
         viewModelScope.launch {
-            val payload = runCatching { buildCloudSnapshotJson() }.getOrNull() ?: return@launch
-            val result = authRepository.saveAccountSyncPayload(payload)
+            var result = cloudSyncRepository.pushToCloud()
+            if (result.isFailure) {
+                delay(1200)
+                result = cloudSyncRepository.pushToCloud()
+            }
+
             if (!silent && result.isSuccess) {
                 _uiState.value = _uiState.value.copy(
                     toastMessage = "Cloud sync complete",
@@ -1389,197 +1276,36 @@ class SettingsViewModel @Inject constructor(
     }
 
     private suspend fun restoreCloudStateToLocalInternal(silent: Boolean): CloudRestoreResult {
-        val payloadResult = authRepository.loadAccountSyncPayload()
-        if (payloadResult.isFailure) {
-            if (!silent) {
-                _uiState.value = _uiState.value.copy(
-                    toastMessage = payloadResult.exceptionOrNull()?.message ?: "Cloud restore failed",
-                    toastType = ToastType.ERROR
-                )
+        return when (cloudSyncRepository.pullFromCloud()) {
+            CloudSyncRepository.RestoreResult.RESTORED -> {
+                loadSettings()
+                if (!silent) {
+                    _uiState.value = _uiState.value.copy(
+                        toastMessage = "Cloud restore complete",
+                        toastType = ToastType.SUCCESS
+                    )
+                }
+                CloudRestoreResult.RESTORED
             }
-            return CloudRestoreResult.FAILED
+            CloudSyncRepository.RestoreResult.NO_BACKUP -> {
+                if (!silent) {
+                    _uiState.value = _uiState.value.copy(
+                        toastMessage = "No cloud backup found",
+                        toastType = ToastType.INFO
+                    )
+                }
+                CloudRestoreResult.NO_BACKUP
+            }
+            CloudSyncRepository.RestoreResult.FAILED -> {
+                if (!silent) {
+                    _uiState.value = _uiState.value.copy(
+                        toastMessage = "Cloud restore failed",
+                        toastType = ToastType.ERROR
+                    )
+                }
+                CloudRestoreResult.FAILED
+            }
         }
-
-        val payload = payloadResult.getOrNull().orEmpty()
-        if (payload.isBlank()) {
-            if (!silent) {
-                _uiState.value = _uiState.value.copy(
-                    toastMessage = "No cloud backup found",
-                    toastType = ToastType.INFO
-                )
-            }
-            return CloudRestoreResult.NO_BACKUP
-        }
-
-        return runCatching {
-            val root = JSONObject(payload)
-            val fallbackDefaultSubtitle = root.optString("defaultSubtitle", _uiState.value.defaultSubtitle)
-            val fallbackDefaultAudioLanguage = root.optString("defaultAudioLanguage", _uiState.value.defaultAudioLanguage)
-            val fallbackCardLayoutMode = normalizeCardLayoutMode(root.optString("cardLayoutMode", _uiState.value.cardLayoutMode))
-            val fallbackFrameRateMatchingMode = normalizeFrameRateMode(root.optString("frameRateMatchingMode", _uiState.value.frameRateMatchingMode))
-            val fallbackAutoPlayNext = root.optBoolean("autoPlayNext", _uiState.value.autoPlayNext)
-            val fallbackAutoPlaySingleSource = root.optBoolean("autoPlaySingleSource", _uiState.value.autoPlaySingleSource)
-            val fallbackAutoPlayMinQuality = normalizeAutoPlayMinQuality(root.optString("autoPlayMinQuality", _uiState.value.autoPlayMinQuality))
-            val fallbackIncludeSpecials = root.optBoolean("includeSpecials", _uiState.value.includeSpecials)
-
-            root.optJSONArray("profiles")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<List<Profile>>() {}.type
-                val profiles: List<Profile> = gson.fromJson(json, type) ?: emptyList()
-                val activeProfileId = root.optString("activeProfileId").ifBlank { null }
-                if (profiles.isNotEmpty()) {
-                    profileRepository.replaceProfilesFromCloud(profiles, activeProfileId)
-                }
-            }
-            val allProfiles = profileRepository.getProfiles()
-            val activeProfileId = profileRepository.getActiveProfileId() ?: allProfiles.firstOrNull()?.id ?: "default"
-
-            root.optJSONObject("profileSettingsById")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<Map<String, CloudProfileSettings>>() {}.type
-                val settingsByProfile: Map<String, CloudProfileSettings> = gson.fromJson(json, type) ?: emptyMap()
-                if (settingsByProfile.isNotEmpty()) {
-                    context.settingsDataStore.edit { prefs ->
-                        settingsByProfile.forEach { (profileId, state) ->
-                            prefs[defaultSubtitleKeyFor(profileId)] = state.defaultSubtitle
-                            prefs[defaultAudioLanguageKeyFor(profileId)] = state.defaultAudioLanguage
-                            prefs[cardLayoutModeKeyFor(profileId)] = normalizeCardLayoutMode(state.cardLayoutMode)
-                            prefs[frameRateMatchingModeKeyFor(profileId)] = normalizeFrameRateMode(state.frameRateMatchingMode)
-                            prefs[autoPlayNextKeyFor(profileId)] = state.autoPlayNext
-                            prefs[autoPlaySingleSourceKeyFor(profileId)] = state.autoPlaySingleSource
-                            prefs[autoPlayMinQualityKeyFor(profileId)] = normalizeAutoPlayMinQuality(state.autoPlayMinQuality)
-                            prefs[includeSpecialsKeyFor(profileId)] = state.includeSpecials
-                        }
-                    }
-                }
-            } ?: run {
-                context.settingsDataStore.edit { prefs ->
-                    prefs[defaultSubtitleKeyFor(activeProfileId)] = fallbackDefaultSubtitle
-                    prefs[defaultAudioLanguageKeyFor(activeProfileId)] = fallbackDefaultAudioLanguage
-                    prefs[cardLayoutModeKeyFor(activeProfileId)] = fallbackCardLayoutMode
-                    prefs[frameRateMatchingModeKeyFor(activeProfileId)] = fallbackFrameRateMatchingMode
-                    prefs[autoPlayNextKeyFor(activeProfileId)] = fallbackAutoPlayNext
-                    prefs[autoPlaySingleSourceKeyFor(activeProfileId)] = fallbackAutoPlaySingleSource
-                    prefs[autoPlayMinQualityKeyFor(activeProfileId)] = fallbackAutoPlayMinQuality
-                    prefs[includeSpecialsKeyFor(activeProfileId)] = fallbackIncludeSpecials
-                }
-            }
-            authRepository.saveDefaultSubtitleToProfile(fallbackDefaultSubtitle)
-            authRepository.saveAutoPlayNextToProfile(fallbackAutoPlayNext)
-
-            // Import Trakt tokens AFTER profiles are restored.
-            root.optJSONObject("traktTokens")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<Map<String, TraktRepository.CloudTraktToken>>() {}.type
-                val tokens: Map<String, TraktRepository.CloudTraktToken> = gson.fromJson(json, type) ?: emptyMap()
-                traktRepository.importTokensForProfiles(tokens)
-            }
-            root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<Map<String, List<Addon>>>() {}.type
-                val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
-                map.forEach { (profileId, addons) ->
-                    streamRepository.replaceAddonsForProfile(profileId, addons)
-                }
-            }
-            root.optJSONArray("addons")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                if (!root.has("addonsByProfile")) {
-                    val type = object : TypeToken<List<Addon>>() {}.type
-                    val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
-                    if (addons.isNotEmpty()) {
-                        streamRepository.replaceAddonsForProfile(activeProfileId, addons)
-                    }
-                }
-            }
-            root.optJSONObject("catalogsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<Map<String, List<CatalogConfig>>>() {}.type
-                val map: Map<String, List<CatalogConfig>> = gson.fromJson(json, type) ?: emptyMap()
-                map.forEach { (profileId, catalogs) ->
-                    catalogRepository.replaceCatalogsForProfile(profileId, catalogs)
-                }
-            }
-            root.optJSONArray("catalogs")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                if (!root.has("catalogsByProfile")) {
-                    val type = object : TypeToken<List<CatalogConfig>>() {}.type
-                    val catalogs: List<CatalogConfig> = gson.fromJson(json, type) ?: emptyList()
-                    if (catalogs.isNotEmpty()) {
-                        catalogRepository.replaceCatalogsForProfile(activeProfileId, catalogs)
-                    }
-                }
-            }
-            root.optJSONObject("hiddenPreinstalledByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<Map<String, List<String>>>() {}.type
-                val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
-                map.forEach { (profileId, hidden) ->
-                    catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(profileId, hidden)
-                }
-            }
-            root.optJSONArray("hiddenPreinstalledCatalogs")?.toString()?.let { json ->
-                if (!root.has("hiddenPreinstalledByProfile")) {
-                    val hidden = if (json.isBlank()) {
-                        emptyList()
-                    } else {
-                        val type = object : TypeToken<List<String>>() {}.type
-                        gson.fromJson<List<String>>(json, type) ?: emptyList()
-                    }
-                    catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(activeProfileId, hidden)
-                }
-            }
-            root.optJSONObject("iptvByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<Map<String, IptvCloudProfileState>>() {}.type
-                val map: Map<String, IptvCloudProfileState> = gson.fromJson(json, type) ?: emptyMap()
-                map.forEach { (profileId, state) ->
-                    iptvRepository.importCloudConfigForProfile(profileId, state)
-                }
-            }
-            val cloudHasIptvKeys = root.has("iptvM3uUrl") || root.has("iptvEpgUrl") ||
-                root.has("iptvFavoriteGroups") || root.has("iptvFavoriteChannels")
-            val m3u = root.optString("iptvM3uUrl")
-            val epg = root.optString("iptvEpgUrl")
-            val favorites = root.optJSONArray("iptvFavoriteGroups")?.toString().orEmpty().let { json ->
-                if (json.isBlank()) emptyList() else {
-                    val type = object : TypeToken<List<String>>() {}.type
-                    gson.fromJson<List<String>>(json, type) ?: emptyList()
-                }
-            }
-            val favoriteChannels = root.optJSONArray("iptvFavoriteChannels")?.toString().orEmpty().let { json ->
-                if (json.isBlank()) emptyList() else {
-                    val type = object : TypeToken<List<String>>() {}.type
-                    gson.fromJson<List<String>>(json, type) ?: emptyList()
-                }
-            }
-            val localIptv = iptvRepository.observeConfig().first()
-            val cloudHasIptvData = m3u.isNotBlank() || epg.isNotBlank() || favorites.isNotEmpty() || favoriteChannels.isNotEmpty()
-            val localHasIptvData = localIptv.m3uUrl.isNotBlank() || localIptv.epgUrl.isNotBlank()
-            // Prevent accidental IPTV wipe when cloud payload has empty/default IPTV fields.
-            if (!root.has("iptvByProfile") && cloudHasIptvKeys && (cloudHasIptvData || !localHasIptvData)) {
-                iptvRepository.importCloudConfig(m3u, epg, favorites, favoriteChannels)
-                if (m3u.isNotBlank()) {
-                    refreshIptv(showToast = false, configured = false, force = false)
-                }
-            }
-            root.optJSONObject("watchlistByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<Map<String, List<LocalWatchlistItem>>>() {}.type
-                val map: Map<String, List<LocalWatchlistItem>> = gson.fromJson(json, type) ?: emptyMap()
-                map.forEach { (profileId, items) ->
-                    watchlistRepository.importWatchlistForProfile(profileId, items)
-                }
-            }
-        }.onSuccess {
-            loadSettings()
-            if (!silent) {
-                _uiState.value = _uiState.value.copy(
-                    toastMessage = "Cloud restore complete",
-                    toastType = ToastType.SUCCESS
-                )
-            }
-        }.onFailure { error ->
-            if (!silent) {
-                _uiState.value = _uiState.value.copy(
-                    toastMessage = error.message ?: "Cloud restore failed",
-                    toastType = ToastType.ERROR
-                )
-            }
-        }.fold(
-            onSuccess = { CloudRestoreResult.RESTORED },
-            onFailure = { CloudRestoreResult.FAILED }
-        )
     }
 
     fun onCloudProfileSwitchHandled() {

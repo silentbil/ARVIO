@@ -23,6 +23,8 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -73,6 +75,18 @@ class StreamRepository @Inject constructor(
         val createdAtMs: Long
     )
     private val streamResultCache = mutableMapOf<String, CachedStreamResult>()
+    private data class AddonRuntimeHealth(
+        var fetchSuccesses: Int = 0,
+        var fetchFailures: Int = 0,
+        var playbackStarts: Int = 0,
+        var playbackFailures: Int = 0,
+        var avgFetchLatencyMs: Long = 0L,
+        var avgStartupMs: Long = 0L,
+        var consecutiveFailures: Int = 0
+    )
+    private val addonRuntimeHealth = mutableMapOf<String, AddonRuntimeHealth>()
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var addonHealthLoadedProfileId: String? = null
 
     // Profile-scoped preference keys - each profile has its own addons
     private fun addonsKey() = profileManager.profileStringKey("installed_addons")
@@ -81,6 +95,13 @@ class StreamRepository @Inject constructor(
     private fun pendingAddonsKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "pending_addons")
     private fun hiddenBuiltInAddonsKey() = profileManager.profileStringKey("hidden_builtin_addons_v1")
     private fun torrServerBaseUrlKey() = profileManager.profileStringKey("torrserver_base_url_v1")
+    private fun addonHealthKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "addon_health_v1")
+
+    init {
+        repositoryScope.launch {
+            ensureAddonHealthLoaded()
+        }
+    }
     fun observeTorrServerBaseUrl(): Flow<String> =
         profileManager.activeProfileId.combine(context.streamDataStore.data) { _, prefs ->
             prefs[torrServerBaseUrlKey()].orEmpty()
@@ -263,13 +284,15 @@ class StreamRepository @Inject constructor(
     private fun convertToAddonManifest(manifest: StremioManifestResponse): AddonManifest {
         val resources = manifest.resources?.mapNotNull { resource ->
             when (resource) {
-                is String -> AddonResource(name = resource)
+                is String -> AddonResource(name = resource.trim().lowercase(Locale.US))
                 is Map<*, *> -> {
                     @Suppress("UNCHECKED_CAST")
                     val map = resource as Map<String, Any?>
                     AddonResource(
-                        name = map["name"] as? String ?: return@mapNotNull null,
-                        types = (map["types"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+                        name = (map["name"] as? String)?.trim()?.lowercase(Locale.US) ?: return@mapNotNull null,
+                        types = (map["types"] as? List<*>)?.filterIsInstance<String>()
+                            ?.map { it.trim().lowercase(Locale.US) }
+                            ?: emptyList(),
                         idPrefixes = (map["idPrefixes"] as? List<*>)?.filterIsInstance<String>()
                     )
                 }
@@ -570,6 +593,7 @@ class StreamRepository @Inject constructor(
      * More lenient filtering to ensure custom addons work
      */
     private fun getStreamAddons(addons: List<Addon>, type: String, id: String): List<Addon> {
+        val normalizedType = type.trim().lowercase(Locale.US)
         return addons.filter { addon ->
             // Must be installed and enabled
             if (!addon.isInstalled || !addon.isEnabled) return@filter false
@@ -586,11 +610,9 @@ class StreamRepository @Inject constructor(
                 val manifest = addon.manifest
                 if (manifest != null && manifest.resources.isNotEmpty()) {
                     val supportsStream = manifest.resources.any { resource ->
-                        resource.name == "stream" &&
-                            (resource.types.isEmpty() ||
-                                resource.types.contains(type) ||
-                                resource.types.contains("movie") ||
-                                resource.types.contains("series"))
+                        (resource.name.equals("stream", ignoreCase = true) ||
+                            resource.name.equals("streams", ignoreCase = true)) &&
+                            supportsResourceType(resource.types, normalizedType)
                     }
                     return@filter supportsStream
                 }
@@ -601,8 +623,9 @@ class StreamRepository @Inject constructor(
             val manifest = addon.manifest
             if (manifest != null && manifest.resources.isNotEmpty()) {
                 val hasStreamResource = manifest.resources.any { resource ->
-                    resource.name == "stream" &&
-                    (resource.types.isEmpty() || resource.types.contains(type) || resource.types.contains("movie") || resource.types.contains("series")) &&
+                    (resource.name.equals("stream", ignoreCase = true) ||
+                        resource.name.equals("streams", ignoreCase = true)) &&
+                    supportsResourceType(resource.types, normalizedType) &&
                     (resource.idPrefixes == null || resource.idPrefixes.isEmpty() || resource.idPrefixes.any { id.startsWith(it) })
                 }
                 if (hasStreamResource) return@filter true
@@ -617,6 +640,17 @@ class StreamRepository @Inject constructor(
             // Default: assume addon supports streaming (be lenient for unknown addons)
             true
         }
+    }
+
+    private fun supportsResourceType(resourceTypes: List<String>, requestedType: String): Boolean {
+        if (resourceTypes.isEmpty()) return true
+        val normalized = resourceTypes.map { it.trim().lowercase(Locale.US) }
+        val aliases = when (requestedType) {
+            "series", "tv", "show" -> setOf("series", "tv", "show")
+            "movie", "film" -> setOf("movie", "film")
+            else -> setOf(requestedType)
+        }
+        return normalized.any { it in aliases }
     }
 
     // Stream source requests — generous timeouts to accommodate slow wifi and
@@ -686,6 +720,7 @@ class StreamRepository @Inject constructor(
         year: Int? = null,
         forceRefresh: Boolean = false
     ): StreamResult = withContext(Dispatchers.IO) {
+        ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddons.first()
         val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
@@ -703,8 +738,10 @@ class StreamRepository @Inject constructor(
             }
         }
 
-        val streamJobs = streamAddons.map { addon ->
+        val prioritizedAddons = streamAddons.sortedByDescending { getAddonHealthBias(it.id) }
+        val streamJobs = prioritizedAddons.map { addon ->
             async {
+                val startedAt = System.currentTimeMillis()
                 try {
                     withTimeout(ADDON_TIMEOUT_MS) {
                         val (baseUrl, queryParams) = getAddonBaseUrl(addon.url ?: return@withTimeout emptyList())
@@ -714,11 +751,27 @@ class StreamRepository @Inject constructor(
                             "$baseUrl/stream/movie/$imdbId.json"
                         }
                         val response = streamApi.getAddonStreams(url)
-                        processStreams(response.streams ?: emptyList(), addon)
+                        val streams = processStreams(response.streams ?: emptyList(), addon)
+                        recordAddonFetchOutcome(
+                            addonId = addon.id,
+                            success = streams.isNotEmpty(),
+                            latencyMs = System.currentTimeMillis() - startedAt
+                        )
+                        streams
                     }
                 } catch (_: TimeoutCancellationException) {
+                    recordAddonFetchOutcome(
+                        addonId = addon.id,
+                        success = false,
+                        latencyMs = System.currentTimeMillis() - startedAt
+                    )
                     emptyList()
                 } catch (_: Exception) {
+                    recordAddonFetchOutcome(
+                        addonId = addon.id,
+                        success = false,
+                        latencyMs = System.currentTimeMillis() - startedAt
+                    )
                     emptyList()
                 }
             }
@@ -867,6 +920,7 @@ class StreamRepository @Inject constructor(
         title: String = "",
         forceRefresh: Boolean = false
     ): StreamResult = withContext(Dispatchers.IO) {
+        ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         // Check if this is anime - use comprehensive detection
         val isAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)
@@ -903,8 +957,10 @@ class StreamRepository @Inject constructor(
             }
         }
 
-        val streamJobs = streamAddons.map { addon ->
+        val prioritizedAddons = streamAddons.sortedByDescending { getAddonHealthBias(it.id) }
+        val streamJobs = prioritizedAddons.map { addon ->
             async {
+                val startedAt = System.currentTimeMillis()
                 try {
                     withTimeout(ADDON_TIMEOUT_MS) {
                         val (baseUrl, queryParams) = getAddonBaseUrl(addon.url ?: return@withTimeout emptyList())
@@ -944,11 +1000,26 @@ class StreamRepository @Inject constructor(
                                 addonStreams = processStreams(fallbackResponse.streams ?: emptyList(), addon)
                             } catch (_: Exception) {}
                         }
+                        recordAddonFetchOutcome(
+                            addonId = addon.id,
+                            success = addonStreams.isNotEmpty(),
+                            latencyMs = System.currentTimeMillis() - startedAt
+                        )
                         addonStreams
                     }
                 } catch (_: TimeoutCancellationException) {
+                    recordAddonFetchOutcome(
+                        addonId = addon.id,
+                        success = false,
+                        latencyMs = System.currentTimeMillis() - startedAt
+                    )
                     emptyList()
                 } catch (_: Exception) {
+                    recordAddonFetchOutcome(
+                        addonId = addon.id,
+                        success = false,
+                        latencyMs = System.currentTimeMillis() - startedAt
+                    )
                     emptyList()
                 }
             }
@@ -1450,6 +1521,107 @@ class StreamRepository @Inject constructor(
             quality.contains("480p", ignoreCase = true) -> 40
             else -> 20
         }
+    }
+
+    fun getAddonHealthBias(addonId: String): Int {
+        if (addonId.isBlank()) return 0
+        if (addonHealthLoadedProfileId == null) {
+            repositoryScope.launch { ensureAddonHealthLoaded() }
+        }
+        val stats = synchronized(addonRuntimeHealth) { addonRuntimeHealth[addonId] } ?: return 0
+        val fetchNet = (stats.fetchSuccesses - stats.fetchFailures) * 12
+        val playbackNet = (stats.playbackStarts - stats.playbackFailures) * 28
+        val reliabilityPenalty = stats.consecutiveFailures * 15
+        val latencyBonus = when {
+            stats.avgFetchLatencyMs in 1..1_500L -> 20
+            stats.avgFetchLatencyMs in 1_501L..3_000L -> 8
+            stats.avgFetchLatencyMs > 8_000L -> -20
+            else -> 0
+        }
+        return (fetchNet + playbackNet + latencyBonus - reliabilityPenalty).coerceIn(-220, 220)
+    }
+
+    fun noteAddonPlaybackStarted(addonId: String, startupMs: Long) {
+        if (addonId.isBlank()) return
+        if (addonHealthLoadedProfileId == null) {
+            repositoryScope.launch { ensureAddonHealthLoaded() }
+        }
+        synchronized(addonRuntimeHealth) {
+            val stats = addonRuntimeHealth.getOrPut(addonId) { AddonRuntimeHealth() }
+            stats.playbackStarts += 1
+            stats.consecutiveFailures = 0
+            stats.avgStartupMs = rollingAverage(stats.avgStartupMs, startupMs)
+        }
+        persistAddonHealthAsync()
+    }
+
+    fun noteAddonPlaybackFailure(addonId: String) {
+        if (addonId.isBlank()) return
+        if (addonHealthLoadedProfileId == null) {
+            repositoryScope.launch { ensureAddonHealthLoaded() }
+        }
+        synchronized(addonRuntimeHealth) {
+            val stats = addonRuntimeHealth.getOrPut(addonId) { AddonRuntimeHealth() }
+            stats.playbackFailures += 1
+            stats.consecutiveFailures += 1
+        }
+        persistAddonHealthAsync()
+    }
+
+    private fun recordAddonFetchOutcome(addonId: String, success: Boolean, latencyMs: Long) {
+        if (addonId.isBlank()) return
+        synchronized(addonRuntimeHealth) {
+            val stats = addonRuntimeHealth.getOrPut(addonId) { AddonRuntimeHealth() }
+            if (success) {
+                stats.fetchSuccesses += 1
+                stats.consecutiveFailures = 0
+            } else {
+                stats.fetchFailures += 1
+                stats.consecutiveFailures += 1
+            }
+            if (latencyMs > 0L) {
+                stats.avgFetchLatencyMs = rollingAverage(stats.avgFetchLatencyMs, latencyMs)
+            }
+        }
+        persistAddonHealthAsync()
+    }
+
+    private suspend fun ensureAddonHealthLoaded() {
+        val profileId = profileManager.getProfileIdSync().ifBlank { "default" }
+        if (addonHealthLoadedProfileId == profileId) return
+
+        val raw = context.streamDataStore.data.first()[addonHealthKeyFor(profileId)].orEmpty()
+        val parsed: Map<String, AddonRuntimeHealth> = if (raw.isBlank()) {
+            emptyMap()
+        } else {
+            runCatching {
+                val type = object : TypeToken<Map<String, AddonRuntimeHealth>>() {}.type
+                gson.fromJson<Map<String, AddonRuntimeHealth>>(raw, type)
+            }.getOrNull().orEmpty()
+        }
+
+        synchronized(addonRuntimeHealth) {
+            addonRuntimeHealth.clear()
+            addonRuntimeHealth.putAll(parsed)
+        }
+        addonHealthLoadedProfileId = profileId
+    }
+
+    private fun persistAddonHealthAsync() {
+        val loadedProfile = addonHealthLoadedProfileId ?: return
+        val snapshot = synchronized(addonRuntimeHealth) { LinkedHashMap(addonRuntimeHealth) }
+        repositoryScope.launch {
+            runCatching {
+                context.streamDataStore.edit { prefs ->
+                    prefs[addonHealthKeyFor(loadedProfile)] = gson.toJson(snapshot)
+                }
+            }
+        }
+    }
+
+    private fun rollingAverage(current: Long, sample: Long): Long {
+        if (sample <= 0L) return current
+        return if (current <= 0L) sample else ((current * 3L) + sample) / 4L
     }
 
     /**

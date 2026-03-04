@@ -11,7 +11,6 @@ import com.arflix.tv.util.profilesDataStore
 import com.arflix.tv.util.settingsDataStore
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 
 enum class CardLayoutMode {
     LANDSCAPE,

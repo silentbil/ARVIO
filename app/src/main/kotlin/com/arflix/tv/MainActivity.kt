@@ -77,7 +77,6 @@ import com.arflix.tv.ui.theme.BackgroundGradientStart
 import com.arflix.tv.worker.TraktSyncWorker
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.Lazy
-import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.math.PI
@@ -295,6 +294,7 @@ fun ArflixApp(
 ) {
     val context = LocalContext.current
     val navController = rememberNavController()
+    val appCoroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val authState by authRepository.authState.collectAsState()
     val activeProfile by profileRepository.activeProfile.collectAsState(initial = null)
     var lastAddonsSyncKey by remember { mutableStateOf<String?>(null) }
@@ -331,7 +331,7 @@ fun ArflixApp(
             currentProfile = activeProfile,
             onSwitchProfile = {
                 // Clear active profile when switching
-                MainScope().launch {
+                appCoroutineScope.launch {
                     profileRepository.clearActiveProfile()
                 }
             },

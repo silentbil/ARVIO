@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,6 +35,8 @@ class ProfileManager @Inject constructor(
     // Cache the current profile ID for synchronous access
     private val _currentProfileId = MutableStateFlow<String>(DEFAULT_PROFILE_ID)
     val currentProfileId: StateFlow<String> = _currentProfileId.asStateFlow()
+    private val _currentProfileName = MutableStateFlow<String>(DEFAULT_PROFILE_ID)
+    val currentProfileName: StateFlow<String> = _currentProfileName.asStateFlow()
 
     /**
      * Flow of the current profile ID
@@ -44,6 +45,13 @@ class ProfileManager @Inject constructor(
         val profileId = id ?: DEFAULT_PROFILE_ID
         _currentProfileId.value = profileId
         profileId
+    }
+
+    val activeProfileName: Flow<String> = profileRepository.activeProfile.map { profile ->
+        val profileName = profile?.name?.lowercase()?.trim().takeUnless { it.isNullOrBlank() }
+            ?: DEFAULT_PROFILE_ID
+        _currentProfileName.value = profileName
+        profileName
     }
 
     /**
@@ -65,8 +73,11 @@ class ProfileManager @Inject constructor(
      * Initialize the profile manager - call this early in app startup
      */
     suspend fun initialize() {
-        val id = profileRepository.getActiveProfileId() ?: DEFAULT_PROFILE_ID
+        val active = profileRepository.getActiveProfile()
+        val id = active?.id ?: DEFAULT_PROFILE_ID
         _currentProfileId.value = id
+        _currentProfileName.value = active?.name?.lowercase()?.trim().takeUnless { it.isNullOrBlank() }
+            ?: id
     }
 
     /**
@@ -75,6 +86,16 @@ class ProfileManager @Inject constructor(
      */
     fun setCurrentProfileId(profileId: String) {
         _currentProfileId.value = profileId
+        if (_currentProfileName.value.isBlank()) {
+            _currentProfileName.value = profileId
+        }
+    }
+
+    fun setCurrentProfileName(profileName: String) {
+        val normalized = profileName.lowercase().trim()
+        if (normalized.isNotBlank()) {
+            _currentProfileName.value = normalized
+        }
     }
 
     // ========== Profile-Scoped Key Generators ==========
@@ -134,15 +155,7 @@ class ProfileManager @Inject constructor(
      * Falls back to profile ID if name lookup fails.
      */
     fun getProfileNameSync(): String {
-        return try {
-            runBlocking {
-                val profiles = profileRepository.getProfiles()
-                val profileId = getProfileIdSync()
-                profiles.find { it.id == profileId }?.name?.lowercase()?.trim() ?: profileId
-            }
-        } catch (_: Exception) {
-            getProfileIdSync()
-        }
+        return _currentProfileName.value.takeUnless { it.isBlank() } ?: getProfileIdSync()
     }
 
     /**

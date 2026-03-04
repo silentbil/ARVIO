@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.watchlist
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.MediaItem
+import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.WatchlistRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +27,8 @@ data class WatchlistUiState(
 
 @HiltViewModel
 class WatchlistViewModel @Inject constructor(
-    private val watchlistRepository: WatchlistRepository
+    private val watchlistRepository: WatchlistRepository,
+    private val cloudSyncRepository: CloudSyncRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(WatchlistUiState())
@@ -118,6 +120,7 @@ class WatchlistViewModel @Inject constructor(
                 )
                 // Then sync to backend
                 watchlistRepository.removeFromWatchlist(item.mediaType, item.id)
+                runCatching { cloudSyncRepository.pushToCloud() }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     toastMessage = "Failed to remove from watchlist",
