@@ -1,7 +1,9 @@
 package com.arflix.tv.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,11 +23,21 @@ import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -58,7 +70,6 @@ fun AppBottomBar(
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        // Subtle top border line
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -76,21 +87,39 @@ fun AppBottomBar(
         ) {
             bottomBarItems.forEach { item ->
                 val isSelected = currentRoute?.contains(item.route, ignoreCase = true) == true
+                var isFocused by remember { mutableStateOf(false) }
+
                 Column(
                     modifier = Modifier
                         .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .then(
+                            if (isFocused) Modifier.border(2.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                            else Modifier
+                        )
+                        .background(if (isFocused) Color.White.copy(alpha = 0.1f) else Color.Transparent)
+                        .focusable()
+                        .onFocusChanged { isFocused = it.isFocused }
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && (event.key == Key.Enter || event.key == Key.DirectionCenter)) {
+                                onNavigate(item.route)
+                                true
+                            } else false
+                        }
                         .clickable { onNavigate(item.route) }
                         .padding(vertical = 2.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    // Icon with pill-shaped highlight for selected state
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(12.dp))
                             .background(
-                                if (isSelected) Color.White.copy(alpha = 0.12f)
-                                else Color.Transparent
+                                when {
+                                    isFocused -> Color.White.copy(alpha = 0.18f)
+                                    isSelected -> Color.White.copy(alpha = 0.12f)
+                                    else -> Color.Transparent
+                                }
                             )
                             .padding(horizontal = 14.dp, vertical = 4.dp),
                         contentAlignment = Alignment.Center
@@ -98,17 +127,20 @@ fun AppBottomBar(
                         Icon(
                             imageVector = item.icon,
                             contentDescription = item.label,
-                            tint = if (isSelected) TextPrimary else TextSecondary.copy(alpha = 0.6f),
+                            tint = when {
+                                isFocused -> Color.White
+                                isSelected -> TextPrimary
+                                else -> TextSecondary.copy(alpha = 0.6f)
+                            },
                             modifier = Modifier.size(24.dp)
                         )
                     }
-                    // Indicator dot under selected icon
                     if (isSelected) {
                         Box(
                             modifier = Modifier
                                 .size(4.dp)
                                 .clip(CircleShape)
-                                .background(TextPrimary)
+                                .background(if (isFocused) Color.White else TextPrimary)
                         )
                     } else {
                         Spacer(modifier = Modifier.size(4.dp))
@@ -116,7 +148,11 @@ fun AppBottomBar(
                     Text(
                         text = item.label,
                         style = ArflixTypography.caption.copy(fontSize = 10.sp),
-                        color = if (isSelected) TextPrimary else TextSecondary.copy(alpha = 0.6f),
+                        color = when {
+                            isFocused -> Color.White
+                            isSelected -> TextPrimary
+                            else -> TextSecondary.copy(alpha = 0.6f)
+                        },
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
