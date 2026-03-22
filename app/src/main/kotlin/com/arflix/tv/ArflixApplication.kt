@@ -12,7 +12,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import coil.Coil
-import coil.ImageLoader
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.data.repository.AuthRepository
 import com.arflix.tv.data.repository.CloudSyncRepository
@@ -28,7 +27,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
@@ -54,8 +52,10 @@ class ArflixApplication : Application(), Configuration.Provider {
         // Initialize OkHttp disk cache before any network calls
         OkHttpProvider.init(this)
 
-        // Build global Coil loader using active profile DNS before first image request.
-        runBlocking {
+        // Initialize the global loader immediately; profile DNS is applied asynchronously.
+        Coil.setImageLoader(OkHttpProvider.createCoilImageLoader(this))
+
+        appScope.launch {
             profileManager.initialize()
             applyProfileDnsAndRefreshCoil()
         }
