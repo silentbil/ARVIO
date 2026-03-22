@@ -52,7 +52,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
+
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -376,8 +376,8 @@ private fun RowsLayer(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(bottom = maxHeight),
-            modifier = Modifier.fillMaxSize().clipToBounds().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
+            contentPadding = PaddingValues(bottom = maxHeight * 0.6f),
+            modifier = Modifier.fillMaxSize().clipToBounds(),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             items(categories.size, key = { categories[it].id }) { index ->
