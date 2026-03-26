@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import androidx.compose.runtime.compositionLocalOf
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -29,6 +30,9 @@ fun deviceHasTouchScreen(context: Context): Boolean {
 
 /** Key for the user's UI mode override in settingsDataStore */
 val DEVICE_MODE_OVERRIDE_KEY = stringPreferencesKey("device_mode_override")
+
+/** Key for skipping profile selection on startup */
+val SKIP_PROFILE_SELECTION_KEY = booleanPreferencesKey("skip_profile_selection")
 
 /** Values: "auto" (default), "tv", "tablet", "phone" */
 fun detectDeviceType(context: Context): DeviceType {

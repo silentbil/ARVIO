@@ -128,6 +128,8 @@ data class SettingsUiState(
     val contentLanguage: String = "en-US",
     // Device mode override
     val deviceModeOverride: String = "auto",
+    // Skip profile selection
+    val skipProfileSelection: Boolean = false,
     // Toast
     val toastMessage: String? = null,
     val toastType: ToastType = ToastType.INFO
@@ -245,6 +247,7 @@ class SettingsViewModel @Inject constructor(
             val cardLayoutMode = normalizeCardLayoutMode(prefs[cardLayoutModeKey()])
             val frameRateMode = normalizeFrameRateMode(prefs[frameRateMatchingModeKey()])
             val deviceModeOverride = prefs[com.arflix.tv.util.DEVICE_MODE_OVERRIDE_KEY] ?: "auto"
+            val skipProfileSelection = prefs[com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY] ?: false
             val contentLang = prefs[contentLanguageKey()] ?: "en-US"
             // Apply content language to MediaRepository immediately
             mediaRepository.contentLanguage = if (contentLang == "en-US") null else contentLang
@@ -325,7 +328,8 @@ class SettingsViewModel @Inject constructor(
                 catalogs = existingCatalogs,
                 addons = addons,
                 contentLanguage = contentLang,
-                deviceModeOverride = deviceModeOverride
+                deviceModeOverride = deviceModeOverride,
+                skipProfileSelection = skipProfileSelection
             )
         }
     }
@@ -722,6 +726,15 @@ class SettingsViewModel @Inject constructor(
                 prefs[com.arflix.tv.util.DEVICE_MODE_OVERRIDE_KEY] = mode
             }
             _uiState.value = _uiState.value.copy(deviceModeOverride = mode)
+        }
+    }
+
+    fun setSkipProfileSelection(skip: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY] = skip
+            }
+            _uiState.value = _uiState.value.copy(skipProfileSelection = skip)
         }
     }
 
