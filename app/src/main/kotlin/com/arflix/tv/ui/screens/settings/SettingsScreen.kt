@@ -251,7 +251,7 @@ fun SettingsScreen(
         if (scrollState.maxValue <= 0) return@LaunchedEffect
 
         val maxIndex = when (sectionIndex) {
-            0 -> 11 // General: 12 items
+            0 -> 12 // General: 13 items
             1 -> 3 // IPTV: Configure + Refresh + Delete + Stalker
             2 -> uiState.catalogs.size // Catalogs
             3 -> uiState.addons.size // Addons
@@ -469,7 +469,8 @@ fun SettingsScreen(
                                                 9 -> viewModel.cycleFrameRateMatchingMode()
                                                 10 -> viewModel.toggleCardLayoutMode()
                                                 11 -> { val next = when (uiState.deviceModeOverride) { "auto" -> "tv"; "tv" -> "tablet"; "tablet" -> "phone"; else -> "auto" }; viewModel.setDeviceModeOverride(next) }
-                                                12 -> openDnsProviderPicker()
+                                                12 -> viewModel.setSkipProfileSelection(!uiState.skipProfileSelection)
+                                                13 -> openDnsProviderPicker()
                                             }
                                         }
                                         1 -> { // IPTV
@@ -597,6 +598,7 @@ fun SettingsScreen(
                             subtitleSize = uiState.subtitleSize,
                             subtitleColor = uiState.subtitleColor,
                             deviceModeOverride = uiState.deviceModeOverride,
+                            skipProfileSelection = uiState.skipProfileSelection,
                             focusedIndex = -1,
                             onSubtitleClick = openSubtitlePicker,
                             onAudioLanguageClick = openAudioLanguagePicker,
@@ -614,6 +616,7 @@ fun SettingsScreen(
                             },
                             onContentLanguageClick = openContentLanguagePicker,
                             onSubtitleSizeClick = { viewModel.cycleSubtitleSize() },
+                            onSkipProfileSelectionToggle = { viewModel.setSkipProfileSelection(it) },
                             onSubtitleColorClick = { viewModel.cycleSubtitleColor() }
                         )
                         "iptv" -> IptvSettings(
@@ -767,6 +770,7 @@ fun SettingsScreen(
                             subtitleSize = uiState.subtitleSize,
                             subtitleColor = uiState.subtitleColor,
                             deviceModeOverride = uiState.deviceModeOverride,
+                            skipProfileSelection = uiState.skipProfileSelection,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             onSubtitleClick = openSubtitlePicker,
                             onAudioLanguageClick = openAudioLanguagePicker,
@@ -783,6 +787,7 @@ fun SettingsScreen(
                                 viewModel.setDeviceModeOverride(next)
                             },
                             onContentLanguageClick = openContentLanguagePicker,
+                            onSkipProfileSelectionToggle = { viewModel.setSkipProfileSelection(it) },
                             onSubtitleSizeClick = { viewModel.cycleSubtitleSize() },
                             onSubtitleColorClick = { viewModel.cycleSubtitleColor() }
                         )
@@ -2034,6 +2039,7 @@ private fun GeneralSettings(
     subtitleSize: String = "Medium",
     subtitleColor: String = "White",
     deviceModeOverride: String = "auto",
+    skipProfileSelection: Boolean = false,
     focusedIndex: Int,
     onSubtitleClick: () -> Unit,
     onAudioLanguageClick: () -> Unit,
@@ -2045,6 +2051,7 @@ private fun GeneralSettings(
     onAutoPlayMinQualityClick: () -> Unit,
     onDeviceModeClick: () -> Unit = {},
     onContentLanguageClick: () -> Unit = {},
+    onSkipProfileSelectionToggle: (Boolean) -> Unit = {},
     trailerAutoPlay: Boolean = false,
     onSubtitleSizeClick: () -> Unit = {},
     onSubtitleColorClick: () -> Unit = {},
@@ -2185,6 +2192,14 @@ private fun GeneralSettings(
             },
             isFocused = focusedIndex == 11,
             onClick = onDeviceModeClick
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsToggleRow(
+            title = "Skip Profile Selection",
+            subtitle = "Auto-load last used profile",
+            isEnabled = skipProfileSelection,
+            isFocused = focusedIndex == 12,
+            onToggle = onSkipProfileSelectionToggle
         )
 
         // ── Network ──

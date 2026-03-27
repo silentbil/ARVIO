@@ -56,6 +56,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import android.content.pm.ActivityInfo
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.DEVICE_MODE_OVERRIDE_KEY
+import com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.LocalHasTouchScreen
 import com.arflix.tv.util.detectDeviceType
@@ -157,6 +158,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Observe device mode override changes live from DataStore
             val deviceModeOverride by remember { this@MainActivity.settingsDataStore.data.map { it[DEVICE_MODE_OVERRIDE_KEY] } }.collectAsState(initial = null)
+            val skipProfileSelection by remember { this@MainActivity.settingsDataStore.data.map { it[SKIP_PROFILE_SELECTION_KEY] ?: false } }.collectAsState(initial = false)
             val deviceType = when (deviceModeOverride) {
                 "tv" -> DeviceType.TV
                 "tablet" -> DeviceType.TABLET
@@ -178,6 +180,7 @@ class MainActivity : ComponentActivity() {
                         profileRepository = profileRepository.get(),
                         traktRepository = traktRepository.get(),
                         launcherContinueWatchingRepository = launcherContinueWatchingRepository.get(),
+                        skipProfileSelection = skipProfileSelection,
                         pendingLauncherRequest = pendingLauncherRequest,
                         onConsumeLauncherRequest = { pendingLauncherRequest = null },
                         preloadedCategories = startupState.categories,
@@ -348,6 +351,7 @@ fun ArflixApp(
     profileRepository: ProfileRepository,
     traktRepository: TraktRepository,
     launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
+    skipProfileSelection: Boolean = false,
     pendingLauncherRequest: LauncherContinueWatchingRequest? = null,
     onConsumeLauncherRequest: () -> Unit = {},
     preloadedCategories: List<com.arflix.tv.data.model.Category> = emptyList(),
@@ -375,7 +379,11 @@ fun ArflixApp(
     }
 
     // Always show profile selection on startup - user must manually choose a profile
-    val startDestination = Screen.ProfileSelection.route
+    val startDestination = if (skipProfileSelection && activeProfile != null) {
+        Screen.Home.route
+    } else {
+        Screen.ProfileSelection.route
+    }
 
     val deviceType = LocalDeviceType.current
     val isMobile = deviceType.isTouchDevice()
