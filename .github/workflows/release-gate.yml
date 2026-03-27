@@ -22,11 +22,11 @@ jobs:
       - name: Validate release test matrix
         run: python3 scripts/validate_release_cases.py
 
-      - name: Compile debug Kotlin
-        run: ./gradlew :app:compileDebugKotlin --stacktrace
+      - name: Compile debug Kotlin (playDebug)
+        run: ./gradlew :app:compilePlayDebugKotlin --stacktrace
 
-      - name: Run debug unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+      - name: Run debug unit tests (playDebug)
+        run: ./gradlew :app:testPlayDebugUnitTest --stacktrace
 
   benchmark-smoke:
     if: github.event_name == 'workflow_dispatch'
