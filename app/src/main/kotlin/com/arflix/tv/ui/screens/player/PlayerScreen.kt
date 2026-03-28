@@ -886,6 +886,30 @@ fun PlayerScreen(
         }
     }
 
+    // Rebuild media source when new external subtitles arrive after initial load.
+    // This fixes the race condition where subtitles from addons arrive after the
+    // MediaItem was already built and set on ExoPlayer.
+    var lastSubtitleCount by remember { mutableIntStateOf(0) }
+    LaunchedEffect(uiState.subtitles.size) {
+        if (playerReleased) return@LaunchedEffect
+        val newCount = uiState.subtitles.size
+        val url = uiState.selectedStreamUrl ?: return@LaunchedEffect
+        // Only rebuild if subtitles increased (new ones arrived) and player is already playing
+        if (newCount > lastSubtitleCount && lastSubtitleCount > 0 && exoPlayer.playbackState != Player.STATE_IDLE) {
+            val currentPosition = exoPlayer.currentPosition
+            val wasPlaying = exoPlayer.isPlaying
+            val subtitleConfigs = buildExternalSubtitleConfigurations(uiState.subtitles)
+            val mediaItem = MediaItem.Builder()
+                .setUri(Uri.parse(url))
+                .setSubtitleConfigurations(subtitleConfigs)
+                .build()
+            exoPlayer.setMediaItem(mediaItem, currentPosition)
+            exoPlayer.prepare()
+            if (wasPlaying) exoPlayer.play()
+        }
+        lastSubtitleCount = newCount
+    }
+
     // Apply subtitle changes without reloading the media source.
     LaunchedEffect(uiState.selectedSubtitle, uiState.subtitleSelectionNonce, uiState.subtitles) {
         if (playerReleased) return@LaunchedEffect
@@ -3110,11 +3134,12 @@ private fun subtitleMimeTypeFromUrl(url: String): String {
         cleanUrl.endsWith(".srt") || cleanUrl.endsWith(".srt.gz") -> MimeTypes.APPLICATION_SUBRIP
         cleanUrl.endsWith(".ass") || cleanUrl.endsWith(".ssa") -> MimeTypes.TEXT_SSA
         cleanUrl.endsWith(".ttml") || cleanUrl.endsWith(".dfxp") -> MimeTypes.APPLICATION_TTML
-        // Extensionless URLs from addons (Comet, OpenSubtitles, etc.) - default to
-        // WebVTT which is the most common format served by subtitle addons.
-        // ExoPlayer handles VTT more gracefully than SRT when there's a format mismatch.
-        cleanUrl.contains("/subtitles/") || cleanUrl.contains("/subs/") || !cleanUrl.substringAfterLast('/').contains('.') -> MimeTypes.TEXT_VTT
-        else -> MimeTypes.TEXT_VTT  // Safe fallback - VTT parser is more lenient
+        // OpenSubtitles serves SRT through extensionless URLs - use SRT as default
+        // since it's the dominant format from subtitle addons (OpenSubtitles, Comet).
+        // SRT and VTT are similar but SRT uses comma for milliseconds (00:01:23,456)
+        // while VTT uses period and requires a WEBVTT header. Using SRT avoids silent
+        // parse failures when the actual content is SRT.
+        else -> MimeTypes.APPLICATION_SUBRIP
     }
 }
 
