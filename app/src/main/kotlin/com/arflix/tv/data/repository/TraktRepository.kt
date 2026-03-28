@@ -1369,12 +1369,24 @@ class TraktRepository @Inject constructor(
                             )
                         }
                     } catch (e: Exception) {
+                        // Keep local/cached item if TMDB hydration fails - don't lose user's continue watching entry
+                        System.err.println("TraktRepo:getCW: TMDB hydration failed for ${candidate.item.title}: ${e.message}")
                         candidate.item
                     }
                 }
             }
 
             val hydratedItems = hydrationTasks.awaitAll()
+            // Ensure we never lose items due to TMDB validation failures - prioritize local status
+            // If hydration returned empty despite having candidates, fall back to local data
+            if (hydratedItems.isEmpty() && topCandidates.isNotEmpty()) {
+                // Map candidates back to items without TMDB enrichment
+                val fallbackItems = topCandidates.map { it.item }
+                cachedContinueWatching = fallbackItems
+                lastContinueWatchingFetch = System.currentTimeMillis()
+                persistContinueWatchingCache(fallbackItems)
+                return@coroutineScope fallbackItems
+            }
 
         val resolvedItems = if (hydratedItems.isNotEmpty()) {
             cachedContinueWatching = hydratedItems
