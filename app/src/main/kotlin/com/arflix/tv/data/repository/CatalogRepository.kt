@@ -198,10 +198,14 @@ class CatalogRepository @Inject constructor(
             defaultPreinstalled.filterNot { it.id in hidden }
         }
 
+        val defaultIds = defaultPreinstalled.map { it.id }.toSet()
         val existing = getCatalogs().map { cfg ->
-            val looksCustom = cfg.id.startsWith("custom_") ||
+            // Only treat as custom if it's NOT in the preinstalled defaults list
+            val looksCustom = !defaultIds.contains(cfg.id) && (
+                cfg.id.startsWith("custom_") ||
                 !cfg.sourceUrl.isNullOrBlank() ||
                 !cfg.sourceRef.isNullOrBlank()
+            )
             if (looksCustom) {
                 cfg.copy(
                     isPreinstalled = false,
@@ -466,10 +470,11 @@ class CatalogRepository @Inject constructor(
         val current = getCatalogs().toMutableList()
         val target = current.firstOrNull { it.id == catalogId }
             ?: return Result.failure(IllegalArgumentException("Catalog not found"))
-        if (target.isPreinstalled) {
-            val profileId = activeProfileId()
-            hidePreinstalledCatalog(profileId, catalogId)
-        }
+        // Always add to hidden preinstalled list. This covers MDBList preinstalled
+        // catalogs that may have isPreinstalled=false due to having sourceUrl set.
+        // For truly custom catalogs, the hide is harmless (ID won't match defaults on next startup).
+        val profileId = activeProfileId()
+        hidePreinstalledCatalog(profileId, catalogId)
         current.removeAll { it.id == catalogId }
         saveCatalogs(current)
         return Result.success(Unit)
