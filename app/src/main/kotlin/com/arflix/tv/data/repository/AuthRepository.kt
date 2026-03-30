@@ -566,7 +566,7 @@ class AuthRepository @Inject constructor(
 
         val prefs = context.authDataStore.data.first()
         val cached = prefs[PrefsKeys.ACCESS_TOKEN]
-        return if (!cached.isNullOrBlank() && !isJwtExpired(cached)) cached else null
+        return if (!cached.isNullOrBlank() && !isJwtExpired(cached)) cached else refreshAccessToken()
     }
 
     suspend fun refreshAccessToken(): String? {
