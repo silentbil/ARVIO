@@ -312,13 +312,14 @@ class TvViewModel @Inject constructor(
     }
 
     fun toggleHiddenGroup(groupName: String) {
-        viewModelScope.launch { iptvRepository.toggleHiddenGroup(groupName) }
+        viewModelScope.launch { iptvRepository.toggleHiddenGroup(groupName); syncIptvFavoritesToCloud() }
     }
 
     fun moveGroupUp(groupName: String) {
         viewModelScope.launch {
             val current = _uiState.value.groups().filterNot { it == FAVORITES_GROUP_NAME }
             iptvRepository.moveGroupUp(groupName, current)
+            syncIptvFavoritesToCloud()
         }
     }
 
@@ -326,6 +327,7 @@ class TvViewModel @Inject constructor(
         viewModelScope.launch {
             val current = _uiState.value.groups().filterNot { it == FAVORITES_GROUP_NAME }
             iptvRepository.moveGroupDown(groupName, current)
+            syncIptvFavoritesToCloud()
         }
     }
 

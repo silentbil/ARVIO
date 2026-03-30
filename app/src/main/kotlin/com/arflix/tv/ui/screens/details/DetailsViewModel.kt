@@ -808,6 +808,7 @@ class DetailsViewModel @Inject constructor(
                     )
                     runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                 }
+                runCatching { cloudSyncRepository.pushToCloud() }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     toastMessage = "Failed to update watched status",

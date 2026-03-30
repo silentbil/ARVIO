@@ -183,6 +183,7 @@ class ProfileViewModel @Inject constructor(
                 isKidsProfile = false
             )
             _uiState.value = _uiState.value.copy(showAddDialog = false)
+            runCatching { cloudSyncRepository.pushToCloud() }
         }
     }
 
@@ -217,6 +218,7 @@ class ProfileViewModel @Inject constructor(
                 )
             )
             _uiState.value = _uiState.value.copy(editingProfile = null)
+            runCatching { cloudSyncRepository.pushToCloud() }
         }
     }
 
@@ -241,6 +243,7 @@ class ProfileViewModel @Inject constructor(
                 profileManager.setCurrentProfileId("default")
                 profileManager.setCurrentProfileName("default")
             }
+            runCatching { cloudSyncRepository.pushToCloud() }
         }
     }
 }

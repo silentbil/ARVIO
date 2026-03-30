@@ -14,6 +14,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.authDataStore
+import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.hash
 import com.arflix.tv.util.sanitizeEmail
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
@@ -96,7 +97,8 @@ sealed class AuthState {
 @Singleton
 class AuthRepository @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val traktRepositoryProvider: Provider<TraktRepository>
+    private val traktRepositoryProvider: Provider<TraktRepository>,
+    private val cloudSyncRepositoryProvider: Provider<CloudSyncRepository>
 ) {
     private val TAG = "AuthRepository"
     private val accountSyncMutationMutex = Mutex()
@@ -422,6 +424,9 @@ class AuthRepository @Inject constructor(
      * Sign out
      */
     suspend fun signOut() {
+        // Push final state before signing out
+        try { cloudSyncRepositoryProvider.get().pushToCloud() } catch (_: Exception) {}
+
         try {
             supabase.auth.signOut()
         } catch (e: Exception) {
@@ -432,10 +437,9 @@ class AuthRepository @Inject constructor(
         } catch (e: Exception) {
         }
 
-        // Clear local data
-        context.authDataStore.edit { prefs ->
-            prefs.clear()
-        }
+        // Clear ALL local data (auth + settings + user preferences)
+        context.authDataStore.edit { prefs -> prefs.clear() }
+        context.settingsDataStore.edit { prefs -> prefs.clear() }
 
         _userProfile.value = null
         _authState.value = AuthState.NotAuthenticated
