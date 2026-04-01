@@ -104,16 +104,14 @@ jobs:
           name: play-aab
           path: artifacts/
 
-      - name: Upload to Play Store (internal track)
+      - name: Upload to Play Store (production)
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.arvio.tv
           releaseFiles: artifacts/*.aab
-          track: internal
+          track: production
           status: completed
-          # Change track to 'production' when ready for full release
-          # track: production
 
   # ─── Discord Announcement ─────────────────────────────────────────
   discord:
