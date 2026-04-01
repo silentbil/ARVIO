@@ -118,11 +118,12 @@ object ApkInstaller {
                     session.fsync(out)
                 }
 
-                val intent = Intent(context, context.javaClass).apply {
-                    action = "com.arvio.tv.INSTALL_COMPLETE"
-                }
-                val pendingIntent = PendingIntent.getActivity(
-                    context, 0, intent,
+                // Use a broadcast PendingIntent instead of activity — works reliably
+                // on Android TV where the Application context isn't an Activity.
+                val intent = Intent("com.arvio.tv.INSTALL_COMPLETE")
+                    .setPackage(context.packageName)
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context, sessionId, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
                 )
 

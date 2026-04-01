@@ -20,8 +20,14 @@ class ApkDownloader @Inject constructor(
             destinationFile.parentFile?.mkdirs()
             if (destinationFile.exists()) destinationFile.delete()
 
+            // Use a dedicated client with longer timeouts for large APK downloads
+            val downloadClient = okHttpClient.newBuilder()
+                .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+
             val request = Request.Builder().url(url).build()
-            okHttpClient.newCall(request).execute().use { response ->
+            downloadClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     error("Download failed: HTTP ${response.code}")
                 }
