@@ -28,7 +28,7 @@ android {
         minSdk = 21
         targetSdk = 35
         versionCode = 232
-        versionName = "1.9.74"
+        versionName = "1.9.73"
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
 
