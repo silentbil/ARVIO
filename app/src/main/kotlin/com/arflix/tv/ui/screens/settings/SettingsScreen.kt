@@ -1379,7 +1379,7 @@ private fun CloudEmailPasswordModal(
                         Text(
                             text = "Sign In",
                             style = ArflixTypography.button,
-                            color = Color.White
+                            color = if (isSignInFocused) Color.White else Color.Black
                         )
                     }
 
@@ -2022,6 +2022,7 @@ private fun UpdateActionButton(
     }
     val textColor = when {
         !enabled -> TextSecondary.copy(alpha = 0.6f)
+        highlighted && isFocused -> Color.Black
         highlighted -> Color.White
         isFocused -> TextPrimary
         else -> TextSecondary

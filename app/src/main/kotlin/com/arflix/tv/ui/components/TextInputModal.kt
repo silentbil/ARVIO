@@ -341,7 +341,7 @@ private fun ActionButton(
             text = text,
             style = ArflixTypography.button,
             color = if (isFocused) {
-                if (isPrimary) Color.White else Color.Black
+                Color.Black
             } else {
                 if (isPrimary) Pink else TextSecondary
             },

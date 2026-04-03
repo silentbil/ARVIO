@@ -400,7 +400,7 @@ private fun ContextMenuItem(
                 Icon(
                     imageVector = Icons.Default.Check,
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = Color.Black,
                     modifier = Modifier.size(16.dp)
                 )
             }

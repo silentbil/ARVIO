@@ -7,6 +7,12 @@ All notable changes to this project are documented in this file.
 ### Added
 - (Nothing yet)
 
+## [1.9.73] - 2026-04-03
+
+### Fixed
+- Fixed white-on-white unreadable buttons across the app: in-app update buttons, cloud sign-in button, next episode "Play Now", context menu check icon, stream selector check icon, and text input modal buttons now have proper contrast.
+- Release pipeline now injects Supabase and Google credentials into CI builds, fixing `Unable to resolve host 'your-project.supabase.co'` errors on Play Store and GitHub-built APKs.
+
 ## [1.9.72] - 2026-04-03
 
 ### Fixed

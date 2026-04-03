@@ -803,7 +803,7 @@ private fun MobileStreamCard(
                 Icon(
                     imageVector = Icons.Default.Check,
                     contentDescription = "Selected",
-                    tint = Color.White,
+                    tint = Color.Black,
                     modifier = Modifier.size(14.dp)
                 )
             }

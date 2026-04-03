@@ -35,6 +35,19 @@ jobs:
           keyPassword=${{ secrets.KEY_PASSWORD }}
           EOF
 
+      - name: Create secrets.properties
+        run: |
+          cat > secrets.properties <<EOF
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_WEB_CLIENT_ID=${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          EOF
+          # Fail fast if placeholder leaked through
+          if grep -q 'your-project' secrets.properties; then
+            echo "::error::secrets.properties contains placeholder values — set SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_WEB_CLIENT_ID in GitHub repo secrets"
+            exit 1
+          fi
+
       - name: Build sideload APK
         run: ./gradlew :app:assembleSideloadRelease --stacktrace
 
