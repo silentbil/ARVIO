@@ -78,6 +78,9 @@ data class SettingsUiState(
     val subtitleColor: String = "White",
     val trailerAutoPlay: Boolean = false,
     val showBudget: Boolean = true,
+    // Volume boost in decibels (0 = off, up to 15 dB). Applied via system LoudnessEnhancer
+    // attached to the ExoPlayer audio session. Issue #88.
+    val volumeBoostDb: Int = 0,
     val includeSpecials: Boolean = false,
     val isLoggedIn: Boolean = false,
     val accountEmail: String? = null,
@@ -180,6 +183,9 @@ class SettingsViewModel @Inject constructor(
     private fun autoPlayMinQualityKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "auto_play_min_quality")
     private fun trailerAutoPlayKey() = profileManager.profileBooleanKey("trailer_auto_play")
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
+    // Stored as a string because ProfileManager has no int helper and we only persist
+    // a handful of discrete dB values. Parsed back to Int on read.
+    private fun volumeBoostDbKey() = profileManager.profileStringKey("volume_boost_db")
 
     private fun subtitleSizeKey() = profileManager.profileStringKey("subtitle_size")
     private fun subtitleColorKey() = profileManager.profileStringKey("subtitle_color")
@@ -268,6 +274,7 @@ class SettingsViewModel @Inject constructor(
             val autoPlayMinQuality = normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()])
             val trailerAutoPlay = prefs[trailerAutoPlayKey()] ?: false
             val showBudget = prefs[showBudgetKey()] ?: true
+            val volumeBoostDb = prefs[volumeBoostDbKey()]?.toIntOrNull()?.coerceIn(0, 15) ?: 0
 
             val subtitleSize = prefs[subtitleSizeKey()] ?: "Medium"
             val subtitleColor = prefs[subtitleColorKey()] ?: "White"
@@ -308,6 +315,7 @@ class SettingsViewModel @Inject constructor(
                 autoPlayMinQuality = autoPlayMinQuality,
                 trailerAutoPlay = trailerAutoPlay,
                 showBudget = showBudget,
+                volumeBoostDb = volumeBoostDb,
 
                 subtitleSize = subtitleSize,
                 subtitleColor = subtitleColor,
@@ -792,6 +800,29 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[showBudgetKey()] = enabled }
             _uiState.value = _uiState.value.copy(showBudget = enabled)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    /**
+     * Cycle the volume boost through discrete dB steps: 0 -> 3 -> 6 -> 9 -> 12 -> 15 -> 0.
+     * 0 dB = LoudnessEnhancer disabled (no overhead, no clipping). Above +12 dB is
+     * cropped to +15 dB since higher values tend to introduce audible distortion on
+     * streaming content with already-compressed audio. Issue #88.
+     */
+    fun cycleVolumeBoost() {
+        val current = _uiState.value.volumeBoostDb
+        val next = when {
+            current < 3 -> 3
+            current < 6 -> 6
+            current < 9 -> 9
+            current < 12 -> 12
+            current < 15 -> 15
+            else -> 0
+        }
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[volumeBoostDbKey()] = next.toString() }
+            _uiState.value = _uiState.value.copy(volumeBoostDb = next)
             syncLocalStateToCloud(silent = true)
         }
     }

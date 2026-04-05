@@ -264,7 +264,7 @@ fun SettingsScreen(
         if (scrollState.maxValue <= 0) return@LaunchedEffect
 
         val maxIndex = when (sectionIndex) {
-            0 -> 14 // General: 15 items (added Show Budget toggle for #72)
+            0 -> 15 // General: 16 items (Show Budget #72 + Volume Boost #88)
             1 -> 3 // IPTV: Configure + Refresh + Delete + Stalker
             2 -> uiState.catalogs.size // Catalogs
             3 -> uiState.addons.size // Addons
@@ -445,7 +445,7 @@ fun SettingsScreen(
                                 Zone.CONTENT -> {
                                     // Dynamic max based on current section
                                     val maxIndex = when (sectionIndex) {
-                                        0 -> 14 // General: 15 items (added Show Budget toggle for #72)
+                                        0 -> 15 // General: 16 items (Show Budget #72 + Volume Boost #88)
                                         1 -> 3 // IPTV: Configure + Refresh + Delete + Stalker
                                         2 -> uiState.catalogs.size // Catalogs: Add + N catalogs
                                         3 -> uiState.addons.size // Addons: N addons + "Add Custom" button
@@ -500,6 +500,7 @@ fun SettingsScreen(
                                                 12 -> viewModel.setSkipProfileSelection(!uiState.skipProfileSelection)
                                                 13 -> viewModel.setShowBudget(!uiState.showBudget)
                                                 14 -> openDnsProviderPicker()
+                                                15 -> viewModel.cycleVolumeBoost()
                                             }
                                         }
                                         1 -> { // IPTV
@@ -629,6 +630,7 @@ fun SettingsScreen(
                             deviceModeOverride = uiState.deviceModeOverride,
                             skipProfileSelection = uiState.skipProfileSelection,
                             showBudget = uiState.showBudget,
+                            volumeBoostDb = uiState.volumeBoostDb,
                             focusedIndex = -1,
                             onSubtitleClick = openSubtitlePicker,
                             onAudioLanguageClick = openAudioLanguagePicker,
@@ -645,6 +647,7 @@ fun SettingsScreen(
                             onSubtitleSizeClick = { viewModel.cycleSubtitleSize() },
                             onSkipProfileSelectionToggle = { viewModel.setSkipProfileSelection(it) },
                             onShowBudgetToggle = { viewModel.setShowBudget(it) },
+                            onVolumeBoostClick = { viewModel.cycleVolumeBoost() },
                             onSubtitleColorClick = { viewModel.cycleSubtitleColor() }
                         )
                         "iptv" -> IptvSettings(
@@ -800,6 +803,7 @@ fun SettingsScreen(
                             deviceModeOverride = uiState.deviceModeOverride,
                             skipProfileSelection = uiState.skipProfileSelection,
                             showBudget = uiState.showBudget,
+                            volumeBoostDb = uiState.volumeBoostDb,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             onSubtitleClick = openSubtitlePicker,
                             onAudioLanguageClick = openAudioLanguagePicker,
@@ -815,6 +819,7 @@ fun SettingsScreen(
                             onContentLanguageClick = openContentLanguagePicker,
                             onSkipProfileSelectionToggle = { viewModel.setSkipProfileSelection(it) },
                             onShowBudgetToggle = { viewModel.setShowBudget(it) },
+                            onVolumeBoostClick = { viewModel.cycleVolumeBoost() },
                             onSubtitleSizeClick = { viewModel.cycleSubtitleSize() },
                             onSubtitleColorClick = { viewModel.cycleSubtitleColor() }
                         )
@@ -2148,6 +2153,7 @@ private fun GeneralSettings(
     deviceModeOverride: String = "auto",
     skipProfileSelection: Boolean = false,
     showBudget: Boolean = true,
+    volumeBoostDb: Int = 0,
     focusedIndex: Int,
     onSubtitleClick: () -> Unit,
     onAudioLanguageClick: () -> Unit,
@@ -2161,6 +2167,7 @@ private fun GeneralSettings(
     onContentLanguageClick: () -> Unit = {},
     onSkipProfileSelectionToggle: (Boolean) -> Unit = {},
     onShowBudgetToggle: (Boolean) -> Unit = {},
+    onVolumeBoostClick: () -> Unit = {},
     trailerAutoPlay: Boolean = false,
     onSubtitleSizeClick: () -> Unit = {},
     onSubtitleColorClick: () -> Unit = {},
@@ -2337,6 +2344,27 @@ private fun GeneralSettings(
             value = dnsProvider,
             isFocused = focusedIndex == 14,
             onClick = onDnsProviderClick
+        )
+
+        // ── Audio ──
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = "Audio",
+            style = ArflixTypography.caption.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
+            color = TextSecondary.copy(alpha = 0.5f),
+            modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
+        )
+
+        SettingsRow(
+            icon = Icons.Default.VolumeUp,
+            title = "Volume Boost",
+            subtitle = "Amplify quiet sources (via system LoudnessEnhancer)",
+            value = when (volumeBoostDb) {
+                0 -> "Off"
+                else -> "+${volumeBoostDb} dB"
+            },
+            isFocused = focusedIndex == 15,
+            onClick = onVolumeBoostClick
         )
     }
 }

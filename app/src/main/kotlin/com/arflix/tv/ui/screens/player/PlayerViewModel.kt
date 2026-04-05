@@ -64,6 +64,9 @@ data class PlayerUiState(
     // "auto_play_next" DataStore setting so the player can respect the toggle
     // and so the post-episode overlay can show a Continue/Cancel prompt.
     val autoPlayNext: Boolean = true,
+    // Volume boost in decibels. 0 = disabled, up to 15 dB. The player observes this
+    // and attaches a LoudnessEnhancer to the ExoPlayer audio session. Issue #88.
+    val volumeBoostDb: Int = 0,
     // Skip intro/recap
     val activeSkipInterval: SkipInterval? = null,
     val skipIntervalDismissed: Boolean = false
@@ -182,6 +185,9 @@ class PlayerViewModel @Inject constructor(
             val subSize = context.settingsDataStore.data.first()[profileManager.profileStringKey("subtitle_size")] ?: "Medium"
             val subColor = context.settingsDataStore.data.first()[profileManager.profileStringKey("subtitle_color")] ?: "White"
             val autoPlayNext = context.settingsDataStore.data.first()[profileManager.profileBooleanKey("auto_play_next")] ?: true
+            val volumeBoostDb = context.settingsDataStore.data.first()[
+                profileManager.profileStringKey("volume_boost_db")
+            ]?.toIntOrNull()?.coerceIn(0, 15) ?: 0
             _uiState.value = PlayerUiState(
                 isLoading = true,
                 isLoadingStreams = true,
@@ -189,7 +195,8 @@ class PlayerViewModel @Inject constructor(
                 frameRateMatchingMode = frameRateMatchingMode,
                 subtitleSize = subSize,
                 subtitleColor = subColor,
-                autoPlayNext = autoPlayNext
+                autoPlayNext = autoPlayNext,
+                volumeBoostDb = volumeBoostDb
             )
 
             // If stream URL provided, use it directly (except magnet links, which require resolution).

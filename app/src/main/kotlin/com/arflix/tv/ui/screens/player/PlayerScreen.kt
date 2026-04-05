@@ -1331,6 +1331,40 @@ fun PlayerScreen(
         }
     }
 
+    // Volume boost via system LoudnessEnhancer attached to the ExoPlayer audio session.
+    // Re-attached whenever the audio session id changes (new stream / source switch) or
+    // the user changes the boost in Settings (though in practice that requires reopening
+    // the player since Settings changes don't propagate mid-session yet). 0 dB = no
+    // effect created, no CPU cost. Issue #88.
+    DisposableEffect(uiState.volumeBoostDb, exoPlayer.audioSessionId) {
+        val sessionId = exoPlayer.audioSessionId
+        val targetDb = uiState.volumeBoostDb
+        val enhancer: android.media.audiofx.LoudnessEnhancer? =
+            if (targetDb > 0 && sessionId != C.AUDIO_SESSION_ID_UNSET) {
+                try {
+                    android.media.audiofx.LoudnessEnhancer(sessionId).apply {
+                        setTargetGain(targetDb * 100) // API takes millibels
+                        enabled = true
+                    }
+                } catch (e: Throwable) {
+                    // Some Android TV devices route audio through HDMI passthrough and
+                    // reject audio-session effects (particularly when passthrough is
+                    // enabled for DTS/AC3). Fail silently — user gets unboosted audio
+                    // but playback still works.
+                    android.util.Log.w("PlayerScreen", "LoudnessEnhancer unavailable on this device: ${e.message}")
+                    null
+                }
+            } else {
+                null
+            }
+        onDispose {
+            runCatching {
+                enhancer?.enabled = false
+                enhancer?.release()
+            }
+        }
+    }
+
     // Close menus when an error occurs so the error overlay can receive input
     LaunchedEffect(uiState.error) {
         if (uiState.error != null) {

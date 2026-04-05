@@ -60,6 +60,7 @@ class CloudSyncRepository @Inject constructor(
         val autoPlayMinQuality: String = "Any",
         val trailerAutoPlay: Boolean = false,
         val showBudget: Boolean = true,
+        val volumeBoostDb: Int = 0,
         val includeSpecials: Boolean = false,
         val iptvHiddenGroups: String = "",
         val iptvGroupOrder: String = ""
@@ -73,6 +74,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileBooleanKeyFor(profileId, "trailer_auto_play")
     private fun showBudgetKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "show_budget_on_home")
+    private fun volumeBoostDbKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "volume_boost_db")
 
     private fun subtitleSizeKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "subtitle_size")
@@ -155,6 +158,7 @@ class CloudSyncRepository @Inject constructor(
 
                         trailerAutoPlay = prefs[trailerAutoPlayKeyFor(profile.id)] ?: false,
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
+                        volumeBoostDb = prefs[volumeBoostDbKeyFor(profile.id)]?.toIntOrNull()?.coerceIn(0, 15) ?: 0,
                         subtitleSize = prefs[subtitleSizeKeyFor(profile.id)] ?: "Medium",
                         subtitleColor = prefs[subtitleColorKeyFor(profile.id)] ?: "White",
                         iptvHiddenGroups = prefs[iptvHiddenGroupsKeyFor(profile.id)] ?: "",
@@ -375,6 +379,7 @@ class CloudSyncRepository @Inject constructor(
 
                         prefs[trailerAutoPlayKeyFor(profileId)] = state.trailerAutoPlay
                         prefs[showBudgetKeyFor(profileId)] = state.showBudget
+                        prefs[volumeBoostDbKeyFor(profileId)] = state.volumeBoostDb.coerceIn(0, 15).toString()
                         prefs[subtitleSizeKeyFor(profileId)] = state.subtitleSize
                         prefs[subtitleColorKeyFor(profileId)] = state.subtitleColor
                         if (state.iptvHiddenGroups.isNotBlank()) prefs[iptvHiddenGroupsKeyFor(profileId)] = state.iptvHiddenGroups
