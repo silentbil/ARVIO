@@ -154,8 +154,8 @@ class MainActivity : ComponentActivity() {
         // Set orientation based on device type
         requestedOrientation = when (initialDeviceType) {
             DeviceType.TV -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            DeviceType.TABLET -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
-            DeviceType.PHONE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            DeviceType.TABLET -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+            DeviceType.PHONE -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
         }
 
         // Keep screen on during playback

@@ -188,7 +188,8 @@ fun PlayerScreen(
     val coroutineScope = rememberCoroutineScope()
     val deviceType = LocalDeviceType.current
 
-    // Keep playback in landscape while the player is visible, then restore the app's prior orientation.
+    // Keep playback in landscape while the player is visible, regardless of the
+    // device's auto-rotate lock. Restore the app's prior orientation afterward.
     DisposableEffect(activity) {
         val previousOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
