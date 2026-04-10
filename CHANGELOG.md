@@ -47,6 +47,10 @@ All notable changes to this project are documented in this file.
 - Normal login flow now performs full cloud restore (not just addons), so catalogs, IPTV favorites, and other cloud-backed state restore after login.
 - `main` pushed to GitLab and GitLab repo prepared as the active remote while GitHub remains suspended.
 
+### Download
+- AFTVnews / Downloader code: `9287794`
+- Direct APK: `https://gitlab.com/arvio1/ARVIO/-/raw/main/releases/v1.9.8/ARVIO-v1.9.8.apk?inline=false`
+
 ## [1.9.74] - 2026-04-03
 
 ### Fixed
