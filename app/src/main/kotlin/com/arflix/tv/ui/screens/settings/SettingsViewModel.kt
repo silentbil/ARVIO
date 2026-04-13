@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.api.TraktDeviceCode
 import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.CatalogConfig
+import com.arflix.tv.data.model.CloudstreamPluginIndexEntry
+import com.arflix.tv.data.model.CloudstreamRepositoryManifest
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.AuthRepository
 import com.arflix.tv.data.repository.AuthState
@@ -22,6 +24,7 @@ import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.CloudstreamRepositoryRecord
 import com.arflix.tv.data.repository.TvDeviceAuthRepository
 import com.arflix.tv.data.repository.TvDeviceAuthSession
 import com.arflix.tv.data.repository.TvDeviceAuthStatusType
@@ -130,6 +133,12 @@ data class SettingsUiState(
     val catalogs: List<CatalogConfig> = emptyList(),
     // Addons
     val addons: List<Addon> = emptyList(),
+    val cloudstreamRepositories: List<CloudstreamRepositoryRecord> = emptyList(),
+    val pendingCloudstreamManifest: CloudstreamRepositoryManifest? = null,
+    val pendingCloudstreamRepoUrl: String? = null,
+    val pendingCloudstreamPlugins: List<CloudstreamPluginIndexEntry> = emptyList(),
+    val cloudstreamEnabled: Boolean = BuildConfig.CLOUDSTREAM_ENABLED,
+    val cloudstreamSupportedApiVersion: Int = StreamRepository.SUPPORTED_CLOUDSTREAM_API_VERSION,
     val torrServerBaseUrl: String = "",
     // Content language (TMDB metadata)
     val contentLanguage: String = "en-US",
@@ -223,6 +232,7 @@ class SettingsViewModel @Inject constructor(
         loadSettings()
         observeProfileChanges()
         observeAddons()
+        observeCloudstreamRepositories()
         observeTorrServer()
         observeSyncState()
         observeAuthState()
@@ -392,6 +402,16 @@ class SettingsViewModel @Inject constructor(
                 }
                 if (_uiState.value.addons != addons) {
                     _uiState.value = _uiState.value.copy(addons = addons)
+                }
+            }
+        }
+    }
+
+    private fun observeCloudstreamRepositories() {
+        viewModelScope.launch {
+            streamRepository.cloudstreamRepositories.collect { repositories ->
+                if (_uiState.value.cloudstreamRepositories != repositories) {
+                    _uiState.value = _uiState.value.copy(cloudstreamRepositories = repositories)
                 }
             }
         }
@@ -960,6 +980,97 @@ class SettingsViewModel @Inject constructor(
                     toastType = ToastType.ERROR
                 )
             }
+        }
+    }
+
+    fun addCloudstreamRepository(url: String) {
+        viewModelScope.launch {
+            val result = streamRepository.addCloudstreamRepository(url)
+            result.onSuccess { (normalizedRepoUrl, manifest, plugins) ->
+                _uiState.value = _uiState.value.copy(
+                    pendingCloudstreamManifest = manifest,
+                    pendingCloudstreamRepoUrl = normalizedRepoUrl,
+                    pendingCloudstreamPlugins = plugins,
+                    toastMessage = "Loaded ${plugins.size} Cloudstream plugins from ${manifest.name}",
+                    toastType = ToastType.SUCCESS
+                )
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.message?.takeIf { it.isNotBlank() } ?: "Failed to load Cloudstream repository",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun dismissCloudstreamPluginPicker() {
+        _uiState.value = _uiState.value.copy(
+            pendingCloudstreamManifest = null,
+            pendingCloudstreamRepoUrl = null,
+            pendingCloudstreamPlugins = emptyList()
+        )
+    }
+
+    fun installCloudstreamPlugin(plugin: CloudstreamPluginIndexEntry) {
+        viewModelScope.launch {
+            val repoUrl = _uiState.value.pendingCloudstreamRepoUrl
+            val manifest = _uiState.value.pendingCloudstreamManifest
+            if (repoUrl.isNullOrBlank() || manifest == null) {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = "Cloudstream repository context expired. Try again.",
+                    toastType = ToastType.ERROR
+                )
+                return@launch
+            }
+            val result = streamRepository.installCloudstreamPlugin(repoUrl, manifest, plugin)
+            result.onSuccess { addon ->
+                val addonsAfterInstall = streamRepository.installedAddons.first()
+                _uiState.value = _uiState.value.copy(
+                    addons = addonsAfterInstall,
+                    pendingCloudstreamManifest = null,
+                    pendingCloudstreamRepoUrl = null,
+                    pendingCloudstreamPlugins = emptyList(),
+                    toastMessage = "Installed ${addon.name}",
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.message?.takeIf { it.isNotBlank() } ?: "Failed to install Cloudstream plugin",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun refreshCloudstreamRepository(repoUrl: String) {
+        viewModelScope.launch {
+            val result = streamRepository.refreshCloudstreamRepository(repoUrl)
+            result.onSuccess { updateCount ->
+                val suffix = if (updateCount > 0) "$updateCount plugin entries refreshed" else "No plugin updates found"
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = suffix,
+                    toastType = ToastType.SUCCESS
+                )
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.message?.takeIf { it.isNotBlank() } ?: "Failed to refresh Cloudstream repository",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun removeCloudstreamRepository(repoUrl: String) {
+        viewModelScope.launch {
+            streamRepository.removeCloudstreamRepository(repoUrl)
+            val addonsAfterRemove = streamRepository.installedAddons.first()
+            _uiState.value = _uiState.value.copy(
+                addons = addonsAfterRemove,
+                toastMessage = "Removed Cloudstream repository",
+                toastType = ToastType.SUCCESS
+            )
+            syncLocalStateToCloud(silent = true)
         }
     }
 
@@ -1965,4 +2076,3 @@ class SettingsViewModel @Inject constructor(
         traktPollingJob?.cancel()
     }
 }
-

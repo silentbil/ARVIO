@@ -6,13 +6,19 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.arflix.tv.BuildConfig
 import com.arflix.tv.data.api.*
 import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.AddonInstallSource
 import com.arflix.tv.data.model.AddonManifest
 import com.arflix.tv.data.model.AddonResource
 import com.arflix.tv.data.model.AddonStreamResult
 import com.arflix.tv.data.model.AddonType
+import com.arflix.tv.data.model.CloudstreamInstalledPlugin
+import com.arflix.tv.data.model.CloudstreamPluginIndexEntry
+import com.arflix.tv.data.model.CloudstreamRepositoryManifest
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.RuntimeKind
 import com.arflix.tv.data.model.ProxyHeaders as ModelProxyHeaders
 import com.arflix.tv.data.model.StreamBehaviorHints as ModelStreamBehaviorHints
 import com.arflix.tv.data.model.StreamSource
@@ -26,10 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -69,8 +72,15 @@ class StreamRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val profileManager: ProfileManager,
     private val animeMapper: AnimeMapper,
-    private val iptvRepository: IptvRepository
+    private val iptvRepository: IptvRepository,
+    private val cloudstreamRepositoryService: CloudstreamRepositoryService,
+    private val cloudstreamPluginInstaller: CloudstreamPluginInstaller,
+    private val cloudstreamProviderRuntime: CloudstreamProviderRuntime
 ) {
+    companion object {
+        const val SUPPORTED_CLOUDSTREAM_API_VERSION = 1
+    }
+
     private val gson = Gson()
     private val TAG = "StreamRepository"
     private val openSubtitlesUrl = "https://opensubtitles-v3.strem.io/subtitles"
@@ -79,6 +89,28 @@ class StreamRepository @Inject constructor(
         val createdAtMs: Long
     )
     private val streamResultCache = mutableMapOf<String, CachedStreamResult>()
+    private val stremioAddonRuntime = StremioAddonRuntime(
+        movieResolver = { addon, imdbId -> fetchMovieStreamsFromAddon(addon, imdbId) },
+        episodeResolver = { addon, request ->
+            fetchEpisodeStreamsFromAddon(
+                addon = addon,
+                imdbId = request.imdbId,
+                season = request.season,
+                episode = request.episode,
+                tmdbId = request.tmdbId,
+                tvdbId = request.tvdbId,
+                genreIds = request.genreIds,
+                originalLanguage = request.originalLanguage,
+                title = request.title,
+                airDate = request.airDate
+            )
+        }
+    )
+    private val cloudstreamAddonRuntime = CloudstreamAddonRuntime(cloudstreamProviderRuntime)
+    private val addonRuntimes: Map<RuntimeKind, AddonRuntime> = listOf(
+        stremioAddonRuntime,
+        cloudstreamAddonRuntime
+    ).associateBy { it.kind }
     private data class AddonRuntimeHealth(
         var fetchSuccesses: Int = 0,
         var fetchFailures: Int = 0,
@@ -100,6 +132,8 @@ class StreamRepository @Inject constructor(
     private fun hiddenBuiltInAddonsKey() = profileManager.profileStringKey("hidden_builtin_addons_v1")
     private fun torrServerBaseUrlKey() = profileManager.profileStringKey("torrserver_base_url_v1")
     private fun addonHealthKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "addon_health_v1")
+    private fun cloudstreamReposKey() = profileManager.profileStringKey("cloudstream_repositories_v1")
+    private fun cloudstreamPendingReposKey() = profileManager.profileStringKey("cloudstream_pending_repositories_v1")
 
     init {
         repositoryScope.launch {
@@ -161,6 +195,13 @@ class StreamRepository @Inject constructor(
             }
         enforceOpenSubtitles(addons)
     }
+
+    val cloudstreamRepositories: Flow<List<CloudstreamRepositoryRecord>> =
+        profileManager.activeProfileId.combine(context.streamDataStore.data) { _, prefs ->
+            parseCloudstreamRepositories(prefs[cloudstreamReposKey()])
+                ?: parseCloudstreamRepositories(prefs[cloudstreamPendingReposKey()])
+                ?: emptyList()
+        }
 
     private fun getDefaultAddonList(): List<Addon> {
         return defaultAddons.map { config ->
@@ -342,6 +383,129 @@ class StreamRepository @Inject constructor(
             ?: addons.firstOrNull { matches(it) }?.id
     }
 
+    suspend fun addCloudstreamRepository(url: String): Result<Triple<String, CloudstreamRepositoryManifest, List<CloudstreamPluginIndexEntry>>> = withContext(Dispatchers.IO) {
+        if (!BuildConfig.CLOUDSTREAM_ENABLED) {
+            return@withContext Result.failure(IllegalStateException("Cloudstream support is only available in the sideload build"))
+        }
+        try {
+            val normalized = cloudstreamRepositoryService.normalizeRepositoryUrl(url)
+            val manifest = cloudstreamRepositoryService.fetchRepositoryManifest(normalized)
+            val plugins = cloudstreamRepositoryService.fetchRepositoryPlugins(normalized)
+            val current = cloudstreamRepositories.first().toMutableList()
+            val existingIndex = current.indexOfFirst { it.url.equals(normalized, ignoreCase = true) }
+            val record = CloudstreamRepositoryRecord(
+                url = normalized,
+                name = manifest.name,
+                description = manifest.description,
+                manifestVersion = manifest.manifestVersion,
+                iconUrl = manifest.iconUrl
+            )
+            if (existingIndex >= 0) {
+                current[existingIndex] = record
+            } else {
+                current.add(0, record)
+            }
+            saveCloudstreamRepositories(current)
+            Result.success(Triple(normalized, manifest, plugins))
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
+    suspend fun installCloudstreamPlugin(
+        repoUrl: String,
+        repositoryManifest: CloudstreamRepositoryManifest,
+        plugin: CloudstreamPluginIndexEntry
+    ): Result<Addon> = withContext(Dispatchers.IO) {
+        if (!BuildConfig.CLOUDSTREAM_ENABLED) {
+            return@withContext Result.failure(IllegalStateException("Cloudstream support is only available in the sideload build"))
+        }
+        try {
+            require(plugin.apiVersion >= SUPPORTED_CLOUDSTREAM_API_VERSION) {
+                "Unsupported Cloudstream plugin API version: ${plugin.apiVersion}"
+            }
+            val normalizedRepoUrl = cloudstreamRepositoryService.normalizeRepositoryUrl(repoUrl)
+            val artifact = cloudstreamPluginInstaller.install(
+                pluginUrl = plugin.url,
+                internalName = plugin.internalName,
+                repoUrl = normalizedRepoUrl
+            )
+            val addons = installedAddons.first().toMutableList()
+            val addonId = buildCloudstreamAddonId(plugin.internalName, normalizedRepoUrl)
+            addons.removeAll { it.id == addonId }
+            val addon = Addon(
+                id = addonId,
+                name = plugin.name,
+                version = plugin.version.toString(),
+                description = plugin.description ?: repositoryManifest.description.orEmpty(),
+                isInstalled = true,
+                isEnabled = true,
+                type = AddonType.CUSTOM,
+                runtimeKind = RuntimeKind.CLOUDSTREAM,
+                installSource = AddonInstallSource.CLOUDSTREAM_REPOSITORY,
+                logo = plugin.iconUrl ?: repositoryManifest.iconUrl,
+                internalName = plugin.internalName,
+                repoUrl = normalizedRepoUrl,
+                pluginPackageUrl = plugin.url,
+                pluginVersionCode = plugin.version,
+                apiVersion = plugin.apiVersion,
+                installedArtifactPath = artifact.absolutePath
+            )
+            addons.add(addon)
+            saveAddons(addons)
+            Result.success(addon)
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
+    suspend fun refreshCloudstreamRepository(repoUrl: String): Result<Int> = withContext(Dispatchers.IO) {
+        if (!BuildConfig.CLOUDSTREAM_ENABLED) {
+            return@withContext Result.failure(IllegalStateException("Cloudstream support is only available in the sideload build"))
+        }
+        try {
+            val normalizedRepoUrl = cloudstreamRepositoryService.normalizeRepositoryUrl(repoUrl)
+            val manifest = cloudstreamRepositoryService.fetchRepositoryManifest(normalizedRepoUrl)
+            val plugins = cloudstreamRepositoryService.fetchRepositoryPlugins(normalizedRepoUrl)
+                .associateBy { it.internalName }
+            val addons = installedAddons.first().toMutableList()
+            var updatesAvailable = 0
+            addons.indices.forEach { index ->
+                val addon = addons[index]
+                if (addon.runtimeKind != RuntimeKind.CLOUDSTREAM || !addon.repoUrl.equals(normalizedRepoUrl, ignoreCase = true)) {
+                    return@forEach
+                }
+                val plugin = addon.internalName?.let { plugins[it] } ?: return@forEach
+                val hasUpdate = (plugin.version > (addon.pluginVersionCode ?: Int.MIN_VALUE))
+                if (hasUpdate) updatesAvailable += 1
+                addons[index] = addon.copy(
+                    name = plugin.name,
+                    description = plugin.description ?: addon.description,
+                    version = plugin.version.toString(),
+                    logo = plugin.iconUrl ?: addon.logo,
+                    pluginPackageUrl = plugin.url,
+                    pluginVersionCode = plugin.version,
+                    apiVersion = plugin.apiVersion
+                )
+            }
+            saveAddons(addons)
+            val currentRepos = cloudstreamRepositories.first().toMutableList()
+            val repoIndex = currentRepos.indexOfFirst { it.url.equals(normalizedRepoUrl, ignoreCase = true) }
+            if (repoIndex >= 0) {
+                currentRepos[repoIndex] = currentRepos[repoIndex].copy(
+                    name = manifest.name,
+                    description = manifest.description,
+                    manifestVersion = manifest.manifestVersion,
+                    iconUrl = manifest.iconUrl
+                )
+                saveCloudstreamRepositories(currentRepos)
+            }
+            Result.success(updatesAvailable)
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
     private fun buildAddonInstanceId(manifestId: String, url: String): String {
         val normalized = url.trim().lowercase()
         val digest = MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray())
@@ -412,8 +576,32 @@ class StreamRepository @Inject constructor(
     suspend fun removeAddon(addonId: String) {
         if (addonId == "opensubtitles") return
         val current = installedAddons.first()
+        current.firstOrNull { it.id == addonId }?.let { addon ->
+            if (addon.runtimeKind == RuntimeKind.CLOUDSTREAM) {
+                cloudstreamPluginInstaller.remove(addon.installedArtifactPath)
+            }
+        }
         val addons = current.filter { it.id != addonId }
         saveAddons(addons)
+    }
+
+    suspend fun removeCloudstreamRepository(repoUrl: String) {
+        val normalizedRepoUrl = runCatching { cloudstreamRepositoryService.normalizeRepositoryUrl(repoUrl) }
+            .getOrDefault(repoUrl.trim())
+        val currentRepos = cloudstreamRepositories.first()
+            .filterNot { it.url.equals(normalizedRepoUrl, ignoreCase = true) }
+        saveCloudstreamRepositories(currentRepos)
+        val currentAddons = installedAddons.first()
+        currentAddons.filter { addon ->
+            addon.runtimeKind == RuntimeKind.CLOUDSTREAM &&
+                addon.repoUrl.equals(normalizedRepoUrl, ignoreCase = true)
+        }.forEach { addon ->
+            cloudstreamPluginInstaller.remove(addon.installedArtifactPath)
+        }
+        saveAddons(currentAddons.filterNot {
+            it.runtimeKind == RuntimeKind.CLOUDSTREAM &&
+                it.repoUrl.equals(normalizedRepoUrl, ignoreCase = true)
+        })
     }
 
     suspend fun replaceAddonsFromCloud(addons: List<Addon>) {
@@ -459,11 +647,54 @@ class StreamRepository @Inject constructor(
     private fun parseAddons(json: String?): List<Addon>? {
         if (json.isNullOrBlank()) return null
         return try {
-            val type = TypeToken.getParameterized(List::class.java, Addon::class.java).type
-            val parsed: List<Addon> = gson.fromJson(json, type)
-            parsed
+            val type = TypeToken.getParameterized(List::class.java, StoredAddonPayload::class.java).type
+            val parsed: List<StoredAddonPayload> = gson.fromJson(json, type)
+            parsed.mapNotNull { payload ->
+                val id = payload.id?.trim().orEmpty()
+                val name = payload.name?.trim().orEmpty()
+                val version = payload.version?.trim().orEmpty()
+                if (id.isBlank() || name.isBlank() || version.isBlank()) return@mapNotNull null
+                Addon(
+                    id = id,
+                    name = name,
+                    version = version,
+                    description = payload.description.orEmpty(),
+                    isInstalled = payload.isInstalled ?: true,
+                    isEnabled = payload.isEnabled ?: true,
+                    type = payload.type ?: AddonType.CUSTOM,
+                    runtimeKind = payload.runtimeKind ?: RuntimeKind.STREMIO,
+                    installSource = payload.installSource ?: AddonInstallSource.DIRECT_URL,
+                    url = payload.url,
+                    logo = payload.logo,
+                    manifest = payload.manifest,
+                    transportUrl = payload.transportUrl,
+                    internalName = payload.internalName,
+                    repoUrl = payload.repoUrl,
+                    pluginPackageUrl = payload.pluginPackageUrl,
+                    pluginVersionCode = payload.pluginVersionCode,
+                    apiVersion = payload.apiVersion,
+                    installedArtifactPath = payload.installedArtifactPath
+                )
+            }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    private fun parseCloudstreamRepositories(json: String?): List<CloudstreamRepositoryRecord>? {
+        if (json.isNullOrBlank()) return null
+        return try {
+            val type = TypeToken.getParameterized(List::class.java, CloudstreamRepositoryRecord::class.java).type
+            gson.fromJson<List<CloudstreamRepositoryRecord>>(json, type)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun saveCloudstreamRepositories(repositories: List<CloudstreamRepositoryRecord>) {
+        context.streamDataStore.edit { prefs ->
+            prefs[cloudstreamReposKey()] = gson.toJson(repositories)
+            prefs.remove(cloudstreamPendingReposKey())
         }
     }
 
@@ -472,6 +703,13 @@ class StreamRepository @Inject constructor(
         primary.forEach { addon -> merged[addon.id] = addon }
         secondary.forEach { addon -> merged.putIfAbsent(addon.id, addon) }
         return merged.values.toList()
+    }
+
+    private fun buildCloudstreamAddonId(internalName: String, repoUrl: String): String {
+        val normalized = "${internalName.trim().lowercase(Locale.US)}|${repoUrl.trim().lowercase(Locale.US)}"
+        val digest = MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray())
+        val shortHash = digest.take(6).joinToString("") { "%02x".format(it) }
+        return "cloudstream_${internalName.trim()}_$shortHash"
     }
 
     /**
@@ -690,6 +928,8 @@ class StreamRepository @Inject constructor(
         return addons.filter { addon ->
             // Must be installed and enabled
             if (!addon.isInstalled || !addon.isEnabled) return@filter false
+
+            if (addon.runtimeKind != RuntimeKind.STREMIO) return@filter false
 
             // Skip subtitle addons
             if (addon.type == AddonType.SUBTITLE) return@filter false
@@ -973,6 +1213,7 @@ class StreamRepository @Inject constructor(
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddons.first()
         val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
+        val cloudstreamAddons = allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
         val cacheKey = streamCacheKey(
             profileId = profileManager.getProfileIdSync(),
             type = "movie",
@@ -988,8 +1229,18 @@ class StreamRepository @Inject constructor(
         }
 
         val prioritizedAddons = streamAddons.sortedByDescending { getAddonHealthBias(it.id) }
-        val streamJobs = prioritizedAddons.map { addon -> async { fetchMovieStreamsFromAddon(addon, imdbId) } }
-        val streams = streamJobs.awaitAll().flatten().toMutableList()
+        val streams = mutableListOf<StreamSource>()
+        val movieRequest = MovieRuntimeRequest(imdbId = imdbId, title = title, year = year)
+        if (prioritizedAddons.isNotEmpty()) {
+            streams += addonRuntimes[RuntimeKind.STREMIO]
+                ?.resolveMovieStreams(prioritizedAddons, movieRequest)
+                .orEmpty()
+        }
+        if (cloudstreamAddons.isNotEmpty()) {
+            streams += addonRuntimes[RuntimeKind.CLOUDSTREAM]
+                ?.resolveMovieStreams(cloudstreamAddons, movieRequest)
+                .orEmpty()
+        }
 
         // Keep core source lookup fully addon-driven and non-blocking.
         // IPTV VOD enrichment is appended separately in ViewModels.
@@ -1011,6 +1262,7 @@ class StreamRepository @Inject constructor(
             ensureAddonHealthLoaded()
             val allAddons = installedAddons.first()
             val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
+            val cloudstreamAddons = allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
             val cacheKey = streamCacheKey(
                 profileId = profileManager.getProfileIdSync(),
                 type = "movie",
@@ -1028,7 +1280,7 @@ class StreamRepository @Inject constructor(
             }
 
             val prioritizedAddons = streamAddons.sortedByDescending { getAddonHealthBias(it.id) }
-            if (prioritizedAddons.isEmpty()) {
+            if (prioritizedAddons.isEmpty() && cloudstreamAddons.isEmpty()) {
                 trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
                 close()
                 return@launch
@@ -1037,6 +1289,7 @@ class StreamRepository @Inject constructor(
             val mutex = Mutex()
             val aggregatedStreams = mutableListOf<StreamSource>()
             var completed = 0
+            val totalAddons = prioritizedAddons.size + if (cloudstreamAddons.isNotEmpty()) 1 else 0
             prioritizedAddons.forEach { addon ->
                 launch {
                     val addonStreams = fetchMovieStreamsFromAddon(addon, imdbId)
@@ -1049,13 +1302,41 @@ class StreamRepository @Inject constructor(
                                 u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                             }
                             .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
-                        if (completed == prioritizedAddons.size) {
+                        if (completed == totalAddons) {
                             val finalResult = StreamResult(deduped, emptyList())
                             synchronized(streamResultCache) {
                                 streamResultCache[cacheKey] = CachedStreamResult(finalResult, System.currentTimeMillis())
                             }
                         }
-                        ProgressiveStreamResult(deduped, emptyList(), completed, prioritizedAddons.size, completed == prioritizedAddons.size)
+                        ProgressiveStreamResult(deduped, emptyList(), completed, totalAddons, completed == totalAddons)
+                    }
+                    trySend(emission)
+                    if (emission.isFinal) close()
+                }
+            }
+            if (cloudstreamAddons.isNotEmpty()) {
+                launch {
+                    val addonStreams = cloudstreamProviderRuntime.resolveMovieStreams(
+                        addons = cloudstreamAddons,
+                        title = title,
+                        year = year
+                    )
+                    val emission = mutex.withLock {
+                        aggregatedStreams.addAll(addonStreams)
+                        completed += 1
+                        val deduped = aggregatedStreams
+                            .filter { stream ->
+                                val u = stream.url?.trim().orEmpty()
+                                u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
+                            }
+                            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                        if (completed == totalAddons) {
+                            val finalResult = StreamResult(deduped, emptyList())
+                            synchronized(streamResultCache) {
+                                streamResultCache[cacheKey] = CachedStreamResult(finalResult, System.currentTimeMillis())
+                            }
+                        }
+                        ProgressiveStreamResult(deduped, emptyList(), completed, totalAddons, completed == totalAddons)
                     }
                     trySend(emission)
                     if (emission.isFinal) close()
@@ -1207,25 +1488,9 @@ class StreamRepository @Inject constructor(
     ): StreamResult = withContext(Dispatchers.IO) {
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
-        // Check if this is anime - use comprehensive detection
-        val isAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)
-        // Get anime query using 5-tier fallback resolution (reduced timeout for faster startup)
-        val animeQuery = if (isAnime) {
-            withTimeoutOrNull(3_000L) {
-                animeMapper.resolveAnimeEpisodeQuery(
-                    tmdbId = tmdbId,
-                    tvdbId = tvdbId,
-                    title = title,
-                    imdbId = imdbId,
-                    season = season,
-                    episode = episode
-                )
-            }
-        } else null
-
-        val seriesId = "$imdbId:$season:$episode"
         val allAddons = installedAddons.first()
         val streamAddons = getStreamAddons(allAddons, "series", imdbId)
+        val cloudstreamAddons = allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
         val cacheKey = streamCacheKey(
             profileId = profileManager.getProfileIdSync(),
             type = "series",
@@ -1243,23 +1508,28 @@ class StreamRepository @Inject constructor(
         }
 
         val prioritizedAddons = streamAddons.sortedByDescending { getAddonHealthBias(it.id) }
-        val streamJobs = prioritizedAddons.map { addon ->
-            async {
-                fetchEpisodeStreamsFromAddon(
-                    addon = addon,
-                    imdbId = imdbId,
-                    season = season,
-                    episode = episode,
-                    tmdbId = tmdbId,
-                    tvdbId = tvdbId,
-                    genreIds = genreIds,
-                    originalLanguage = originalLanguage,
-                    title = title,
-                    airDate = airDate
-                )
-            }
+        val episodeRequest = EpisodeRuntimeRequest(
+            imdbId = imdbId,
+            season = season,
+            episode = episode,
+            tmdbId = tmdbId,
+            tvdbId = tvdbId,
+            genreIds = genreIds,
+            originalLanguage = originalLanguage,
+            title = title,
+            airDate = airDate
+        )
+        val streams = mutableListOf<StreamSource>()
+        if (prioritizedAddons.isNotEmpty()) {
+            streams += addonRuntimes[RuntimeKind.STREMIO]
+                ?.resolveEpisodeStreams(prioritizedAddons, episodeRequest)
+                .orEmpty()
         }
-        val streams = streamJobs.awaitAll().flatten().toMutableList()
+        if (cloudstreamAddons.isNotEmpty()) {
+            streams += addonRuntimes[RuntimeKind.CLOUDSTREAM]
+                ?.resolveEpisodeStreams(cloudstreamAddons, episodeRequest)
+                .orEmpty()
+        }
 
         // Keep core source lookup fully addon-driven and non-blocking.
         // IPTV VOD enrichment is appended separately in ViewModels.
@@ -1287,6 +1557,7 @@ class StreamRepository @Inject constructor(
             ensureAddonHealthLoaded()
             val allAddons = installedAddons.first()
             val streamAddons = getStreamAddons(allAddons, "series", imdbId)
+            val cloudstreamAddons = allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
             val cacheKey = streamCacheKey(
                 profileId = profileManager.getProfileIdSync(),
                 type = "series",
@@ -1306,7 +1577,7 @@ class StreamRepository @Inject constructor(
             }
 
             val prioritizedAddons = streamAddons.sortedByDescending { getAddonHealthBias(it.id) }
-            if (prioritizedAddons.isEmpty()) {
+            if (prioritizedAddons.isEmpty() && cloudstreamAddons.isEmpty()) {
                 trySend(ProgressiveStreamResult(emptyList(), emptyList(), 0, 0, true))
                 close()
                 return@launch
@@ -1315,6 +1586,7 @@ class StreamRepository @Inject constructor(
             val mutex = Mutex()
             val aggregatedStreams = mutableListOf<StreamSource>()
             var completed = 0
+            val totalAddons = prioritizedAddons.size + if (cloudstreamAddons.isNotEmpty()) 1 else 0
             prioritizedAddons.forEach { addon ->
                 launch {
                     val addonStreams = fetchEpisodeStreamsFromAddon(
@@ -1338,13 +1610,44 @@ class StreamRepository @Inject constructor(
                                 u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                             }
                             .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
-                        if (completed == prioritizedAddons.size) {
+                        if (completed == totalAddons) {
                             val finalResult = StreamResult(deduped, emptyList())
                             synchronized(streamResultCache) {
                                 streamResultCache[cacheKey] = CachedStreamResult(finalResult, System.currentTimeMillis())
                             }
                         }
-                        ProgressiveStreamResult(deduped, emptyList(), completed, prioritizedAddons.size, completed == prioritizedAddons.size)
+                        ProgressiveStreamResult(deduped, emptyList(), completed, totalAddons, completed == totalAddons)
+                    }
+                    trySend(emission)
+                    if (emission.isFinal) close()
+                }
+            }
+            if (cloudstreamAddons.isNotEmpty()) {
+                launch {
+                    val addonStreams = cloudstreamProviderRuntime.resolveEpisodeStreams(
+                        addons = cloudstreamAddons,
+                        title = title,
+                        year = null,
+                        season = season,
+                        episode = episode,
+                        airDate = airDate
+                    )
+                    val emission = mutex.withLock {
+                        aggregatedStreams.addAll(addonStreams)
+                        completed += 1
+                        val deduped = aggregatedStreams
+                            .filter { stream ->
+                                val u = stream.url?.trim().orEmpty()
+                                u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
+                            }
+                            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                        if (completed == totalAddons) {
+                            val finalResult = StreamResult(deduped, emptyList())
+                            synchronized(streamResultCache) {
+                                streamResultCache[cacheKey] = CachedStreamResult(finalResult, System.currentTimeMillis())
+                            }
+                        }
+                        ProgressiveStreamResult(deduped, emptyList(), completed, totalAddons, completed == totalAddons)
                     }
                     trySend(emission)
                     if (emission.isFinal) close()
@@ -2101,6 +2404,36 @@ data class AddonConfig(
     val isEnabled: Boolean = true
 )
 
+data class CloudstreamRepositoryRecord(
+    val url: String,
+    val name: String,
+    val description: String? = null,
+    val manifestVersion: Int,
+    val iconUrl: String? = null
+)
+
+private data class StoredAddonPayload(
+    val id: String? = null,
+    val name: String? = null,
+    val version: String? = null,
+    val description: String? = null,
+    val isInstalled: Boolean? = null,
+    val isEnabled: Boolean? = null,
+    val type: AddonType? = null,
+    val runtimeKind: RuntimeKind? = null,
+    val installSource: AddonInstallSource? = null,
+    val url: String? = null,
+    val logo: String? = null,
+    val manifest: AddonManifest? = null,
+    val transportUrl: String? = null,
+    val internalName: String? = null,
+    val repoUrl: String? = null,
+    val pluginPackageUrl: String? = null,
+    val pluginVersionCode: Int? = null,
+    val apiVersion: Int? = null,
+    val installedArtifactPath: String? = null
+)
+
 /**
  * Stream resolution result
  */
@@ -2116,4 +2449,3 @@ data class ProgressiveStreamResult(
     val totalAddons: Int,
     val isFinal: Boolean
 )
-
