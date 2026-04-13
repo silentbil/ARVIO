@@ -137,6 +137,7 @@ import com.arflix.tv.ui.components.StreamSelector
 import com.arflix.tv.ui.components.WaveLoadingDots
 import androidx.compose.ui.text.style.TextOverflow
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.PurpleDark
@@ -145,6 +146,7 @@ import com.arflix.tv.ui.theme.PurplePrimary
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import androidx.compose.runtime.rememberCoroutineScope
@@ -184,6 +186,7 @@ fun PlayerScreen(
     val activity = remember(context) { context.findActivity() }
     val uiState by viewModel.uiState.collectAsState()
     val latestUiState by rememberUpdatedState(uiState)
+    val clockFormat = rememberPlayerClockFormat()
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
     val deviceType = LocalDeviceType.current
@@ -1954,14 +1957,13 @@ fun PlayerScreen(
                     Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 8.dp)) {
                         val currentTime = remember { mutableStateOf("") }
                         val endsAtTime = remember { mutableStateOf("") }
-                        LaunchedEffect(duration, currentPosition) {
+                        LaunchedEffect(duration, currentPosition, clockFormat) {
                             while (true) {
                                 val now = System.currentTimeMillis()
-                                val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                                currentTime.value = sdf.format(java.util.Date(now))
+                                currentTime.value = formatPlayerClockTime(now, clockFormat)
                                 if (duration > 0 && currentPosition >= 0) {
                                     val remainingMs = (duration - currentPosition).coerceAtLeast(0L)
-                                    endsAtTime.value = sdf.format(java.util.Date(now + remainingMs))
+                                    endsAtTime.value = formatPlayerClockTime(now + remainingMs, clockFormat)
                                 } else { endsAtTime.value = "" }
                                 kotlinx.coroutines.delay(1000)
                             }
@@ -2800,6 +2802,33 @@ private fun getFullLanguageName(code: String?): String {
         normalizedCode == "und" || normalizedCode == "unknown" -> "Unknown"
         else -> code.uppercase()
     }
+}
+
+@Composable
+private fun rememberPlayerClockFormat(): String {
+    val context = LocalContext.current
+    var resolvedFormat by remember { mutableStateOf("24h") }
+
+    LaunchedEffect(context) {
+        runCatching {
+            val prefs = context.settingsDataStore.data.first()
+            val saved = prefs.asMap().entries
+                .firstOrNull { (key, _) -> key.name.endsWith("_clock_format") }
+                ?.value as? String
+            resolvedFormat = saved ?: "24h"
+        }
+    }
+
+    return resolvedFormat
+}
+
+private fun formatPlayerClockTime(timestampMs: Long, clockFormat: String): String {
+    val pattern = when (clockFormat) {
+        "12h" -> "h:mm a"
+        else -> "HH:mm"
+    }
+    val sdf = java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault())
+    return sdf.format(java.util.Date(timestampMs))
 }
 
 private fun handleSubtitleMenuKey(
