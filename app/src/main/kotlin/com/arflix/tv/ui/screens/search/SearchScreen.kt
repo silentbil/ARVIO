@@ -173,17 +173,9 @@ fun SearchScreen(
                     }
                     FocusZone.FILTERS -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.SEARCH_INPUT -> {
-                        // If we have search results, go back to results instead of sidebar
-                        // This fixes the issue where back from details goes to keyboard instead of results
-                        if (activeCategories.isNotEmpty() || hasAiResults) {
-                            focusZone = FocusZone.RESULTS
-                            currentRowIndex = 0
-                            currentItemIndex = 0
-                            true
-                        } else {
-                            focusZone = FocusZone.SIDEBAR
-                            true
-                        }
+                        // Always progress toward sidebar so repeated Back presses can exit Search.
+                        focusZone = FocusZone.SIDEBAR
+                        true
                     }
                     FocusZone.SIDEBAR -> { onBack(); true }
                 }
