@@ -1887,26 +1887,16 @@ class HomeViewModel @Inject constructor(
                 }
             }
         } else {
-            // Not connected to Trakt — use local + cloud watch_history as CW sources
-            val localItems = runCatching { traktRepository.getLocalContinueWatching() }.getOrDefault(emptyList())
             val historyItems = loadContinueWatchingFromHistory()
-
-            val mergedByShow = LinkedHashMap<String, ContinueWatchingItem>()
-            historyItems.forEach { item ->
-                val key = "${item.mediaType}:${item.id}"
-                val existing = mergedByShow[key]
-                if (existing == null || item.progress >= existing.progress) {
-                    mergedByShow[key] = item
-                }
+            if (historyItems.isNotEmpty()) {
+                // Cloud watch_history is the shared source of truth for non-Trakt
+                // profiles. Only fall back to local CW when the cloud has nothing
+                // yet, so one device's stale local cache cannot override another
+                // device's synced progress/episode.
+                historyItems
+            } else {
+                runCatching { traktRepository.getLocalContinueWatching() }.getOrDefault(emptyList())
             }
-            localItems.forEach { item ->
-                val key = "${item.mediaType}:${item.id}"
-                val existing = mergedByShow[key]
-                if (existing == null || item.progress >= existing.progress) {
-                    mergedByShow[key] = item
-                }
-            }
-            mergedByShow.values.toList()
         }
 
         val persistedDismissedKeys = runCatching {
