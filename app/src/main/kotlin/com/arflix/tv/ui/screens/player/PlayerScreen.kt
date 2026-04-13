@@ -234,6 +234,7 @@ fun PlayerScreen(
     var showSkipOverlay by remember { mutableStateOf(false) }
     var lastSkipTime by remember { mutableLongStateOf(0L) }
     var skipStartPosition by remember { mutableLongStateOf(0L) }  // Position when skipping started
+    var skipPreviewPosition by remember { mutableLongStateOf(0L) }
     var isControlScrubbing by remember { mutableStateOf(false) }
     var scrubPreviewPosition by remember { mutableLongStateOf(0L) }
     var controlsSeekJob by remember { mutableStateOf<Job?>(null) }
@@ -1060,6 +1061,7 @@ fun PlayerScreen(
             showSkipOverlay = false
             skipAmount = 0
             skipStartPosition = 0L
+            skipPreviewPosition = 0L
         }
     }
 
@@ -1667,6 +1669,7 @@ fun PlayerScreen(
                                 lastSkipTime = now
                                 val unclamped = (skipStartPosition + (skipAmount * 1000L)).coerceAtLeast(0L)
                                 val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
+                                skipPreviewPosition = targetPosition
                                 exoPlayer.seekTo(targetPosition)
                                 showSkipOverlay = true
                                 true
@@ -1689,6 +1692,7 @@ fun PlayerScreen(
                                 lastSkipTime = now
                                 val unclamped = (skipStartPosition + (skipAmount * 1000L)).coerceAtLeast(0L)
                                 val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
+                                skipPreviewPosition = targetPosition
                                 exoPlayer.seekTo(targetPosition)
                                 showSkipOverlay = true
                                 true
@@ -2420,19 +2424,49 @@ fun PlayerScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 120.dp)
         ) {
-            Text(
-                text = if (skipAmount >= 0) "+${skipAmount}s" else "${skipAmount}s",
-                style = ArflixTypography.sectionTitle.copy(
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    shadow = Shadow(
-                        color = Color.Black,
-                        offset = Offset(2f, 2f),
-                        blurRadius = 8f
-                    )
-                ),
-                color = Color.White
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = if (skipAmount >= 0) "+${skipAmount}s" else "${skipAmount}s",
+                    style = ArflixTypography.sectionTitle.copy(
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        shadow = Shadow(
+                            color = Color.Black,
+                            offset = Offset(2f, 2f),
+                            blurRadius = 8f
+                        )
+                    ),
+                    color = Color.White
+                )
+
+                if (duration > 0L) {
+                    val previewPosition = skipPreviewPosition
+                        .takeIf { it > 0L }
+                        ?: currentPosition
+                    val previewProgress = (previewPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(5.dp)
+                            .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(3.dp))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(previewProgress)
+                                .height(5.dp)
+                                .background(Pink, RoundedCornerShape(3.dp))
+                        )
+                    }
+                }
+            }
         }
 
         // Error modal — friendly setup guide for no-addons, red error for actual playback failures
