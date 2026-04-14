@@ -1434,6 +1434,12 @@ fun PlayerScreen(
         }
     }
 
+    BackHandler(
+        enabled = showControls && !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && uiState.error == null
+    ) {
+        showControls = false
+    }
+
     val playerDeviceType = LocalDeviceType.current
     val isTouchDevice = playerDeviceType.isTouchDevice()
     val isTablet = playerDeviceType == com.arflix.tv.util.DeviceType.TABLET
@@ -1556,6 +1562,13 @@ fun PlayerScreen(
                             }
                         }
                         else -> Unit // fall through to normal handling
+                    }
+
+                    if ((event.key == Key.Back || event.key == Key.Escape) &&
+                        showControls && !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && uiState.error == null
+                    ) {
+                        showControls = false
+                        return@onKeyEvent true
                     }
 
                     // Handle error modal

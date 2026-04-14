@@ -169,9 +169,13 @@ fun TvScreen(
     var centerDownAtMs by remember { mutableStateOf<Long?>(null) }
 
     BackHandler(enabled = isMobile && isFullScreen) {
-        // Always return to EPG guide first, regardless of how we got here
-        isFullScreen = false
-        showFullscreenOverlay = false
+        if (showFullscreenOverlay) {
+            showFullscreenOverlay = false
+        } else {
+            // Always return to EPG guide first, regardless of how we got here
+            isFullScreen = false
+            showFullscreenOverlay = false
+        }
     }
 
     val groupsListState = rememberLazyListState()
@@ -469,9 +473,13 @@ fun TvScreen(
                     if (event.type == KeyEventType.KeyDown) {
                         when (event.key) {
                             Key.Back, Key.Escape -> {
-                                // Always return to EPG guide first, regardless of launch source
-                                isFullScreen = false
-                                showFullscreenOverlay = false
+                                if (showFullscreenOverlay) {
+                                    showFullscreenOverlay = false
+                                } else {
+                                    // Always return to EPG guide first, regardless of launch source
+                                    isFullScreen = false
+                                    showFullscreenOverlay = false
+                                }
                                 return@onPreviewKeyEvent true
                             }
                             Key.Enter, Key.DirectionCenter -> {
