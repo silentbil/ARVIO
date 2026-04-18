@@ -65,6 +65,12 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         // Initialize OkHttp disk cache before any network calls
         OkHttpProvider.init(this)
 
+        // Bridge arvio's shared OkHttpClient into the CloudStream plugin
+        // runtime's global `app` accessor so any `.cs3` plugin loaded later
+        // performs HTTP through the same DNS-over-HTTPS, connection pool,
+        // and interceptors as the rest of the app.
+        com.lagradost.cloudstream3.setCloudstreamHttpClient(OkHttpProvider.client)
+
         // Warm DNS for TMDB image CDN so the very first image request on the home
         // screen doesn't block on DNS-over-HTTPS bootstrap + resolution. Without
         // this, the first batch of card images can take 1-3s extra on cold start

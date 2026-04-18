@@ -1885,7 +1885,11 @@ class MediaRepository @Inject constructor(
         typeHint: MediaType?
     ): Pair<MediaType, Int>? {
         val normalizedHint = typeHint ?: addonCatalogTypeToMediaType(meta.type)
-        val rawTmdb = (meta.tmdbId ?: meta.moviedbId)?.trim().orEmpty()
+        // `moviedbId` would be a useful addon fallback field but it's added
+        // by a separate pending change to StremioMetaPreview — stick to the
+        // existing `tmdbId` alias until that lands to keep this branch
+        // self-contained.
+        val rawTmdb = meta.tmdbId?.trim().orEmpty()
         val tmdbFromField = rawTmdb.toIntOrNull()
             ?: Regex("""\d+""").find(rawTmdb)?.value?.toIntOrNull()
         if (tmdbFromField != null && normalizedHint != null) {

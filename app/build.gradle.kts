@@ -239,6 +239,15 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
+    // CloudStream plugin runtime. The NiceHttp client that plugins import as
+    // `com.lagradost.nicehttp.Requests` is re-implemented in-tree (see
+    // app/src/main/kotlin/com/lagradost/nicehttp/) over the existing OkHttp
+    // dependency — upstream NiceHttp binaries ship pre-compiled against
+    // newer Kotlin stdlibs than this project supports. Jackson is required
+    // by `MainAPIKt.getMapper()`. Jsoup handles HTML parsing the plugins do.
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.3")
+    implementation("org.jsoup:jsoup:1.17.2")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
