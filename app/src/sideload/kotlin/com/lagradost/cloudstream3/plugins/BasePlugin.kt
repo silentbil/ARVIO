@@ -1,28 +1,46 @@
 package com.lagradost.cloudstream3.plugins
 
-import android.content.Context
+import com.lagradost.cloudstream3.APIHolder
 import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.utils.ExtractorApi
+import com.lagradost.cloudstream3.utils.extractorApis
 
 /**
- * Vendored BasePlugin — in upstream CloudStream 4.4.0 this sits in the `app`
- * module rather than the library module. We host it inside arvio because
- * plugins extend it as their entry point. Call `registerMainAPI(api)` from
- * inside `load()` to expose your provider to arvio's runtime.
+ * Library-flavored plugin base, matching upstream recloudstream/cloudstream
+ * master `library/src/commonMain/.../plugins/BasePlugin.kt`. Plugins compiled
+ * against the modern KMP library extend this. `load()` takes no arguments
+ * (Context isn't in commonMain); the app-module `Plugin` subclass — for
+ * older CS 4.x-era plugins — provides the `load(context: Context)` hook.
+ *
+ * `registerMainAPI()` pushes into the global `APIHolder.allProviders` list;
+ * the runtime snapshots that list before/after `load()` to identify what the
+ * plugin exposed.
  */
-open class BasePlugin {
-    private val registered: MutableList<MainAPI> = mutableListOf()
+abstract class BasePlugin {
+    fun registerMainAPI(element: MainAPI) {
+        element.sourcePlugin = this.filename
+        synchronized(APIHolder.allProviders) {
+            APIHolder.allProviders.add(element)
+        }
+        APIHolder.addPluginMapping(element)
+    }
 
-    val __arvio_registered: List<MainAPI> get() = registered.toList()
-
-    open fun load(context: Context) {}
+    fun registerExtractorAPI(element: ExtractorApi) {
+        element.sourcePlugin = this.filename
+        extractorApis.add(element)
+    }
 
     open fun beforeUnload() {}
 
-    fun registerMainAPI(api: MainAPI) {
-        registered.add(api)
-    }
+    open fun load() {}
 
-    fun registerExtractorAPI(api: MainAPI) {
-        registered.add(api)
-    }
+    /** Full file path to the plugin. Set by the runtime after instantiation. */
+    var filename: String? = null
+
+    /** Legacy alias kept for plugins that predate the rename. */
+    @Suppress("PropertyName")
+    @Deprecated("Renamed to filename", ReplaceWith("filename"))
+    var __filename: String?
+        get() = filename
+        set(value) { filename = value }
 }

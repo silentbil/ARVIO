@@ -495,6 +495,18 @@ abstract class MainAPI {
         throw NotImplementedError()
     }
 
+    /**
+     * Paginated search, starts with page=1. Mirrors the master-branch
+     * CloudStream addition; plugins compiled against that newer API
+     * override this variant and leave `search(query)` as its default TODO.
+     * If a plugin overrides this one, arvio dispatches to it via reflection
+     * in [CloudstreamProviderRuntime].
+     */
+    open suspend fun search(query: String, page: Int): SearchResponseList? {
+        val searchResults = search(query) ?: return null
+        return SearchResponseList(searchResults, hasNext = false)
+    }
+
     // @WorkerThread
     open suspend fun quickSearch(query: String): List<SearchResponse>? {
         throw NotImplementedError()
@@ -1999,3 +2011,13 @@ enum class TrackerType {
         }
     }
 }
+
+/**
+ * Paginated search result wrapper from the master-branch API addition.
+ * Older plugins return `List<SearchResponse>` directly; newer ones return
+ * this so the host knows if there's another page to fetch.
+ */
+data class SearchResponseList(
+    val list: List<SearchResponse>,
+    val hasNext: Boolean = false
+)

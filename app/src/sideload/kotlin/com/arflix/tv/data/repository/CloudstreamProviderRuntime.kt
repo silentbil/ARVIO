@@ -10,7 +10,9 @@ import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MovieLoadResponse
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.TvSeriesLoadResponse
+import com.lagradost.cloudstream3.APIHolder
 import com.lagradost.cloudstream3.plugins.BasePlugin
+import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dalvik.system.DexClassLoader
@@ -158,8 +160,18 @@ class CloudstreamProviderRuntime @Inject constructor(
         title: String,
         year: Int?
     ): SearchResponse? {
-        val results = runCatchingTimeout(SEARCH_TIMEOUT_MS, "search") { api.search(title) }
-            .orEmpty()
+        // CloudStream has two search overloads — legacy `search(String)`
+        // returning List<SearchResponse> and the master-branch
+        // `search(String, Int)` returning SearchResponseList. Newer plugins
+        // override only the paginated one and leave the legacy one as the
+        // base-class TODO(). Try paginated first, fall back to legacy.
+        val paginated = runCatchingTimeout(SEARCH_TIMEOUT_MS, "search(query,page)") {
+            api.search(title, 1)
+        }
+        val results: List<SearchResponse> = paginated?.list
+            ?: runCatchingTimeout(SEARCH_TIMEOUT_MS, "search(query)") {
+                api.search(title)
+            }.orEmpty()
         if (results.isEmpty()) return null
 
         val lower = title.trim().lowercase()
@@ -201,7 +213,7 @@ class CloudstreamProviderRuntime @Inject constructor(
                 artifact.absolutePath,
                 dexDir.absolutePath,
                 null,
-                BasePlugin::class.java.classLoader
+                Plugin::class.java.classLoader
             )
             val pluginClass = runCatching {
                 Class.forName(pluginClassName, true, loader)
@@ -209,22 +221,60 @@ class CloudstreamProviderRuntime @Inject constructor(
                 Log.e(TAG, "pluginClassName=$pluginClassName not found", it)
                 return@withLock null
             }
-            if (!BasePlugin::class.java.isAssignableFrom(pluginClass)) {
-                Log.e(TAG, "$pluginClassName does not extend BasePlugin")
-                return@withLock null
-            }
 
             val instance = runCatching {
-                pluginClass.getDeclaredConstructor().newInstance() as BasePlugin
+                pluginClass.getDeclaredConstructor().newInstance()
             }.getOrElse {
                 Log.e(TAG, "failed to instantiate $pluginClassName", it)
                 return@withLock null
             }
 
-            runCatching { instance.load(context) }
-                .onFailure { Log.e(TAG, "$pluginClassName.load() threw", it) }
+            // Community CloudStream plugins extend `com.lagradost.cloudstream3
+            // .plugins.Plugin` (the app-module class in upstream) rather than
+            // our library-visible `BasePlugin`. `Plugin.registerMainAPI()`
+            // pushes into the global `APIHolder.allProviders`, not onto the
+            // instance. Snapshot its size before calling load() and slice
+            // out the APIs the plugin added.
+            val apisBefore = synchronized(APIHolder.allProviders) {
+                APIHolder.allProviders.toList()
+            }
 
-            val loaded = LoadedPlugin(instance, instance.__arvio_registered)
+            // Two plugin-base conventions in the wild:
+            //   - `com.lagradost.cloudstream3.plugins.Plugin.load(Context)`
+            //     (app-module base used by CS 4.x-era plugins)
+            //   - `com.lagradost.cloudstream3.plugins.BasePlugin.load()`
+            //     (library-module base used by plugins compiled against the
+            //     KMP master library)
+            // Detect by probing declared methods on the concrete class so
+            // either override dispatches correctly.
+            runCatching {
+                val loadNoArg = runCatching {
+                    pluginClass.getMethod("load")
+                }.getOrNull()
+                val loadWithCtx = runCatching {
+                    pluginClass.getMethod("load", Context::class.java)
+                }.getOrNull()
+                when {
+                    loadNoArg != null -> loadNoArg.invoke(instance)
+                    loadWithCtx != null -> loadWithCtx.invoke(instance, context)
+                    else -> error("$pluginClassName has no load() / load(Context) method")
+                }
+            }.onFailure { Log.e(TAG, "$pluginClassName.load() threw", it) }
+
+            val apisAfter = synchronized(APIHolder.allProviders) {
+                APIHolder.allProviders.toList()
+            }
+            val registered = (apisAfter - apisBefore.toSet()).toList()
+
+            Log.i(
+                TAG,
+                "$pluginClassName registered ${registered.size} MainAPI(s): " +
+                    registered.joinToString { it.name }
+            )
+
+            // Cache alongside a stable plugin-instance marker for teardown.
+            val marker: BasePlugin = (instance as? BasePlugin) ?: object : BasePlugin() {}
+            val loaded = LoadedPlugin(marker, registered)
             pluginCache[artifactPath] = loaded
             loaded
         }
