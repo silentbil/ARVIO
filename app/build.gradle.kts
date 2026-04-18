@@ -3,6 +3,10 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    // Kotlin 2.0+: Compose compiler is its own plugin, not a
+    // `composeOptions.kotlinCompilerExtensionVersion` pin. Version tracks
+    // Kotlin in the root build.gradle.kts.
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
     id("androidx.baselineprofile")
@@ -135,22 +139,11 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
-        // Compose stability configuration - marks domain models as stable to prevent
-        // unnecessary recompositions. Requires Compose compiler 1.5.4+.
-        freeCompilerArgs += listOf(
-            "-P",
-            "plugin:androidx.compose.compiler.plugins.kotlin:stabilityConfigurationPath=" +
-                "${project.projectDir.absolutePath}/compose_stability_config.conf"
-        )
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.5"
     }
 
     packaging {
@@ -171,6 +164,15 @@ android {
     }
 }
 
+// Kotlin 2.0+ Compose compiler plugin config. The stability config file
+// is the same as before — marks domain models as stable to avoid
+// unnecessary recompositions — but fed through a first-class plugin
+// extension instead of a raw -P freeCompilerArg.
+composeCompiler {
+    stabilityConfigurationFile = rootProject.layout.projectDirectory
+        .file("app/compose_stability_config.conf")
+}
+
 // KSP configuration for Hilt
 ksp {
     arg("dagger.fastInit", "enabled")
@@ -189,8 +191,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
 
-    // Compose BOM - use compatible version for TV
-    implementation(platform("androidx.compose:compose-bom:2023.10.01"))
+    // Compose BOM — bumped alongside Kotlin 2.1. Staying on the 2024.06
+    // line keeps tv-foundation 1.0.0-alpha11 happy; newer BOMs drift the
+    // runtime off alpha11 and cause invalid-slot-table crashes on D-pad.
+    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -206,9 +210,13 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.6")
 
-    // Hilt for DI
-    implementation("com.google.dagger:hilt-android:2.48")
-    ksp("com.google.dagger:hilt-compiler:2.48")
+    // Hilt for DI — 2.54 is the first release with Kotlin 2.1 metadata
+    // support on the Java compile side. 2.52 fails on `hiltJavaCompile*`
+    // with "Unable to read Kotlin metadata due to unsupported metadata
+    // version" because Hilt parses generated `@Module` classes that carry
+    // Kotlin 2.1's newer metadata format.
+    implementation("com.google.dagger:hilt-android:2.54")
+    ksp("com.google.dagger:hilt-compiler:2.54")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
 
     // Leanback (TV compliance, browse fragments if needed)
