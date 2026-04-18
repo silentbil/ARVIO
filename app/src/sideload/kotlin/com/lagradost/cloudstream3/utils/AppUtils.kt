@@ -1,28 +1,24 @@
 package com.lagradost.cloudstream3.utils
 
-import com.fasterxml.jackson.core.type.TypeReference
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import com.lagradost.cloudstream3.mapper
 
-/**
- * Clean-room `AppUtils` — real CloudStream exposes a rag-bag of helpers here.
- * We implement the subset observable in published plugin dex: `parseJson`,
- * `tryParseJson`, `toJson`. Plugins use these around the jackson mapper.
- */
 object AppUtils {
-    @JvmStatic
-    val jacksonMapper: ObjectMapper = jacksonObjectMapper()
+    /** Any object as json string */
+    fun Any.toJson(): String {
+        if (this is String) return this
+        return mapper.writeValueAsString(this)
+    }
 
-    @JvmStatic
-    inline fun <reified T> parseJson(json: String): T =
-        jacksonMapper.readValue(json, object : TypeReference<T>() {})
+    inline fun <reified T> parseJson(value: String): T {
+        return mapper.readValue(value)
+    }
 
-    @JvmStatic
-    inline fun <reified T> tryParseJson(json: String?): T? =
-        if (json.isNullOrBlank()) null else runCatching {
-            jacksonMapper.readValue(json, object : TypeReference<T>() {})
-        }.getOrNull()
-
-    @JvmStatic
-    fun toJson(value: Any?): String = jacksonMapper.writeValueAsString(value)
+    inline fun <reified T> tryParseJson(value: String?): T? {
+        return try {
+            parseJson(value ?: return null)
+        } catch (_: Exception) {
+            null
+        }
+    }
 }

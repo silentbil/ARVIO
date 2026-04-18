@@ -248,6 +248,7 @@ dependencies {
     // parses provider HTML for simple plugins.
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.3")
     implementation("org.jsoup:jsoup:1.17.2")
+    implementation("me.xdrop:fuzzywuzzy:1.4.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
