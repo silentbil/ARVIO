@@ -173,8 +173,10 @@ fun LiveTvScreen(
         }
     }
 
-    // Sidebar expanded state + search overlay.
-    var sidebarExpanded by rememberSaveable { mutableStateOf(true) }
+    // Sidebar stays expanded now that the whole TV page is dense enough.
+    // Collapse animation removed per user request — `sidebarExpanded` held
+    // as a const so existing callers still compile.
+    val sidebarExpanded = true
     var searchOpen by rememberSaveable { mutableStateOf(false) }
 
     // Focus requesters for the three regions.
@@ -268,14 +270,8 @@ fun LiveTvScreen(
         }
     }
 
-    // Auto-collapse sidebar whenever focus leaves it. Collapses when the
-    // EPG/mini-player takes focus and expands again on DPAD_LEFT / back.
     BackHandler(enabled = searchOpen) { searchOpen = false }
-    BackHandler(enabled = !searchOpen && !sidebarExpanded) {
-        sidebarExpanded = true
-        runCatching { sidebarFocus.requestFocus() }
-    }
-    BackHandler(enabled = !searchOpen && sidebarExpanded) { onBack() }
+    BackHandler(enabled = !searchOpen) { onBack() }
 
     Box(
         modifier = Modifier
@@ -308,7 +304,6 @@ fun LiveTvScreen(
                     expanded = sidebarExpanded,
                     onSelect = { id -> selectedCategoryId = id },
                     onOpenSearch = { searchOpen = true },
-                    onFocusEnter = { sidebarExpanded = true },
                     modifier = Modifier
                         .fillMaxHeight()
                         .focusRequester(sidebarFocus),
@@ -323,8 +318,7 @@ fun LiveTvScreen(
                         favoriteSet = favSet,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(miniFocus)
-                            .onFocusChanged { if (it.hasFocus) sidebarExpanded = false },
+                            .focusRequester(miniFocus),
                     )
                     EpgGrid(
                         channels = filteredChannels,
@@ -335,8 +329,7 @@ fun LiveTvScreen(
                         favorites = favSet,
                         modifier = Modifier
                             .fillMaxSize()
-                            .focusRequester(epgFocus)
-                            .onFocusChanged { if (it.hasFocus) sidebarExpanded = false },
+                            .focusRequester(epgFocus),
                     )
                 }
             }
