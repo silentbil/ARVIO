@@ -246,9 +246,13 @@ fun MediaCard(
                 // cards. Rendered in two layers so dark/black logos remain
                 // readable on dark card art: a white silhouette of the logo
                 // sits behind the real logo with a 1px offset and low alpha
-                // to create a subtle halo. Light logos are largely unchanged
-                // (white-behind-white adds no contrast).
-                if (isLandscape && logoRequest != null) {
+                // to create a subtle halo.
+                //
+                // Collection tiles (services / franchises / genres) keep a
+                // clean cover — the branded image already carries the
+                // wordmark, so stacking a separate clearlogo double-stamps
+                // the identity. Suppress it here per the design spec.
+                if (isLandscape && logoRequest != null && !isCollectionTile) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomStart)

@@ -474,10 +474,22 @@ fun HomeScreen(
         }
     }
 
-    // ── IPTV hero live-player state ──
+    // ── IPTV + service-collection hero player state ──
     val isHeroIptv = displayHeroItem != null && viewModel.isIptvItem(displayHeroItem)
     val isHeroCollection = displayHeroItem != null && viewModel.isCollectionItem(displayHeroItem)
-    val heroVideoUrl = displayHeroItem?.let { if (isHeroIptv) viewModel.getIptvStreamUrl(it.id) else null }
+    // Track service-collection "played once" — after the video ends we stop
+    // re-spawning the player until the user focuses a *different* service.
+    // Keyed on the focused collection id so re-entering the card after
+    // moving elsewhere replays it.
+    var collectionVideoFinishedId by remember { mutableStateOf<Int?>(null) }
+    val serviceHeroVideoUrl = displayHeroItem
+        ?.takeIf { isHeroCollection && collectionVideoFinishedId != it.id }
+        ?.let { viewModel.getCollectionHeroVideoUrl(it) }
+    val heroVideoUrl = when {
+        isHeroIptv -> displayHeroItem?.let { viewModel.getIptvStreamUrl(it.id) }
+        serviceHeroVideoUrl != null -> serviceHeroVideoUrl
+        else -> null
+    }
 
     // Warm details assets for the currently displayed hero item so selecting
     // Details doesn't pause on the first clearlogo/episodes fetch.
@@ -520,6 +532,22 @@ fun HomeScreen(
     }
     DisposableEffect(Unit) { onDispose { heroExoPlayer.release() } }
 
+    // Service-collection video lifecycle: play once on focus, with sound,
+    // then mark the card "played" so subsequent focus returns fall back to
+    // the stock image. IPTV live streams bypass this (they loop naturally).
+    val focusedCollectionId = displayHeroItem?.id?.takeIf { isHeroCollection }
+    DisposableEffect(heroExoPlayer) {
+        val listener = object : androidx.media3.common.Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == androidx.media3.common.Player.STATE_ENDED) {
+                    focusedCollectionId?.let { collectionVideoFinishedId = it }
+                }
+            }
+        }
+        heroExoPlayer.addListener(listener)
+        onDispose { heroExoPlayer.removeListener(listener) }
+    }
+
     LaunchedEffect(heroVideoUrl) {
         if (heroVideoUrl != null) {
             heroExoPlayer.stop()
@@ -537,6 +565,10 @@ fun HomeScreen(
             } else {
                 heroExoPlayer.setMediaItem(mi)
             }
+            // Service videos play once with sound and stop; IPTV live streams
+            // naturally don't loop (they're live) so REPEAT_MODE_OFF is safe
+            // for both paths.
+            heroExoPlayer.repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF
             heroExoPlayer.volume = 1f
             heroExoPlayer.prepare()
             heroExoPlayer.playWhenReady = true

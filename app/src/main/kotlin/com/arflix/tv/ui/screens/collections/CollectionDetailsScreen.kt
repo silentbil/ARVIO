@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -94,10 +95,14 @@ data class CollectionDetailsUiState(
     val movieItems: List<MediaItem> = emptyList(),
     val seriesItems: List<MediaItem> = emptyList(),
     val isLoading: Boolean = true,
+    val isLoadingMore: Boolean = false,
+    val hasMore: Boolean = false,
+    val loadedOffset: Int = 0,
     val error: String? = null
 ) {
     val hasMovies: Boolean get() = movieItems.isNotEmpty()
     val hasSeries: Boolean get() = seriesItems.isNotEmpty()
+    val allItems: List<MediaItem> get() = movieItems + seriesItems
 }
 
 @HiltViewModel
@@ -108,6 +113,16 @@ class CollectionDetailsViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(CollectionDetailsUiState())
     val uiState: StateFlow<CollectionDetailsUiState> = _uiState.asStateFlow()
+
+    private companion object {
+        // First-page size: big enough to fill a 1080 p grid several rows
+        // deep so the scroll position stabilises before the first pager
+        // request kicks in.
+        const val FIRST_PAGE = 120
+        // Subsequent pages: smaller so each fetch completes quickly and
+        // new rows appear as the user scrolls — no dead-air waits.
+        const val PAGE_STEP = 60
+    }
 
     fun load(catalogId: String) {
         viewModelScope.launch {
@@ -121,7 +136,7 @@ class CollectionDetailsViewModel @Inject constructor(
                 runCatching { streamRepository.ensureCustomAddons(catalog.requiredAddonUrls) }
             }
             val page = runCatching {
-                mediaRepository.loadCollectionCatalogPage(catalog, offset = 0, limit = 120)
+                mediaRepository.loadCollectionCatalogPage(catalog, offset = 0, limit = FIRST_PAGE)
             }.getOrNull()
             val all = page?.items.orEmpty()
             _uiState.value = CollectionDetailsUiState(
@@ -129,7 +144,40 @@ class CollectionDetailsViewModel @Inject constructor(
                 movieItems = all.filter { it.mediaType == MediaType.MOVIE },
                 seriesItems = all.filter { it.mediaType == MediaType.TV },
                 isLoading = false,
+                hasMore = page?.hasMore == true,
+                loadedOffset = all.size,
                 error = if (page == null) "Failed to load collection" else null
+            )
+        }
+    }
+
+    /**
+     * Pulls the next `PAGE_STEP` items. Called from the grid when it
+     * scrolls to near the tail — user never sees a "20-item cap" because
+     * as long as the source has more, we keep pulling.
+     */
+    fun loadMoreIfNeeded() {
+        val state = _uiState.value
+        val catalog = state.catalog ?: return
+        if (state.isLoading || state.isLoadingMore || !state.hasMore) return
+        _uiState.value = state.copy(isLoadingMore = true)
+        viewModelScope.launch {
+            val next = runCatching {
+                mediaRepository.loadCollectionCatalogPage(
+                    catalog,
+                    offset = state.loadedOffset,
+                    limit = PAGE_STEP
+                )
+            }.getOrNull()
+            val newItems = next?.items.orEmpty()
+            val existingIds = (state.movieItems + state.seriesItems).mapTo(HashSet()) { it.id to it.mediaType }
+            val uniqueNew = newItems.filter { (it.id to it.mediaType) !in existingIds }
+            _uiState.value = _uiState.value.copy(
+                movieItems = state.movieItems + uniqueNew.filter { it.mediaType == MediaType.MOVIE },
+                seriesItems = state.seriesItems + uniqueNew.filter { it.mediaType == MediaType.TV },
+                isLoadingMore = false,
+                hasMore = next?.hasMore == true,
+                loadedOffset = state.loadedOffset + newItems.size
             )
         }
     }
@@ -320,68 +368,46 @@ fun CollectionDetailsScreen(
         }
 
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            // Hero renders behind everything as an ambient backdrop. The
-            // Movies/Series tabs sit right below the topbar — the grid
-            // scrolls over the fading hero so the page feels anchored to
-            // the top instead of being pushed down by a tall hero block.
-            val backdropHeight = (maxHeight * 0.42f).coerceIn(200.dp, 360.dp)
-            CollectionHero(
-                catalog = uiState.catalog,
-                heroHeight = backdropHeight
-            )
-
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    // Sit the header close to the topbar so the hero backdrop
-                    // reads as ambience, not a tall block. Leaves enough room
-                    // for the TV sidebar chevron to render above it.
-                    .padding(top = if (isMobile) 8.dp else 40.dp)
-            ) {
-                CollectionTitleHeader(catalog = uiState.catalog)
-
-                CollectionTabBar(
+            val backdropHeight = (maxHeight * 0.52f).coerceIn(260.dp, 440.dp)
+            val items = when (selectedTab) {
+                CollectionTab.MOVIES -> uiState.movieItems
+                CollectionTab.SERIES -> uiState.seriesItems
+            }
+            when {
+                uiState.isLoading -> CollectionSkeletonGrid(
+                    gridColumns = gridColumns,
+                    cardWidth = cardWidth,
+                    usePosterCards = usePosterCards
+                )
+                items.isEmpty() && !uiState.isLoadingMore -> CollectionEmptyState(
+                    message = uiState.error ?: "Nothing to show here yet."
+                )
+                else -> CollectionItemsGrid(
+                    items = items,
+                    gridColumns = gridColumns,
+                    cardWidth = cardWidth,
+                    usePosterCards = usePosterCards,
+                    gridState = gridState,
+                    focusRequester = gridFocusRequester,
+                    onFocusChanged = { hasFocus ->
+                        if (hasFocus) {
+                            isSidebarFocused = false
+                            isTabBarFocused = false
+                        }
+                    },
+                    onItemFocused = { focusedGridIndex = it },
+                    onItemClick = { onNavigateToDetails(it.mediaType, it.id) },
+                    catalog = uiState.catalog,
+                    backdropHeight = backdropHeight,
                     hasMovies = uiState.hasMovies,
                     hasSeries = uiState.hasSeries,
                     selectedTab = selectedTab,
-                    isFocusedFromRemote = isTabBarFocused,
-                    onTabSelected = { selectedTab = it }
+                    isTabBarFocused = isTabBarFocused,
+                    onTabSelected = { selectedTab = it },
+                    onNearEnd = { viewModel.loadMoreIfNeeded() },
+                    isLoadingMore = uiState.isLoadingMore,
+                    isMobile = isMobile,
                 )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                val items = when (selectedTab) {
-                    CollectionTab.MOVIES -> uiState.movieItems
-                    CollectionTab.SERIES -> uiState.seriesItems
-                }
-
-                AnimatedContent(
-                    targetState = Triple(selectedTab, items, uiState.isLoading),
-                    transitionSpec = {
-                        (fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(120)))
-                    },
-                    label = "collection_tab_content"
-                ) { (_, currentItems, loading) ->
-                    when {
-                        loading -> CollectionSkeletonGrid(gridColumns = gridColumns, cardWidth = cardWidth, usePosterCards = usePosterCards)
-                        currentItems.isEmpty() -> CollectionEmptyState(
-                            message = uiState.error ?: "Nothing to show here yet."
-                        )
-                        else -> CollectionItemsGrid(
-                            items = currentItems,
-                            gridColumns = gridColumns,
-                            cardWidth = cardWidth,
-                            usePosterCards = usePosterCards,
-                            gridState = gridState,
-                            focusRequester = gridFocusRequester,
-                            onFocusChanged = { hasFocus ->
-                                if (hasFocus) isSidebarFocused = false
-                            },
-                            onItemFocused = { focusedGridIndex = it },
-                            onItemClick = { onNavigateToDetails(it.mediaType, it.id) }
-                        )
-                    }
-                }
             }
         }
     }
@@ -561,25 +587,39 @@ private fun CollectionTabChip(
     var isFocused by remember { mutableStateOf(false) }
     val visuallyFocused = isFocused || isFocusedFromRemote
     val shape = RoundedCornerShape(50)
+    // Three clearly distinct states so selected + focused never read as
+    // "two tabs selected":
+    //   • Selected  → filled white chip, dark text (content identity).
+    //   • Focused   → transparent chip, white 2 dp border, white text
+    //                 (cursor only, no content identity).
+    //   • Idle      → subtle muted chip.
+    // If the chip is both, selected wins the fill and focus adds a 1 dp
+    // accent ring on top so the user still sees the cursor is on it.
     val bg = when {
-        visuallyFocused || isSelected -> Color.White
-        else -> Color.White.copy(alpha = 0.10f)
+        isSelected -> Color.White
+        visuallyFocused -> Color.Transparent
+        else -> Color.White.copy(alpha = 0.08f)
     }
     val fg = when {
-        visuallyFocused || isSelected -> BackgroundDark
-        else -> TextPrimary.copy(alpha = 0.9f)
+        isSelected -> BackgroundDark
+        visuallyFocused -> Color.White
+        else -> TextPrimary.copy(alpha = 0.75f)
+    }
+    val borderColor = when {
+        isSelected && visuallyFocused -> Color(0xFF4F7FB0)
+        visuallyFocused -> Color.White
+        else -> Color.Transparent
+    }
+    val borderWidth = when {
+        isSelected && visuallyFocused -> 1.dp
+        visuallyFocused -> 2.dp
+        else -> 0.dp
     }
     Box(
         modifier = Modifier
             .clip(shape)
             .background(bg)
-            .then(
-                if (visuallyFocused) Modifier.border(
-                    width = 2.dp,
-                    color = Color.White,
-                    shape = shape
-                ) else Modifier
-            )
+            .border(width = borderWidth, color = borderColor, shape = shape)
             .onFocusChanged { isFocused = it.isFocused }
             .focusable()
             .clickable(onClick = onClick)
@@ -589,7 +629,7 @@ private fun CollectionTabChip(
             text = label,
             style = ArflixTypography.sectionTitle.copy(
                 fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
                 letterSpacing = 0.4.sp
             ),
             color = fg
@@ -607,34 +647,108 @@ private fun CollectionItemsGrid(
     focusRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
     onItemFocused: (Int) -> Unit,
-    onItemClick: (MediaItem) -> Unit
+    onItemClick: (MediaItem) -> Unit,
+    catalog: CatalogConfig?,
+    backdropHeight: androidx.compose.ui.unit.Dp,
+    hasMovies: Boolean,
+    hasSeries: Boolean,
+    selectedTab: CollectionTab,
+    isTabBarFocused: Boolean,
+    onTabSelected: (CollectionTab) -> Unit,
+    onNearEnd: () -> Unit,
+    isLoadingMore: Boolean,
+    isMobile: Boolean,
 ) {
     val cardContentType = if (usePosterCards) "poster_card" else "landscape_card"
+    // Auto-pagination: whenever the user scrolls to within 8 grid items of
+    // the tail, kick off the next page. No more "20-item cap" feeling — the
+    // grid just keeps extending as long as the source has more.
+    androidx.compose.runtime.LaunchedEffect(gridState, items.size) {
+        androidx.compose.runtime.snapshotFlow {
+            val layout = gridState.layoutInfo
+            val last = layout.visibleItemsInfo.lastOrNull()?.index ?: 0
+            last to layout.totalItemsCount
+        }
+            .collect { (last, total) ->
+                if (total > 0 && last >= total - 8) onNearEnd()
+            }
+    }
     TvLazyVerticalGrid(
         columns = TvGridCells.Fixed(gridColumns),
         state = gridState,
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 42.dp)
             .focusRequester(focusRequester)
             .onFocusChanged { onFocusChanged(it.hasFocus) },
-        contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // ─── Hero (full-width, scrolls away) ───
+        item(
+            span = { androidx.tv.foundation.lazy.grid.TvGridItemSpan(maxLineSpan) },
+            contentType = "hero"
+        ) {
+            CollectionHero(catalog = catalog, heroHeight = backdropHeight)
+        }
+        // ─── Title (full-width, scrolls away) ───
+        item(
+            span = { androidx.tv.foundation.lazy.grid.TvGridItemSpan(maxLineSpan) },
+            contentType = "title"
+        ) {
+            CollectionTitleHeader(catalog = catalog)
+        }
+        // ─── Tab bar (full-width, scrolls away) ───
+        item(
+            span = { androidx.tv.foundation.lazy.grid.TvGridItemSpan(maxLineSpan) },
+            contentType = "tabs"
+        ) {
+            CollectionTabBar(
+                hasMovies = hasMovies,
+                hasSeries = hasSeries,
+                selectedTab = selectedTab,
+                isFocusedFromRemote = isTabBarFocused,
+                onTabSelected = onTabSelected
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+        // ─── Grid items ───
         itemsIndexed(
             items,
             key = { _, it -> "${it.mediaType}-${it.id}" },
             contentType = { _, _ -> cardContentType }
         ) { index, item ->
+            val cellPadStart = if (index % gridColumns == 0) 42.dp else 0.dp
+            val cellPadEnd = if (index % gridColumns == gridColumns - 1) 42.dp else 0.dp
             MediaCard(
                 item = item,
                 width = cardWidth,
                 isLandscape = !usePosterCards,
                 showTitle = true,
                 onFocused = { onItemFocused(index) },
-                onClick = { onItemClick(item) }
+                onClick = { onItemClick(item) },
+                modifier = Modifier.padding(start = cellPadStart, end = cellPadEnd)
             )
+        }
+        // ─── Footer (loading spinner while more pages stream in) ───
+        if (isLoadingMore) {
+            item(
+                span = { androidx.tv.foundation.lazy.grid.TvGridItemSpan(maxLineSpan) },
+                contentType = "loading_more"
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        color = Color(0xFF4F7FB0),
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
         }
     }
 }

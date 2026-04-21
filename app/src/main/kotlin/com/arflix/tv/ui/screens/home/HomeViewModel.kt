@@ -145,6 +145,13 @@ class HomeViewModel @Inject constructor(
 
     fun isCollectionItem(item: MediaItem): Boolean = item.status?.startsWith("collection:") == true
 
+    /** Returns the service / franchise hero-video URL for a focused collection tile, or null. */
+    fun getCollectionHeroVideoUrl(item: MediaItem): String? {
+        if (!isCollectionItem(item)) return null
+        return collectionCatalogByMediaId[item.id]?.collectionHeroVideoUrl
+            ?.takeIf { it.isNotBlank() }
+    }
+
     private fun isActionableMediaItem(item: MediaItem): Boolean {
         // Synthetic collection tiles (Netflix/Disney/HBO service cards) carry
         // a hash-based id in MediaItem.id that is not a real TMDB id — treating
@@ -1051,32 +1058,24 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun toCollectionCategory(row: HomeCollectionRow): Category {
-        var logoChanged = false
         val items = row.items.mapIndexed { index, config ->
             val fakeId = (config.id.hashCode() and Int.MAX_VALUE).let { if (it == 0) index + 1 else it }
             collectionCatalogByMediaId[fakeId] = config
-            // Seed the logo cache so the focused tile / hero can render the
-            // real clearlogo PNG instead of falling back to title text.
-            config.collectionClearLogoUrl?.takeIf { it.isNotBlank() }?.let { logo ->
-                if (putCachedLogo("MOVIE_$fakeId", logo)) logoChanged = true
-            }
-            // Collection tiles: `image` is the static cover shown when idle,
-            // `backdrop` is the focus GIF that MediaCard swaps in while the
-            // tile is focused (collection tiles are detected by the
-            // `collection:` status prefix).
+            // Cards intentionally do NOT seed a clearlogo or a description
+            // for collection tiles — the branded cover is the whole card,
+            // per the design spec. Clearlogo lives only on the collection
+            // detail hero; description lives only on detail, never on
+            // the home-row card.
             MediaItem(
                 id = fakeId,
                 title = config.title,
-                overview = config.collectionDescription.orEmpty(),
+                overview = "",
                 mediaType = MediaType.MOVIE,
                 image = config.collectionCoverImageUrl.orEmpty(),
                 backdrop = config.collectionFocusGifUrl
                     ?: config.collectionCoverImageUrl,
                 status = "collection:${config.id}"
             )
-        }
-        if (logoChanged) {
-            scheduleLogoCachePublish(highPriority = true)
         }
         return Category(
             id = row.id,

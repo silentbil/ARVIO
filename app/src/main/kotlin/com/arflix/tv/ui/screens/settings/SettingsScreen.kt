@@ -945,7 +945,18 @@ fun SettingsScreen(
                                 "accounts" -> Icons.Default.Person
                                 else -> Icons.Default.Settings
                             },
-                            title = section.replaceFirstChar { it.uppercase() },
+                            // Display name — internal route keys ("stremio" etc.) are
+                            // kept for stability of conditionals, but user-visible labels
+                            // follow product naming.
+                            title = when (section) {
+                                "general" -> "General"
+                                "iptv" -> "IPTV"
+                                "catalogs" -> "Catalogs"
+                                "stremio" -> "Addons"
+                                "cloudstream" -> "Cloudstream"
+                                "accounts" -> "Account"
+                                else -> section.replaceFirstChar { it.uppercase() }
+                            },
                             isSelected = sectionIndex == index,
                             isFocused = activeZone == Zone.SECTION && sectionIndex == index,
                             onClick = {
@@ -1127,7 +1138,7 @@ fun SettingsScreen(
         // Custom Addon Input Modal
         if (showCustomAddonInput) {
             InputModal(
-                title = "Add Stremio Addon",
+                title = "Add Addon",
                 fields = listOf(
                     InputField(label = "URL", value = customAddonUrl, onValueChange = { customAddonUrl = it })
                 ),
