@@ -103,18 +103,9 @@ fun EpgGrid(
     val channelListState = rememberLazyListState()
     val programListState = rememberLazyListState()
 
-    // Bidirectional scroll sync: whichever column the user drives pulls
-    // the other along. The equality guard prevents a feedback loop.
-    LaunchedEffect(channelListState, programListState) {
-        snapshotFlow { channelListState.firstVisibleItemIndex to channelListState.firstVisibleItemScrollOffset }
-            .collect { (idx, off) ->
-                if (programListState.firstVisibleItemIndex != idx ||
-                    programListState.firstVisibleItemScrollOffset != off
-                ) {
-                    programListState.scrollToItem(idx, off)
-                }
-            }
-    }
+    // One-way scroll sync: the program grid leads, the channel column
+    // mirrors it. A bidirectional setup caused a feedback loop and
+    // noticeable DPAD jank on long lists.
     LaunchedEffect(channelListState, programListState) {
         snapshotFlow { programListState.firstVisibleItemIndex to programListState.firstVisibleItemScrollOffset }
             .collect { (idx, off) ->
@@ -334,33 +325,7 @@ private fun ProgramsRow(
                 }
             ),
     ) {
-        if (programs.isEmpty()) {
-            // No EPG data for this channel — still render a wide NOW placeholder
-            // pinned to the current slot so the body doesn't look bare and the
-            // user can tune with one click.
-            val nowMin = ((nowMillis - windowStartMillis) / 60_000L).toInt().coerceAtLeast(0)
-            val offset = (nowMin * pxPerMin).dp - 90.dp
-            val width = 180.dp
-            Box(
-                modifier = Modifier
-                    .offset(x = offset.coerceAtLeast(0.dp))
-                    .width(width)
-                    .height(LiveDims.EpgRowHeight)
-                    .padding(horizontal = 3.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(LiveDims.CellRadius))
-                    .background(LiveColors.Panel)
-                    .pointerInput(channel.id) { detectTapGestures(onTap = { onClick() }) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Text(
-                    text = channel.name,
-                    style = LiveType.CellTitle.copy(color = LiveColors.FgDim),
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
-            }
-        } else {
+        if (programs.isNotEmpty()) {
             programs.forEach { p ->
                 val startMin = ((p.startUtcMillis - windowStartMillis) / 60_000L).toInt().coerceAtLeast(0)
                 // 30-min floor → 150dp min block width, enough room to render

@@ -145,11 +145,15 @@ fun CategorySidebar(
                         hasChildren = country.children.isNotEmpty(),
                         isOpenGroup = isExpanded,
                         onClick = {
-                            // First press selects the country; second press toggles children.
-                            if (selectedId != country.id) {
-                                onSelect(country.id)
+                            // Tap always toggles expansion. Opening also selects so
+                            // the grid reflects the just-opened group; collapsing
+                            // leaves selection alone so the user can close a group
+                            // without losing their filter.
+                            if (isExpanded) {
+                                expandedCountry = null
                             } else {
-                                expandedCountry = if (isExpanded) null else country.id
+                                expandedCountry = country.id
+                                onSelect(country.id)
                             }
                         },
                     )

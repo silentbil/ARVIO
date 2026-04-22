@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,11 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -160,7 +166,11 @@ fun LiveTvScreen(
     // this, DPAD navigation triggers a recompose that stalls the UI thread
     // long enough to ANR on large playlists.
     val filteredChannelsState = remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
-    LaunchedEffect(enrichedState.value, selectedCategoryId, favSet, recents.value) {
+    // Only let `recents` invalidate the filter when Recent is the active
+    // category; otherwise every channel tune would re-scan a 50k-entry
+    // enriched list and stutter DPAD travel.
+    val recentsFilterKey = if (selectedCategoryId == "recent") recents.value else Unit
+    LaunchedEffect(enrichedState.value, selectedCategoryId, favSet, recentsFilterKey) {
         val enriched = enrichedState.value.all
         val matcher = categoryMatcher(selectedCategoryId, favSet, recents.value)
         val result = withContext(Dispatchers.Default) { enriched.filter(matcher) }
@@ -175,10 +185,13 @@ fun LiveTvScreen(
         enrichedState.value.all.firstOrNull { it.id == playingChannelId }
     }
 
-    // Pick a default channel to play when data arrives.
+    // Pick a default channel to play when data arrives. Prefer a favorite
+    // from the current filter so opening the TV page lands on "your"
+    // channel; fall back to the first filtered entry.
     LaunchedEffect(filteredChannels, playingChannelId) {
         if (playingChannelId == null && filteredChannels.isNotEmpty()) {
-            playingChannelId = filteredChannels.first().id
+            playingChannelId = filteredChannels.firstOrNull { it.id in favSet }?.id
+                ?: filteredChannels.first().id
         }
     }
 
@@ -192,6 +205,23 @@ fun LiveTvScreen(
     val sidebarFocus = remember { FocusRequester() }
     val miniFocus = remember { FocusRequester() }
     val epgFocus = remember { FocusRequester() }
+    val fsFocus = remember { FocusRequester() }
+
+    // Monotonic counter bumped on every DPAD key while in fullscreen —
+    // the HUD observes this to re-show and reset its auto-hide timer.
+    var hudPokeSignal by remember { mutableStateOf(0) }
+
+    // Prev/next zapping across the full enriched list (not the filtered
+    // category) per user spec. Wraps around.
+    fun zap(delta: Int) {
+        val all = enrichedState.value.all
+        if (all.isEmpty()) return
+        val currentIdx = all.indexOfFirst { it.id == playingChannelId }
+        val start = if (currentIdx >= 0) currentIdx else 0
+        val size = all.size
+        val nextIdx = ((start + delta) % size + size) % size
+        playingChannelId = all[nextIdx].id
+    }
 
     // ExoPlayer lifecycle — mirrors the legacy screen's setup verbatim so live
     // IPTV behaviour (buffer, retries, chunkless HLS) stays identical.
@@ -400,7 +430,19 @@ fun LiveTvScreen(
                         scaleY = scale
                         alpha = fsProgress
                     }
-                    .background(Color.Black),
+                    .background(Color.Black)
+                    .focusRequester(fsFocus)
+                    .focusable()
+                    .onPreviewKeyEvent { ev ->
+                        if (!isFullScreen || ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (ev.key) {
+                            Key.DirectionUp -> { zap(-1); hudPokeSignal++; true }
+                            Key.DirectionDown -> { zap(+1); hudPokeSignal++; true }
+                            Key.DirectionCenter, Key.Enter -> { hudPokeSignal++; true }
+                            Key.DirectionLeft, Key.DirectionRight -> { hudPokeSignal++; false }
+                            else -> false
+                        }
+                    },
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
@@ -412,6 +454,19 @@ fun LiveTvScreen(
                     update = { it.player = exoPlayer },
                     modifier = Modifier.fillMaxSize(),
                 )
+                if (isFullScreen) {
+                    FullscreenHud(
+                        channel = playingChannel,
+                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        pokeSignal = hudPokeSignal,
+                    )
+                }
+            }
+        }
+
+        LaunchedEffect(isFullScreen) {
+            if (isFullScreen) {
+                runCatching { fsFocus.requestFocus() }
             }
         }
 
