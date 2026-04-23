@@ -293,17 +293,12 @@ fun MediaCard(
                     }
                 }
 
-                // Official logo/art overlay in bottom-left corner of landscape
-                // cards. Rendered in two layers so dark/black logos remain
-                // readable on dark card art: a white silhouette of the logo
-                // sits behind the real logo with a 1px offset and low alpha
-                // to create a subtle halo.
-                //
-                // Collection tiles (services / franchises / genres) keep a
-                // clean cover — the branded image already carries the
-                // wordmark, so stacking a separate clearlogo double-stamps
-                // the identity. Suppress it here per the design spec.
-                if (logoRequest != null && !isCollectionTile) {
+                // Official logo/art overlay is only used on landscape cards.
+                // Poster layout should stay image-first on TV, otherwise the
+                // clearlogo crowds the poster art and looks double-stamped.
+                // Collection tiles already embed their own branding, so they
+                // stay logo-free in both layouts.
+                if (logoRequest != null && isLandscape && !isCollectionTile) {
                     Box(
                         modifier = Modifier
                             .align(if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter)

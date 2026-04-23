@@ -231,6 +231,11 @@ class TvViewModel @Inject constructor(
                     onChannelsReady = { channels ->
                         // Publish channels to UI immediately — don't wait for EPG.
                         // This makes the TV page responsive even on cold start with no cache.
+                        val cachedNowNext = withContext(Dispatchers.Default) {
+                            iptvRepository.reDeriveCachedNowNext(
+                                channels.asSequence().map { it.id }.toSet()
+                            ).orEmpty()
+                        }
                         val lookup = withContext(Dispatchers.Default) {
                             channels.associateBy { it.id }
                         }
@@ -240,7 +245,12 @@ class TvViewModel @Inject constructor(
                             error = null,
                             snapshot = currentSnapshot.copy(
                                 channels = channels,
-                                grouped = channels.groupBy { it.group.ifBlank { "Uncategorized" } }
+                                grouped = channels.groupBy { it.group.ifBlank { "Uncategorized" } },
+                                nowNext = if (cachedNowNext.isNotEmpty()) {
+                                    currentSnapshot.nowNext.toMutableMap().apply { putAll(cachedNowNext) }
+                                } else {
+                                    currentSnapshot.nowNext
+                                }
                             ),
                             channelLookup = lookup,
                             loadingMessage = null,
@@ -356,13 +366,12 @@ class TvViewModel @Inject constructor(
     }
 
     private suspend fun refreshGuideFromCache() {
-        val channelIds = _uiState.value.snapshot.nowNext.keys
+        val channelIds = _uiState.value.snapshot.channels.asSequence().map { it.id }.toSet()
         if (channelIds.isEmpty()) return
         val updated = withContext(Dispatchers.Default) {
             iptvRepository.reDeriveCachedNowNext(channelIds)
         } ?: return
         val current = _uiState.value
-        if (current.snapshot.nowNext.isEmpty()) return
         _uiState.value = current.copy(
             snapshot = current.snapshot.copy(
                 nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(updated) }

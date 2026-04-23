@@ -27,7 +27,6 @@ import com.arflix.tv.ui.screens.player.PlayerScreen
 import com.arflix.tv.ui.screens.collections.CollectionDetailsScreen
 import com.arflix.tv.ui.screens.search.SearchScreen
 import com.arflix.tv.ui.screens.settings.SettingsScreen
-import com.arflix.tv.ui.screens.tv.TvScreen
 import com.arflix.tv.ui.screens.tv.live.LiveTvScreen
 import com.arflix.tv.ui.screens.watchlist.WatchlistScreen
 import com.arflix.tv.ui.screens.profile.ProfileSelectionScreen
@@ -247,42 +246,22 @@ fun AppNavigation(
         ) { backStackEntry ->
             val initialChannelId = backStackEntry.arguments?.getString("channelId")
             val initialStreamUrl = backStackEntry.arguments?.getString("streamUrl")
-            val isTouchDevice = LocalDeviceType.current.isTouchDevice()
-            if (isTouchDevice) {
-                TvScreen(
-                    currentProfile = currentProfile,
-                    initialChannelId = initialChannelId,
-                    initialStreamUrl = initialStreamUrl,
-                    onNavigateToHome = { navigateHome() },
-                    onNavigateToSearch = { navigateTopLevel(Screen.Search.route) },
-                    onNavigateToWatchlist = { navigateTopLevel(Screen.Watchlist.route) },
-                    onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
-                    onSwitchProfile = {
-                        onSwitchProfile()
-                        navController.navigate(Screen.ProfileSelection.route) {
-                            popUpTo(Screen.Home.route) { inclusive = true }
-                        }
-                    },
-                    onBack = { navController.popBackStack() }
-                )
-            } else {
-                LiveTvScreen(
-                    currentProfile = currentProfile,
-                    initialChannelId = initialChannelId,
-                    initialStreamUrl = initialStreamUrl,
-                    onNavigateToHome = { navigateHome() },
-                    onNavigateToSearch = { navigateTopLevel(Screen.Search.route) },
-                    onNavigateToWatchlist = { navigateTopLevel(Screen.Watchlist.route) },
-                    onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
-                    onSwitchProfile = {
-                        onSwitchProfile()
-                        navController.navigate(Screen.ProfileSelection.route) {
-                            popUpTo(Screen.Home.route) { inclusive = true }
-                        }
-                    },
-                    onBack = { navController.popBackStack() }
-                )
-            }
+            LiveTvScreen(
+                currentProfile = currentProfile,
+                initialChannelId = initialChannelId,
+                initialStreamUrl = initialStreamUrl,
+                onNavigateToHome = { navigateHome() },
+                onNavigateToSearch = { navigateTopLevel(Screen.Search.route) },
+                onNavigateToWatchlist = { navigateTopLevel(Screen.Watchlist.route) },
+                onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
+                onSwitchProfile = {
+                    onSwitchProfile()
+                    navController.navigate(Screen.ProfileSelection.route) {
+                        popUpTo(Screen.Home.route) { inclusive = true }
+                    }
+                },
+                onBack = { navController.popBackStack() }
+            )
         }
 
         // Settings screen

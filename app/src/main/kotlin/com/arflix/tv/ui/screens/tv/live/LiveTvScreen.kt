@@ -48,6 +48,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -73,6 +74,7 @@ import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.components.topBarSelectedIndex
+import com.arflix.tv.util.LocalDeviceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -113,6 +115,13 @@ fun LiveTvScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val currentUiState by rememberUpdatedState(state)
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val deviceType = LocalDeviceType.current
+    val isTouchDevice = deviceType.isTouchDevice()
+    val useTouchRail = isTouchDevice && configuration.smallestScreenWidthDp < 600
+    val compactTouchLayout = isTouchDevice && configuration.screenWidthDp < 900
+    val showTopBar = !isTouchDevice
+    val contentTopPadding = if (showTopBar) AppTopBarHeight else 0.dp
     val guideClockMillis by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
             delay(30_000L)
@@ -220,7 +229,7 @@ fun LiveTvScreen(
         }
     }
 
-    val sidebarExpanded = true
+    val sidebarExpanded = !useTouchRail
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var focusSelectedChannelSignal by remember { mutableIntStateOf(0) }
     // Full-screen playback mode — pressing OK on an EPG row expands the
@@ -338,7 +347,7 @@ fun LiveTvScreen(
     // Make sure focus lands on the EPG when the screen settles — matches the
     // spec's default-focus diagram ("mini → EPG on DPAD_DOWN").
     LaunchedEffect(enrichedState.value !== EnrichedChannels.Empty) {
-        if (enrichedState.value !== EnrichedChannels.Empty) {
+        if (!isTouchDevice && enrichedState.value !== EnrichedChannels.Empty) {
             runCatching { epgFocus.requestFocus() }
         }
     }
@@ -351,61 +360,67 @@ fun LiveTvScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(LiveColors.Bg)
-            .onPreviewKeyEvent { event ->
-                if (searchOpen || isFullScreen || event.type != KeyEventType.KeyDown) {
-                    return@onPreviewKeyEvent false
-                }
-                when (focusZone) {
-                    LiveTvFocusZone.TOPBAR -> {
-                        when (event.key) {
-                            Key.DirectionLeft -> {
-                                if (topBarFocusIndex > 0) {
-                                    topBarFocusIndex = (topBarFocusIndex - 1).coerceIn(0, maxTopBarIndex)
-                                }
-                                true
-                            }
-                            Key.DirectionRight -> {
-                                if (topBarFocusIndex < maxTopBarIndex) {
-                                    topBarFocusIndex = (topBarFocusIndex + 1).coerceIn(0, maxTopBarIndex)
-                                }
-                                true
-                            }
-                            Key.DirectionDown -> {
-                                focusZone = LiveTvFocusZone.SIDEBAR
-                                runCatching { sidebarFocus.requestFocus() }
-                                true
-                            }
-                            Key.DirectionCenter, Key.Enter -> {
-                                if (hasProfile && topBarFocusIndex == 0) {
-                                    onSwitchProfile()
-                                } else {
-                                    when (topBarFocusedItem(topBarFocusIndex, hasProfile)) {
-                                        SidebarItem.SEARCH -> onNavigateToSearch()
-                                        SidebarItem.HOME -> onNavigateToHome()
-                                        SidebarItem.WATCHLIST -> onNavigateToWatchlist()
-                                        SidebarItem.TV -> Unit
-                                        SidebarItem.SETTINGS -> onNavigateToSettings()
-                                        null -> Unit
+            .then(
+                if (!isTouchDevice) {
+                    Modifier.onPreviewKeyEvent { event ->
+                        if (searchOpen || isFullScreen || event.type != KeyEventType.KeyDown) {
+                            return@onPreviewKeyEvent false
+                        }
+                        when (focusZone) {
+                            LiveTvFocusZone.TOPBAR -> {
+                                when (event.key) {
+                                    Key.DirectionLeft -> {
+                                        if (topBarFocusIndex > 0) {
+                                            topBarFocusIndex = (topBarFocusIndex - 1).coerceIn(0, maxTopBarIndex)
+                                        }
+                                        true
                                     }
+                                    Key.DirectionRight -> {
+                                        if (topBarFocusIndex < maxTopBarIndex) {
+                                            topBarFocusIndex = (topBarFocusIndex + 1).coerceIn(0, maxTopBarIndex)
+                                        }
+                                        true
+                                    }
+                                    Key.DirectionDown -> {
+                                        focusZone = LiveTvFocusZone.SIDEBAR
+                                        runCatching { sidebarFocus.requestFocus() }
+                                        true
+                                    }
+                                    Key.DirectionCenter, Key.Enter -> {
+                                        if (hasProfile && topBarFocusIndex == 0) {
+                                            onSwitchProfile()
+                                        } else {
+                                            when (topBarFocusedItem(topBarFocusIndex, hasProfile)) {
+                                                SidebarItem.SEARCH -> onNavigateToSearch()
+                                                SidebarItem.HOME -> onNavigateToHome()
+                                                SidebarItem.WATCHLIST -> onNavigateToWatchlist()
+                                                SidebarItem.TV -> Unit
+                                                SidebarItem.SETTINGS -> onNavigateToSettings()
+                                                null -> Unit
+                                            }
+                                        }
+                                        true
+                                    }
+                                    else -> false
                                 }
-                                true
                             }
-                            else -> false
+                            LiveTvFocusZone.SIDEBAR -> {
+                                if (event.key == Key.DirectionUp) {
+                                    topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
+                                        .coerceIn(0, maxTopBarIndex)
+                                    focusZone = LiveTvFocusZone.TOPBAR
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            LiveTvFocusZone.EPG -> false
                         }
                     }
-                    LiveTvFocusZone.SIDEBAR -> {
-                        if (event.key == Key.DirectionUp) {
-                            topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
-                                .coerceIn(0, maxTopBarIndex)
-                            focusZone = LiveTvFocusZone.TOPBAR
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    LiveTvFocusZone.EPG -> false
+                } else {
+                    Modifier
                 }
-            }
+            )
     ) {
         // Content area starts below the translucent top bar so it doesn't get
         // overwritten.
@@ -441,7 +456,49 @@ fun LiveTvScreen(
             // so the two regions read as one surface instead of a hovering
             // chip row. The content itself gets an internal top padding so
             // nothing important renders under the opaque chips.
-            Row(
+            if (useTouchRail) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = contentTopPadding),
+                ) {
+                    MiniPlayerRow(
+                        exoPlayer = exoPlayer,
+                        channel = playingChannel,
+                        clockTickMillis = guideClockMillis,
+                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
+                        favoriteSet = favSet,
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TouchCategoryRail(
+                        tree = enrichedState.value.tree,
+                        selectedId = selectedCategoryId,
+                        onSelect = { id -> selectedCategoryId = id },
+                        onOpenSearch = { searchOpen = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    EpgGrid(
+                        channels = filteredChannels,
+                        clockTickMillis = guideClockMillis,
+                        nowNext = state.snapshot.nowNext,
+                        selectedChannelId = playingChannelId,
+                        focusSelectedChannelSignal = focusSelectedChannelSignal,
+                        compact = true,
+                        onChannelSelect = { channel ->
+                            if (channel.id == playingChannelId && !isFullScreen) {
+                                isFullScreen = true
+                            } else {
+                                playingChannelId = channel.id
+                            }
+                        },
+                        onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
+                        favorites = favSet,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            } else Row(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 CategorySidebar(
@@ -453,14 +510,14 @@ fun LiveTvScreen(
                     onFocusEnter = { focusZone = LiveTvFocusZone.SIDEBAR },
                     modifier = Modifier
                         .fillMaxHeight()
-                        .padding(top = AppTopBarHeight)
-                        .focusRequester(sidebarFocus),
+                        .padding(top = contentTopPadding)
+                        .then(if (!isTouchDevice) Modifier.focusRequester(sidebarFocus) else Modifier),
                 )
 
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = AppTopBarHeight),
+                        .padding(top = contentTopPadding),
                 ) {
                     MiniPlayerRow(
                         exoPlayer = exoPlayer,
@@ -469,9 +526,10 @@ fun LiveTvScreen(
                         nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
+                        compact = compactTouchLayout,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(miniFocus),
+                            .then(if (!isTouchDevice) Modifier.focusRequester(miniFocus) else Modifier),
                     )
                     EpgGrid(
                         channels = filteredChannels,
@@ -479,6 +537,7 @@ fun LiveTvScreen(
                         nowNext = state.snapshot.nowNext,
                         selectedChannelId = playingChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
+                        compact = compactTouchLayout,
                         onChannelSelect = { channel ->
                             // Two-step activation:
                             //  1st tap on a channel → tune it in the mini-
@@ -503,7 +562,7 @@ fun LiveTvScreen(
                                     focusZone = LiveTvFocusZone.EPG
                                 }
                             }
-                            .focusRequester(epgFocus),
+                            .then(if (!isTouchDevice) Modifier.focusRequester(epgFocus) else Modifier),
                     )
                 }
             }
@@ -581,7 +640,7 @@ fun LiveTvScreen(
         // Top bar only shows when NOT in full-screen playback.
         // Fade with the fullscreen progress so it doesn't pop in/out — looks
         // natural next to the grow animation below.
-        if (fsProgress < 1f) {
+        if (showTopBar && fsProgress < 1f) {
             Box(modifier = Modifier.graphicsLayer { alpha = 1f - fsProgress }) {
                 AppTopBar(
                     selectedItem = SidebarItem.TV,

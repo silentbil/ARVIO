@@ -499,6 +499,10 @@ class HomeViewModel @Inject constructor(
     private fun loadCategoriesCache(): List<Category> {
         return runCatching {
             if (!categoriesCacheFile.exists()) return emptyList()
+            if (categoriesCacheFile.length() > maxCategoriesCacheBytes) {
+                categoriesCacheFile.delete()
+                return emptyList()
+            }
             val json = categoriesCacheFile.readText()
             if (json.isBlank()) return emptyList()
             val type = com.google.gson.reflect.TypeToken
@@ -585,6 +589,8 @@ class HomeViewModel @Inject constructor(
     private var usedPreloadedData = false
 
     private val maxLogoCacheEntries = if (isLowRamDevice) 220 else 420
+    private val maxLogoCacheJsonChars = if (isLowRamDevice) 250_000 else 500_000
+    private val maxCategoriesCacheBytes = if (isLowRamDevice) 500_000L else 1_000_000L
     private val logoCacheLock = Any()
     private val logoCache = LinkedHashMap<String, String>(maxLogoCacheEntries + 32, 0.75f, true)
     private var logoCacheRevision: Long = 0L
@@ -719,20 +725,29 @@ class HomeViewModel @Inject constructor(
     private fun restoreLogoCacheFromDisk() {
         try {
             val json = logoCachePrefs.getString("urls", null) ?: return
+            if (json.length > maxLogoCacheJsonChars) {
+                logoCachePrefs.edit().remove("urls").apply()
+                return
+            }
             val map = org.json.JSONObject(json)
             val keys = map.keys()
             synchronized(logoCacheLock) {
                 while (keys.hasNext()) {
                     val key = keys.next()
                     logoCache[key] = map.getString(key)
+                    while (logoCache.size > maxLogoCacheEntries) {
+                        val eldestKey = logoCache.entries.iterator().next().key
+                        logoCache.remove(eldestKey)
+                    }
                 }
                 if (logoCache.isNotEmpty()) {
                     logoCacheRevision += 1L
                 }
             }
             System.err.println("HomeVM: restored ${logoCache.size} logo URLs from disk cache")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             System.err.println("HomeVM: failed to restore logo cache: ${e.message}")
+            runCatching { logoCachePrefs.edit().remove("urls").apply() }
         }
     }
 
@@ -807,15 +822,23 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(syncStatus = status)
             }
         }
-        // Restore logo URL cache from disk for instant clearlogos on cold start
-        restoreLogoCacheFromDisk()
-        if (logoCache.isNotEmpty()) {
-            replaceCardLogoState(snapshotLogoCache())
-            // Keep startup smooth: defer memory warmup until after initial Home rendering.
-            viewModelScope.launch {
+        // Restore logo URL cache from disk off the main thread. This used to run
+        // synchronously during HomeViewModel init, which made the profile->home
+        // transition much more likely to hitch or ANR on phones with larger caches.
+        viewModelScope.launch(Dispatchers.IO) {
+            restoreLogoCacheFromDisk()
+            val cachedLogos = snapshotLogoCache()
+            if (cachedLogos.isNotEmpty()) {
+                withContext(Dispatchers.Main) {
+                    replaceCardLogoState(cachedLogos)
+                }
+                // Keep startup smooth: defer memory warmup until after initial Home rendering.
                 delay(if (isLowRamDevice) 1_800L else 1_200L)
                 val cachedUrls = synchronized(logoCacheLock) { logoCache.values.toList() }
-                preloadLogoImages(cachedUrls.takeLast(if (isLowRamDevice) 8 else 12), batchLimit = if (isLowRamDevice) 4 else 6)
+                preloadLogoImages(
+                    cachedUrls.takeLast(if (isLowRamDevice) 8 else 12),
+                    batchLimit = if (isLowRamDevice) 4 else 6
+                )
             }
         }
 
@@ -823,21 +846,25 @@ class HomeViewModel @Inject constructor(
         // screen appears populated within 1 frame of launch — no skeleton loading
         // phase. loadHomeData() refreshes from TMDB in the background and silently
         // replaces the cached data when it arrives.
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val cachedCategories = loadCategoriesCache()
                 if (cachedCategories.isNotEmpty() && _uiState.value.categories.isEmpty()) {
                     val heroItem = chooseInitialHero(cachedCategories)
                     val heroKey = heroItem?.let { "${it.mediaType}_${it.id}" }
                     val heroLogo = heroKey?.let { getCachedLogo(it) }
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        isInitialLoad = false,
-                        categories = cachedCategories,
-                        heroItem = heroItem,
-                        heroLogoUrl = heroLogo,
-                        error = null
-                    )
+                    withContext(Dispatchers.Main) {
+                        if (_uiState.value.categories.isEmpty()) {
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                isInitialLoad = false,
+                                categories = cachedCategories,
+                                heroItem = heroItem,
+                                heroLogoUrl = heroLogo,
+                                error = null
+                            )
+                        }
+                    }
                 }
             } catch (_: Exception) {}
         }
@@ -846,7 +873,7 @@ class HomeViewModel @Inject constructor(
         // When Trakt is connected, we still use the cache for instant display but the
         // cache will only contain Trakt-sourced items after the first successful
         // resolveContinueWatchingItems call (which saves Trakt-only data to the cache).
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val dismissedKeys = runCatching {
                     traktRepository.getDismissedContinueWatchingShowKeys()
@@ -855,25 +882,6 @@ class HomeViewModel @Inject constructor(
                     dismissedKeys.contains("${item.mediaType.name}:${item.id}")
                 }
                 if (cached.isNotEmpty()) {
-                    // Set hero item IMMEDIATELY from raw CW data (before the slow
-                    // merge step) so the hero section, clear logo, and overview text
-                    // appear on the very first frame after profile selection.
-                    val rawFirstItem = cached.firstOrNull()?.toMediaItem()
-                    if (rawFirstItem != null && _uiState.value.heroItem == null) {
-                        val heroKey = "${rawFirstItem.mediaType}_${rawFirstItem.id}"
-                        val heroLogo = getCachedLogo(heroKey)
-                        if (heroLogo != null) {
-                            preloadLogoImages(listOf(heroLogo), batchLimit = 1)
-                        }
-                        mediaRepository.cacheItem(rawFirstItem)
-                        _uiState.value = _uiState.value.copy(
-                            heroItem = rawFirstItem,
-                            heroLogoUrl = heroLogo
-                        )
-                        hydrateHeroDetailsIfNeeded(rawFirstItem)
-                    }
-
-                    // Now do the slower merge with local resume data
                     val merged = mergeContinueWatchingResumeData(cached)
                     val cwCategory = Category(
                         id = "continue_watching",
@@ -881,14 +889,36 @@ class HomeViewModel @Inject constructor(
                         items = merged.map { it.toMediaItem() }
                     )
                     cwCategory.items.forEach { mediaRepository.cacheItem(it) }
-                    lastContinueWatchingItems = cwCategory.items
-                    lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
-                    val updated = _uiState.value.categories.toMutableList()
-                    val idx = updated.indexOfFirst { it.id == "continue_watching" }
-                    if (idx >= 0) updated[idx] = cwCategory else updated.add(0, cwCategory)
-                    _uiState.value = _uiState.value.copy(
-                        categories = updated
-                    )
+
+                    // Set hero item IMMEDIATELY from raw CW data (before the slow
+                    // merge step) so the hero section, clear logo, and overview text
+                    // appear on the very first frame after profile selection.
+                    val rawFirstItem = cached.firstOrNull()?.toMediaItem()
+                    val heroKey = rawFirstItem?.let { "${it.mediaType}_${it.id}" }
+                    val heroLogo = heroKey?.let { getCachedLogo(it) }
+
+                    withContext(Dispatchers.Main) {
+                        if (rawFirstItem != null && _uiState.value.heroItem == null) {
+                            if (heroLogo != null) {
+                                preloadLogoImages(listOf(heroLogo), batchLimit = 1)
+                            }
+                            mediaRepository.cacheItem(rawFirstItem)
+                            _uiState.value = _uiState.value.copy(
+                                heroItem = rawFirstItem,
+                                heroLogoUrl = heroLogo
+                            )
+                            hydrateHeroDetailsIfNeeded(rawFirstItem)
+                        }
+
+                        lastContinueWatchingItems = cwCategory.items
+                        lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
+                        val updated = _uiState.value.categories.toMutableList()
+                        val idx = updated.indexOfFirst { it.id == "continue_watching" }
+                        if (idx >= 0) updated[idx] = cwCategory else updated.add(0, cwCategory)
+                        _uiState.value = _uiState.value.copy(
+                            categories = updated
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 System.err.println("HomeVM: preload CW cache failed: ${e.message}")

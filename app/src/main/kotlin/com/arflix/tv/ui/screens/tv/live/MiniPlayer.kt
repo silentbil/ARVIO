@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -51,33 +52,69 @@ fun MiniPlayerRow(
     nowNext: IptvNowNext?,
     favoriteSet: Set<String>,
     onFavoriteToggle: (String) -> Unit,
+    compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(start = 10.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        VideoCard(exoPlayer = exoPlayer, channel = channel)
-        InfoColumn(
-            channel = channel,
-            clockTickMillis = clockTickMillis,
-            nowNext = nowNext,
-            isFavorite = channel?.id?.let { it in favoriteSet } == true,
-            onFavoriteToggle = onFavoriteToggle,
-            modifier = Modifier.weight(1f),
-        )
+    if (compact) {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            VideoCard(
+                exoPlayer = exoPlayer,
+                channel = channel,
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            InfoColumn(
+                channel = channel,
+                clockTickMillis = clockTickMillis,
+                nowNext = nowNext,
+                isFavorite = channel?.id?.let { it in favoriteSet } == true,
+                onFavoriteToggle = onFavoriteToggle,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    } else {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            VideoCard(exoPlayer = exoPlayer, channel = channel)
+            InfoColumn(
+                channel = channel,
+                clockTickMillis = clockTickMillis,
+                nowNext = nowNext,
+                isFavorite = channel?.id?.let { it in favoriteSet } == true,
+                onFavoriteToggle = onFavoriteToggle,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun VideoCard(exoPlayer: ExoPlayer, channel: EnrichedChannel?) {
+private fun VideoCard(
+    exoPlayer: ExoPlayer,
+    channel: EnrichedChannel?,
+    compact: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     Box(
-        modifier = Modifier
-            .size(LiveDims.MiniPlayerWidth, LiveDims.MiniPlayerHeight)
+        modifier = modifier
+            .then(
+                if (compact) {
+                    Modifier.aspectRatio(16f / 9f)
+                } else {
+                    Modifier.size(LiveDims.MiniPlayerWidth, LiveDims.MiniPlayerHeight)
+                }
+            )
             .clip(RoundedCornerShape(LiveDims.VideoRadius))
             .background(LiveColors.PanelDeep),
     ) {

@@ -86,11 +86,16 @@ fun EpgGrid(
     onChannelSelect: (EnrichedChannel) -> Unit,
     onChannelFavoriteToggle: (String) -> Unit,
     favorites: Set<String>,
+    compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val pxPerMin = LiveDims.EpgPxPerMinute
     val selectedChannelFocusRequester = remember { FocusRequester() }
+    val headerHeight = if (compact) 32.dp else LiveDims.EpgHeaderHeight
+    val channelColumnWidth = if (compact) 164.dp else LiveDims.EpgChannelColWidth
+    val halfHourWidth = if (compact) 96.dp else LiveDims.EpgHalfHourWidth
+    val rowHeight = if (compact) 52.dp else LiveDims.EpgRowHeight
 
     // Window: now − 30 min → now + 2 h = 2.5 h total.
     // Past is limited to 30 min so most of the ruler is future programmes
@@ -191,14 +196,14 @@ fun EpgGrid(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(LiveDims.EpgHeaderHeight)
+                .height(headerHeight)
                 .background(LiveColors.PanelDeep),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Sticky channel-column label + current CH indicator
             Row(
                 modifier = Modifier
-                    .width(LiveDims.EpgChannelColWidth)
+                    .width(channelColumnWidth)
                     .fillMaxHeight()
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -235,7 +240,7 @@ fun EpgGrid(
                     slots.forEach { slot ->
                         Box(
                             modifier = Modifier
-                                .width(LiveDims.EpgHalfHourWidth)
+                                .width(halfHourWidth)
                                 .fillMaxHeight()
                                 .padding(start = 12.dp),
                             contentAlignment = Alignment.CenterStart,
@@ -280,7 +285,7 @@ fun EpgGrid(
                 LazyColumn(
                     state = channelListState,
                     modifier = Modifier
-                        .width(LiveDims.EpgChannelColWidth)
+                        .width(channelColumnWidth)
                         .fillMaxHeight()
                         .background(LiveColors.PanelDeep),
                 ) {
@@ -298,6 +303,7 @@ fun EpgGrid(
                             stripe = idx % 2 == 1,
                             onClick = { onChannelSelect(ch) },
                             onFavoriteToggle = { onChannelFavoriteToggle(ch.id) },
+                            rowHeight = rowHeight,
                             modifier = if (ch.id == selectedChannelId) {
                                 Modifier.focusRequester(selectedChannelFocusRequester)
                             } else {
@@ -343,10 +349,11 @@ fun EpgGrid(
                                 programs = rowPrograms,
                                 clockTickMillis = clockTickMillis,
                                 windowStartMillis = windowStartMillis,
-                                totalWidth = LiveDims.EpgHalfHourWidth * slots.size,
+                                totalWidth = halfHourWidth * slots.size,
                                 pxPerMin = pxPerMin,
                                 stripe = idx % 2 == 1,
                                 isActive = ch.id == selectedChannelId,
+                                rowHeight = rowHeight,
                                 onClick = { onChannelSelect(ch) },
                             )
                         }
@@ -375,13 +382,14 @@ private fun ProgramsRow(
     pxPerMin: Int,
     stripe: Boolean,
     isActive: Boolean,
+    rowHeight: Dp,
     onClick: () -> Unit,
 ) {
     val nowMillis = clockTickMillis
     Box(
         modifier = Modifier
             .width(totalWidth)
-            .height(LiveDims.EpgRowHeight)
+            .height(rowHeight)
             .background(
                 when {
                     isActive -> LiveColors.FocusBg

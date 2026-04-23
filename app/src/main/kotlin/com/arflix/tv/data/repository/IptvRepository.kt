@@ -778,14 +778,22 @@ class IptvRepository @Inject constructor(
                 ?: resolveXtreamCredentials(config.m3uUrl)
             val hasXtreamChannels = channels.any { it.xtreamStreamId != null || it.id.startsWith("xtream:") }
             System.err.println("[EPG] loadSnapshot: forceEpgReload=$forceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamCreds=${xtreamCreds != null} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size}")
-            val nowNext = if (epgCandidates.isEmpty() && xtreamCreds == null) {
-                onProgress(IptvLoadProgress("No EPG URL configured", 90))
-                System.err.println("[EPG] No EPG URL and no Xtream creds - skipping EPG")
-                emptyMap()
-            } else if (shouldUseCachedEpg) {
+            val cachedFallbackNowNext =
+                reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()) ?: cachedNowNext
+            val nowNext = if (shouldUseCachedEpg) {
                 onProgress(IptvLoadProgress("Using cached EPG", 92))
                 System.err.println("[EPG] Using cached EPG (${cachedNowNext.size} channels, age=${(now - cachedEpgAt)/1000}s)")
-                reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()) ?: cachedNowNext
+                cachedFallbackNowNext
+            } else if (epgCandidates.isEmpty() && xtreamCreds == null) {
+                if (cachedFallbackNowNext.isNotEmpty()) {
+                    onProgress(IptvLoadProgress("Using cached EPG", 92))
+                    System.err.println("[EPG] No active EPG source, keeping cached EPG fallback (${cachedFallbackNowNext.size} channels)")
+                    cachedFallbackNowNext
+                } else {
+                    onProgress(IptvLoadProgress("No EPG URL configured", 90))
+                    System.err.println("[EPG] No EPG URL and no Xtream creds - skipping EPG")
+                    emptyMap()
+                }
             } else {
                 var resolvedNowNext: Map<String, IptvNowNext> = emptyMap()
                 var resolved = false
@@ -866,10 +874,15 @@ class IptvRepository @Inject constructor(
                 }
 
                 if (!resolved) {
-                    // Throttle repeated failures to avoid refetching every open.
-                    cachedNowNext = ConcurrentHashMap()
-                    cachedEpgAt = System.currentTimeMillis()
-                    epgUpdated = true
+                    if (cachedFallbackNowNext.isNotEmpty()) {
+                        resolvedNowNext = cachedFallbackNowNext
+                        System.err.println("[EPG] Keeping stale cached EPG fallback after refresh failure (${cachedFallbackNowNext.size} channels)")
+                    } else {
+                        // Throttle repeated failures to avoid refetching every open.
+                        cachedNowNext = ConcurrentHashMap()
+                        cachedEpgAt = System.currentTimeMillis()
+                        epgUpdated = true
+                    }
                 }
                 resolvedNowNext
             }

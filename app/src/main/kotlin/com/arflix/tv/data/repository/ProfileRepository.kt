@@ -23,6 +23,7 @@ class ProfileRepository @Inject constructor(
     private val authRepository: AuthRepository
 ) {
     private val gson = Gson()
+    private val profileListType = object : TypeToken<List<Profile>>() {}.type
 
     companion object {
         private val PROFILES_KEY = stringPreferencesKey("profiles")
@@ -33,17 +34,7 @@ class ProfileRepository @Inject constructor(
      * Flow of all profiles
      */
     val profiles: Flow<List<Profile>> = context.profilesDataStore.data.map { prefs ->
-        val json = prefs[PROFILES_KEY]
-        if (json.isNullOrBlank()) {
-            emptyList()
-        } else {
-            try {
-                val type = object : TypeToken<List<Profile>>() {}.type
-                gson.fromJson(json, type)
-            } catch (e: Exception) {
-                emptyList()
-            }
-        }
+        decodeProfiles(prefs[PROFILES_KEY])
     }
 
     /**
@@ -58,14 +49,7 @@ class ProfileRepository @Inject constructor(
      */
     val activeProfile: Flow<Profile?> = context.profilesDataStore.data.map { prefs ->
         val activeId = prefs[ACTIVE_PROFILE_KEY] ?: return@map null
-        val json = prefs[PROFILES_KEY] ?: return@map null
-        try {
-            val type = object : TypeToken<List<Profile>>() {}.type
-            val profileList: List<Profile> = gson.fromJson(json, type)
-            profileList.find { it.id == activeId }
-        } catch (e: Exception) {
-            null
-        }
+        decodeProfiles(prefs[PROFILES_KEY]).find { it.id == activeId }
     }
 
     /**
@@ -100,9 +84,9 @@ class ProfileRepository @Inject constructor(
         )
 
         context.profilesDataStore.edit { prefs ->
-            val currentList = getProfiles().toMutableList()
+            val currentList = decodeProfiles(prefs[PROFILES_KEY]).toMutableList()
             currentList.add(profile)
-            prefs[PROFILES_KEY] = gson.toJson(currentList)
+            prefs[PROFILES_KEY] = encodeProfiles(currentList)
         }
         pushProfilesStateToCloud()
 
@@ -114,11 +98,11 @@ class ProfileRepository @Inject constructor(
      */
     suspend fun updateProfile(profile: Profile) {
         context.profilesDataStore.edit { prefs ->
-            val currentList = getProfiles().toMutableList()
+            val currentList = decodeProfiles(prefs[PROFILES_KEY]).toMutableList()
             val index = currentList.indexOfFirst { it.id == profile.id }
             if (index >= 0) {
                 currentList[index] = profile
-                prefs[PROFILES_KEY] = gson.toJson(currentList)
+                prefs[PROFILES_KEY] = encodeProfiles(currentList)
             }
         }
         pushProfilesStateToCloud()
@@ -129,9 +113,9 @@ class ProfileRepository @Inject constructor(
      */
     suspend fun deleteProfile(profileId: String) {
         context.profilesDataStore.edit { prefs ->
-            val currentList = getProfiles().toMutableList()
+            val currentList = decodeProfiles(prefs[PROFILES_KEY]).toMutableList()
             currentList.removeAll { it.id == profileId }
-            prefs[PROFILES_KEY] = gson.toJson(currentList)
+            prefs[PROFILES_KEY] = encodeProfiles(currentList)
 
             // If we deleted the active profile, clear it
             if (prefs[ACTIVE_PROFILE_KEY] == profileId) {
@@ -149,11 +133,11 @@ class ProfileRepository @Inject constructor(
             prefs[ACTIVE_PROFILE_KEY] = profileId
 
             // Update lastUsedAt
-            val currentList = getProfiles().toMutableList()
+            val currentList = decodeProfiles(prefs[PROFILES_KEY]).toMutableList()
             val index = currentList.indexOfFirst { it.id == profileId }
             if (index >= 0) {
                 currentList[index] = currentList[index].copy(lastUsedAt = System.currentTimeMillis())
-                prefs[PROFILES_KEY] = gson.toJson(currentList)
+                prefs[PROFILES_KEY] = encodeProfiles(currentList)
             }
         }
         pushProfilesStateToCloud()
@@ -206,5 +190,18 @@ class ProfileRepository @Inject constructor(
             name = "Profile 1",
             avatarColor = ProfileColors.colors[0]
         )
+    }
+
+    private fun decodeProfiles(json: String?): List<Profile> {
+        if (json.isNullOrBlank()) return emptyList()
+        return try {
+            gson.fromJson<List<Profile>>(json, profileListType) ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun encodeProfiles(profiles: List<Profile>): String {
+        return gson.toJson(profiles, profileListType)
     }
 }

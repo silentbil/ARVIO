@@ -66,6 +66,7 @@ fun ChannelRow(
     stripe: Boolean = false,
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit,
+    rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -89,7 +90,7 @@ fun ChannelRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(LiveDims.EpgRowHeight)
+            .height(rowHeight)
             .graphicsLayer {
                 scaleX = animatedScale
                 scaleY = animatedScale

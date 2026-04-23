@@ -17,12 +17,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class ProfileUiState(
     val profiles: List<Profile> = emptyList(),
     val activeProfile: Profile? = null,
     val isLoading: Boolean = true,
+    val isSwitchingProfile: Boolean = false,
     val isManageMode: Boolean = false,
     // Add profile dialog state
     val showAddDialog: Boolean = false,
@@ -89,45 +91,55 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun selectProfile(profile: Profile) {
-        // CRITICAL: Clear ALL profile caches BEFORE switching to ensure complete isolation
-        // This prevents Profile 1's Trakt data from showing in Profile 2
-        traktRepository.clearAllProfileCaches()
-        watchlistRepository.clearWatchlistCache()
-        iptvRepository.invalidateCache()
+        if (_uiState.value.isSwitchingProfile) return
 
-        // Update ProfileManager's cache with the new profile ID
-        // This ensures all profile-scoped keys use the correct prefix immediately
-        profileManager.setCurrentProfileId(profile.id)
-        profileManager.setCurrentProfileName(profile.name)
-
-        // Activate preloaded cache for instant Continue Watching display
-        // This transfers any preloaded data to the active cache before HomeViewModel loads
-        traktRepository.activatePreloadedCache(profile.id)
-
-        // Persist the active profile selection
         viewModelScope.launch {
-            profileRepository.setActiveProfile(profile.id)
-        }
+            _uiState.value = _uiState.value.copy(isSwitchingProfile = true)
+            try {
+                withContext(Dispatchers.Default) {
+                    // CRITICAL: Clear ALL profile caches BEFORE switching to ensure complete isolation.
+                    // Keep this off the main thread; some profiles carry enough data here to stall
+                    // touch devices during the profile tap transition.
+                    traktRepository.clearAllProfileCaches()
+                    watchlistRepository.clearWatchlistCache()
+                    iptvRepository.invalidateCache()
+                }
 
-        // Push current state before switching, then pull cloud state for the new profile.
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { cloudSyncRepository.pushToCloud() }
-            delay(1_000L)
-            if (profileRepository.getActiveProfileId() != profile.id) return@launch
-            runCatching { cloudSyncRepository.pullFromCloud() }
-        }
+                // Update ProfileManager cache immediately so profile-scoped keys are correct
+                // for any work started after selection.
+                profileManager.setCurrentProfileId(profile.id)
+                profileManager.setCurrentProfileName(profile.name)
 
-        // Defer IPTV warmup/network parse to keep initial Home navigation smooth.
-        viewModelScope.launch(Dispatchers.IO) {
-            delay(6_000L)
-            if (profileRepository.getActiveProfileId() != profile.id) return@launch
-            runCatching {
-                iptvRepository.warmupFromCacheOnly()
-                // Trigger a non-forced background refresh after startup settles.
-                iptvRepository.loadSnapshot(
-                    forcePlaylistReload = false,
-                    forceEpgReload = false
-                )
+                // Activate any preloaded Continue Watching cache for instant Home population.
+                traktRepository.activatePreloadedCache(profile.id)
+
+                // Persist the active profile before the UI navigates away.
+                withContext(Dispatchers.IO) {
+                    profileRepository.setActiveProfile(profile.id)
+                }
+
+                // Push current state before switching, then pull cloud state for the new profile.
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching { cloudSyncRepository.pushToCloud() }
+                    delay(1_000L)
+                    if (profileRepository.getActiveProfileId() != profile.id) return@launch
+                    runCatching { cloudSyncRepository.pullFromCloud() }
+                }
+
+                // Defer IPTV warmup/network parse to keep initial Home navigation smooth.
+                viewModelScope.launch(Dispatchers.IO) {
+                    delay(6_000L)
+                    if (profileRepository.getActiveProfileId() != profile.id) return@launch
+                    runCatching {
+                        iptvRepository.warmupFromCacheOnly()
+                        iptvRepository.loadSnapshot(
+                            forcePlaylistReload = false,
+                            forceEpgReload = false
+                        )
+                    }
+                }
+            } finally {
+                _uiState.value = _uiState.value.copy(isSwitchingProfile = false)
             }
         }
     }

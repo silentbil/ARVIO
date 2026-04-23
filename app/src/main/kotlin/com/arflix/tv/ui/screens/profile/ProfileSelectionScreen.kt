@@ -104,8 +104,13 @@ fun ProfileSelectionScreen(
     }
 
     // Navigate when activeProfile changes after user selection
-    LaunchedEffect(uiState.activeProfile?.id) {
-        if (navigateTriggered && uiState.activeProfile != null && !uiState.isManageMode) {
+    LaunchedEffect(uiState.activeProfile?.id, uiState.isSwitchingProfile) {
+        if (
+            navigateTriggered &&
+            uiState.activeProfile != null &&
+            !uiState.isManageMode &&
+            !uiState.isSwitchingProfile
+        ) {
             onProfileSelected()
         }
     }
@@ -192,11 +197,11 @@ fun ProfileSelectionScreen(
                             avatarSize = avatarSize,
                             modifier = Modifier.focusRequester(focusRequesters[index]),
                             onClick = {
+                                if (uiState.isSwitchingProfile) return@ProfileAvatar
                                 if (uiState.isManageMode) {
                                     viewModel.showEditDialog(profile)
                                 } else {
                                     if (uiState.activeProfile?.id == profile.id) {
-                                        viewModel.selectProfile(profile)
                                         onProfileSelected()
                                     } else {
                                         navigateTriggered = true
@@ -235,13 +240,12 @@ fun ProfileSelectionScreen(
                             modifier = Modifier.focusRequester(focusRequesters[index]),
                             onClick = {
                                 // Guard against stray Enter key events from previous screen
-                                if (!isReadyForInput) return@ProfileAvatar
+                                if (!isReadyForInput || uiState.isSwitchingProfile) return@ProfileAvatar
 
                                 if (uiState.isManageMode) {
                                     viewModel.showEditDialog(profile)
                                 } else {
                                     if (uiState.activeProfile?.id == profile.id) {
-                                        viewModel.selectProfile(profile)
                                         onProfileSelected()
                                     } else {
                                         navigateTriggered = true
@@ -263,7 +267,7 @@ fun ProfileSelectionScreen(
                         AddProfileButton(
                             avatarSize = avatarSize,
                             modifier = Modifier.focusRequester(focusRequesters[uiState.profiles.size]),
-                            onClick = { if (isReadyForInput) viewModel.showAddDialog() }
+                            onClick = { if (isReadyForInput && !uiState.isSwitchingProfile) viewModel.showAddDialog() }
                         )
                     }
                 }
@@ -274,7 +278,11 @@ fun ProfileSelectionScreen(
             // Manage Profiles button
             ManageProfilesButton(
                 isManageMode = uiState.isManageMode,
-                onClick = { if (isTouchDevice || isReadyForInput) viewModel.toggleManageMode() }
+                onClick = {
+                    if ((isTouchDevice || isReadyForInput) && !uiState.isSwitchingProfile) {
+                        viewModel.toggleManageMode()
+                    }
+                }
             )
 
             if (!isCloudConnected) {
@@ -282,7 +290,21 @@ fun ProfileSelectionScreen(
 
                 // Cloud connect button — focusable on TV, tappable on mobile
                 CloudConnectButton(
-                    onClick = { if (isTouchDevice || isReadyForInput) onConnectCloud() }
+                    onClick = {
+                        if ((isTouchDevice || isReadyForInput) && !uiState.isSwitchingProfile) {
+                            onConnectCloud()
+                        }
+                    }
+                )
+            }
+
+            if (uiState.isSwitchingProfile) {
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "Loading profile...",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.72f)
                 )
             }
         }
