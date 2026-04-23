@@ -1647,6 +1647,16 @@ class SettingsViewModel @Inject constructor(
 
                         val tokenImport = authRepository.signInWithSessionTokens(access, refresh)
                         if (tokenImport.isSuccess) {
+                            // TV auth previously stopped at token import, relying only on
+                            // auth-state observation for restore. On slower networks/session
+                            // propagation this could fail once and never retry, leaving a
+                            // freshly signed-in device with empty addons/settings/CW.
+                            var restoreResult = restoreCloudStateToLocalInternal(silent = true)
+                            if (restoreResult == CloudRestoreResult.FAILED) {
+                                delay(1200)
+                                restoreResult = restoreCloudStateToLocalInternal(silent = true)
+                            }
+
                             clearCloudAuthSession(cancelPolling = false)
                             pendingProfileSwitchAfterCloudLogin = true
                             _uiState.value = _uiState.value.copy(
@@ -1655,8 +1665,15 @@ class SettingsViewModel @Inject constructor(
                                 showCloudEmailPasswordDialog = false,
                                 cloudUserCode = null,
                                 cloudVerificationUrl = null,
-                                toastMessage = "Signed in successfully",
-                                toastType = ToastType.SUCCESS
+                                toastMessage = when (restoreResult) {
+                                    CloudRestoreResult.RESTORED -> "Signed in and restored from cloud"
+                                    CloudRestoreResult.NO_BACKUP -> "Signed in successfully"
+                                    CloudRestoreResult.FAILED -> "Signed in, but cloud restore failed"
+                                },
+                                toastType = when (restoreResult) {
+                                    CloudRestoreResult.FAILED -> ToastType.ERROR
+                                    else -> ToastType.SUCCESS
+                                }
                             )
                             return@launch
                         } else {
@@ -1777,6 +1794,59 @@ class SettingsViewModel @Inject constructor(
         if (!_uiState.value.isLoggedIn) return
         viewModelScope.launch {
             restoreCloudStateToLocalInternal(silent = silent)
+        }
+    }
+
+    fun forceCloudSyncNow() {
+        if (!_uiState.value.isLoggedIn || authRepository.getCurrentUserId().isNullOrBlank()) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Sign in to ARVIO Cloud first",
+                toastType = ToastType.INFO
+            )
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Forcing cloud sync...",
+                toastType = ToastType.INFO
+            )
+
+            // Push local state first, then pull remote state so this device ends
+            // with the server-authoritative snapshot after upload.
+            var pushResult = cloudSyncRepository.pushToCloud()
+            if (pushResult.isFailure) {
+                delay(1200)
+                pushResult = cloudSyncRepository.pushToCloud()
+            }
+            if (pushResult.isFailure) {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = pushResult.exceptionOrNull()?.message ?: "Cloud sync failed while uploading",
+                    toastType = ToastType.ERROR
+                )
+                return@launch
+            }
+
+            val restoreResult = restoreCloudStateToLocalInternal(silent = true)
+            if (restoreResult == CloudRestoreResult.FAILED) {
+                delay(1200)
+            }
+            val finalRestoreResult = if (restoreResult == CloudRestoreResult.FAILED) {
+                restoreCloudStateToLocalInternal(silent = true)
+            } else restoreResult
+
+            _uiState.value = _uiState.value.copy(
+                toastMessage = when (finalRestoreResult) {
+                    CloudRestoreResult.RESTORED -> "Cloud sync complete"
+                    CloudRestoreResult.NO_BACKUP -> "Cloud sync complete (no backup to restore)"
+                    CloudRestoreResult.FAILED -> "Upload complete, but restore failed"
+                },
+                toastType = if (finalRestoreResult == CloudRestoreResult.FAILED) {
+                    ToastType.ERROR
+                } else {
+                    ToastType.SUCCESS
+                }
+            )
         }
     }
 
