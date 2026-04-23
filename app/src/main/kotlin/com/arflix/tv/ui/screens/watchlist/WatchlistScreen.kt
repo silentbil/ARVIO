@@ -63,6 +63,7 @@ import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.ToastType as ComponentToastType
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundDark
 import com.arflix.tv.ui.theme.Pink
@@ -362,6 +363,7 @@ fun WatchlistScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(gridFocusRequester)
+                                .arvioDpadFocusGroup()
                                 .onFocusChanged { 
                                     if (it.hasFocus) {
                                         isSidebarFocused = false

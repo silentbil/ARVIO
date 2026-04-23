@@ -63,6 +63,10 @@ class CloudSyncRepository @Inject constructor(
     var isPushDirty: Boolean = false
         private set
 
+    fun markLocalStateDirty() {
+        isPushDirty = true
+    }
+
     enum class RestoreResult { RESTORED, NO_BACKUP, FAILED }
 
     // ── Data class for per-profile settings stored in cloud ──
@@ -256,10 +260,28 @@ class CloudSyncRepository @Inject constructor(
         // Addons per profile
         val addonsByProfile = buildMap<String, List<Addon>> {
             profiles.forEach { profile ->
-                put(profile.id, streamRepository.getAddonsForProfile(profile.id))
+                put(
+                    profile.id,
+                    sanitizeAddonsForCloudSync(streamRepository.getAddonsForProfile(profile.id))
+                )
             }
         }
         root.put("addonsByProfile", JSONObject(gson.toJson(addonsByProfile)))
+
+        val cloudstreamRepositoriesByProfile = buildMap<String, List<CloudstreamRepositoryRecord>> {
+            profiles.forEach { profile ->
+                val repositories = streamRepository.getCloudstreamRepositoriesForProfile(profile.id)
+                val addons = addonsByProfile[profile.id].orEmpty()
+                put(
+                    profile.id,
+                    mergeCloudstreamRepositoriesFromAddons(repositories, addons)
+                )
+            }
+        }
+        root.put(
+            "cloudstreamRepositoriesByProfile",
+            JSONObject(gson.toJson(cloudstreamRepositoriesByProfile))
+        )
 
         // Catalogs per profile
         val catalogsByProfile = buildMap<String, List<CatalogConfig>> {
@@ -464,6 +486,26 @@ class CloudSyncRepository @Inject constructor(
                 val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
                 if (addons.isNotEmpty()) {
                     streamRepository.replaceAddonsForProfile(activeProfileId, addons)
+                }
+            }
+        }
+
+        root.optJSONObject("cloudstreamRepositoriesByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+            val type = object : TypeToken<Map<String, List<CloudstreamRepositoryRecord>>>() {}.type
+            val map: Map<String, List<CloudstreamRepositoryRecord>> = gson.fromJson(json, type) ?: emptyMap()
+            map.forEach { (profileId, repositories) ->
+                val merged = mergeCloudstreamRepositoriesFromAddons(repositories, emptyList())
+                streamRepository.replaceCloudstreamRepositoriesForProfile(profileId, merged)
+            }
+        } ?: run {
+            root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = object : TypeToken<Map<String, List<Addon>>>() {}.type
+                val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
+                map.forEach { (profileId, addons) ->
+                    val recoveredRepositories = mergeCloudstreamRepositoriesFromAddons(emptyList(), addons)
+                    if (recoveredRepositories.isNotEmpty()) {
+                        streamRepository.replaceCloudstreamRepositoriesForProfile(profileId, recoveredRepositories)
+                    }
                 }
             }
         }

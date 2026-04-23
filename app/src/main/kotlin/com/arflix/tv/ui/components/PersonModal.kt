@@ -65,6 +65,7 @@ import coil.compose.AsyncImage
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.PersonDetails
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundDark
 import com.arflix.tv.ui.theme.Pink
@@ -326,6 +327,7 @@ fun PersonModal(
                             // Horizontal cards like homepage
                             TvLazyRow(
                                 state = knownForListState,
+                                modifier = Modifier.arvioDpadFocusGroup(),
                                 contentPadding = PaddingValues(end = 24.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
@@ -472,6 +474,7 @@ private fun MobilePersonContent(
             )
             Spacer(modifier = Modifier.height(12.dp))
             LazyRow(
+                modifier = Modifier.arvioDpadFocusGroup(),
                 contentPadding = PaddingValues(end = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {

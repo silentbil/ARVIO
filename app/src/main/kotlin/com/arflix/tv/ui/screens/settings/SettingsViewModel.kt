@@ -1015,6 +1015,7 @@ class SettingsViewModel @Inject constructor(
                     toastMessage = "Loaded ${plugins.size} Cloudstream plugins from ${manifest.name}",
                     toastType = ToastType.SUCCESS
                 )
+                syncLocalStateToCloud(silent = true)
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     toastMessage = error.message?.takeIf { it.isNotBlank() } ?: "Failed to load Cloudstream repository",
@@ -1048,9 +1049,6 @@ class SettingsViewModel @Inject constructor(
                 val addonsAfterInstall = streamRepository.installedAddons.first()
                 _uiState.value = _uiState.value.copy(
                     addons = addonsAfterInstall,
-                    pendingCloudstreamManifest = null,
-                    pendingCloudstreamRepoUrl = null,
-                    pendingCloudstreamPlugins = emptyList(),
                     toastMessage = "Installed ${addon.name}",
                     toastType = ToastType.SUCCESS
                 )
@@ -1073,6 +1071,7 @@ class SettingsViewModel @Inject constructor(
                     toastMessage = suffix,
                     toastType = ToastType.SUCCESS
                 )
+                syncLocalStateToCloud(silent = true)
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     toastMessage = error.message?.takeIf { it.isNotBlank() } ?: "Failed to refresh Cloudstream repository",
@@ -1749,6 +1748,7 @@ class SettingsViewModel @Inject constructor(
     fun syncLocalStateToCloud(silent: Boolean = false, force: Boolean = false) {
         if (!force && !_uiState.value.isLoggedIn) return
         if (authRepository.getCurrentUserId().isNullOrBlank()) return
+        cloudSyncRepository.markLocalStateDirty()
         viewModelScope.launch {
             // Small delay to ensure DataStore writes from the caller have flushed
             // before we snapshot all profiles for cloud upload.

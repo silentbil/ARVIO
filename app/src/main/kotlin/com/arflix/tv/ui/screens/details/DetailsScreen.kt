@@ -128,6 +128,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
@@ -1240,6 +1241,7 @@ private fun DetailsContent(
                 // Episodes LazyRow (outside the inner Column to allow independent horizontal scroll)
                 if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
                     LazyRow(
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -1273,6 +1275,7 @@ private fun DetailsContent(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                     LazyRow(
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
@@ -1306,6 +1309,7 @@ private fun DetailsContent(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                     LazyRow(
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -1341,6 +1345,7 @@ private fun DetailsContent(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                     LazyRow(
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -1796,6 +1801,7 @@ private fun DetailsContent(
                 .fillMaxWidth()
                 .height(contentRowHeight)
                 .padding(start = 24.dp, bottom = contentRowBottomPadding)
+                .arvioDpadFocusGroup()
                 .clipToBounds(),  // Clip content to prevent overlay on hero
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(top = 12.dp)
@@ -1824,6 +1830,7 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = seasonRowState,
+                            modifier = Modifier.arvioDpadFocusGroup(),
                             contentPadding = PaddingValues(start = contentStartPadding, end = 150.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -1862,6 +1869,7 @@ private fun DetailsContent(
 
                     TvLazyRow(
                         state = episodeRowState,
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = contentStartPadding, end = 520.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
@@ -1909,6 +1917,7 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = castRowState,
+                            modifier = Modifier.arvioDpadFocusGroup(),
                             contentPadding = PaddingValues(start = contentStartPadding, end = 120.dp),  // 90dp card + 30dp margin
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
@@ -1956,6 +1965,7 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = reviewRowState,
+                            modifier = Modifier.arvioDpadFocusGroup(),
                             contentPadding = PaddingValues(start = contentStartPadding, end = 350.dp),  // 320dp card + 30dp margin
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
@@ -2002,6 +2012,7 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = similarRowState,
+                            modifier = Modifier.arvioDpadFocusGroup(),
                             contentPadding = PaddingValues(
                                 start = contentStartPadding,
                                 end = if (usePosterCards) 140.dp else 210.dp

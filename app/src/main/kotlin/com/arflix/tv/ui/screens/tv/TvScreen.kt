@@ -3,20 +3,28 @@
 
 package com.arflix.tv.ui.screens.tv
 
+import android.content.Context
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.onKeyEvent
@@ -44,10 +52,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LiveTv
@@ -68,6 +72,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -116,6 +121,7 @@ import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.AccentGreen
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundCard
@@ -126,12 +132,52 @@ import com.arflix.tv.ui.theme.TextSecondary
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 private enum class TvFocusZone {
     SIDEBAR,
     GROUPS,
     GUIDE
+}
+
+private fun String.toTvFocusZone(
+    hasGroups: Boolean,
+    hasChannels: Boolean
+): TvFocusZone = when (uppercase()) {
+    TvFocusZone.SIDEBAR.name -> if (hasGroups) TvFocusZone.GROUPS else TvFocusZone.SIDEBAR
+    TvFocusZone.GROUPS.name -> if (hasGroups) TvFocusZone.GROUPS else TvFocusZone.SIDEBAR
+    else -> when {
+        hasChannels -> TvFocusZone.GUIDE
+        hasGroups -> TvFocusZone.GROUPS
+        else -> TvFocusZone.SIDEBAR
+    }
+}
+
+private fun createTvExoPlayer(
+    context: Context,
+    mediaSourceFactory: DefaultMediaSourceFactory
+): ExoPlayer {
+    val loadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            20_000,
+            120_000,
+            1_000,
+            3_000
+        )
+        .setTargetBufferBytes(80 * 1024 * 1024)
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .setBackBuffer(10_000, true)
+        .build()
+
+    return ExoPlayer.Builder(context)
+        .setMediaSourceFactory(mediaSourceFactory)
+        .setLoadControl(loadControl)
+        .build()
+        .apply {
+            playWhenReady = true
+            videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+        }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -167,6 +213,36 @@ fun TvScreen(
     var showFullscreenOverlay by remember { mutableStateOf(false) }
     var fullscreenOverlayTrigger by remember { mutableStateOf(0L) } // timestamp to reset auto-hide timer
     var centerDownAtMs by remember { mutableStateOf<Long?>(null) }
+    var lastNavigationAt by remember { mutableLongStateOf(0L) }
+    var restoredSessionAt by rememberSaveable { mutableLongStateOf(0L) }
+    var isFastNavigating by remember { mutableStateOf(false) }
+    val rootFocusRequester = remember { FocusRequester() }
+    var rootHasFocus by remember { mutableStateOf(false) }
+    val focusRecoveryDelayMs = 180L
+
+    LaunchedEffect(Unit) {
+        runCatching { rootFocusRequester.requestFocus() }
+    }
+    LaunchedEffect(rootHasFocus, showGroupContextMenu) {
+        if (rootHasFocus || showGroupContextMenu) return@LaunchedEffect
+        delay(focusRecoveryDelayMs)
+        if (!rootHasFocus && !showGroupContextMenu) {
+            runCatching { rootFocusRequester.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(lastNavigationAt) {
+        val anchor = lastNavigationAt
+        if (anchor <= 0L) {
+            isFastNavigating = false
+            return@LaunchedEffect
+        }
+        isFastNavigating = true
+        delay(180L)
+        if (lastNavigationAt == anchor) {
+            isFastNavigating = false
+        }
+    }
 
     BackHandler(enabled = isMobile && isFullScreen) {
         if (showFullscreenOverlay) {
@@ -181,13 +257,20 @@ fun TvScreen(
     val groupsListState = rememberLazyListState()
     val channelsListState = rememberLazyListState()
     val contentTopPadding = (AppTopBarContentTopInset - 14.dp).coerceAtLeast(52.dp)
+    val markNavigation = remember {
+        { lastNavigationAt = SystemClock.elapsedRealtime() }
+    }
 
-    val groups by remember(uiState.snapshot.grouped, uiState.snapshot.favoriteGroups, uiState.snapshot.favoriteChannels) {
-        derivedStateOf { uiState.groups() }
+    val groups = uiState.groups
+    val favoriteGroups by remember(uiState.snapshot.favoriteGroups) {
+        derivedStateOf { uiState.snapshot.favoriteGroups.toSet() }
+    }
+    val favoriteChannels by remember(uiState.snapshot.favoriteChannels) {
+        derivedStateOf { uiState.snapshot.favoriteChannels.toSet() }
     }
     val safeGroupIndex = groupIndex.coerceIn(0, (groups.size - 1).coerceAtLeast(0))
     val selectedGroup = groups.getOrNull(safeGroupIndex).orEmpty()
-    val channels = uiState.filteredChannels(selectedGroup)
+    val channels = uiState.channelsByGroup[selectedGroup].orEmpty()
     val safeChannelIndex = channelIndex.coerceIn(0, (channels.size - 1).coerceAtLeast(0))
     val selectedChannel = selectedChannelId?.let { uiState.channelLookup[it] }
     // Actual playback should be driven by the currently playing channel first.
@@ -202,6 +285,14 @@ fun TvScreen(
         if (initialChannelId != null && uiState.snapshot.channels.isNotEmpty()) {
             val channel = uiState.channelLookup[initialChannelId]
             if (channel != null) {
+                val restoredGroupIndex = groups.indexOfFirst { groupName ->
+                    uiState.channelsByGroup[groupName].orEmpty().any { it.id == channel.id }
+                }
+                if (restoredGroupIndex >= 0) {
+                    groupIndex = restoredGroupIndex
+                    val restoredChannels = uiState.channelsByGroup[groups[restoredGroupIndex]].orEmpty()
+                    channelIndex = restoredChannels.indexOfFirst { it.id == channel.id }.coerceAtLeast(0)
+                }
                 selectedChannelId = channel.id
                 // Only set playingChannelId if not already playing (instant start already did it)
                 if (playingChannelId != channel.id) {
@@ -210,6 +301,49 @@ fun TvScreen(
                 isFullScreen = true
             }
         }
+    }
+
+    LaunchedEffect(uiState.tvSession.lastOpenedAt, uiState.snapshot.channels.size, initialChannelId, initialStreamUrl) {
+        if (initialChannelId != null || initialStreamUrl != null) return@LaunchedEffect
+        val session = uiState.tvSession
+        if (session.lastOpenedAt <= 0L || restoredSessionAt == session.lastOpenedAt || uiState.snapshot.channels.isEmpty()) {
+            return@LaunchedEffect
+        }
+
+        val restoredGroupIndex = when {
+            session.lastGroupName.isNotBlank() -> groups.indexOf(session.lastGroupName)
+            session.lastChannelId.isNotBlank() -> groups.indexOfFirst { groupName ->
+                uiState.channelsByGroup[groupName].orEmpty().any { it.id == session.lastChannelId }
+            }
+            else -> -1
+        }.coerceAtLeast(0)
+
+        val effectiveGroupIndex = if (groups.isNotEmpty()) {
+            restoredGroupIndex.coerceIn(0, groups.lastIndex)
+        } else {
+            0
+        }
+        if (groups.isNotEmpty()) {
+            groupIndex = effectiveGroupIndex
+        }
+        val restoredGroup = groups.getOrNull(effectiveGroupIndex).orEmpty()
+        val restoredChannels = uiState.channelsByGroup[restoredGroup].orEmpty()
+        val restoredChannelIndex = if (session.lastChannelId.isNotBlank()) {
+            restoredChannels.indexOfFirst { it.id == session.lastChannelId }
+        } else {
+            -1
+        }
+        if (restoredChannels.isNotEmpty()) {
+            channelIndex = restoredChannelIndex.takeIf { it >= 0 } ?: 0
+            val targetChannel = restoredChannels.getOrNull(channelIndex) ?: restoredChannels.first()
+            selectedChannelId = targetChannel.id
+            playingChannelId = targetChannel.id
+        }
+        focusZone = session.lastFocusedZone.toTvFocusZone(
+            hasGroups = groups.isNotEmpty(),
+            hasChannels = restoredChannels.isNotEmpty()
+        )
+        restoredSessionAt = session.lastOpenedAt
     }
 
     LaunchedEffect(groups.size) {
@@ -246,6 +380,30 @@ fun TvScreen(
             groupIndex = 1
         }
     }
+    LaunchedEffect(selectedGroup, channels.size, selectedChannelId, playingChannelId) {
+        if (selectedGroup.isBlank() || channels.isEmpty()) return@LaunchedEffect
+        viewModel.prefetchVisibleCategoryEpg(
+            channelIds = channels.map { it.id },
+            selectedChannelId = playingChannelId ?: selectedChannelId
+        )
+    }
+    LaunchedEffect(playingChannelId) {
+        val currentChannelId = playingChannelId ?: return@LaunchedEffect
+        viewModel.rememberTvSession(
+            lastChannelId = currentChannelId,
+            lastGroupName = selectedGroup,
+            lastFocusedZone = if (isFullScreen) TvFocusZone.GUIDE.name else focusZone.name,
+            markOpened = true
+        )
+    }
+    LaunchedEffect(selectedGroup, focusZone, selectedChannelId, isFullScreen) {
+        if (selectedGroup.isBlank() && selectedChannelId == null && playingChannelId == null) return@LaunchedEffect
+        viewModel.rememberTvSession(
+            lastChannelId = playingChannelId ?: selectedChannelId,
+            lastGroupName = selectedGroup,
+            lastFocusedZone = if (isFullScreen) TvFocusZone.GUIDE.name else focusZone.name
+        )
+    }
 
     // OkHttp with connection pooling for faster channel switching
     val iptvHttpClient = remember {
@@ -277,27 +435,7 @@ fun TvScreen(
     // Track whether ExoPlayer has been released to guard against post-dispose calls
     var isPlayerReleased by remember { mutableStateOf(false) }
 
-    val exoPlayer = remember {
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                20_000,    // minBufferMs — keep a healthy safety buffer for live streams
-                120_000,   // maxBufferMs — 2 min ahead to survive brief IPTV server hiccups
-                1_000,     // bufferForPlaybackMs — fast initial start
-                3_000      // bufferForPlaybackAfterRebufferMs — resume quickly after stall
-            )
-            .setTargetBufferBytes(80 * 1024 * 1024)
-            .setPrioritizeTimeOverSizeThresholds(true) // prioritize time buffer for live continuity
-            .setBackBuffer(10_000, true)
-            .build()
-
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(iptvDefaultFactory)
-            .setLoadControl(loadControl)
-            .build().apply {
-                playWhenReady = true
-                videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-            }
-    }
+    var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
 
     var miniPlayerView by remember { mutableStateOf<PlayerView?>(null) }
     var fullPlayerView by remember { mutableStateOf<PlayerView?>(null) }
@@ -309,7 +447,8 @@ fun TvScreen(
     DisposableEffect(Unit) {
         onDispose {
             isPlayerReleased = true
-            exoPlayer.release()
+            exoPlayer?.release()
+            exoPlayer = null
         }
     }
 
@@ -318,8 +457,8 @@ fun TvScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> exoPlayer.pause()
-                Lifecycle.Event.ON_RESUME -> if (playingChannelId != null) exoPlayer.play()
+                Lifecycle.Event.ON_PAUSE -> exoPlayer?.pause()
+                Lifecycle.Event.ON_RESUME -> if (playingChannelId != null) exoPlayer?.play()
                 else -> {}
             }
         }
@@ -329,9 +468,10 @@ fun TvScreen(
 
     // Helper: prepare ExoPlayer with a stream URL (shared by normal play + error retry)
     fun prepareStream(stream: String) {
+        val player = exoPlayer ?: return
         if (isPlayerReleased) return
-        exoPlayer.stop()
-        exoPlayer.clearMediaItems()
+        player.stop()
+        player.clearMediaItems()
         val mediaItem = MediaItem.Builder()
             .setUri(stream)
             .setLiveConfiguration(
@@ -344,12 +484,12 @@ fun TvScreen(
             .build()
         val streamLower = stream.lowercase()
         if (streamLower.contains(".m3u8") || streamLower.contains("/hls") || streamLower.contains("format=hls")) {
-            exoPlayer.setMediaSource(iptvHlsFactory.createMediaSource(mediaItem))
+            player.setMediaSource(iptvHlsFactory.createMediaSource(mediaItem))
         } else {
-            exoPlayer.setMediaItem(mediaItem)
+            player.setMediaItem(mediaItem)
         }
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
+        player.prepare()
+        player.playWhenReady = true
     }
 
     // Track the last stream URL prepared to avoid redundant prepareStream calls
@@ -362,6 +502,9 @@ fun TvScreen(
             playingChannelId = initialChannelId
             isFullScreen = true
             lastPreparedStreamUrl = initialStreamUrl
+            if (exoPlayer == null) {
+                exoPlayer = createTvExoPlayer(context, iptvDefaultFactory)
+            }
             prepareStream(initialStreamUrl)
         }
     }
@@ -380,12 +523,16 @@ fun TvScreen(
             }
         }
         if (stream == lastPreparedStreamUrl) return@LaunchedEffect
+        if (exoPlayer == null) {
+            exoPlayer = createTvExoPlayer(context, iptvDefaultFactory)
+        }
         lastPreparedStreamUrl = stream
         playerRetryCount = 0
         prepareStream(stream)
     }
 
-    LaunchedEffect(isFullScreen, miniPlayerView, fullPlayerView) {
+    LaunchedEffect(isFullScreen, miniPlayerView, fullPlayerView, exoPlayer) {
+        val player = exoPlayer ?: return@LaunchedEffect
         if (isPlayerReleased) return@LaunchedEffect
         if (isFullScreen) {
             miniPlayerView?.player = null
@@ -394,7 +541,7 @@ fun TvScreen(
             targetView.postDelayed({
                 if (!isPlayerReleased) {
                     targetView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    targetView.player = exoPlayer
+                    targetView.player = player
                     targetView.requestLayout()
                     targetView.invalidate()
                 }
@@ -405,7 +552,7 @@ fun TvScreen(
             targetView.postDelayed({
                 if (!isPlayerReleased) {
                     targetView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    targetView.player = exoPlayer
+                    targetView.player = player
                     targetView.requestLayout()
                     targetView.invalidate()
                 }
@@ -414,6 +561,7 @@ fun TvScreen(
     }
 
     DisposableEffect(exoPlayer) {
+        val player = exoPlayer ?: return@DisposableEffect onDispose { }
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 if (isPlayerReleased) return
@@ -424,7 +572,7 @@ fun TvScreen(
                     System.err.println("[IPTV] Playback failed after 3 retries: ${error.message} URL=$stream")
                     return
                 }
-                exoPlayer.clearMediaItems()
+                player.clearMediaItems()
                 val mediaItem = MediaItem.Builder()
                     .setUri(stream)
                     .setLiveConfiguration(
@@ -435,9 +583,9 @@ fun TvScreen(
                             .build()
                     )
                     .build()
-                exoPlayer.setMediaItem(mediaItem)
-                exoPlayer.prepare()
-                exoPlayer.playWhenReady = true
+                player.setMediaItem(mediaItem)
+                player.prepare()
+                player.playWhenReady = true
             }
             override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                 if (isPlayerReleased) return
@@ -451,15 +599,22 @@ fun TvScreen(
                 }
             }
         }
-        exoPlayer.addListener(listener)
-        onDispose { exoPlayer.removeListener(listener) }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(BackgroundDark)
+            .focusRequester(rootFocusRequester)
             .focusable()
+            .onFocusChanged {
+                rootHasFocus = it.hasFocus
+                if (!it.hasFocus) {
+                    centerDownAtMs = null
+                }
+            }
             .onPreviewKeyEvent { event ->
                 // When context menu is open, let it handle all key events
                 if (showGroupContextMenu) {
@@ -587,6 +742,7 @@ fun TvScreen(
                         }
                     }
                 } else if (event.type == KeyEventType.KeyDown) {
+                    centerDownAtMs = null
                     when (event.key) {
                         Key.Back, Key.Escape -> {
                             when (focusZone) {
@@ -598,6 +754,7 @@ fun TvScreen(
                         }
 
                         Key.DirectionLeft -> {
+                            markNavigation()
                             when (focusZone) {
                                 TvFocusZone.SIDEBAR -> if (sidebarFocusIndex > 0) {
                                     sidebarFocusIndex = (sidebarFocusIndex - 1).coerceIn(0, maxSidebarIndex)
@@ -609,6 +766,7 @@ fun TvScreen(
                         }
 
                         Key.DirectionRight -> {
+                            markNavigation()
                             when (focusZone) {
                                 TvFocusZone.SIDEBAR -> if (sidebarFocusIndex < maxSidebarIndex) {
                                     sidebarFocusIndex = (sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
@@ -620,6 +778,7 @@ fun TvScreen(
                         }
 
                         Key.DirectionUp -> {
+                            markNavigation()
                             when (focusZone) {
                                 TvFocusZone.SIDEBAR -> Unit
 
@@ -630,6 +789,7 @@ fun TvScreen(
                         }
 
                         Key.DirectionDown -> {
+                            markNavigation()
                             when (focusZone) {
                                 TvFocusZone.SIDEBAR -> if (groups.isNotEmpty()) focusZone = TvFocusZone.GROUPS
 
@@ -683,27 +843,25 @@ fun TvScreen(
             }
         } else {
             // Immersive layout: seamless dark surface, no compartment borders
+            val categoryRailAlpha by animateFloatAsState(
+                targetValue = if (focusZone == TvFocusZone.GROUPS || isFullScreen) 1f else 0.32f,
+                animationSpec = androidx.compose.animation.core.tween(durationMillis = 140),
+                label = "tv-category-rail-alpha"
+            )
             Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = contentTopPadding)
             ) {
-                // Categories rail with smooth collapse when navigating to guide
-                val showCategoryRail = focusZone != TvFocusZone.GUIDE || isFullScreen
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showCategoryRail,
-                    enter = androidx.compose.animation.expandHorizontally(
-                        expandFrom = Alignment.Start,
-                        animationSpec = androidx.compose.animation.core.tween(200)
-                    ),
-                    exit = androidx.compose.animation.shrinkHorizontally(
-                        shrinkTowards = Alignment.Start,
-                        animationSpec = androidx.compose.animation.core.tween(200)
-                    )
+                Box(
+                    modifier = Modifier
+                        .width(if (isMobile) 140.dp else 170.dp)
+                        .fillMaxHeight()
+                        .padding(start = 6.dp, top = 4.dp, bottom = 4.dp, end = 6.dp)
                 ) {
                     CategoryRail(
                         groups = groups,
-                        favoriteGroups = uiState.snapshot.favoriteGroups.toSet(),
+                        favoriteGroups = favoriteGroups,
                         focusedGroupIndex = safeGroupIndex,
                         isFocused = focusZone == TvFocusZone.GROUPS,
                         listState = groupsListState,
@@ -723,16 +881,8 @@ fun TvScreen(
                         onToggleHidden = { viewModel.toggleHiddenGroup(it) },
                         onMoveUp = { viewModel.moveGroupUp(it) },
                         onMoveDown = { viewModel.moveGroupDown(it) },
-
-                        modifier = Modifier
-                            .width(if (isMobile) 140.dp else 170.dp)
-                            .fillMaxHeight()
-                            .padding(start = 6.dp, top = 4.dp, bottom = 4.dp, end = 6.dp)
+                        modifier = Modifier.graphicsLayer { alpha = categoryRailAlpha }
                     )
-
-
-
-
                 }
 
                 // Main content: EPG info + player top, guide bottom
@@ -908,7 +1058,7 @@ fun TvScreen(
                                     }
                                 }
                         ) {
-                            if (playingChannel != null && !isFullScreen) {
+                            if (playingChannel != null && !isFullScreen && exoPlayer != null) {
                                 AndroidView(
                                     factory = { ctx ->
                                         PlayerView(ctx).apply {
@@ -940,8 +1090,9 @@ fun TvScreen(
                         isLoading = uiState.isLoading,
                         focusedChannelIndex = safeChannelIndex,
                         guideFocused = focusZone == TvFocusZone.GUIDE,
+                        fastNavigating = isFastNavigating,
                         playingChannelId = playingChannelId,
-                        favoriteChannels = uiState.snapshot.favoriteChannels.toSet(),
+                        favoriteChannels = favoriteChannels,
                         listState = channelsListState,
                         onChannelClick = { index ->
                             val channel = channels.getOrNull(index) ?: return@GuidePanel
@@ -1133,12 +1284,16 @@ private suspend fun smoothScrollTo(state: LazyListState, targetIndex: Int) {
     val safe = targetIndex.coerceAtLeast(0)
     val firstVisible = state.firstVisibleItemIndex
     val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstVisible
+    val visibleSpan = (lastVisible - firstVisible).coerceAtLeast(0) + 1
     val outsideViewport = safe < firstVisible || safe > lastVisible
     val distance = abs(firstVisible - safe)
-    if (safe == 0 || outsideViewport || distance > 12) {
+    if (safe == firstVisible && state.firstVisibleItemScrollOffset == 0) return
+    if (safe == 0 || distance > visibleSpan * 2) {
         state.scrollToItem(safe)
-    } else {
+    } else if (distance <= 2 || (!outsideViewport && distance <= visibleSpan) || distance <= visibleSpan + 1) {
         state.animateScrollToItem(safe)
+    } else {
+        state.scrollToItem(safe)
     }
 }
 
@@ -1163,7 +1318,7 @@ private fun CategoryRail(
     LazyColumn(
         state = listState,
         verticalArrangement = Arrangement.spacedBy(1.dp),
-        modifier = modifier
+        modifier = modifier.arvioDpadFocusGroup()
     ) {
         itemsIndexed(groups, key = { _, group -> group }, contentType = { _, _ -> "category_group" }) { index, group ->
             GroupRailItem(
@@ -1442,6 +1597,7 @@ private fun GuidePanel(
     isLoading: Boolean,
     focusedChannelIndex: Int,
     guideFocused: Boolean,
+    fastNavigating: Boolean,
     playingChannelId: String?,
     favoriteChannels: Set<String>,
     listState: LazyListState,
@@ -1482,7 +1638,7 @@ private fun GuidePanel(
             LazyColumn(
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().arvioDpadFocusGroup()
             ) {
                 itemsIndexed(
                     channels,
@@ -1506,6 +1662,7 @@ private fun GuidePanel(
                         isFocused = focused,
                         isPlaying = channel.id == playingChannelId,
                         isFavoriteChannel = favoriteChannels.contains(channel.id),
+                        showDetailedTimeline = focused || channel.id == playingChannelId,
                         windowStart = windowStart,
                         windowEnd = windowEnd,
                         now = now,
@@ -1576,6 +1733,7 @@ private fun GuideChannelRow(
     isFocused: Boolean,
     isPlaying: Boolean,
     isFavoriteChannel: Boolean,
+    showDetailedTimeline: Boolean,
     windowStart: Long,
     windowEnd: Long,
     now: Long,
@@ -1686,21 +1844,105 @@ private fun GuideChannelRow(
             }
         }
 
-        TimelineProgramLane(
-            recentPrograms = recentPrograms,
-            nowProgram = nowProgram,
-            upcomingPrograms = upcomingPrograms,
-            windowStart = windowStart,
-            windowEnd = windowEnd,
-            now = now,
-            nowRatio = nowRatio,
-            isRowFocused = isFocused,
-            isRowPlaying = isPlaying,
+        if (showDetailedTimeline) {
+            TimelineProgramLane(
+                recentPrograms = recentPrograms,
+                nowProgram = nowProgram,
+                upcomingPrograms = upcomingPrograms,
+                windowStart = windowStart,
+                windowEnd = windowEnd,
+                now = now,
+                nowRatio = nowRatio,
+                isRowFocused = isFocused,
+                isRowPlaying = isPlaying,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(start = 2.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+            )
+        } else {
+            CompactGuideLane(
+                nowProgram = nowProgram,
+                nextProgram = upcomingPrograms.firstOrNull(),
+                now = now,
+                isRowFocused = isFocused,
+                isRowPlaying = isPlaying,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(start = 2.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun CompactGuideLane(
+    nowProgram: IptvProgram?,
+    nextProgram: IptvProgram?,
+    now: Long,
+    isRowFocused: Boolean,
+    isRowPlaying: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val baseColor = when {
+        isRowFocused -> Color.White.copy(alpha = 0.08f)
+        isRowPlaying -> AccentGreen.copy(alpha = 0.05f)
+        else -> Color.White.copy(alpha = 0.03f)
+    }
+    val accentColor = when {
+        isRowPlaying -> AccentGreen.copy(alpha = 0.7f)
+        isRowFocused -> Color.White.copy(alpha = 0.55f)
+        else -> Color.White.copy(alpha = 0.3f)
+    }
+    val nowTitle = nowProgram?.title?.takeIf { it.isNotBlank() } ?: "Live program"
+    val nextTitle = nextProgram?.title?.takeIf { it.isNotBlank() }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(baseColor)
+    ) {
+        if (nowProgram != null) {
+            val duration = (nowProgram.endUtcMillis - nowProgram.startUtcMillis).coerceAtLeast(1L)
+            val elapsed = (now - nowProgram.startUtcMillis).coerceIn(0, duration)
+            val progress = (elapsed.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(progress.coerceAtLeast(0.02f))
+                    .background(accentColor.copy(alpha = if (isRowPlaying) 0.16f else 0.09f))
+            )
+        }
+
+        Column(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .padding(start = 2.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
-        )
+                .fillMaxSize()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = nowTitle,
+                style = ArflixTypography.caption.copy(
+                    fontSize = 11.sp,
+                    fontWeight = if (isRowFocused) FontWeight.Medium else FontWeight.Normal
+                ),
+                color = Color.White.copy(alpha = 0.86f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (nextTitle != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Next: $nextTitle",
+                    style = ArflixTypography.caption.copy(fontSize = 9.sp),
+                    color = Color.White.copy(alpha = 0.45f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 

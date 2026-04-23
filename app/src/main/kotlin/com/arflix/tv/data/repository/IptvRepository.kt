@@ -110,7 +110,15 @@ data class IptvCloudProfileState(
     val favoriteChannels: List<String> = emptyList(),
     val hiddenGroups: List<String> = emptyList(),
     val groupOrder: List<String> = emptyList(),
-    val playlists: List<IptvPlaylistEntry> = emptyList()
+    val playlists: List<IptvPlaylistEntry> = emptyList(),
+    val tvSession: IptvTvSessionState = IptvTvSessionState()
+)
+
+data class IptvTvSessionState(
+    val lastChannelId: String = "",
+    val lastGroupName: String = "",
+    val lastFocusedZone: String = "GUIDE",
+    val lastOpenedAt: Long = 0L
 )
 
 @Singleton
@@ -273,6 +281,27 @@ class IptvRepository @Inject constructor(
         profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
             decodeGroupOrder(prefs)
         }
+
+    fun observeTvSessionState(): Flow<IptvTvSessionState> =
+        profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
+            decodeTvSessionState(prefs)
+        }
+
+    suspend fun saveTvSessionState(state: IptvTvSessionState) {
+        context.settingsDataStore.edit { prefs ->
+            if (state == IptvTvSessionState()) {
+                prefs.remove(tvSessionKey())
+            } else {
+                prefs[tvSessionKey()] = gson.toJson(
+                    state.copy(
+                        lastChannelId = state.lastChannelId.trim(),
+                        lastGroupName = state.lastGroupName.trim(),
+                        lastFocusedZone = state.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                    )
+                )
+            }
+        }
+    }
 
     suspend fun saveConfig(m3uUrl: String, epgUrl: String) {
         val normalizedM3u = normalizeIptvInput(m3uUrl)
@@ -552,6 +581,9 @@ class IptvRepository @Inject constructor(
             prefs.remove(playlistsKey())
             prefs.remove(favoriteGroupsKey())
             prefs.remove(favoriteChannelsKey())
+            prefs.remove(hiddenGroupsKey())
+            prefs.remove(groupOrderKey())
+            prefs.remove(tvSessionKey())
         }
         invalidateCache()
         runCatching { cacheFile().delete() }
@@ -1365,6 +1397,9 @@ class IptvRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "iptv_group_order")
     private fun playlistsKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_playlists_json")
+    private fun tvSessionKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_tv_session")
+    private fun tvSessionKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_tv_session")
 
     private fun decodeHiddenGroups(prefs: Preferences): List<String> {
         val raw = prefs[hiddenGroupsKey()].orEmpty()
@@ -1397,6 +1432,22 @@ class IptvRepository @Inject constructor(
         }.getOrDefault(emptyList())
     }
 
+    private fun decodeTvSessionState(prefs: Preferences): IptvTvSessionState =
+        decodeTvSessionState(prefs[tvSessionKey()].orEmpty())
+
+    private fun decodeTvSessionState(raw: String): IptvTvSessionState {
+        if (raw.isBlank()) return IptvTvSessionState()
+        return runCatching {
+            gson.fromJson(raw, IptvTvSessionState::class.java)?.let { session ->
+                session.copy(
+                    lastChannelId = session.lastChannelId.trim(),
+                    lastGroupName = session.lastGroupName.trim(),
+                    lastFocusedZone = session.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                )
+            } ?: IptvTvSessionState()
+        }.getOrDefault(IptvTvSessionState())
+    }
+
     private fun decodeFavoriteGroups(raw: String): List<String> {
         if (raw.isBlank()) return emptyList()
         return runCatching {
@@ -1427,6 +1478,7 @@ class IptvRepository @Inject constructor(
         val hiddenRaw = prefs[hiddenGroupsKeyFor(safeProfileId)].orEmpty()
         val orderRaw = prefs[groupOrderKeyFor(safeProfileId)].orEmpty()
         val playlistsRaw = prefs[playlistsKeyFor(safeProfileId)].orEmpty()
+        val tvSessionRaw = prefs[tvSessionKeyFor(safeProfileId)].orEmpty()
         return IptvCloudProfileState(
             m3uUrl = decryptConfigValue(prefs[m3uUrlKeyFor(safeProfileId)].orEmpty()),
             epgUrl = decryptConfigValue(prefs[epgUrlKeyFor(safeProfileId)].orEmpty()),
@@ -1449,7 +1501,8 @@ class IptvRepository @Inject constructor(
                     val type = object : TypeToken<List<IptvPlaylistEntry>>() {}.type
                     gson.fromJson<List<IptvPlaylistEntry>>(playlistsRaw, type) ?: emptyList()
                 }.getOrDefault(emptyList())
-            } else emptyList()
+            } else emptyList(),
+            tvSession = decodeTvSessionState(tvSessionRaw)
         )
     }
 
@@ -1470,6 +1523,17 @@ class IptvRepository @Inject constructor(
             }
             if (state.playlists.isNotEmpty()) {
                 prefs[playlistsKeyFor(safeProfileId)] = gson.toJson(state.playlists)
+            }
+            if (state.tvSession != IptvTvSessionState()) {
+                prefs[tvSessionKeyFor(safeProfileId)] = gson.toJson(
+                    state.tvSession.copy(
+                        lastChannelId = state.tvSession.lastChannelId.trim(),
+                        lastGroupName = state.tvSession.lastGroupName.trim(),
+                        lastFocusedZone = state.tvSession.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                    )
+                )
+            } else {
+                prefs.remove(tvSessionKeyFor(safeProfileId))
             }
         }
         if (profileManager.getProfileIdSync() == safeProfileId) {

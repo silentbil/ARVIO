@@ -48,6 +48,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import retrofit2.HttpException
+import java.io.File
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.MessageDigest
@@ -150,7 +151,9 @@ class StreamRepository @Inject constructor(
     private fun torrServerBaseUrlKey() = profileManager.profileStringKey("torrserver_base_url_v1")
     private fun addonHealthKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "addon_health_v1")
     private fun cloudstreamReposKey() = profileManager.profileStringKey("cloudstream_repositories_v1")
+    private fun cloudstreamReposKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "cloudstream_repositories_v1")
     private fun cloudstreamPendingReposKey() = profileManager.profileStringKey("cloudstream_pending_repositories_v1")
+    private fun cloudstreamPendingReposKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "cloudstream_pending_repositories_v1")
 
     init {
         repositoryScope.launch {
@@ -646,7 +649,7 @@ class StreamRepository @Inject constructor(
     }
 
     suspend fun replaceAddonsFromCloud(addons: List<Addon>) {
-        saveAddons(enforceOpenSubtitles(addons))
+        saveAddons(restoreCloudstreamAddonArtifacts(enforceOpenSubtitles(addons)))
     }
 
     suspend fun getAddonsForProfile(profileId: String): List<Addon> {
@@ -655,14 +658,31 @@ class StreamRepository @Inject constructor(
         return enforceOpenSubtitles(stored ?: getDefaultAddonList())
     }
 
+    suspend fun getCloudstreamRepositoriesForProfile(profileId: String): List<CloudstreamRepositoryRecord> {
+        val prefs = context.streamDataStore.data.first()
+        return parseCloudstreamRepositories(prefs[cloudstreamReposKeyFor(profileId)])
+            ?: parseCloudstreamRepositories(prefs[cloudstreamPendingReposKeyFor(profileId)])
+            ?: emptyList()
+    }
+
     suspend fun replaceAddonsForProfile(profileId: String, addons: List<Addon>) {
-        val resolved = enforceOpenSubtitles(addons)
+        val resolved = restoreCloudstreamAddonArtifacts(enforceOpenSubtitles(addons))
         context.streamDataStore.edit { prefs ->
             prefs[addonsKeyFor(profileId)] = gson.toJson(resolved)
             prefs.remove(pendingAddonsKeyFor(profileId))
         }
         if (profileManager.getProfileIdSync() == profileId) {
             synchronized(streamResultCache) { streamResultCache.clear() }
+        }
+    }
+
+    suspend fun replaceCloudstreamRepositoriesForProfile(
+        profileId: String,
+        repositories: List<CloudstreamRepositoryRecord>
+    ) {
+        context.streamDataStore.edit { prefs ->
+            prefs[cloudstreamReposKeyFor(profileId)] = gson.toJson(repositories)
+            prefs.remove(cloudstreamPendingReposKeyFor(profileId))
         }
     }
 
@@ -675,6 +695,51 @@ class StreamRepository @Inject constructor(
             prefs.remove(pendingAddonsKey())
         }
         synchronized(streamResultCache) { streamResultCache.clear() }
+    }
+
+    private suspend fun restoreCloudstreamAddonArtifacts(addons: List<Addon>): List<Addon> = withContext(Dispatchers.IO) {
+        addons.map { addon ->
+            if (addon.runtimeKind != RuntimeKind.CLOUDSTREAM) {
+                return@map addon
+            }
+
+            val internalName = addon.internalName?.trim().orEmpty()
+            val repoUrl = addon.repoUrl?.trim().orEmpty()
+            val pluginUrl = addon.pluginPackageUrl?.trim().orEmpty()
+            val currentArtifact = addon.installedArtifactPath
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::File)
+                ?.takeIf { it.exists() }
+
+            if (internalName.isBlank() || repoUrl.isBlank()) {
+                val restoredPath = currentArtifact?.absolutePath
+                return@map addon.copy(
+                    installedArtifactPath = restoredPath,
+                    isEnabled = addon.isEnabled && restoredPath != null
+                )
+            }
+
+            val expectedArtifact = cloudstreamPluginInstaller.getPluginFile(internalName, repoUrl)
+                .takeIf { it.exists() }
+            val restoredArtifact = currentArtifact
+                ?: expectedArtifact
+                ?: pluginUrl.takeIf { it.isNotBlank() }?.let { downloadUrl ->
+                    runCatching {
+                        cloudstreamPluginInstaller.install(
+                            pluginUrl = downloadUrl,
+                            internalName = internalName,
+                            repoUrl = repoUrl
+                        )
+                    }.getOrNull()
+                }
+
+            val restoredPath = restoredArtifact?.absolutePath
+            addon.copy(
+                installedArtifactPath = restoredPath,
+                isEnabled = addon.isEnabled && restoredPath != null
+            )
+        }
     }
 
     /**
@@ -695,28 +760,46 @@ class StreamRepository @Inject constructor(
                 val name = payload.name?.trim().orEmpty()
                 val version = payload.version?.trim().orEmpty()
                 if (id.isBlank() || name.isBlank() || version.isBlank()) return@mapNotNull null
+                val runtimeKind = payload.runtimeKind ?: RuntimeKind.STREMIO
+                val internalName = payload.internalName?.trim()?.takeIf { it.isNotBlank() }
+                val normalizedRepoUrl = if (runtimeKind == RuntimeKind.CLOUDSTREAM) {
+                    cloudstreamRepositoryService.normalizeStoredRepositoryUrl(payload.repoUrl)
+                } else {
+                    payload.repoUrl?.trim()?.takeIf { it.isNotBlank() }
+                }
+                val normalizedId = if (runtimeKind == RuntimeKind.CLOUDSTREAM &&
+                    internalName != null &&
+                    !normalizedRepoUrl.isNullOrBlank()
+                ) {
+                    buildCloudstreamAddonId(internalName, normalizedRepoUrl)
+                } else {
+                    id
+                }
                 Addon(
-                    id = id,
+                    id = normalizedId,
                     name = name,
                     version = version,
                     description = payload.description.orEmpty(),
                     isInstalled = payload.isInstalled ?: true,
                     isEnabled = payload.isEnabled ?: true,
                     type = payload.type ?: AddonType.CUSTOM,
-                    runtimeKind = payload.runtimeKind ?: RuntimeKind.STREMIO,
+                    runtimeKind = runtimeKind,
                     installSource = payload.installSource ?: AddonInstallSource.DIRECT_URL,
                     url = payload.url,
                     logo = payload.logo,
                     manifest = payload.manifest,
                     transportUrl = payload.transportUrl,
-                    internalName = payload.internalName,
-                    repoUrl = payload.repoUrl,
+                    internalName = internalName,
+                    repoUrl = normalizedRepoUrl,
                     pluginPackageUrl = payload.pluginPackageUrl,
                     pluginVersionCode = payload.pluginVersionCode,
                     apiVersion = payload.apiVersion,
                     installedArtifactPath = payload.installedArtifactPath
                 )
-            }
+            }.fold(LinkedHashMap<String, Addon>()) { acc, addon ->
+                acc[addon.id] = addon
+                acc
+            }.values.toList()
         } catch (e: Exception) {
             null
         }
@@ -727,6 +810,12 @@ class StreamRepository @Inject constructor(
         return try {
             val type = TypeToken.getParameterized(List::class.java, CloudstreamRepositoryRecord::class.java).type
             gson.fromJson<List<CloudstreamRepositoryRecord>>(json, type)
+                ?.mapNotNull { record ->
+                    cloudstreamRepositoryService.normalizeStoredRepositoryUrl(record.url)?.let { normalizedUrl ->
+                        record.copy(url = normalizedUrl)
+                    }
+                }
+                ?.distinctBy { it.url.lowercase(Locale.US) }
         } catch (_: Exception) {
             null
         }

@@ -1,7 +1,6 @@
 package com.arflix.tv.ui.skin
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -66,13 +65,9 @@ fun Modifier.arvioFocusable(
 
     val tokens = ArvioSkin.focus
 
-    // Use spring physics for natural, bouncy feel
     val scale by animateFloatAsState(
         targetValue = targetScale,
-        animationSpec = spring(
-            dampingRatio = 0.75f,  // Slight bounce for premium feel
-            stiffness = 400f       // Snappy but smooth
-        ),
+        animationSpec = tween(durationMillis = 90, easing = tokens.easing),
         label = "arvio_focus_scale",
     )
 
@@ -146,13 +141,6 @@ fun Modifier.arvioFocusable(
             when (outline) {
                 is Outline.Rounded -> {
                     val path = Path().apply { addRoundRect(outline.roundRect) }
-                    // Soft glow layers (cheap multi-stroke, no shader blur)
-                    // Creates the "focused card floats" perception like Netflix.
-                    val glow1 = Stroke(width = borderWidth + 10f)
-                    drawPath(path, outlineColor.copy(alpha = highlightAlpha * 0.08f), style = glow1)
-                    val glow2 = Stroke(width = borderWidth + 5f)
-                    drawPath(path, outlineColor.copy(alpha = highlightAlpha * 0.18f), style = glow2)
-                    // Sharp border on top
                     drawPath(path, ringColor, style = Stroke(width = borderWidth))
                 }
                 is Outline.Rectangle -> {

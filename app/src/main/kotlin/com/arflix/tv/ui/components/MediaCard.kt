@@ -45,9 +45,6 @@ import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 
 /**
@@ -59,14 +56,10 @@ import androidx.compose.ui.zIndex
  * - Uses `ArvioSkin` for consistent styling
  */
 
-// Shared gradient overlay for all cards - avoids per-card Brush allocation.
-// Uses pre-computed ARGB values for BackgroundDark (0x0D0D14).
-private val sharedCardOverlayBrush = Brush.verticalGradient(
+private val missingArtworkBrush = Brush.linearGradient(
     colors = listOf(
-        Color.Transparent,
-        Color.Transparent,
-        Color(0x66_0D0D14),  // ~40% alpha
-        Color(0xB3_0D0D14),  // ~70% alpha
+        Color(0xFF1F2333),
+        Color(0xFF0D0D14)
     )
 )
 
@@ -217,14 +210,7 @@ fun MediaCard(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        Color(0xFF1F2333),
-                                        Color(0xFF0D0D14)
-                                    )
-                                )
-                            ),
+                            .background(missingArtworkBrush),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -299,7 +285,11 @@ fun MediaCard(
                 // Collection tiles already embed their own branding, so they
                 // stay logo-free in both layouts.
                 if (logoRequest != null && isLandscape && !isCollectionTile) {
-                    Box(
+                    AsyncImage(
+                        model = logoRequest,
+                        contentDescription = "${item.title} logo",
+                        contentScale = ContentScale.Fit,
+                        alignment = if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter,
                         modifier = Modifier
                             .align(if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter)
                             .fillMaxWidth(if (isLandscape) 0.52f else 0.74f)
@@ -309,29 +299,7 @@ fun MediaCard(
                                 end = if (isLandscape) 0.dp else 8.dp,
                                 bottom = if (isLandscape) 18.dp else 12.dp
                             )
-                    ) {
-                        AsyncImage(
-                            model = logoRequest,
-                            contentDescription = null,
-                            contentScale = ContentScale.Fit,
-                            alignment = if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter,
-                            colorFilter = ColorFilter.tint(Color.White, BlendMode.SrcIn),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    alpha = 0.55f
-                                    translationX = 1.dp.toPx()
-                                    translationY = 1.dp.toPx()
-                                }
-                        )
-                        AsyncImage(
-                            model = logoRequest,
-                            contentDescription = "${item.title} logo",
-                            contentScale = ContentScale.Fit,
-                            alignment = if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+                    )
                 }
 
                 // Subtle green watched badge

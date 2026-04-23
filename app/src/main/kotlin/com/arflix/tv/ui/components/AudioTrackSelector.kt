@@ -39,6 +39,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
@@ -147,7 +148,9 @@ fun AudioTrackSelector(
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.height((audioTracks.size * 60).coerceAtMost(300).dp)
+                        modifier = Modifier
+                            .height((audioTracks.size * 60).coerceAtMost(300).dp)
+                            .arvioDpadFocusGroup()
                     ) {
                         itemsIndexed(audioTracks) { index, track ->
                             AudioTrackItem(

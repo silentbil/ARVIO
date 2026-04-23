@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.player
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
@@ -779,10 +780,18 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onPlaybackStarted(startupMs: Long, startupRetries: Int, autoFailovers: Int) {
-        val addonId = _uiState.value.selectedStream?.addonId?.trim().orEmpty()
+        val addonId = _uiState.value.selectedStream?.addonId?.trim()
+            .takeUnless { it.isNullOrBlank() }
+            ?: currentPreferredAddonId.orEmpty()
         if (addonId.isNotBlank()) {
             streamRepository.noteAddonPlaybackStarted(addonId, startupMs)
         }
+        Log.i(
+            TAG,
+            "Playback started addonId=${addonId.ifBlank { "unknown" }} " +
+                "source=${_uiState.value.selectedStream?.source ?: currentPreferredSourceName ?: "unknown"} " +
+                "startupMs=$startupMs retries=$startupRetries failovers=$autoFailovers"
+        )
         viewModelScope.launch {
             playbackTelemetryRepository.recordStartup(
                 startupMs = startupMs,
@@ -793,7 +802,9 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onSelectedStreamPlaybackFailure() {
-        val addonId = _uiState.value.selectedStream?.addonId?.trim().orEmpty()
+        val addonId = _uiState.value.selectedStream?.addonId?.trim()
+            .takeUnless { it.isNullOrBlank() }
+            ?: currentPreferredAddonId.orEmpty()
         if (addonId.isNotBlank()) {
             streamRepository.noteAddonPlaybackFailure(addonId)
         }
@@ -1831,6 +1842,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     companion object {
+        private const val TAG = "PlayerViewModel"
+
         /** Known debrid service CDN domains. Reachability checks are skipped for these. */
         private val DEBRID_CDN_DOMAINS = setOf(
             // Real-Debrid

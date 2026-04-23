@@ -43,6 +43,28 @@ class CloudstreamRepositoryServiceTest {
     }
 
     @Test
+    fun `normalizeRepositoryUrl repairs legacy raw github repo urls with merged branch`() = runBlocking {
+        val normalized = service.normalizeRepositoryUrl(
+            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX_builds/CS.json"
+        )
+        assertEquals(
+            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+            normalized
+        )
+    }
+
+    @Test
+    fun `normalizeStoredRepositoryUrl repairs legacy raw github repo urls leniently`() {
+        val normalized = service.normalizeStoredRepositoryUrl(
+            " https://raw.githubusercontent.com/SaurabhKaperwan/CSX_builds/CS.json "
+        )
+        assertEquals(
+            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+            normalized
+        )
+    }
+
+    @Test
     fun `normalizeRepositoryUrl rejects non https urls`() = runBlocking {
         try {
             service.normalizeRepositoryUrl("http://example.com/repo.json")
