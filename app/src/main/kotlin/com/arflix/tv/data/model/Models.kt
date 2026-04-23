@@ -321,6 +321,7 @@ data class AddonStreamResult(
     val addonId: String,
     val addonName: String,
     val error: Exception? = null
+) : Serializable
 
 /**
  * Quality filter entry - device-scoped regex patterns to exclude quality tiers.
@@ -336,15 +337,5 @@ data class QualityFilterConfig(
     val deviceName: String = "", // Display name (e.g., "Living Room TV", "Bedroom Fire TV")
     val regexPattern: String = "", // Regex pattern to EXCLUDE matching qualities (e.g., "4K|2160p")
     val enabled: Boolean = true, // Enable/disable filter without deleting
-    val createdAt: Long = System.currentTimeMillis()
-) : Serializable
-) : Serializable
-
-@Immutable
-data class QualityFilterConfig(
-    val id: String = "",
-    val deviceName: String = "",
-    val regexPattern: String = "",
-    val enabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis()
 ) : Serializable
