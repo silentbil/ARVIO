@@ -299,6 +299,15 @@ class CloudSyncRepository @Inject constructor(
         }
         root.put("hiddenPreinstalledByProfile", JSONObject(gson.toJson(hiddenPreinstalledByProfile)))
 
+        // Hidden addon catalogs per profile — without this, a deletion on one
+        // device is undone by another device's next addon sync.
+        val hiddenAddonByProfile = buildMap<String, List<String>> {
+            profiles.forEach { profile ->
+                put(profile.id, catalogRepository.getHiddenAddonCatalogIdsForProfile(profile.id))
+            }
+        }
+        root.put("hiddenAddonByProfile", JSONObject(gson.toJson(hiddenAddonByProfile)))
+
         // IPTV config per profile (including favorites)
         val iptvByProfile = buildMap<String, IptvCloudProfileState> {
             profiles.forEach { profile ->
@@ -545,6 +554,15 @@ class CloudSyncRepository @Inject constructor(
                     gson.fromJson<List<String>>(json, type) ?: emptyList()
                 }
                 catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(activeProfileId, hidden)
+            }
+        }
+
+        // ── Hidden addon catalogs ──
+        root.optJSONObject("hiddenAddonByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+            val type = object : TypeToken<Map<String, List<String>>>() {}.type
+            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
+            map.forEach { (profileId, hidden) ->
+                catalogRepository.setHiddenAddonCatalogIdsForProfile(profileId, hidden)
             }
         }
 

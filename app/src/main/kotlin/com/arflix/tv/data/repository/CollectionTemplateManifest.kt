@@ -34,6 +34,7 @@ internal data class CollectionTemplateEntry(
 internal object CollectionTemplateManifest {
     private const val VIDEO_BASE = "https://raw.githubusercontent.com/mrtxiv/networks-video-collection/3486fc9a3d0efe59d1929e75f66021dc4e15bcb7/networks%20videos/"
     private const val STREAMING_SERVICE_IMAGE_BASE = "https://raw.githubusercontent.com/chrishudson918/images/46fd4f8c335a7c581a7dcdb7dfac268c68ef84fc/Landscape%20Streaming%20Services/"
+    private const val GENRE_IMAGE_BASE = "https://raw.githubusercontent.com/chrishudson918/images/main/Landscape%20Genres/"
     private const val STREAMING_ADDON_URL = "https://7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club/bmZ4LGRucCxhbXAsYXRwLGhibSxwbXAscGNwLGhsdSxzdHo6OlVTOjE3NzYzMjQxMDg4OTM6MDowOkdU/manifest.json"
     private const val MARVEL_ADDON_URL = "https://addon-marvel.onrender.com/catalog/marvel-mcu/manifest.json"
     private const val DC_ADDON_URL = "https://addon-dc-cq85.onrender.com/catalog/dc-chronological/manifest.json"
@@ -327,8 +328,8 @@ internal object CollectionTemplateManifest {
         entry(
             title = "Action",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/action.png",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}ACTION.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -343,8 +344,8 @@ internal object CollectionTemplateManifest {
         entry(
             title = "Comedy",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/comedy.png",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}COMEDY.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -359,8 +360,8 @@ internal object CollectionTemplateManifest {
         entry(
             title = "Sci-Fi",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/sci-fi.png",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}SCI%20FI.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -373,26 +374,10 @@ internal object CollectionTemplateManifest {
             )
         ),
         entry(
-            title = "Crime",
-            group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/crime.png",
-            tileShape = CollectionTileShape.POSTER,
-            hideTitle = true,
-            heroVideoUrl = null,
-            sources = listOf(
-                source(addonId = "aio-metadata", type = "movie", catalogId = "mdblist.3108"),
-                source(addonId = "aio-metadata", type = "series", catalogId = "mdblist.3126")
-            ),
-            listMetadata = listOf(
-                metadata(sourceCatalogId = "mdblist.3108", sourceAddonId = "aio-metadata", sourceName = "Popular Crime Movies", sourceLabel = "MDBLIST", mediaType = "movie", itemCount = 400, author = "garycrawfordgc", url = "https://mdblist.com/lists/garycrawfordgc/crime"),
-                metadata(sourceCatalogId = "mdblist.3126", sourceAddonId = "aio-metadata", sourceName = "Popular Crime Shows", sourceLabel = "MDBLIST", mediaType = "series", itemCount = 500, author = "garycrawfordgc", url = "https://mdblist.com/lists/garycrawfordgc/crime-shows")
-            )
-        ),
-        entry(
             title = "Thriller",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/thriller.png",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}THRILLER.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -407,8 +392,8 @@ internal object CollectionTemplateManifest {
         entry(
             title = "Drama",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/drama.png",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}DRAMA.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -423,8 +408,8 @@ internal object CollectionTemplateManifest {
         entry(
             title = "Horror",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/horror.png",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}HORROR.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -439,58 +424,10 @@ internal object CollectionTemplateManifest {
             )
         ),
         entry(
-            title = "Mystery",
-            group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/mystery.png",
-            tileShape = CollectionTileShape.POSTER,
-            hideTitle = true,
-            heroVideoUrl = null,
-            sources = listOf(
-                source(addonId = "aio-metadata", type = "movie", catalogId = "mdblist.40490"),
-                source(addonId = "aio-metadata", type = "series", catalogId = "mdblist.40804")
-            ),
-            listMetadata = listOf(
-                metadata(sourceCatalogId = "mdblist.40490", sourceAddonId = "aio-metadata", sourceName = "Popular Mystery Movies", sourceLabel = "MDBLIST", mediaType = "movie", itemCount = 200, author = "quickflix", url = "https://mdblist.com/lists/quickflix/movies-popular-mystery"),
-                metadata(sourceCatalogId = "mdblist.40804", sourceAddonId = "aio-metadata", sourceName = "Popular Mystery Shows", sourceLabel = "MDBLIST", mediaType = "series", itemCount = 100, author = "quickflix", url = "https://mdblist.com/lists/quickflix/tv-shows-popular-mystery")
-            )
-        ),
-        entry(
-            title = "Mindfuck",
-            group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/mindfuck.png",
-            tileShape = CollectionTileShape.POSTER,
-            hideTitle = true,
-            heroVideoUrl = null,
-            sources = listOf(
-                source(addonId = "aio-metadata", type = "movie", catalogId = "mdblist.114516")
-            ),
-            listMetadata = listOf(
-                metadata(sourceCatalogId = "mdblist.114516", sourceAddonId = "aio-metadata", sourceName = "Mindfuck", sourceLabel = "MDBLIST", mediaType = "movie", itemCount = 256, author = "ultraaa", url = "https://mdblist.com/lists/ultraaa/mindfuck-collection")
-            )
-        ),
-        entry(
-            title = "Anime",
-            group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/anime.png",
-            tileShape = CollectionTileShape.POSTER,
-            hideTitle = true,
-            heroVideoUrl = null,
-            sources = listOf(
-                source(addonId = "aio-metadata", type = "anime", catalogId = "anilist.trending"),
-                source(addonId = "aio-metadata", type = "anime", catalogId = "mal.discover.anime.top_anime.mnxr57of"),
-                source(addonId = "aio-metadata", type = "anime", catalogId = "mal.discover.anime.top_anime_movies.mnxr68mk")
-            ),
-            listMetadata = listOf(
-                metadata(sourceCatalogId = "anilist.trending", sourceAddonId = "aio-metadata", sourceName = "Trending Anime", sourceLabel = "ANILIST", mediaType = "anime", itemCount = null, author = null, url = null),
-                metadata(sourceCatalogId = "mal.discover.anime.top_anime.mnxr57of", sourceAddonId = "aio-metadata", sourceName = "Top Anime", sourceLabel = "MAL", mediaType = "anime", itemCount = null, author = null, url = "https://myanimelist.net/anime.php"),
-                metadata(sourceCatalogId = "mal.discover.anime.top_anime_movies.mnxr68mk", sourceAddonId = "aio-metadata", sourceName = "Top Anime Movies", sourceLabel = "MAL", mediaType = "anime", itemCount = null, author = null, url = "https://myanimelist.net/anime.php")
-            )
-        ),
-        entry(
             title = "Documentary",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/documentary.jpg",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}DOC.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -505,8 +442,8 @@ internal object CollectionTemplateManifest {
         entry(
             title = "Romance",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/romance.jpg",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}ROMANCE.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -519,26 +456,10 @@ internal object CollectionTemplateManifest {
             )
         ),
         entry(
-            title = "History",
-            group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/history.jpg",
-            tileShape = CollectionTileShape.POSTER,
-            hideTitle = true,
-            heroVideoUrl = null,
-            sources = listOf(
-                source(addonId = "aio-metadata", type = "movie", catalogId = "mdblist.6638"),
-                source(addonId = "aio-metadata", type = "series", catalogId = "mdblist.6608")
-            ),
-            listMetadata = listOf(
-                metadata(sourceCatalogId = "mdblist.6638", sourceAddonId = "aio-metadata", sourceName = "Popular History Movies", sourceLabel = "MDBLIST", mediaType = "movie", itemCount = 457, author = "MaxtronTV", url = "https://mdblist.com/lists/maxtrontv/history-movies"),
-                metadata(sourceCatalogId = "mdblist.6608", sourceAddonId = "aio-metadata", sourceName = "History TV Shows", sourceLabel = "MDBLIST", mediaType = "series", itemCount = 552, author = "MaxtronTV", url = "https://mdblist.com/lists/maxtrontv/history-tv-shows")
-            )
-        ),
-        entry(
             title = "Animation",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/animation.jpg",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}ANIMATION.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -551,24 +472,10 @@ internal object CollectionTemplateManifest {
             )
         ),
         entry(
-            title = "Reality TV",
-            group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/reality-tv.jpg",
-            tileShape = CollectionTileShape.POSTER,
-            hideTitle = true,
-            heroVideoUrl = null,
-            sources = listOf(
-                source(addonId = "aio-metadata", type = "series", catalogId = "mdblist.128054")
-            ),
-            listMetadata = listOf(
-                metadata(sourceCatalogId = "mdblist.128054", sourceAddonId = "aio-metadata", sourceName = "Popular Reality Shows", sourceLabel = "MDBLIST", mediaType = "series", itemCount = 500, author = "snoak", url = "https://mdblist.com/lists/snoak/top-reality-shows")
-            )
-        ),
-        entry(
             title = "Family",
             group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/family.jpg",
-            tileShape = CollectionTileShape.POSTER,
+            coverImageUrl = "${GENRE_IMAGE_BASE}KIDS%20AND%20FAMILY.jpegli.jpg",
+            tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
@@ -578,20 +485,6 @@ internal object CollectionTemplateManifest {
             listMetadata = listOf(
                 metadata(sourceCatalogId = "mdblist.43249", sourceAddonId = "aio-metadata", sourceName = "Popular Family Movies", sourceLabel = "MDBLIST", mediaType = "movie", itemCount = 434, author = "familytv133", url = "https://mdblist.com/lists/familytv133/family-kids-english-movies-rated-g-pg"),
                 metadata(sourceCatalogId = "mdblist.43251", sourceAddonId = "aio-metadata", sourceName = "Popular Family Shows", sourceLabel = "MDBLIST", mediaType = "series", itemCount = 277, author = "familytv133", url = "https://mdblist.com/lists/familytv133/family-kids-english-tv-showsrated-g-pg")
-            )
-        ),
-        entry(
-            title = "Nature",
-            group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/nature.jpg",
-            tileShape = CollectionTileShape.POSTER,
-            hideTitle = true,
-            heroVideoUrl = null,
-            sources = listOf(
-                source(addonId = "aio-metadata", type = "series", catalogId = "mdblist.113465")
-            ),
-            listMetadata = listOf(
-                metadata(sourceCatalogId = "mdblist.113465", sourceAddonId = "aio-metadata", sourceName = "Latest Nature Documentaries", sourceLabel = "MDBLIST", mediaType = "series", itemCount = 278, author = "manu-081", url = "https://mdblist.com/lists/manu-081/latest-tv-shows-nature-documentary")
             )
         ),
         entry(

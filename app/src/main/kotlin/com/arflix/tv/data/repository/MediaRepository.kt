@@ -206,9 +206,17 @@ class MediaRepository @Inject constructor(
         val refs = LinkedHashSet<Pair<MediaType, Int>>()
         cached?.forEach { refs.add(it) }
         val targetCount = requiredCount.coerceAtLeast(1)
+        // SERVICE and GENRE rails page through TMDB/addon catalogs on demand,
+        // so let the per-source budget grow with the user's scroll position
+        // instead of clamping at the default 72/96/120 ceiling. FRANCHISE and
+        // other fixed groups keep the small cap.
+        val unlimitedGroup = catalog.collectionGroup == CollectionGroupKind.SERVICE ||
+            catalog.collectionGroup == CollectionGroupKind.GENRE
         catalog.collectionSources.forEach { source ->
             val remaining = (targetCount - refs.size).coerceAtLeast(1)
-            val sourceBudget = when (source.kind) {
+            val sourceBudget = if (unlimitedGroup) {
+                (targetCount + 20).coerceAtLeast(40)
+            } else when (source.kind) {
                 CollectionSourceKind.ADDON_CATALOG -> (remaining + 12).coerceAtLeast(24).coerceAtMost(120)
                 CollectionSourceKind.MDBLIST_PUBLIC -> (remaining + 8).coerceAtLeast(24).coerceAtMost(96)
                 else -> (remaining + 8).coerceAtLeast(24).coerceAtMost(72)
@@ -1189,31 +1197,6 @@ class MediaRepository @Inject constructor(
                     ).joinToString("|")
                 }
             }
-            val bundledGenreCovers = mapOf(
-                "action" to "file:///android_asset/genre_cards/action.jpg",
-                "comedy" to "file:///android_asset/genre_cards/comedy.jpg",
-                "sci-fi" to "file:///android_asset/genre_cards/sci-fi.jpg",
-                "crime" to "file:///android_asset/genre_cards/crime.jpg",
-                "thriller" to "file:///android_asset/genre_cards/thriller.jpg",
-                "drama" to "file:///android_asset/genre_cards/drama.jpg",
-                "horror" to "file:///android_asset/genre_cards/horror.jpg",
-                "mystery" to "file:///android_asset/genre_cards/mystery.jpg",
-                "mindfuck" to "file:///android_asset/genre_cards/mindfuck.jpg",
-                "anime" to "file:///android_asset/genre_cards/anime.jpg",
-                "documentary" to "file:///android_asset/genre_cards/documentary.jpg",
-                "romance" to "file:///android_asset/genre_cards/romance.jpg",
-                "history" to "file:///android_asset/genre_cards/history.jpg",
-                "animation" to "file:///android_asset/genre_cards/animation.jpg",
-                "reality tv" to "file:///android_asset/genre_cards/reality_tv.jpg",
-                "family" to "file:///android_asset/genre_cards/family.jpg",
-                "nature" to "file:///android_asset/genre_cards/nature.jpg",
-                "fantasy" to "file:///android_asset/genre_cards/fantasy.jpg",
-                "adventure" to "file:///android_asset/genre_cards/adventure.jpg",
-                "superhero" to "file:///android_asset/genre_cards/superhero.jpg",
-                "war & military" to "file:///android_asset/genre_cards/war_military.jpg",
-                "western" to "file:///android_asset/genre_cards/western.jpg"
-            )
-
             val collectionRails = CollectionTemplateManifest.railOrder.map { group ->
                 CatalogConfig(
                     id = CollectionTemplateManifest.railCatalogId(group),
@@ -1233,9 +1216,7 @@ class MediaRepository @Inject constructor(
                 val legacyHeroCover = legacy?.collectionHeroImageUrl?.takeUnless {
                     it.contains(".gif", ignoreCase = true) || it.contains("gifv", ignoreCase = true)
                 }
-                val bundledGenreCover = bundledGenreCovers[entry.title.trim().lowercase(Locale.US)]
                 val preferredCover = when (entry.group) {
-                    CollectionGroupKind.GENRE -> bundledGenreCover ?: entry.coverImageUrl
                     CollectionGroupKind.FRANCHISE -> if (entry.sources.isNotEmpty()) {
                         entry.coverImageUrl
                     } else {
@@ -1269,11 +1250,7 @@ class MediaRepository @Inject constructor(
                     } else {
                         entry.tileShape
                     },
-                    collectionHideTitle = if (entry.group == CollectionGroupKind.GENRE) {
-                        false
-                    } else {
-                        entry.hideTitle
-                    },
+                    collectionHideTitle = entry.hideTitle,
                     collectionSources = mergeCollectionSources(
                         primary = entry.sources,
                         fallback = legacy?.collectionSources.orEmpty()

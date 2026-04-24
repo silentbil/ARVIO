@@ -1368,6 +1368,15 @@ fun PlayerScreen(
                 )
             }
             runCatching { exoPlayer.release() }
+            // Restore the system stream volume if the player left it at zero.
+            // setStreamVolume(STREAM_MUSIC, 0) silences HDMI ARC, optical, and
+            // Bluetooth receivers globally — not just this app — so we must undo
+            // it when leaving the player, regardless of whether the user muted
+            // intentionally or accidentally scrolled the volume down.
+            if (isMuted || currentVolume == 0) {
+                val restoreLevel = volumeBeforeMute.coerceAtLeast(1)
+                runCatching { audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, restoreLevel, 0) }
+            }
         }
     }
 
