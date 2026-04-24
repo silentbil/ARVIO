@@ -994,6 +994,17 @@ private fun DetailsContent(
         val mobileScrollState = rememberScrollState()
         val density = LocalDensity.current
         var stickyThreshold by remember { mutableStateOf(-1f) }
+        val topBarAlpha by remember {
+            derivedStateOf {
+                if (stickyThreshold >= 0f && mobileScrollState.value > stickyThreshold) {
+                    val overscroll = mobileScrollState.value - stickyThreshold
+                    val maxOverscroll = 150f
+                    (overscroll / maxOverscroll).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+            }
+        }
 
         val genreText = genres.take(2).joinToString(" / ").ifBlank {
             if (item.mediaType == MediaType.TV) "TV Series" else "Movie"
@@ -1046,6 +1057,22 @@ private fun DetailsContent(
                                 )
                             )
                     )
+                    
+                    if (topBarAlpha > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .graphicsLayer { 
+                                    alpha = topBarAlpha
+                                    translationY = mobileScrollState.value.toFloat()
+                                }
+                                .background(Color.Black.copy(alpha = 0.85f))
+                        ) {
+                            Spacer(modifier = Modifier.statusBarsPadding().height(64.dp))
+                        }
+                    }
+
                     // Title and metadata over backdrop bottom
                     Column(
                         modifier = Modifier
