@@ -204,12 +204,12 @@ class IptvRepository @Inject constructor(
     private val playlistCacheMs = staleAfterMs
     private val epgCacheMs = staleAfterMs
     private val epgEmptyRetryMs = 30_000L
-    private val epgUpcomingProgramLimit = 8
+    private val epgUpcomingProgramLimit = 14
     private val epgRecentProgramLimit = 2
     private val xtreamShortEpgLimit = 8
     private val startupShortEpgChannelLimit = 1200
     private val generalShortEpgChannelLimit = 4000
-    private val cacheUpcomingProgramLimit = 4
+    private val cacheUpcomingProgramLimit = 8
     private val cacheRecentProgramLimit = 1
     private val xtreamVodCacheMs = 6 * 60 * 60_000L
     private val iptvHttpClient: OkHttpClient by lazy {

@@ -141,6 +141,37 @@ private enum class TvFocusZone {
     GUIDE
 }
 
+private fun List<IptvChannel>.preferredIndexFor(
+    selectedChannelId: String?,
+    playingChannelId: String?
+): Int {
+    if (isEmpty()) return 0
+    val selectedIndex = selectedChannelId?.let { id -> indexOfFirst { it.id == id } } ?: -1
+    if (selectedIndex >= 0) return selectedIndex
+    val playingIndex = playingChannelId?.let { id -> indexOfFirst { it.id == id } } ?: -1
+    if (playingIndex >= 0) return playingIndex
+    return 0
+}
+
+private fun preferredStartupGroup(
+    groups: List<String>,
+    channelsByGroup: Map<String, List<IptvChannel>>
+): String? {
+    return when {
+        channelsByGroup[FAVORITES_GROUP_NAME].orEmpty().isNotEmpty() -> FAVORITES_GROUP_NAME
+        else -> groups.firstOrNull { channelsByGroup[it].orEmpty().isNotEmpty() }
+    }
+}
+
+private fun String.isPriorityGuideGroup(): Boolean {
+    if (this == FAVORITES_GROUP_NAME) return true
+    val tokens = lowercase()
+        .split(Regex("[^a-z0-9]+"))
+        .filter { it.isNotBlank() }
+        .toSet()
+    return "netherlands" in tokens || "nederland" in tokens || "nl" in tokens
+}
+
 private fun String.toTvFocusZone(
     hasGroups: Boolean,
     hasChannels: Boolean
@@ -215,6 +246,7 @@ fun TvScreen(
     var centerDownAtMs by remember { mutableStateOf<Long?>(null) }
     var lastNavigationAt by remember { mutableLongStateOf(0L) }
     var restoredSessionAt by rememberSaveable { mutableLongStateOf(0L) }
+    var startupDefaultApplied by rememberSaveable { mutableStateOf(false) }
     var isFastNavigating by remember { mutableStateOf(false) }
     val rootFocusRequester = remember { FocusRequester() }
     var rootHasFocus by remember { mutableStateOf(false) }
@@ -272,6 +304,9 @@ fun TvScreen(
     val selectedGroup = groups.getOrNull(safeGroupIndex).orEmpty()
     val channels = uiState.channelsByGroup[selectedGroup].orEmpty()
     val safeChannelIndex = channelIndex.coerceIn(0, (channels.size - 1).coerceAtLeast(0))
+    val startupGroupName = remember(groups, uiState.channelsByGroup) {
+        preferredStartupGroup(groups, uiState.channelsByGroup).orEmpty()
+    }
     val selectedChannel = selectedChannelId?.let { uiState.channelLookup[it] }
     // Actual playback should be driven by the currently playing channel first.
     // A stale selectedChannelId (e.g. after group changes) can otherwise override
@@ -303,10 +338,52 @@ fun TvScreen(
         }
     }
 
-    LaunchedEffect(uiState.tvSession.lastOpenedAt, uiState.snapshot.channels.size, initialChannelId, initialStreamUrl) {
+    LaunchedEffect(uiState.tvSession.lastOpenedAt, uiState.snapshot.channels.size, initialChannelId, initialStreamUrl, startupGroupName, startupDefaultApplied) {
         if (initialChannelId != null || initialStreamUrl != null) return@LaunchedEffect
+        if (uiState.snapshot.channels.isEmpty()) {
+            return@LaunchedEffect
+        }
+        if (startupDefaultApplied && restoredSessionAt == uiState.tvSession.lastOpenedAt && restoredSessionAt > 0L) return@LaunchedEffect
+
         val session = uiState.tvSession
-        if (session.lastOpenedAt <= 0L || restoredSessionAt == session.lastOpenedAt || uiState.snapshot.channels.isEmpty()) {
+        val startupGroupIndex = startupGroupName
+            .takeIf { it.isNotBlank() }
+            ?.let(groups::indexOf)
+            ?.takeIf { it >= 0 }
+        val shouldPreferFavoritesStartup = startupGroupIndex != null &&
+            startupGroupName == FAVORITES_GROUP_NAME
+
+        if (!startupDefaultApplied && shouldPreferFavoritesStartup) {
+            val favoritesChannels = uiState.channelsByGroup[startupGroupName].orEmpty()
+            val startupIndex = 0
+            val startupChannel = favoritesChannels.getOrNull(startupIndex)
+            if (startupChannel != null) {
+                groupIndex = startupGroupIndex
+                channelIndex = startupIndex
+                selectedChannelId = startupChannel.id
+                playingChannelId = startupChannel.id
+                focusZone = TvFocusZone.GUIDE
+                restoredSessionAt = session.lastOpenedAt.coerceAtLeast(1L)
+                startupDefaultApplied = true
+                return@LaunchedEffect
+            }
+        }
+
+        if (!startupDefaultApplied && session.lastOpenedAt <= 0L) {
+            val fallbackGroup = startupGroupIndex ?: 0
+            val fallbackChannels = groups.getOrNull(fallbackGroup)
+                ?.let { uiState.channelsByGroup[it].orEmpty() }
+                .orEmpty()
+            val fallbackIndex = fallbackChannels.preferredIndexFor(selectedChannelId, playingChannelId)
+            fallbackChannels.getOrNull(fallbackIndex)?.let { channel ->
+                if (groups.isNotEmpty()) groupIndex = fallbackGroup
+                channelIndex = fallbackIndex
+                selectedChannelId = channel.id
+                playingChannelId = channel.id
+                focusZone = TvFocusZone.GUIDE
+                restoredSessionAt = 1L
+                startupDefaultApplied = true
+            }
             return@LaunchedEffect
         }
 
@@ -344,10 +421,22 @@ fun TvScreen(
             hasChannels = restoredChannels.isNotEmpty()
         )
         restoredSessionAt = session.lastOpenedAt
+        startupDefaultApplied = true
     }
 
     LaunchedEffect(groups.size) {
         if (groupIndex >= groups.size) groupIndex = 0
+    }
+    LaunchedEffect(selectedGroup, channels.size, focusZone, playingChannelId) {
+        if (selectedGroup.isBlank() || channels.isEmpty()) return@LaunchedEffect
+        val preferredIndex = channels.preferredIndexFor(selectedChannelId, playingChannelId)
+            .coerceIn(0, channels.lastIndex)
+        if (channelIndex != preferredIndex && (focusZone == TvFocusZone.GUIDE || selectedChannelId == null)) {
+            channelIndex = preferredIndex
+        }
+        if (selectedChannelId == null || channels.none { it.id == selectedChannelId }) {
+            selectedChannelId = channels[preferredIndex].id
+        }
     }
     LaunchedEffect(uiState.isConfigured) {
         if (uiState.isConfigured && focusZone == TvFocusZone.SIDEBAR && groups.isNotEmpty()) {
@@ -384,8 +473,28 @@ fun TvScreen(
         if (selectedGroup.isBlank() || channels.isEmpty()) return@LaunchedEffect
         viewModel.prefetchVisibleCategoryEpg(
             channelIds = channels.map { it.id },
-            selectedChannelId = playingChannelId ?: selectedChannelId
+            selectedChannelId = playingChannelId ?: selectedChannelId,
+            eagerLimit = if (selectedGroup.isPriorityGuideGroup()) minOf(channels.size, 480) else minOf(channels.size, 140),
+            backgroundLimit = if (selectedGroup.isPriorityGuideGroup()) minOf(channels.size, 1200) else minOf(channels.size, 420)
         )
+    }
+    LaunchedEffect(selectedGroup, focusZone, selectedChannelId, isFastNavigating, isFullScreen) {
+        if (isFullScreen || focusZone != TvFocusZone.GROUPS) return@LaunchedEffect
+        val targetChannelId = selectedChannelId ?: return@LaunchedEffect
+        if (targetChannelId == playingChannelId) return@LaunchedEffect
+        if (channels.none { it.id == targetChannelId }) return@LaunchedEffect
+        if (isFastNavigating) return@LaunchedEffect
+        delay(120L)
+        if (
+            !isFullScreen &&
+            focusZone == TvFocusZone.GROUPS &&
+            !isFastNavigating &&
+            channels.any { it.id == targetChannelId } &&
+            selectedChannelId == targetChannelId &&
+            playingChannelId != targetChannelId
+        ) {
+            playingChannelId = targetChannelId
+        }
     }
     LaunchedEffect(playingChannelId) {
         val currentChannelId = playingChannelId ?: return@LaunchedEffect
@@ -723,8 +832,13 @@ fun TvScreen(
                         }
 
                         TvFocusZone.GROUPS -> {
-                            channelIndex = 0
-                            focusZone = TvFocusZone.GUIDE
+                            if (channels.isNotEmpty()) {
+                                val targetIndex = channels.preferredIndexFor(selectedChannelId, playingChannelId)
+                                    .coerceIn(0, channels.lastIndex)
+                                channelIndex = targetIndex
+                                selectedChannelId = channels[targetIndex].id
+                                focusZone = TvFocusZone.GUIDE
+                            }
                             true
                         }
 
@@ -771,7 +885,13 @@ fun TvScreen(
                                 TvFocusZone.SIDEBAR -> if (sidebarFocusIndex < maxSidebarIndex) {
                                     sidebarFocusIndex = (sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
                                 }
-                                TvFocusZone.GROUPS -> if (channels.isNotEmpty()) focusZone = TvFocusZone.GUIDE
+                                TvFocusZone.GROUPS -> if (channels.isNotEmpty()) {
+                                    val targetIndex = channels.preferredIndexFor(selectedChannelId, playingChannelId)
+                                        .coerceIn(0, channels.lastIndex)
+                                    channelIndex = targetIndex
+                                    selectedChannelId = channels[targetIndex].id
+                                    focusZone = TvFocusZone.GUIDE
+                                }
                                 TvFocusZone.GUIDE -> Unit
                             }
                             true
@@ -868,8 +988,10 @@ fun TvScreen(
                         onGroupClick = { index ->
                             groupIndex = index
                             focusZone = TvFocusZone.GROUPS
-                            channelIndex = 0
-                            selectedChannelId = null
+                            val nextChannels = uiState.channelsByGroup[groups.getOrNull(index).orEmpty()].orEmpty()
+                            val targetIndex = nextChannels.preferredIndexFor(selectedChannelId, playingChannelId)
+                            channelIndex = targetIndex.coerceAtLeast(0)
+                            selectedChannelId = nextChannels.getOrNull(targetIndex)?.id
                         },
                         onGroupLongPress = { index ->
                             groupIndex = index

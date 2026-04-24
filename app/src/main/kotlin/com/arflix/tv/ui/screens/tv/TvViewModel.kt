@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
-private const val FAVORITES_GROUP_NAME = "My Favorites"
+internal const val FAVORITES_GROUP_NAME = "My Favorites"
 
 data class TvUiState(
     val isLoading: Boolean = false,
@@ -372,7 +372,12 @@ class TvViewModel @Inject constructor(
         viewModelScope.launch { iptvRepository.toggleHiddenGroup(groupName); scheduleIptvCloudSync() }
     }
 
-    fun prefetchVisibleCategoryEpg(channelIds: List<String>, selectedChannelId: String?) {
+    fun prefetchVisibleCategoryEpg(
+        channelIds: List<String>,
+        selectedChannelId: String?,
+        eagerLimit: Int = 96,
+        backgroundLimit: Int = 640
+    ) {
         if (channelIds.isEmpty()) return
         val orderedIds = buildList {
             selectedChannelId?.takeIf { it in channelIds }?.let { add(it) }
@@ -391,6 +396,8 @@ class TvViewModel @Inject constructor(
             append('|')
             append(orderedIds.size)
             append('|')
+            append(eagerLimit)
+            append('|')
             append(orderedIds.firstOrNull().orEmpty())
             append('|')
             append(orderedIds.lastOrNull().orEmpty())
@@ -402,7 +409,7 @@ class TvViewModel @Inject constructor(
         lastVisibleEpgRefreshAt = now
         visibleEpgRefreshJob?.cancel()
         visibleEpgRefreshJob = viewModelScope.launch {
-            val eagerIds = orderedIds.take(96)
+            val eagerIds = orderedIds.take(eagerLimit.coerceAtLeast(1))
             System.err.println("[EPG-Category] eager=${eagerIds.size} totalVisible=${orderedIds.size} selected=${selectedChannelId.orEmpty()}")
             val eagerRefreshed = runCatching {
                 iptvRepository.refreshEpgForChannels(
@@ -422,7 +429,7 @@ class TvViewModel @Inject constructor(
 
             val backgroundIds = orderedIds
                 .drop(eagerIds.size)
-                .take(640)
+                .take(backgroundLimit.coerceAtLeast(0))
                 .filterNot { id -> hasProgramData(_uiState.value.snapshot.nowNext[id]) }
             if (backgroundIds.isEmpty()) return@launch
 
@@ -515,25 +522,29 @@ class TvViewModel @Inject constructor(
         val state = _uiState.value
         if (state.channelsByGroup.isEmpty()) return
 
-        val preferredGroup = state.tvSession.lastGroupName
-            .takeIf { it.isNotBlank() && state.channelsByGroup[it].orEmpty().isNotEmpty() }
-            ?: state.groups.firstOrNull { state.channelsByGroup[it].orEmpty().isNotEmpty() }
-            ?: return
+        val warmGroups = buildStartupWarmGroups(state)
+        if (warmGroups.isEmpty()) return
+        val warmChannels = buildList {
+            warmGroups.forEachIndexed { index, groupName ->
+                val limit = if (groupName == FAVORITES_GROUP_NAME || index == 0) 96 else 56
+                addAll(state.channelsByGroup[groupName].orEmpty().take(limit))
+            }
+        }
+            .distinctBy { it.id }
+        if (warmChannels.isEmpty()) return
 
-        val preferredChannels = state.channelsByGroup[preferredGroup].orEmpty().take(72)
-        if (preferredChannels.isEmpty()) return
-
-        val coverage = preferredChannels.count { hasProgramData(state.snapshot.nowNext[it.id]) }
-        if (coverage >= minOf(preferredChannels.size, 12)) return
+        val coverage = warmChannels.count { hasProgramData(state.snapshot.nowNext[it.id]) }
+        if (coverage >= minOf(warmChannels.size, 24)) return
 
         val preferredSelectedId = state.tvSession.lastChannelId
-            .takeIf { id -> id.isNotBlank() && preferredChannels.any { channel -> channel.id == id } }
+            .takeIf { id -> id.isNotBlank() && warmChannels.any { channel -> channel.id == id } }
+            ?: warmChannels.firstOrNull()?.id
         val warmupKey = buildString {
-            append(preferredGroup)
+            append(warmGroups.joinToString(","))
             append('|')
-            append(preferredChannels.firstOrNull()?.id.orEmpty())
+            append(warmChannels.firstOrNull()?.id.orEmpty())
             append('|')
-            append(preferredChannels.size)
+            append(warmChannels.size)
             append('|')
             append(preferredSelectedId.orEmpty())
         }
@@ -541,8 +552,10 @@ class TvViewModel @Inject constructor(
         startupGuideWarmupKey = warmupKey
 
         prefetchVisibleCategoryEpg(
-            channelIds = preferredChannels.map { it.id },
-            selectedChannelId = preferredSelectedId ?: preferredChannels.firstOrNull()?.id
+            channelIds = warmChannels.map { it.id },
+            selectedChannelId = preferredSelectedId,
+            eagerLimit = minOf(warmChannels.size, 520),
+            backgroundLimit = minOf(warmChannels.size, 1600)
         )
     }
 
@@ -557,6 +570,28 @@ class TvViewModel @Inject constructor(
             }
         }
     }
+}
+
+private fun buildStartupWarmGroups(state: TvUiState): List<String> {
+    if (state.channelsByGroup.isEmpty()) return emptyList()
+    val favoritesFirst = state.channelsByGroup[FAVORITES_GROUP_NAME]
+        .orEmpty()
+        .takeIf { it.isNotEmpty() }
+        ?.let { listOf(FAVORITES_GROUP_NAME) }
+        .orEmpty()
+    val sessionGroup = state.tvSession.lastGroupName
+        .takeIf { it.isNotBlank() && state.channelsByGroup[it].orEmpty().isNotEmpty() }
+        ?.let(::listOf)
+        .orEmpty()
+    val favoriteGroups = state.snapshot.favoriteGroups
+        .filter { state.channelsByGroup[it].orEmpty().isNotEmpty() }
+    val netherlandsGroups = state.groups.filter { groupName ->
+        state.channelsByGroup[groupName].orEmpty().isNotEmpty() && groupName.isPriorityStartupGroup()
+    }
+    val fallbackGroups = state.groups.filter { state.channelsByGroup[it].orEmpty().isNotEmpty() }
+    return (favoritesFirst + sessionGroup + favoriteGroups + netherlandsGroups + fallbackGroups)
+        .distinct()
+        .take(16)
 }
 
 private fun setPreparedContent(state: TvUiState): TvUiState {
@@ -609,7 +644,12 @@ private fun buildPreparedChannelsByGroup(
                 if (favoriteChannelIds.isEmpty()) {
                     emptyList()
                 } else {
-                    snapshot.channels.filter { favoriteChannelIds.contains(it.id) }
+                    val favoriteOrder = snapshot.favoriteChannels
+                        .withIndex()
+                        .associate { (index, id) -> id to index }
+                    snapshot.channels
+                        .filter { favoriteChannelIds.contains(it.id) }
+                        .sortedBy { favoriteOrder[it.id] ?: Int.MAX_VALUE }
                 }
             } else {
                 snapshot.grouped[group].orEmpty()
@@ -617,6 +657,18 @@ private fun buildPreparedChannelsByGroup(
             put(group, filterTvChannels(source, trimmedQuery))
         }
     }
+}
+
+private fun String.isNetherlandsGroup(): Boolean {
+    val tokens = lowercase()
+        .split(Regex("[^a-z0-9]+"))
+        .filter { it.isNotBlank() }
+        .toSet()
+    return "netherlands" in tokens || "nederland" in tokens || "nl" in tokens
+}
+
+private fun String.isPriorityStartupGroup(): Boolean {
+    return isNetherlandsGroup() || lowercase().contains("4k")
 }
 
 private fun filterTvChannels(
