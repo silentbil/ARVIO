@@ -132,7 +132,7 @@ fun MediaCard(
     val shape = rememberArvioCardShape(ArvioSkin.radius.md)
 
     val showFocusOutline = visualFocused
-    val jumpBorderWidth = if (showFocusOutline) 3.dp else 0.dp
+    val jumpBorderWidth = if (showFocusOutline) 2.5.dp else 0.dp
 
     val context = LocalContext.current
     val density = LocalDensity.current
