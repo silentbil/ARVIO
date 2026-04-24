@@ -179,7 +179,7 @@ fun MediaCard(
             backgroundColor = ArvioSkin.colors.surface,
             outlineColor = ArvioSkin.colors.focusOutline,
             outlineWidth = jumpBorderWidth,
-            focusedScale = 1.05f,
+            focusedScale = 1.15f,
             pressedScale = 0.97f,
             focusedTransformOriginX = 0.5f,
             enableSystemFocus = enableSystemFocus,
