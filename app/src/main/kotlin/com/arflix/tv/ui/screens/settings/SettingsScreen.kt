@@ -120,6 +120,7 @@ import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundDark
 import com.arflix.tv.ui.theme.BackgroundElevated
@@ -3527,13 +3528,38 @@ private fun CloudstreamSettings(
     onDeleteRepo: (String) -> Unit = {},
     onAddRepository: () -> Unit = {}
 ) {
+    val enabledPluginCount = remember(plugins) { plugins.count { it.isEnabled } }
     Column {
         Text(
             text = "Cloudstream",
             style = ArflixTypography.sectionTitle,
             color = TextPrimary,
-            modifier = Modifier.padding(bottom = 24.dp)
+            modifier = Modifier.padding(bottom = 10.dp)
         )
+
+        Text(
+            text = "Add a repository, browse plugins, install what you want, then use it from Sources on movies and series.",
+            style = ArflixTypography.body,
+            color = TextSecondary,
+            modifier = Modifier.padding(bottom = 18.dp)
+        )
+
+        if (plugins.isNotEmpty() || repositories.isNotEmpty()) {
+            Text(
+                text = buildString {
+                    append("${plugins.size} installed")
+                    append(" • ")
+                    append("$enabledPluginCount enabled")
+                    if (repositories.isNotEmpty()) {
+                        append(" • ")
+                        append("${repositories.size} repos")
+                    }
+                },
+                style = ArflixTypography.caption,
+                color = TextSecondary,
+                modifier = Modifier.padding(bottom = 14.dp)
+            )
+        }
 
         if (plugins.isEmpty() && repositories.isEmpty()) {
             Text(
@@ -3576,8 +3602,14 @@ private fun CloudstreamSettings(
                 )
                 repositories.forEachIndexed { index, repo ->
                     val rowIndex = plugins.size + index
+                    val installedForRepo = plugins.count { it.repoUrl.equals(repo.url, ignoreCase = true) }
+                    val enabledForRepo = plugins.count {
+                        it.repoUrl.equals(repo.url, ignoreCase = true) && it.isEnabled
+                    }
                     CloudstreamRepositoryRow(
                         repository = repo,
+                        installedPluginCount = installedForRepo,
+                        enabledPluginCount = enabledForRepo,
                         isFocused = focusedIndex == rowIndex,
                         focusedAction = if (focusedIndex == rowIndex) focusedActionIndex else -1,
                         onConfigure = { onConfigureRepo(repo.url) },
@@ -3625,6 +3657,28 @@ private fun CloudstreamSettings(
                 color = Pink
             )
         }
+    }
+}
+
+@Composable
+private fun CloudstreamStatusChip(
+    text: String,
+    background: Color,
+    textColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(background)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = text,
+            style = ArflixTypography.caption,
+            color = textColor,
+            maxLines = 1
+        )
     }
 }
 
@@ -3696,6 +3750,23 @@ private fun AddonRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CloudstreamStatusChip(
+                        text = "Installed",
+                        background = Color(0xFF2563EB).copy(alpha = 0.18f),
+                        textColor = Color(0xFF93C5FD)
+                    )
+                    CloudstreamStatusChip(
+                        text = if (isEnabled) "Enabled" else "Disabled",
+                        background = if (isEnabled) {
+                            SuccessGreen.copy(alpha = 0.18f)
+                        } else {
+                            Color.White.copy(alpha = 0.08f)
+                        },
+                        textColor = if (isEnabled) SuccessGreen else TextSecondary
+                    )
+                }
             }
         }
 
@@ -3907,6 +3978,8 @@ private fun CloudstreamInstalledPluginRow(
 @Composable
 private fun CloudstreamRepositoryRow(
     repository: CloudstreamRepositoryRecord,
+    installedPluginCount: Int,
+    enabledPluginCount: Int,
     isFocused: Boolean,
     focusedAction: Int = -1,
     onConfigure: () -> Unit,
@@ -3967,6 +4040,29 @@ private fun CloudstreamRepositoryRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CloudstreamStatusChip(
+                        text = if (installedPluginCount == 1) {
+                            "1 plugin installed"
+                        } else {
+                            "$installedPluginCount plugins installed"
+                        },
+                        background = Color(0xFF2563EB).copy(alpha = 0.18f),
+                        textColor = Color(0xFF93C5FD)
+                    )
+                    if (installedPluginCount > 0) {
+                        CloudstreamStatusChip(
+                            text = "$enabledPluginCount enabled",
+                            background = if (enabledPluginCount > 0) {
+                                SuccessGreen.copy(alpha = 0.18f)
+                            } else {
+                                Color.White.copy(alpha = 0.08f)
+                            },
+                            textColor = if (enabledPluginCount > 0) SuccessGreen else TextSecondary
+                        )
+                    }
+                }
             }
         }
 
@@ -3974,9 +4070,9 @@ private fun CloudstreamRepositoryRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
                     .background(
                         color = if (isConfigureFocused) SuccessGreen else Color.White.copy(alpha = 0.1f),
                         shape = RoundedCornerShape(8.dp)
@@ -3990,7 +4086,7 @@ private fun CloudstreamRepositoryRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.Settings,
-                    contentDescription = "Configure repository",
+                    contentDescription = "Browse repository plugins",
                     tint = if (isConfigureFocused) Color.White else TextSecondary,
                     modifier = Modifier.size(18.dp)
                 )
@@ -4166,6 +4262,12 @@ private fun CloudstreamPluginPickerModal(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(20.dp))
+                Text(
+                    text = "Installed plugins stay visible here after install. Use Install, Enable/Disable, or Remove per plugin.",
+                    style = ArflixTypography.caption,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
 
                 if (plugins.isEmpty()) {
                     Text(
@@ -4177,6 +4279,7 @@ private fun CloudstreamPluginPickerModal(
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .arvioDpadFocusGroup()
                             .heightIn(max = 420.dp),
                         state = listState,
                         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -4255,6 +4358,32 @@ private fun CloudstreamPluginPickerModal(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
+                                    }
+                                    if (installedAddon != null) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            CloudstreamStatusChip(
+                                                text = "Installed",
+                                                background = Color(0xFF2563EB).copy(alpha = 0.18f),
+                                                textColor = Color(0xFF93C5FD)
+                                            )
+                                            CloudstreamStatusChip(
+                                                text = if (installedAddon.isEnabled) "Enabled" else "Disabled",
+                                                background = if (installedAddon.isEnabled) {
+                                                    SuccessGreen.copy(alpha = 0.18f)
+                                                } else {
+                                                    Color.White.copy(alpha = 0.08f)
+                                                },
+                                                textColor = if (installedAddon.isEnabled) SuccessGreen else TextSecondary
+                                            )
+                                            if (hasUpdate) {
+                                                CloudstreamStatusChip(
+                                                    text = "Update available",
+                                                    background = Pink.copy(alpha = 0.18f),
+                                                    textColor = Pink
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -5561,7 +5690,7 @@ private fun SubtitlePickerModal(
 
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.heightIn(max = 360.dp)
+                    modifier = Modifier.heightIn(max = 360.dp).arvioDpadFocusGroup()
                 ) {
                     itemsIndexed(options) { index, option ->
                         val isFocused = index == safeIndex

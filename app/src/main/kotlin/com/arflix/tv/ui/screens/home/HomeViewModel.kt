@@ -667,6 +667,8 @@ class HomeViewModel @Inject constructor(
     private var watchedBadgesJob: Job? = null
     private var loadHomeRequestId: Long = 0L
     private val HERO_DEBOUNCE_MS = 80L // Short debounce; focus idle is handled in HomeScreen
+    private val startupCreatedAtMs = SystemClock.elapsedRealtime()
+    private val startupSettleMs = if (isLowRamDevice) 2_200L else 1_400L
 
     // Phase 6.2-6.3: Fast scroll detection
     private var lastFocusChangeTime = 0L
@@ -731,6 +733,62 @@ class HomeViewModel @Inject constructor(
 
     private fun getCachedLogo(key: String): String? = synchronized(logoCacheLock) {
         logoCache[key]
+    }
+
+    private fun isStartupSettling(): Boolean {
+        return SystemClock.elapsedRealtime() - startupCreatedAtMs < startupSettleMs
+    }
+
+    private suspend fun delayUntilStartupSettled(extraDelayMs: Long = 0L) {
+        val waitMs = (startupCreatedAtMs + startupSettleMs + extraDelayMs) -
+            SystemClock.elapsedRealtime()
+        if (waitMs > 0L) {
+            delay(waitMs)
+        }
+    }
+
+    private fun scheduleInitialHomeLoad() {
+        viewModelScope.launch {
+            delay(if (isLowRamDevice) 220L else 140L)
+            if (
+                usedPreloadedData ||
+                _uiState.value.categories.isNotEmpty() ||
+                _uiState.value.heroItem != null
+            ) {
+                delayUntilStartupSettled()
+            }
+            loadHomeData()
+        }
+    }
+
+    private fun scheduleStartupImageWarmup(
+        logoUrls: List<String> = emptyList(),
+        backdropUrls: List<String> = emptyList()
+    ) {
+        if (logoUrls.isEmpty() && backdropUrls.isEmpty()) return
+        viewModelScope.launch(networkDispatcher) {
+            delayUntilStartupSettled(160L)
+            if (logoUrls.isNotEmpty()) {
+                preloadLogoImages(
+                    logoUrls,
+                    batchLimit = if (isLowRamDevice) 4 else 6
+                )
+            }
+            if (backdropUrls.isNotEmpty()) {
+                preloadBackdropImages(backdropUrls)
+            }
+        }
+    }
+
+    private fun scheduleStartupHeroHydration(item: MediaItem) {
+        heroDetailsJob?.cancel()
+        heroDetailsJob = viewModelScope.launch(networkDispatcher) {
+            delayUntilStartupSettled(120L)
+            val currentHero = _uiState.value.heroItem
+            if (currentHero?.id == item.id && currentHero.mediaType == item.mediaType) {
+                hydrateHeroDetailsIfNeeded(item)
+            }
+        }
     }
 
     private fun hasCachedLogo(key: String): Boolean = synchronized(logoCacheLock) {
@@ -1019,14 +1077,22 @@ class HomeViewModel @Inject constructor(
                     withContext(Dispatchers.Main) {
                         if (rawFirstItem != null && _uiState.value.heroItem == null) {
                             if (heroLogo != null) {
-                                preloadLogoImages(listOf(heroLogo), batchLimit = 1)
+                                if (isStartupSettling()) {
+                                    scheduleStartupImageWarmup(logoUrls = listOf(heroLogo))
+                                } else {
+                                    preloadLogoImages(listOf(heroLogo), batchLimit = 1)
+                                }
                             }
                             mediaRepository.cacheItem(rawFirstItem)
                             _uiState.value = _uiState.value.copy(
                                 heroItem = rawFirstItem,
                                 heroLogoUrl = heroLogo
                             )
-                            hydrateHeroDetailsIfNeeded(rawFirstItem)
+                            if (isStartupSettling()) {
+                                scheduleStartupHeroHydration(rawFirstItem)
+                            } else {
+                                hydrateHeroDetailsIfNeeded(rawFirstItem)
+                            }
                         }
 
                         lastContinueWatchingItems = cwCategory.items
@@ -1043,7 +1109,7 @@ class HomeViewModel @Inject constructor(
                 System.err.println("HomeVM: preload CW cache failed: ${e.message}")
             }
         }
-        loadHomeData()
+        scheduleInitialHomeLoad()
         // Defer heavy background warmups so first-launch navigation remains smooth.
         viewModelScope.launch {
             delay(if (isLowRamDevice) 12_000L else 8_000L)
@@ -1709,7 +1775,14 @@ class HomeViewModel @Inject constructor(
                     }
                     if (heroLogoFromCache != null || cachedLogoResults.isNotEmpty()) {
                         // Use high batch limit for initial display — preload all cached logos at once
-                        preloadLogoImages(cachedLogoResults.values.toList(), batchLimit = if (isLowRamDevice) 4 else 6)
+                        if (isStartupSettling()) {
+                            scheduleStartupImageWarmup(logoUrls = cachedLogoResults.values.toList())
+                        } else {
+                            preloadLogoImages(
+                                cachedLogoResults.values.toList(),
+                                batchLimit = if (isLowRamDevice) 4 else 6
+                            )
+                        }
                         _uiState.value = _uiState.value.copy(
                             isLoading = _uiState.value.isLoading,
                             categories = categories,
@@ -1717,7 +1790,13 @@ class HomeViewModel @Inject constructor(
                             heroItem = heroItem,
                             heroLogoUrl = heroLogoFromCache ?: _uiState.value.heroLogoUrl
                         )
-                        heroItem?.let { hydrateHeroDetailsIfNeeded(it) }
+                        heroItem?.let { item ->
+                            if (isStartupSettling()) {
+                                scheduleStartupHeroHydration(item)
+                            } else {
+                                hydrateHeroDetailsIfNeeded(item)
+                            }
+                        }
                         replaceCardLogoState(snapshotLogoCache())
                     }
                 }
@@ -1741,14 +1820,25 @@ class HomeViewModel @Inject constructor(
 
                 // Phase 1.2: Preload actual images with Coil (only newly fetched)
                 if (fetchedLogoResults.isNotEmpty()) {
-                    preloadLogoImages(fetchedLogoResults.values.toList(), batchLimit = if (isLowRamDevice) 4 else 6)
+                    if (isStartupSettling()) {
+                        scheduleStartupImageWarmup(logoUrls = fetchedLogoResults.values.toList())
+                    } else {
+                        preloadLogoImages(
+                            fetchedLogoResults.values.toList(),
+                            batchLimit = if (isLowRamDevice) 4 else 6
+                        )
+                    }
                 }
 
                 // Also preload backdrop images for first row
                 val backdropUrls = categories.firstOrNull()?.items?.take(initialBackdropPrefetchItems)?.mapNotNull {
                     it.backdrop ?: it.image
                 } ?: emptyList()
-                preloadBackdropImages(backdropUrls)
+                if (isStartupSettling()) {
+                    scheduleStartupImageWarmup(backdropUrls = backdropUrls)
+                } else {
+                    preloadBackdropImages(backdropUrls)
+                }
 
                 val heroLogoUrl = heroItem?.let { item ->
                     val key = "${item.mediaType}_${item.id}"
@@ -1767,7 +1857,13 @@ class HomeViewModel @Inject constructor(
                     isAuthenticated = traktRepository.isAuthenticated.first(),
                     error = null
                 )
-                heroItem?.let { hydrateHeroDetailsIfNeeded(it) }
+                heroItem?.let { item ->
+                    if (isStartupSettling()) {
+                        scheduleStartupHeroHydration(item)
+                    } else {
+                        hydrateHeroDetailsIfNeeded(item)
+                    }
+                }
                 replaceCardLogoState(snapshotLogoCache())
                 refreshWatchedBadges()
 
