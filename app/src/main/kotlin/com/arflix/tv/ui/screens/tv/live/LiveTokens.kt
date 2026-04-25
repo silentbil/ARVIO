@@ -56,20 +56,20 @@ object LiveColors {
     val BrandGeneral = Brand(Color(0xFF1B2B5A), Color(0xFFE8EFFB))
 }
 
-val LiveMono: FontFamily = FontFamily.Monospace
+val LiveMono: FontFamily = InterFontFamily
 
 object LiveType {
     // v4 — minimum readable at 10ft. 7sp is the absolute floor for the
     // tightest tags/badges; no higher than 11sp anywhere on the TV page.
-    val ChannelName  = TextStyle(fontFamily = InterFontFamily, fontSize = 11.sp, fontWeight = FontWeight.W700, letterSpacing = (-0.22).sp)
-    val ProgramTitle = TextStyle(fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.W600, letterSpacing = (-0.10).sp)
-    val CellTitle    = TextStyle(fontFamily = InterFontFamily, fontSize = 9.sp, fontWeight = FontWeight.W600, letterSpacing = (-0.09).sp)
-    val BodySynopsis = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W400)
-    val CatLabel     = TextStyle(fontFamily = InterFontFamily, fontSize = 9.sp, fontWeight = FontWeight.W500)
-    val SectionTag   = TextStyle(fontFamily = LiveMono, fontSize = 7.sp, fontWeight = FontWeight.W700, letterSpacing = 1.0.sp)
-    val Badge        = TextStyle(fontFamily = LiveMono, fontSize = 7.sp, fontWeight = FontWeight.W700, letterSpacing = 0.6.sp)
-    val TimeMono     = TextStyle(fontFamily = LiveMono, fontSize = 8.sp, fontWeight = FontWeight.W500)
-    val NumberMono   = TextStyle(fontFamily = LiveMono, fontSize = 8.sp, fontWeight = FontWeight.W600)
+    val ChannelName  = TextStyle(fontFamily = InterFontFamily, fontSize = 11.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 14.sp)
+    val ProgramTitle = TextStyle(fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 13.sp)
+    val CellTitle    = TextStyle(fontFamily = InterFontFamily, fontSize = 9.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 12.sp)
+    val BodySynopsis = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W400, letterSpacing = 0.sp, lineHeight = 11.sp)
+    val CatLabel     = TextStyle(fontFamily = InterFontFamily, fontSize = 9.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 12.sp)
+    val SectionTag   = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 11.sp)
+    val Badge        = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 11.sp)
+    val TimeMono     = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 11.sp)
+    val NumberMono   = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 11.sp)
 }
 
 object LiveDims {
