@@ -56,18 +56,17 @@ fun MobileBackButton(
     Box(
         modifier = modifier
             .statusBarsPadding()
-            .padding(start = 12.dp, top = 12.dp)
-            .size(40.dp)
+            .padding(start = 8.dp, top = 8.dp)
+            .size(48.dp) // Generous touch target
             .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.55f))
             .clickable(onClick = onBack),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
             contentDescription = "Back",
-            tint = Color.White,
-            modifier = Modifier.size(22.dp)
+            tint = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.size(28.dp)
         )
     }
 }
