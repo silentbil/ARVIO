@@ -103,8 +103,8 @@ fun ProgramCell(
                 scaleY = scale
             }
             .onFocusChanged {
-                focused = it.isFocused
-                if (it.isFocused) onFocused()
+                focused = it.hasFocus
+                if (it.hasFocus) onFocused()
             }
             .border(
                 width = borderWidth,

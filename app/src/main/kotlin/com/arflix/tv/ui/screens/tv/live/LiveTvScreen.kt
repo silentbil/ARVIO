@@ -527,6 +527,7 @@ fun LiveTvScreen(
                         selectedChannelId = focusedChannelId ?: playingChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
                         compact = true,
+                        gridFocused = focusZone == LiveTvFocusZone.EPG,
                         onChannelSelect = { channel ->
                             focusedChannelId = channel.id
                             if (channel.id == playingChannelId && !isFullScreen) {
@@ -587,6 +588,7 @@ fun LiveTvScreen(
                         selectedChannelId = focusedChannelId ?: playingChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
                         compact = compactTouchLayout,
+                        gridFocused = focusZone == LiveTvFocusZone.EPG,
                         onChannelSelect = { channel ->
                             // Two-step activation:
                             //  1st tap on a channel → tune it in the mini-
