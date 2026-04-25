@@ -540,19 +540,6 @@ internal object CollectionTemplateManifest {
             listMetadata = emptyList()
         ),
         entry(
-            title = "Western",
-            group = CollectionGroupKind.GENRE,
-            coverImageUrl = "https://image.tmdb.org/t/p/original/1B44i8YVIEJWiWvOyCTqcE30iyJ.jpg",
-            tileShape = CollectionTileShape.LANDSCAPE,
-            hideTitle = false,
-            heroVideoUrl = null,
-            sources = listOf(
-                tmdbGenreSource(type = "movie", genreId = 37),
-                tmdbGenreSource(type = "series", genreId = 37)
-            ),
-            listMetadata = emptyList()
-        ),
-        entry(
             title = "20's Movies",
             group = CollectionGroupKind.DECADE,
             coverImageUrl = "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/20snew.jpg",

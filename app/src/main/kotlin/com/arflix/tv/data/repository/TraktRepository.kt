@@ -2149,81 +2149,248 @@ class TraktRepository @Inject constructor(
 
     suspend fun getWatchlist(): List<MediaItem> {
         val auth = getAuthHeader() ?: return emptyList()
-        val items = mutableListOf<MediaItem>()
+        return getWatchlistFromTrakt(auth)
+    }
 
-        try {
-            val raw = traktApi.getWatchlist(auth, clientId)
-
-            // Sort newest-first by listed_at (when the user added the item).
-            // Trakt's default sort is user "rank" which does NOT match "added date".
-            val watchlist = raw.sortedByDescending { it.listedAt }
-
-            for (item in watchlist) {
-                when (item.type) {
-                    "movie" -> {
-                        val imdbId = item.movie?.ids?.imdb?.trim()?.takeIf { it.isNotEmpty() }
-                        // Prefer IMDB ID resolution — Trakt's stored tmdb mapping is
-                        // occasionally stale/wrong (e.g. an old "Luther" pointing at
-                        // a different show). IMDB IDs are canonical.
-                        val resolvedTmdbId: Int? = imdbId?.let { id ->
-                            runCatching {
-                                tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).movieResults
-                                    .firstOrNull()?.id?.takeIf { it > 0 }
-                            }.getOrNull()
-                        } ?: item.movie?.ids?.tmdb
-
-                        val tmdbId = resolvedTmdbId ?: continue
-                        try {
-                            val details = tmdbApi.getMovieDetails(tmdbId, Constants.TMDB_API_KEY)
-                            items.add(
-                                MediaItem(
-                                    id = tmdbId,
-                                    title = details.title,
-                                    subtitle = "Movie",
-                                    overview = details.overview ?: "",
-                                    year = details.releaseDate?.take(4) ?: "",
-                                    imdbRating = String.format("%.1f", details.voteAverage),
-                                    mediaType = MediaType.MOVIE,
-                                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
-                                        ?: details.backdropPath?.let { "${Constants.BACKDROP_BASE}$it" } ?: "",
-                                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
-                                )
-                            )
-                        } catch (e: Exception) { }
+    private suspend fun getWatchlistFromTrakt(auth: String): List<MediaItem> {
+        return try {
+            val watchlist = fetchAllWatchlistItems(auth)
+            val semaphore = Semaphore(6)
+            coroutineScope {
+                watchlist.map { item ->
+                    async {
+                        semaphore.withPermit {
+                            hydrateWatchlistItem(item)
+                        }
                     }
-                    "show" -> {
-                        val imdbId = item.show?.ids?.imdb?.trim()?.takeIf { it.isNotEmpty() }
-                        val resolvedTmdbId: Int? = imdbId?.let { id ->
-                            runCatching {
-                                tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).tvResults
-                                    .firstOrNull()?.id?.takeIf { it > 0 }
-                            }.getOrNull()
-                        } ?: item.show?.ids?.tmdb
+                }.awaitAll().filterNotNull()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
 
-                        val tmdbId = resolvedTmdbId ?: continue
-                        try {
-                            val details = tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY)
-                            items.add(
-                                MediaItem(
-                                    id = tmdbId,
-                                    title = details.name,
-                                    subtitle = "TV Series",
-                                    overview = details.overview ?: "",
-                                    year = details.firstAirDate?.take(4) ?: "",
-                                    imdbRating = String.format("%.1f", details.voteAverage),
-                                    mediaType = MediaType.TV,
-                                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
-                                        ?: details.backdropPath?.let { "${Constants.BACKDROP_BASE}$it" } ?: "",
-                                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
-                                )
-                            )
-                        } catch (e: Exception) { }
+    private suspend fun fetchAllWatchlistItems(auth: String): List<TraktWatchlistItem> {
+        val typedItems = fetchWatchlistItemsByType(auth, "movies") + fetchWatchlistItemsByType(auth, "shows")
+        if (typedItems.isNotEmpty()) {
+            return typedItems
+                .distinctBy { watchlistIdentity(it) }
+                .sortedByDescending { it.listedAt }
+        }
+
+        return traktApi.getWatchlist(auth, clientId)
+            .sortedByDescending { it.listedAt }
+            .distinctBy { watchlistIdentity(it) }
+    }
+
+    private suspend fun fetchWatchlistItemsByType(auth: String, type: String): List<TraktWatchlistItem> {
+        val all = mutableListOf<TraktWatchlistItem>()
+        val seen = LinkedHashSet<String>()
+        val limit = 100
+        var page = 1
+
+        while (true) {
+            val response = try {
+                traktApi.getWatchlistAddedPage(
+                    auth = auth,
+                    clientId = clientId,
+                    type = type,
+                    page = page,
+                    limit = limit
+                )
+            } catch (_: Exception) {
+                break
+            }
+
+            if (!response.isSuccessful) {
+                break
+            }
+
+            val pageItems = response.body().orEmpty()
+            pageItems.forEach { item ->
+                val key = watchlistIdentity(item)
+                if (seen.add(key)) all.add(item)
+            }
+
+            val totalPages = response.headers()["X-Pagination-Page-Count"]?.toIntOrNull()
+            val hasMorePages = if (totalPages != null) {
+                page < totalPages
+            } else {
+                pageItems.size >= limit
+            }
+            if (!hasMorePages) break
+            page += 1
+        }
+
+        return all
+    }
+
+    private fun watchlistIdentity(item: TraktWatchlistItem): String {
+        val ids = when (item.type) {
+            "movie" -> item.movie?.ids
+            "show" -> item.show?.ids
+            else -> null
+        }
+        return listOfNotNull(
+            item.type,
+            ids?.trakt?.let { "trakt:$it" },
+            ids?.tmdb?.let { "tmdb:$it" },
+            ids?.imdb?.takeIf { it.isNotBlank() }?.let { "imdb:$it" }
+        ).joinToString(":").ifBlank { "${item.type}:${item.rank}:${item.listedAt}" }
+    }
+
+    private suspend fun hydrateWatchlistItem(item: TraktWatchlistItem): MediaItem? {
+        return when (item.type) {
+            "movie" -> item.movie?.let { movie ->
+                val details = resolveWatchlistMovieDetails(movie) ?: return null
+                MediaItem(
+                    id = details.id,
+                    title = details.title,
+                    subtitle = "Movie",
+                    overview = details.overview ?: "",
+                    year = details.releaseDate?.take(4) ?: "",
+                    imdbRating = String.format("%.1f", details.voteAverage),
+                    mediaType = MediaType.MOVIE,
+                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
+                        ?: details.backdropPath?.let { "${Constants.BACKDROP_BASE}$it" } ?: "",
+                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
+                )
+            }
+            "show" -> item.show?.let { show ->
+                val details = resolveWatchlistShowDetails(show) ?: return null
+                MediaItem(
+                    id = details.id,
+                    title = details.name,
+                    subtitle = "TV Series",
+                    overview = details.overview ?: "",
+                    year = details.firstAirDate?.take(4) ?: "",
+                    imdbRating = String.format("%.1f", details.voteAverage),
+                    mediaType = MediaType.TV,
+                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
+                        ?: details.backdropPath?.let { "${Constants.BACKDROP_BASE}$it" } ?: "",
+                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
+                )
+            }
+            else -> null
+        }
+    }
+
+    private suspend fun resolveWatchlistMovieDetails(movie: TraktMovieInfo): TmdbMovieDetails? {
+        val imdbId = movie.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
+        val ids = buildList {
+            imdbId?.let { id ->
+                runCatching {
+                    tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).movieResults
+                        .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
+                }.getOrNull()?.let { addAll(it) }
+            }
+            movie.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
+        }.distinct()
+
+        for (id in ids) {
+            val details = runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            if (isWatchlistMatch(movie.title, movie.year, details.title, details.releaseDate)) {
+                return details
+            }
+        }
+
+        val searchMatch = searchTmdbWatchlistMatch(movie.title, movie.year, MediaType.MOVIE)
+        if (searchMatch != null) {
+            return runCatching { tmdbApi.getMovieDetails(searchMatch, Constants.TMDB_API_KEY) }.getOrNull()
+        }
+
+        return if (normalizeWatchlistTitle(movie.title).isBlank()) {
+            ids.firstNotNullOfOrNull { id ->
+                runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull()
+            }
+        } else {
+            null
+        }
+    }
+
+    private suspend fun resolveWatchlistShowDetails(show: TraktShowInfo): TmdbTvDetails? {
+        val imdbId = show.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
+        val ids = buildList {
+            imdbId?.let { id ->
+                runCatching {
+                    tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).tvResults
+                        .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
+                }.getOrNull()?.let { addAll(it) }
+            }
+            show.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
+        }.distinct()
+
+        for (id in ids) {
+            val details = runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            if (isWatchlistMatch(show.title, show.year, details.name, details.firstAirDate)) {
+                return details
+            }
+        }
+
+        val searchMatch = searchTmdbWatchlistMatch(show.title, show.year, MediaType.TV)
+        if (searchMatch != null) {
+            return runCatching { tmdbApi.getTvDetails(searchMatch, Constants.TMDB_API_KEY) }.getOrNull()
+        }
+
+        return if (normalizeWatchlistTitle(show.title).isBlank()) {
+            ids.firstNotNullOfOrNull { id ->
+                runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull()
+            }
+        } else {
+            null
+        }
+    }
+
+    private suspend fun searchTmdbWatchlistMatch(title: String, year: Int?, mediaType: MediaType): Int? {
+        val normalizedTitle = normalizeWatchlistTitle(title)
+        if (normalizedTitle.isBlank()) return null
+
+        return runCatching {
+            tmdbApi.searchMulti(Constants.TMDB_API_KEY, title, page = 1).results
+                .asSequence()
+                .filter { result ->
+                    when (mediaType) {
+                        MediaType.MOVIE -> result.mediaType == "movie"
+                        MediaType.TV -> result.mediaType == "tv"
                     }
                 }
-            }
-        } catch (e: Exception) { }
+                .filter { result ->
+                    val candidateTitle = result.title ?: result.name ?: ""
+                    normalizeWatchlistTitle(candidateTitle) == normalizedTitle &&
+                        yearCompatible(year, (result.releaseDate ?: result.firstAirDate)?.take(4)?.toIntOrNull())
+                }
+                .sortedByDescending { it.popularity }
+                .firstOrNull()
+                ?.id
+                ?.takeIf { it > 0 }
+        }.getOrNull()
+    }
 
-        return items
+    private fun isWatchlistMatch(
+        traktTitle: String,
+        traktYear: Int?,
+        tmdbTitle: String,
+        tmdbDate: String?
+    ): Boolean {
+        return normalizeWatchlistTitle(traktTitle) == normalizeWatchlistTitle(tmdbTitle) &&
+            yearCompatible(traktYear, tmdbDate?.take(4)?.toIntOrNull())
+    }
+
+    private fun normalizeWatchlistTitle(title: String): String {
+        return title.lowercase(Locale.US)
+            .replace("&", "and")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+            .removePrefix("the ")
+            .removePrefix("a ")
+            .removePrefix("an ")
+            .replace(" ", "")
+    }
+
+    private fun yearCompatible(first: Int?, second: Int?): Boolean {
+        if (first == null || second == null) return true
+        val diff = if (first > second) first - second else second - first
+        return diff <= 1
     }
 
     suspend fun addToWatchlist(mediaType: MediaType, tmdbId: Int) {
