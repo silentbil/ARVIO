@@ -116,7 +116,9 @@ class TraktRepository @Inject constructor(
 
     private var attemptedProfileTokenLoad = false
     @Volatile private var cachedContinueWatching: List<ContinueWatchingItem> = emptyList()
+    @Volatile private var cachedContinueWatchingProfileId: String? = null
     @Volatile private var continueWatchingFetching = false
+    @Volatile private var continueWatchingFetchingProfileId: String? = null
     private var lastContinueWatchingFetch = 0L
     private val CONTINUE_WATCHING_CACHE_MS = 300_000L // 5 minute cache to reduce API calls and improve performance
     private val TRAKT_UP_NEXT_RECENT_WINDOW_MS = 548L * 24L * 60L * 60L * 1000L // 18 months
@@ -1121,29 +1123,37 @@ class TraktRepository @Inject constructor(
      * For profiles without Trakt, falls back to local Continue Watching storage.
      */
     suspend fun getContinueWatching(forceRefresh: Boolean = false): List<ContinueWatchingItem> = coroutineScope {
+        val requestProfileId = profileManager.getProfileIdSync()
         val auth = getAuthHeader()
 
         // If no Trakt auth, use local Continue Watching for this profile
         if (auth == null) {
             val localItems = loadLocalContinueWatching()
             cachedContinueWatching = localItems
+            cachedContinueWatchingProfileId = requestProfileId
             return@coroutineScope localItems
         }
 
         // Return cached data if still fresh (unless forced)
         val now = System.currentTimeMillis()
-        if (!forceRefresh && cachedContinueWatching.isNotEmpty() && now - lastContinueWatchingFetch < CONTINUE_WATCHING_CACHE_MS) {
+        if (
+            !forceRefresh &&
+            cachedContinueWatchingProfileId == requestProfileId &&
+            cachedContinueWatching.isNotEmpty() &&
+            now - lastContinueWatchingFetch < CONTINUE_WATCHING_CACHE_MS
+        ) {
             return@coroutineScope cachedContinueWatching
         }
 
         // Prevent duplicate fetches
-        if (continueWatchingFetching) {
-            while (continueWatchingFetching) { delay(50) }
-            if (cachedContinueWatching.isNotEmpty()) {
+        if (continueWatchingFetching && continueWatchingFetchingProfileId == requestProfileId) {
+            while (continueWatchingFetching && continueWatchingFetchingProfileId == requestProfileId) { delay(50) }
+            if (cachedContinueWatchingProfileId == requestProfileId && cachedContinueWatching.isNotEmpty()) {
                 return@coroutineScope cachedContinueWatching
             }
         }
         continueWatchingFetching = true
+        continueWatchingFetchingProfileId = requestProfileId
 
         try {
         val candidates = mutableListOf<ContinueWatchingCandidate>()
@@ -1469,6 +1479,7 @@ class TraktRepository @Inject constructor(
                 val fallbackItems = topCandidates.map { it.item }
                     .filter { it.mediaType != MediaType.TV || (it.season != null && it.episode != null) }
                 cachedContinueWatching = fallbackItems
+                cachedContinueWatchingProfileId = requestProfileId
                 lastContinueWatchingFetch = System.currentTimeMillis()
                 persistContinueWatchingCache(fallbackItems)
                 return@coroutineScope fallbackItems
@@ -1476,31 +1487,43 @@ class TraktRepository @Inject constructor(
 
         val resolvedItems = if (hydratedItems.isNotEmpty()) {
             cachedContinueWatching = hydratedItems
+            cachedContinueWatchingProfileId = requestProfileId
             lastContinueWatchingFetch = System.currentTimeMillis()
             persistContinueWatchingCache(hydratedItems)
             hydratedItems
         } else {
-            val cached = if (cachedContinueWatching.isNotEmpty()) {
+            val cached = if (cachedContinueWatchingProfileId == requestProfileId && cachedContinueWatching.isNotEmpty()) {
                 cachedContinueWatching
             } else {
-                loadContinueWatchingCache().also { cachedContinueWatching = it }
+                loadContinueWatchingCache().also {
+                    cachedContinueWatching = it
+                    cachedContinueWatchingProfileId = requestProfileId
+                }
             }
             cached
         }
         return@coroutineScope resolvedItems
         } finally {
             continueWatchingFetching = false
+            continueWatchingFetchingProfileId = null
         }
     }
 
-    fun getCachedContinueWatching(): List<ContinueWatchingItem> = cachedContinueWatching
+    fun getCachedContinueWatching(): List<ContinueWatchingItem> {
+        return if (cachedContinueWatchingProfileId == profileManager.getProfileIdSync()) {
+            cachedContinueWatching
+        } else {
+            emptyList()
+        }
+    }
 
     // Cache for preloaded profile data (keyed by profileId)
     private val preloadedProfileCache = ConcurrentHashMap<String, List<ContinueWatchingItem>>()
 
     suspend fun preloadContinueWatchingCache(): List<ContinueWatchingItem> {
+        val currentProfileId = profileManager.getProfileIdSync()
         // Return existing cache if available
-        if (cachedContinueWatching.isNotEmpty()) {
+        if (cachedContinueWatchingProfileId == currentProfileId && cachedContinueWatching.isNotEmpty()) {
             cachedContinueWatching = filterDismissedContinueWatchingItems(cachedContinueWatching)
             return cachedContinueWatching
         }
@@ -1521,14 +1544,15 @@ class TraktRepository @Inject constructor(
             // Profile genuinely has no Trakt — use local CW
             val local = filterDismissedContinueWatchingItems(loadLocalContinueWatchingRaw())
             cachedContinueWatching = local
+            cachedContinueWatchingProfileId = currentProfileId
             return cachedContinueWatching
         }
 
         // Trakt profile: check preloaded cache first (from ProfileSelectionScreen)
-        val currentProfileId = profileManager.getProfileIdSync()
         val preloaded = preloadedProfileCache[currentProfileId]
         if (!preloaded.isNullOrEmpty()) {
             cachedContinueWatching = filterDismissedContinueWatchingItems(preloaded)
+            cachedContinueWatchingProfileId = currentProfileId
             return cachedContinueWatching
         }
 
@@ -1537,6 +1561,7 @@ class TraktRepository @Inject constructor(
         // resolveContinueWatchingItems). Do NOT fall back to local CW here.
         val cached = filterDismissedContinueWatchingItems(loadContinueWatchingCache())
         cachedContinueWatching = cached
+        cachedContinueWatchingProfileId = currentProfileId
         return cachedContinueWatching
     }
 
@@ -1573,6 +1598,7 @@ class TraktRepository @Inject constructor(
             // If this profile becomes active, pre-populate the main cache
             if (profileManager.getProfileIdSync() == profileId) {
                 cachedContinueWatching = filtered
+                cachedContinueWatchingProfileId = profileId
             }
         } catch (e: Exception) {
             // Silently ignore preload failures - not critical
@@ -1594,12 +1620,14 @@ class TraktRepository @Inject constructor(
     fun activatePreloadedCache(profileId: String) {
         // CRITICAL: Clear existing cache first to prevent profile data leakage
         cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
 
         // Then load this profile's preloaded data if available
         val preloaded = preloadedProfileCache[profileId]
         if (!preloaded.isNullOrEmpty()) {
             cachedContinueWatching = preloaded
+            cachedContinueWatchingProfileId = profileId
         }
     }
 
@@ -1608,6 +1636,7 @@ class TraktRepository @Inject constructor(
      */
     fun clearContinueWatchingCache() {
         cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
     }
 
@@ -1620,6 +1649,7 @@ class TraktRepository @Inject constructor(
      */
     suspend fun purgeLocalContinueWatchingForTraktProfile() {
         cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
         preloadedProfileCache.clear()
         context.traktDataStore.edit { prefs ->
@@ -1649,8 +1679,11 @@ class TraktRepository @Inject constructor(
 
         // Continue watching caches
         cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
         preloadedProfileCache.clear()
+        continueWatchingFetching = false
+        continueWatchingFetchingProfileId = null
 
         // Scrobble state (prevent cross-profile scrobble deduplication issues)
         lastScrobbleKey = null
@@ -1669,6 +1702,7 @@ class TraktRepository @Inject constructor(
 
         if (cachedContinueWatching.isEmpty()) {
             cachedContinueWatching = loadContinueWatchingCache()
+            cachedContinueWatchingProfileId = profileManager.getProfileIdSync()
         }
 
         cachedContinueWatching = cachedContinueWatching.filter { item ->

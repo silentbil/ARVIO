@@ -39,6 +39,7 @@ class CloudSyncRepository @Inject constructor(
     private val iptvRepository: IptvRepository,
     private val streamRepository: StreamRepository,
     private val traktRepository: TraktRepository,
+    private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
     private val invalidationBus: CloudSyncInvalidationBus
 ) {
@@ -726,6 +727,7 @@ class CloudSyncRepository @Inject constructor(
         }
 
         traktRepository.clearAllProfileCaches()
+        watchHistoryRepository.clearProfileCaches()
 
         System.err.println("[CLOUD-SYNC] Full cloud restore applied successfully")
     }

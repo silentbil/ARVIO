@@ -6,6 +6,7 @@ import com.arflix.tv.util.Constants
 import kotlinx.serialization.Serializable
 import retrofit2.HttpException
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -56,17 +57,26 @@ class WatchHistoryRepository @Inject constructor(
     // Updated on every successful getContinueWatching() call.
     @Volatile
     private var cachedContinueWatching: List<WatchHistoryEntry> = emptyList()
+    private val cachedContinueWatchingByProfile = ConcurrentHashMap<String, List<WatchHistoryEntry>>()
+    private val cachedWatchHistoryByProfile = ConcurrentHashMap<String, List<WatchHistoryEntry>>()
+
+    private fun currentProfileId(): String = profileManager.getProfileIdSync().ifBlank { "default" }
+
+    private fun currentProfileQuery(): String? {
+        val profileId = currentProfileId()
+        return if (profileManager.isDefaultProfile()) null else "eq.$profileId"
+    }
 
     private fun profileHistorySource(base: String): String {
         // Use stable profile ID so rename/case changes do not split history.
         // Profile IDs are synced via cloud profile sync.
-        val profileId = profileManager.getProfileIdSync()
+        val profileId = currentProfileId()
         return "profile:$profileId:$base"
     }
 
     private fun profileHistorySourceFilter(): String {
         // PostgREST wildcard for LIKE is '*'
-        val profileId = profileManager.getProfileIdSync()
+        val profileId = currentProfileId()
         return "like.profile:$profileId:*"
     }
 
@@ -77,7 +87,7 @@ class WatchHistoryRepository @Inject constructor(
      * for the default profile to avoid cross-profile leakage.
      */
     private fun filterByProfile(entries: List<WatchHistoryEntry>): List<WatchHistoryEntry> {
-        val profileId = profileManager.getProfileIdSync()
+        val profileId = currentProfileId()
         val profileName = profileManager.getProfileNameSync()
         val prefixById = "profile:$profileId:"
         val prefixByName = "profile:$profileName:"
@@ -121,7 +131,7 @@ class WatchHistoryRepository @Inject constructor(
 
         val entry = WatchHistoryEntry(
                 user_id = userId,
-                profile_id = profileManager.getProfileIdSync(),
+                profile_id = currentProfileId(),
                 media_type = if (mediaType == MediaType.MOVIE) "movie" else "tv",
                 show_tmdb_id = tmdbId,
                 title = title,
@@ -162,22 +172,25 @@ class WatchHistoryRepository @Inject constructor(
         // watch_history realtime event (which fires back to our own device) doesn't
         // trigger a redundant Home Continue Watching refresh. See issue #91 fix.
         if (saved) {
+            val profileId = currentProfileId()
             val nowIso = Instant.now().toString()
             val cachedEntry = entry.copy(
                 paused_at = nowIso,
                 updated_at = nowIso
             )
+            val profileCache = cachedContinueWatchingByProfile[profileId].orEmpty()
             cachedContinueWatching = if (isEntryInProgress(cachedEntry)) {
-                listOf(cachedEntry) + cachedContinueWatching.filterNot { existing ->
+                listOf(cachedEntry) + profileCache.filterNot { existing ->
                     existing.media_type == cachedEntry.media_type &&
                         existing.show_tmdb_id == cachedEntry.show_tmdb_id
                 }
             } else {
-                cachedContinueWatching.filterNot { existing ->
+                profileCache.filterNot { existing ->
                     existing.media_type == cachedEntry.media_type &&
                         existing.show_tmdb_id == cachedEntry.show_tmdb_id
                 }
             }
+            cachedContinueWatchingByProfile[profileId] = cachedContinueWatching
             runCatching { realtimeSyncManagerProvider.get().markLocalWatchHistoryWrite() }
         }
     }
@@ -190,13 +203,16 @@ class WatchHistoryRepository @Inject constructor(
      * Returns cached data on failure instead of empty list.
      */
     suspend fun getWatchHistory(): List<WatchHistoryEntry> {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return cachedWatchHistory
+        val profileId = currentProfileId()
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: return cachedWatchHistoryByProfile[profileId].orEmpty()
 
         return try {
             val records = executeSupabaseCall("get watch history") { auth ->
                 supabaseApi.getWatchHistory(
                     auth = auth,
                     userId = "eq.$userId",
+                    profileId = currentProfileQuery(),
                     source = null,
                     order = "updated_at.desc",
                     limit = 500
@@ -204,9 +220,10 @@ class WatchHistoryRepository @Inject constructor(
             }.map { it.toEntry() }
             val result = filterByProfile(records)
             cachedWatchHistory = result
+            cachedWatchHistoryByProfile[profileId] = result
             result
         } catch (_: Exception) {
-            cachedWatchHistory
+            cachedWatchHistoryByProfile[profileId].orEmpty()
         }
     }
 
@@ -221,14 +238,16 @@ class WatchHistoryRepository @Inject constructor(
      * an empty row that makes the user think their watch history is lost.
      */
     suspend fun getContinueWatching(): List<WatchHistoryEntry> {
+        val profileId = currentProfileId()
         val userId = authRepositoryProvider.get().getCurrentUserId()
-        if (userId == null) return cachedContinueWatching
+        if (userId == null) return cachedContinueWatchingByProfile[profileId].orEmpty()
 
         return try {
             val records = executeSupabaseCall("get continue watching history") { auth ->
                 supabaseApi.getWatchHistory(
                     auth = auth,
                     userId = "eq.$userId",
+                    profileId = currentProfileQuery(),
                     source = null,
                     order = "updated_at.desc",
                     limit = 500
@@ -239,10 +258,11 @@ class WatchHistoryRepository @Inject constructor(
                 .filter { isEntryInProgress(it) }
             // Cache the successful result for offline/error fallback
             cachedContinueWatching = result
+            cachedContinueWatchingByProfile[profileId] = result
             result
         } catch (_: Exception) {
             // Return cached data instead of empty list on failure
-            cachedContinueWatching
+            cachedContinueWatchingByProfile[profileId].orEmpty()
         }
     }
 
@@ -262,6 +282,7 @@ class WatchHistoryRepository @Inject constructor(
                 supabaseApi.getWatchHistoryItem(
                     auth = auth,
                     userId = "eq.$userId",
+                    profileId = currentProfileQuery(),
                     showTmdbId = "eq.$tmdbId",
                     mediaType = "eq.${if (mediaType == MediaType.MOVIE) "movie" else "tv"}",
                     source = null,
@@ -290,6 +311,7 @@ class WatchHistoryRepository @Inject constructor(
                 supabaseApi.getWatchHistoryItem(
                     auth = auth,
                     userId = "eq.$userId",
+                    profileId = currentProfileQuery(),
                     showTmdbId = "eq.$tmdbId",
                     mediaType = "eq.$mediaTypeKey",
                     source = null,
@@ -323,6 +345,7 @@ class WatchHistoryRepository @Inject constructor(
                     auth = auth,
                     userId = "eq.$userId",
                     showTmdbId = "eq.$tmdbId",
+                    profileId = currentProfileQuery(),
                     source = profileHistorySourceFilter(),
                     season = season?.let { "eq.$it" },
                     episode = episode?.let { "eq.$it" }
@@ -344,12 +367,20 @@ class WatchHistoryRepository @Inject constructor(
                 supabaseApi.deleteWatchHistory(
                     auth = auth,
                     userId = "eq.$userId",
+                    profileId = currentProfileQuery(),
                     source = profileHistorySourceFilter()
                 )
             }
         } catch (_: Exception) {
             // Silently handle errors
         }
+    }
+
+    fun clearProfileCaches() {
+        cachedContinueWatching = emptyList()
+        cachedWatchHistory = emptyList()
+        cachedContinueWatchingByProfile.clear()
+        cachedWatchHistoryByProfile.clear()
     }
 
     private suspend fun <T> executeSupabaseCall(

@@ -25,6 +25,7 @@ import com.arflix.tv.data.repository.ContinueWatchingItem
 import com.arflix.tv.data.repository.CatalogRepository
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
+import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.CloudSyncStatus
@@ -113,6 +114,7 @@ class HomeViewModel @Inject constructor(
     private val cloudSyncRepository: CloudSyncRepository,
     private val launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
     private val realtimeSyncManager: com.arflix.tv.data.repository.RealtimeSyncManager,
+    private val profileManager: ProfileManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     private val imageLoader: ImageLoader by lazy(LazyThreadSafetyMode.NONE) {
@@ -601,8 +603,11 @@ class HomeViewModel @Inject constructor(
     // Use a plain file in the cache dir instead of DataStore — DataStore has
     // a size limit and the categories JSON can be 200KB+. A cache file is faster
     // to read/write and doesn't trigger DataStore observers.
-    private val categoriesCacheFile by lazy {
-        java.io.File(context.cacheDir, "home_categories_cache.json")
+    private fun categoriesCacheFile(): java.io.File {
+        val profileId = profileManager.getProfileIdSync()
+            .ifBlank { "default" }
+            .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+        return java.io.File(context.cacheDir, "home_categories_cache_$profileId.json")
     }
 
     private fun persistCategoriesCache(categories: List<Category>) {
@@ -611,18 +616,19 @@ class HomeViewModel @Inject constructor(
         }
         if (cacheable.isEmpty()) return
         runCatching {
-            categoriesCacheFile.writeText(gson.toJson(cacheable))
+            categoriesCacheFile().writeText(gson.toJson(cacheable))
         }
     }
 
     private fun loadCategoriesCache(): List<Category> {
         return runCatching {
-            if (!categoriesCacheFile.exists()) return emptyList()
-            if (categoriesCacheFile.length() > maxCategoriesCacheBytes) {
-                categoriesCacheFile.delete()
+            val file = categoriesCacheFile()
+            if (!file.exists()) return emptyList()
+            if (file.length() > maxCategoriesCacheBytes) {
+                file.delete()
                 return emptyList()
             }
-            val json = categoriesCacheFile.readText()
+            val json = file.readText()
             if (json.isBlank()) return emptyList()
             val type = com.google.gson.reflect.TypeToken
                 .getParameterized(MutableList::class.java, Category::class.java)
@@ -666,6 +672,7 @@ class HomeViewModel @Inject constructor(
     private var refreshContinueWatchingJob: Job? = null
     private var watchedBadgesJob: Job? = null
     private var loadHomeRequestId: Long = 0L
+    private var activeRuntimeProfileId: String? = null
     private val HERO_DEBOUNCE_MS = 80L // Short debounce; focus idle is handled in HomeScreen
     private val startupCreatedAtMs = SystemClock.elapsedRealtime()
     private val startupSettleMs = if (isLowRamDevice) 2_200L else 1_400L
@@ -789,6 +796,30 @@ class HomeViewModel @Inject constructor(
                 hydrateHeroDetailsIfNeeded(item)
             }
         }
+    }
+
+    private fun resetProfileRuntimeState(profileId: String) {
+        loadHomeJob?.cancel()
+        refreshContinueWatchingJob?.cancel()
+        watchedBadgesJob?.cancel()
+        preloadCategoryJob?.cancel()
+        preloadCategoryPriorityJob?.cancel()
+        customCatalogsJob?.cancel()
+        epgRefreshJob?.cancel()
+        lastContinueWatchingItems = emptyList()
+        lastContinueWatchingUpdateMs = 0L
+        lastResolvedBaseCategories = emptyList()
+        dismissedContinueWatchingKeys.clear()
+        categoryPaginationStates.clear()
+        savedCatalogById.clear()
+        collectionCatalogByMediaId.clear()
+        iptvChannelMap.clear()
+        traktRepository.clearAllProfileCaches()
+        watchlistRepository.clearWatchlistCache()
+        watchHistoryRepository.clearProfileCaches()
+        iptvRepository.invalidateCache()
+        _uiState.value = HomeUiState(syncStatus = _uiState.value.syncStatus)
+        activeRuntimeProfileId = profileId
     }
 
     private fun hasCachedLogo(key: String): Boolean = synchronized(logoCacheLock) {
@@ -944,6 +975,24 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        viewModelScope.launch {
+            profileManager.activeProfileId
+                .distinctUntilChanged()
+                .collect { profileId ->
+                    val previousProfileId = activeRuntimeProfileId
+                    if (previousProfileId == null) {
+                        activeRuntimeProfileId = profileId
+                        return@collect
+                    }
+                    if (previousProfileId != profileId) {
+                        resetProfileRuntimeState(profileId)
+                        loadHomeData()
+                        refreshContinueWatchingOnly(force = true)
+                        startEpgRefreshTimer()
+                    }
+                }
+        }
+
         // Load top-level UI preferences used on Home
         viewModelScope.launch {
             try {

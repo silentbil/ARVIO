@@ -90,8 +90,11 @@ import com.arflix.tv.data.repository.AuthRepository
 import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRequest
+import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.TraktRepository
+import com.arflix.tv.data.repository.WatchHistoryRepository
+import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.data.repository.toLauncherContinueWatchingRequest
 import com.arflix.tv.navigation.AppNavigation
 import com.arflix.tv.navigation.Screen
@@ -126,6 +129,15 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var traktRepository: Lazy<TraktRepository>
+
+    @Inject
+    lateinit var profileManager: Lazy<ProfileManager>
+
+    @Inject
+    lateinit var watchHistoryRepository: Lazy<WatchHistoryRepository>
+
+    @Inject
+    lateinit var watchlistRepository: Lazy<WatchlistRepository>
 
     @Inject
     lateinit var launcherContinueWatchingRepository: Lazy<LauncherContinueWatchingRepository>
@@ -229,6 +241,10 @@ class MainActivity : ComponentActivity() {
                         authRepository = authRepository.get(),
                         profileRepository = profileRepository.get(),
                         traktRepository = traktRepository.get(),
+                        profileManager = profileManager.get(),
+                        watchHistoryRepository = watchHistoryRepository.get(),
+                        watchlistRepository = watchlistRepository.get(),
+                        iptvRepository = iptvRepository.get(),
                         launcherContinueWatchingRepository = launcherContinueWatchingRepository.get(),
                         skipProfileSelection = skipProfileSelection,
                         activeProfileLoaded = activeProfileLoaded,
@@ -395,6 +411,10 @@ fun ArflixApp(
     authRepository: AuthRepository,
     profileRepository: ProfileRepository,
     traktRepository: TraktRepository,
+    profileManager: ProfileManager,
+    watchHistoryRepository: WatchHistoryRepository,
+    watchlistRepository: WatchlistRepository,
+    iptvRepository: com.arflix.tv.data.repository.IptvRepository,
     launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
     skipProfileSelection: Boolean? = null,
     activeProfileLoaded: Boolean = false,
@@ -484,6 +504,12 @@ fun ArflixApp(
                 isCloudConnected = authState is AuthState.Authenticated,
                 onSwitchProfile = {
                     appCoroutineScope.launch {
+                        traktRepository.clearAllProfileCaches()
+                        watchHistoryRepository.clearProfileCaches()
+                        watchlistRepository.clearWatchlistCache()
+                        iptvRepository.invalidateCache()
+                        profileManager.setCurrentProfileId("default")
+                        profileManager.setCurrentProfileName("default")
                         profileRepository.clearActiveProfile()
                     }
                 },

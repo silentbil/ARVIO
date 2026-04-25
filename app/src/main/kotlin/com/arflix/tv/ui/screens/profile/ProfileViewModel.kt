@@ -8,6 +8,7 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.TraktRepository
+import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.ui.components.ToastType
@@ -46,6 +47,7 @@ class ProfileViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
+    private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
     private val iptvRepository: IptvRepository,
     private val cloudSyncRepository: CloudSyncRepository
@@ -122,6 +124,7 @@ class ProfileViewModel @Inject constructor(
                     // Keep this off the main thread; some profiles carry enough data here to stall
                     // touch devices during the profile tap transition.
                     traktRepository.clearAllProfileCaches()
+                    watchHistoryRepository.clearProfileCaches()
                     watchlistRepository.clearWatchlistCache()
                     iptvRepository.invalidateCache()
                 }
@@ -164,6 +167,7 @@ class ProfileViewModel @Inject constructor(
     fun switchProfile() {
         // Clear all caches when leaving a profile to prevent data leakage
         traktRepository.clearAllProfileCaches()
+        watchHistoryRepository.clearProfileCaches()
         watchlistRepository.clearWatchlistCache()
         iptvRepository.invalidateCache()
 
@@ -270,6 +274,7 @@ class ProfileViewModel @Inject constructor(
             showToast("Profile deleted", ToastType.SUCCESS)
             if (activeId == profile.id) {
                 traktRepository.clearAllProfileCaches()
+                watchHistoryRepository.clearProfileCaches()
                 watchlistRepository.clearWatchlistCache()
                 iptvRepository.invalidateCache()
                 profileManager.setCurrentProfileId("default")
