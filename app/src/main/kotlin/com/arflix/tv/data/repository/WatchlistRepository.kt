@@ -274,7 +274,10 @@ class WatchlistRepository @Inject constructor(
         // 2. Append any local-only items at the end (preserve original relative order).
         for (local in existing) {
             val key = "${local.mediaType}:${local.tmdbId}"
-            if (key !in seen) ordered.add(local)
+            val sameTitleAlreadySynced = ordered.any {
+                it.mediaType == local.mediaType && normalizeTitleForDuplicateCheck(it.title) == normalizeTitleForDuplicateCheck(local.title)
+            }
+            if (key !in seen && !sameTitleAlreadySynced) ordered.add(local)
         }
 
         saveWatchlist(ordered)
@@ -429,5 +432,18 @@ class WatchlistRepository @Inject constructor(
             image = posterPath.orEmpty(),
             backdrop = backdropPath
         )
+    }
+
+    private fun normalizeTitleForDuplicateCheck(title: String): String {
+        return java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .lowercase()
+            .replace("&", "and")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+            .removePrefix("the ")
+            .removePrefix("a ")
+            .removePrefix("an ")
+            .replace(" ", "")
     }
 }

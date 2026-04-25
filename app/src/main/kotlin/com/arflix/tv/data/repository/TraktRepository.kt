@@ -49,6 +49,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import retrofit2.HttpException
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -2259,25 +2260,43 @@ class TraktRepository @Inject constructor(
 
     private suspend fun resolveWatchlistMovieTmdbId(movie: TraktMovieInfo): Int? {
         val imdbId = movie.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
-        imdbId?.let { id ->
-            runCatching {
-                tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).movieResults
-                    .firstOrNull()?.id?.takeIf { it > 0 }
-            }.getOrNull()?.let { return it }
+        val ids = buildList {
+            imdbId?.let { id ->
+                runCatching {
+                    tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).movieResults
+                        .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
+                }.getOrNull()?.let { addAll(it) }
+            }
+            movie.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
+        }.distinct()
+
+        for (id in ids) {
+            val details = runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            if (isWatchlistMatch(movie.title, movie.year, details.title, details.releaseDate)) {
+                return id
+            }
         }
-        movie.ids.tmdb?.takeIf { it > 0 }?.let { return it }
         return searchTmdbWatchlistMatch(movie.title, movie.year, MediaType.MOVIE)
     }
 
     private suspend fun resolveWatchlistShowTmdbId(show: TraktShowInfo): Int? {
         val imdbId = show.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
-        imdbId?.let { id ->
-            runCatching {
-                tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).tvResults
-                    .firstOrNull()?.id?.takeIf { it > 0 }
-            }.getOrNull()?.let { return it }
+        val ids = buildList {
+            imdbId?.let { id ->
+                runCatching {
+                    tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).tvResults
+                        .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
+                }.getOrNull()?.let { addAll(it) }
+            }
+            show.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
+        }.distinct()
+
+        for (id in ids) {
+            val details = runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            if (isWatchlistMatch(show.title, show.year, details.name, details.firstAirDate)) {
+                return id
+            }
         }
-        show.ids.tmdb?.takeIf { it > 0 }?.let { return it }
         return searchTmdbWatchlistMatch(show.title, show.year, MediaType.TV)
     }
 
@@ -2415,7 +2434,11 @@ class TraktRepository @Inject constructor(
                     normalizeWatchlistTitle(candidateTitle) == normalizedTitle &&
                         yearCompatible(year, (result.releaseDate ?: result.firstAirDate)?.take(4)?.toIntOrNull())
                 }
-                .sortedByDescending { it.popularity }
+                .sortedWith(
+                    compareBy<com.arflix.tv.data.api.TmdbMediaItem> {
+                        yearDistance(year, (it.releaseDate ?: it.firstAirDate)?.take(4)?.toIntOrNull()) ?: Int.MAX_VALUE
+                    }.thenByDescending { it.popularity }
+                )
                 .firstOrNull()
                 ?.id
                 ?.takeIf { it > 0 }
@@ -2433,7 +2456,9 @@ class TraktRepository @Inject constructor(
     }
 
     private fun normalizeWatchlistTitle(title: String): String {
-        return title.lowercase(Locale.US)
+        return Normalizer.normalize(title, Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .lowercase(Locale.US)
             .replace("&", "and")
             .replace(Regex("[^a-z0-9]+"), " ")
             .trim()
@@ -2447,6 +2472,11 @@ class TraktRepository @Inject constructor(
         if (first == null || second == null) return true
         val diff = if (first > second) first - second else second - first
         return diff <= 1
+    }
+
+    private fun yearDistance(first: Int?, second: Int?): Int? {
+        if (first == null || second == null) return null
+        return if (first > second) first - second else second - first
     }
 
     suspend fun addToWatchlist(mediaType: MediaType, tmdbId: Int) {
