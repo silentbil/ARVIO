@@ -1391,7 +1391,7 @@ private fun HeroSection(
                     .trim()
                     .ifBlank { "No description available." }
 
-                val overviewMaxHeight = 56.dp
+                val overviewMaxHeight = 72.dp
                 Box(
                     modifier = Modifier
                         .width(360.dp)
@@ -1406,7 +1406,7 @@ private fun HeroSection(
                             shadow = textShadow
                         ),
                         color = Color.White.copy(alpha = 0.9f),
-                        maxLines = 3,
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -1482,7 +1482,7 @@ private fun HomeHeroLayer(
         val contentRowBottomPadding = 12.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
-        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 46.dp else 58.dp
+        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 56.dp else 70.dp
 
         Box(
             modifier = Modifier

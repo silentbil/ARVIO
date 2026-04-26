@@ -1548,7 +1548,7 @@ private fun DetailsContent(
         val contentRowBottomPadding = 12.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
-        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 70.dp else 82.dp
+        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 80.dp else 94.dp
 
         Box(
             modifier = Modifier
@@ -1627,7 +1627,7 @@ private fun DetailsContent(
                 val rating = item.imdbRating.ifEmpty { item.tmdbRating }
                 val ratingValue = parseRatingValue(rating)
                 val budgetText = budget?.trim()?.takeIf { it.isNotEmpty() && item.mediaType == MediaType.MOVIE }
-                val overviewMaxHeight = if (isCompactHeight) 54.dp else 56.dp
+                val overviewMaxHeight = if (isCompactHeight) 68.dp else 72.dp
 
                 val separatorStyle = ArflixTypography.caption.copy(
                     fontSize = 13.sp,
@@ -1751,7 +1751,7 @@ private fun DetailsContent(
                             shadow = textShadow
                         ),
                         color = Color.White.copy(alpha = 0.9f),
-                        maxLines = 3,
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
