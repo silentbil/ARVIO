@@ -8,6 +8,7 @@ import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.Response
 
 /**
  * Trakt.tv API interface
@@ -298,6 +299,17 @@ interface TraktApi {
         @Query("type") type: String? = null,
         @Query("extended") extended: String = "full"
     ): List<TraktWatchlistItem>
+
+    @GET("users/me/watchlist/{type}/added")
+    suspend fun getWatchlistAddedPage(
+        @Header("Authorization") auth: String,
+        @Header("trakt-api-key") clientId: String,
+        @Header("trakt-api-version") version: String = "2",
+        @Path("type") type: String,
+        @Query("extended") extended: String = "full",
+        @Query("page") page: Int,
+        @Query("limit") limit: Int
+    ): Response<List<TraktWatchlistItem>>
     
     @POST("sync/watchlist")
     @retrofit2.http.Headers("Content-Type: application/json")
@@ -338,7 +350,18 @@ interface TraktApi {
         @Header("trakt-api-key") clientId: String,
         @Header("trakt-api-version") version: String = "2",
         @Query("type") type: String = "show",
-        @Query("limit") limit: Int = 100
+        @Query("limit") limit: Int = 100,
+        @Query("page") page: Int? = null
+    ): List<TraktHiddenItem>
+
+    @GET("users/hidden/progress_watched_reset")
+    suspend fun getHiddenProgressResetShows(
+        @Header("Authorization") auth: String,
+        @Header("trakt-api-key") clientId: String,
+        @Header("trakt-api-version") version: String = "2",
+        @Query("type") type: String = "show",
+        @Query("limit") limit: Int = 100,
+        @Query("page") page: Int? = null
     ): List<TraktHiddenItem>
 
     // ========== Anime (Custom Lists) ==========

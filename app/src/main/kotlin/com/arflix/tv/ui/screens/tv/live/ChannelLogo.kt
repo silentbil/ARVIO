@@ -12,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -48,8 +47,8 @@ fun ChannelLogo(
                 style = LiveType.ChannelName.copy(
                     color = channel.brandFg,
                     fontSize = (size.value * 0.34f).sp,
-                    fontWeight = FontWeight.W800,
-                    letterSpacing = (-0.04 * size.value).sp,
+                    fontWeight = FontWeight.W700,
+                    letterSpacing = 0.sp,
                 ),
             )
             1 -> Text(
@@ -58,7 +57,7 @@ fun ChannelLogo(
                     color = channel.brandFg,
                     fontSize = (size.value * 0.32f).sp,
                     fontWeight = FontWeight.W600,
-                    fontFamily = LiveMono,
+                    letterSpacing = 0.sp,
                 ),
             )
             else -> Text(
@@ -66,8 +65,8 @@ fun ChannelLogo(
                 style = LiveType.ChannelName.copy(
                     color = channel.brandFg,
                     fontSize = (size.value * 0.33f).sp,
-                    fontStyle = FontStyle.Italic,
-                    fontWeight = FontWeight.W700,
+                    fontWeight = FontWeight.W600,
+                    letterSpacing = 0.sp,
                 ),
             )
         }

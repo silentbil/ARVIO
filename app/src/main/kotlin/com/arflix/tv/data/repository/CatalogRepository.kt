@@ -45,7 +45,8 @@ class CatalogRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val profileManager: ProfileManager,
     private val traktApi: TraktApi,
-    private val okHttpClient: OkHttpClient
+    private val okHttpClient: OkHttpClient,
+    private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private companion object {
         private const val ADDON_SOURCE_REF_PREFIX = "addon_catalog|"
@@ -58,6 +59,7 @@ class CatalogRepository @Inject constructor(
     private val gson = Gson()
     private fun catalogsKey(profileId: String) = stringPreferencesKey("profile_${profileId}_catalogs_v1")
     private fun hiddenPreinstalledKey(profileId: String) = stringPreferencesKey("profile_${profileId}_hidden_preinstalled_catalogs_v2")
+    private fun hiddenAddonKey(profileId: String) = stringPreferencesKey("profile_${profileId}_hidden_addon_catalogs_v1")
     private val legacyDefaultKey = stringPreferencesKey("profile_default_catalogs_v1")
     private val legacyGlobalKey = stringPreferencesKey("catalogs_v1")
     private val listType = object : TypeToken<List<CatalogConfig>>() {}.type
@@ -65,6 +67,19 @@ class CatalogRepository @Inject constructor(
 
     private fun decodeHiddenPreinstalled(profileId: String, prefs: Preferences): Set<String> {
         val raw = prefs[hiddenPreinstalledKey(profileId)]
+        if (raw.isNullOrBlank()) return emptySet()
+        return try {
+            (gson.fromJson<List<String>>(raw, hiddenListType) ?: emptyList())
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toSet()
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
+
+    private fun decodeHiddenAddon(profileId: String, prefs: Preferences): Set<String> {
+        val raw = prefs[hiddenAddonKey(profileId)]
         if (raw.isNullOrBlank()) return emptySet()
         return try {
             (gson.fromJson<List<String>>(raw, hiddenListType) ?: emptyList())
@@ -84,6 +99,18 @@ class CatalogRepository @Inject constructor(
             hidden.add(trimmed)
             prefs[hiddenPreinstalledKey(profileId)] = gson.toJson(hidden.toList())
         }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, profileId, "hide preinstalled catalog")
+    }
+
+    private suspend fun hideAddonCatalog(profileId: String, catalogId: String) {
+        val trimmed = catalogId.trim()
+        if (trimmed.isBlank()) return
+        context.settingsDataStore.edit { prefs ->
+            val hidden = decodeHiddenAddon(profileId, prefs).toMutableSet()
+            hidden.add(trimmed)
+            prefs[hiddenAddonKey(profileId)] = gson.toJson(hidden.toList())
+        }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, profileId, "hide addon catalog")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -167,6 +194,7 @@ class CatalogRepository @Inject constructor(
                 prefs[hiddenPreinstalledKey(profileId)] = gson.toJson(cleaned)
             }
         }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, profileId, "set hidden preinstalled catalogs")
     }
 
     suspend fun setHiddenPreinstalledCatalogIdsForProfile(profileId: String, ids: List<String>) {
@@ -179,6 +207,45 @@ class CatalogRepository @Inject constructor(
                 prefs[hiddenPreinstalledKey(safeProfileId)] = gson.toJson(cleaned)
             }
         }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, safeProfileId, "set hidden preinstalled catalogs")
+    }
+
+    suspend fun getHiddenAddonCatalogIdsForActiveProfile(): List<String> {
+        val profileId = activeProfileId()
+        val prefs = context.settingsDataStore.data.first()
+        return decodeHiddenAddon(profileId, prefs).toList()
+    }
+
+    suspend fun getHiddenAddonCatalogIdsForProfile(profileId: String): List<String> {
+        val safeProfileId = profileId.trim().ifBlank { "default" }
+        val prefs = context.settingsDataStore.data.first()
+        return decodeHiddenAddon(safeProfileId, prefs).toList()
+    }
+
+    suspend fun setHiddenAddonCatalogIdsForActiveProfile(ids: List<String>) {
+        val profileId = activeProfileId()
+        val cleaned = ids.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        context.settingsDataStore.edit { prefs ->
+            if (cleaned.isEmpty()) {
+                prefs[hiddenAddonKey(profileId)] = ""
+            } else {
+                prefs[hiddenAddonKey(profileId)] = gson.toJson(cleaned)
+            }
+        }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, profileId, "set hidden addon catalogs")
+    }
+
+    suspend fun setHiddenAddonCatalogIdsForProfile(profileId: String, ids: List<String>) {
+        val safeProfileId = profileId.trim().ifBlank { "default" }
+        val cleaned = ids.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        context.settingsDataStore.edit { prefs ->
+            if (cleaned.isEmpty()) {
+                prefs[hiddenAddonKey(safeProfileId)] = ""
+            } else {
+                prefs[hiddenAddonKey(safeProfileId)] = gson.toJson(cleaned)
+            }
+        }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, safeProfileId, "set hidden addon catalogs")
     }
 
     private suspend fun saveCatalogs(catalogs: List<CatalogConfig>) {
@@ -189,6 +256,7 @@ class CatalogRepository @Inject constructor(
         context.settingsDataStore.edit { prefs ->
             prefs[catalogsKey(profileId)] = gson.toJson(sanitized)
         }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, profileId, "save catalogs")
     }
 
     suspend fun replaceCatalogsForProfile(profileId: String, catalogs: List<CatalogConfig>) {
@@ -199,6 +267,7 @@ class CatalogRepository @Inject constructor(
         context.settingsDataStore.edit { prefs ->
             prefs[catalogsKey(safeProfileId)] = gson.toJson(sanitized)
         }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, safeProfileId, "replace catalogs")
     }
 
     suspend fun ensurePreinstalled(defaultCategories: List<Category>): List<CatalogConfig> {
@@ -303,6 +372,10 @@ class CatalogRepository @Inject constructor(
     }
 
     suspend fun syncAddonCatalogs(addons: List<Addon>): Boolean {
+        val profileId = activeProfileId()
+        val hiddenAddonIds = context.settingsDataStore.data
+            .first()
+            .let { prefs -> decodeHiddenAddon(profileId, prefs) }
         val supportedCatalogs = addons
             .asSequence()
             .filter { addon ->
@@ -316,6 +389,10 @@ class CatalogRepository @Inject constructor(
                 addon.manifest?.catalogs.orEmpty().asSequence()
                     .mapNotNull { catalog -> buildAddonCatalogConfig(addon, catalog) }
             }
+            // Drop entries the user has explicitly deleted. Without this, every
+            // sync would re-add them from the addon manifest on the very next
+            // installedAddons emission, making addon catalog deletion impossible.
+            .filterNot { it.id in hiddenAddonIds }
             .distinctBy { it.id }
             .toList()
 
@@ -440,33 +517,11 @@ class CatalogRepository @Inject constructor(
         current: List<CatalogConfig>,
         desiredDefaults: List<CatalogConfig>
     ): List<CatalogConfig> {
-        val desiredCollectionIds = desiredDefaults
-            .filter { it.kind == CatalogKind.COLLECTION_RAIL || it.kind == CatalogKind.COLLECTION }
-            .map { it.id }
-            .toSet()
-        if (desiredCollectionIds.isEmpty()) return current
-
-        val currentFirstCollectionIndex = current.indexOfFirst { it.id in desiredCollectionIds }
-        val desiredFirstCollectionIndex = desiredDefaults.indexOfFirst { it.id in desiredCollectionIds }
-        if (currentFirstCollectionIndex < 0 || desiredFirstCollectionIndex < 0) return current
-
-        val trendingAnimeIndex = current.indexOfFirst { it.id == "trending_anime" }
-        val collectionsStillTrailing = currentFirstCollectionIndex > trendingAnimeIndex + 1 &&
-            current.filter { it.id in desiredCollectionIds }.map { it.id }.toSet() == desiredCollectionIds
-        if (!collectionsStillTrailing) return current
-
-        val currentById = current.associateBy { it.id }
-        val reorderedPreinstalled = desiredDefaults.mapNotNull { desired ->
-            val existing = currentById[desired.id] ?: return@mapNotNull desired
-            if (existing.title.isNotBlank() && existing.title != desired.title) {
-                desired.copy(title = existing.title)
-            } else {
-                desired
-            }
-        }
-
-        val nonPreinstalled = current.filterNot { it.isPreinstalled }
-        return reorderedPreinstalled + nonPreinstalled
+        // This migration used to reorder preinstalled catalogs back to their default
+        // positions whenever the condition fired. The condition (collections trailing
+        // after trending_anime) fired on *every* Settings open after the user had
+        // reordered anything, resetting their custom order. Migration is now a no-op.
+        return current
     }
 
     private fun isVisibleCatalogInSettings(config: CatalogConfig): Boolean {
@@ -547,6 +602,11 @@ class CatalogRepository @Inject constructor(
         val profileId = activeProfileId()
         if (isPreinstalledCatalog(target)) {
             hidePreinstalledCatalog(profileId, catalogId)
+        } else if (target.sourceType == CatalogSourceType.ADDON) {
+            // Addon catalogs are re-derived from installed addons on every
+            // syncAddonCatalogs call, so the deletion won't stick unless we
+            // record the id here.
+            hideAddonCatalog(profileId, catalogId)
         }
         current.removeAll { it.id == catalogId }
         saveCatalogs(current)
@@ -991,6 +1051,13 @@ class CatalogRepository @Inject constructor(
 
     private fun readCatalogsFromPrefs(profileId: String, prefs: Preferences): List<CatalogConfig> {
         val hiddenPreinstalled = decodeHiddenPreinstalled(profileId, prefs)
+        val hiddenAddon = decodeHiddenAddon(profileId, prefs)
+
+        fun CatalogConfig.isHidden(): Boolean {
+            if (isPreinstalledCatalog(this) && id in hiddenPreinstalled) return true
+            if (sourceType == CatalogSourceType.ADDON && id in hiddenAddon) return true
+            return false
+        }
 
         // Strict profile-first lookup to avoid leaking or prioritizing
         // catalogs from other profiles.
@@ -998,7 +1065,7 @@ class CatalogRepository @Inject constructor(
         if (primary.isNotEmpty()) {
             val base = primary
                 .distinctBy { it.id }
-                .filterNot { cfg -> isPreinstalledCatalog(cfg) && cfg.id in hiddenPreinstalled }
+                .filterNot { it.isHidden() }
                 .toMutableList()
             val existingKeys = base.map { "${it.id}|${it.sourceUrl.orEmpty()}" }.toMutableSet()
 
@@ -1009,6 +1076,7 @@ class CatalogRepository @Inject constructor(
                     parseCatalogsJson(prefs[legacyGlobalKey])
                 )
                     .filterNot { it.isPreinstalled }
+                    .filterNot { it.isHidden() }
                     .distinctBy { "${it.id}|${it.sourceUrl.orEmpty()}" }
 
                 legacyCustom.forEach { cfg ->
@@ -1027,14 +1095,14 @@ class CatalogRepository @Inject constructor(
         if (legacyDefault.isNotEmpty()) {
             return legacyDefault
                 .distinctBy { it.id }
-                .filterNot { cfg -> isPreinstalledCatalog(cfg) && cfg.id in hiddenPreinstalled }
+                .filterNot { it.isHidden() }
         }
 
         val legacyGlobal = parseCatalogsJson(prefs[legacyGlobalKey])
         if (legacyGlobal.isNotEmpty()) {
             return legacyGlobal
                 .distinctBy { it.id }
-                .filterNot { cfg -> isPreinstalledCatalog(cfg) && cfg.id in hiddenPreinstalled }
+                .filterNot { it.isHidden() }
         }
 
         return emptyList()

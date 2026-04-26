@@ -28,6 +28,7 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
+        @Query("profile_id") profileId: String? = null,
         @Query("source") source: String? = null,
         @Query("media_type") mediaType: String? = null,
         @Query("select") select: String = "*",
@@ -49,6 +50,7 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
+        @Query("profile_id") profileId: String? = null,
         @Query("show_tmdb_id") showTmdbId: String,
         @Query("media_type") mediaType: String,
         @Query("source") source: String? = null,
@@ -64,6 +66,7 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
+        @Query("profile_id") profileId: String? = null,
         @Query("show_tmdb_id") showTmdbId: String? = null,
         @Query("media_type") mediaType: String? = null,
         @Query("season") season: String? = null,
@@ -133,7 +136,8 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
-        @Query("select") select: String = "tmdb_id,watched_at",
+        @Query("profile_id") profileId: String? = null,
+        @Query("select") select: String = "user_id,profile_id,tmdb_id,trakt_id,watched_at",
         @Query("order") order: String = "tmdb_id",
         @Query("offset") offset: Int = 0,
         @Query("limit") limit: Int = 1000
@@ -144,7 +148,8 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
-        @Query("select") select: String = "tmdb_id,show_trakt_id,season,episode,trakt_episode_id,tmdb_episode_id,watched_at,updated_at,source",
+        @Query("profile_id") profileId: String? = null,
+        @Query("select") select: String = "user_id,profile_id,tmdb_id,show_trakt_id,season,episode,trakt_episode_id,tmdb_episode_id,watched_at,updated_at,source",
         @Query("order") order: String = "tmdb_id,season,episode",
         @Query("offset") offset: Int = 0,
         @Query("limit") limit: Int = 1000
@@ -156,8 +161,9 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
+        @Query("profile_id") profileId: String? = null,
         @Query("tmdb_id") tmdbId: String,
-        @Query("select") select: String = "tmdb_id,show_trakt_id,season,episode,trakt_episode_id,tmdb_episode_id,watched_at,updated_at,source"
+        @Query("select") select: String = "user_id,profile_id,tmdb_id,show_trakt_id,season,episode,trakt_episode_id,tmdb_episode_id,watched_at,updated_at,source"
     ): List<WatchedEpisodeRecord>
     
     @POST("rest/v1/watched_movies")
@@ -190,6 +196,7 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
+        @Query("profile_id") profileId: String? = null,
         @Query("tmdb_id") tmdbId: String
     )
 
@@ -198,6 +205,7 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
+        @Query("profile_id") profileId: String? = null,
         @Query("tmdb_id") tmdbId: String,
         @Query("season") season: String,
         @Query("episode") episode: String
@@ -274,6 +282,7 @@ interface SupabaseApi {
 data class WatchHistoryRecord(
     val id: String? = null,
     @SerializedName("user_id") val userId: String,
+    @SerializedName("profile_id") val profileId: String? = null,
     @SerializedName("media_type") val mediaType: String, // "movie" or "tv"
     @SerializedName("show_tmdb_id") val showTmdbId: Int? = null,
     @SerializedName("show_trakt_id") val showTraktId: Int? = null,
@@ -324,6 +333,7 @@ data class WatchlistRecord(
 
 data class WatchedMovieRecord(
     @SerializedName("user_id") val userId: String,
+    @SerializedName("profile_id") val profileId: String? = null,
     @SerializedName("tmdb_id") val tmdbId: Int,
     @SerializedName("trakt_id") val traktId: Int? = null,
     @SerializedName("watched_at") val watchedAt: String? = null
@@ -331,6 +341,7 @@ data class WatchedMovieRecord(
 
 data class WatchedEpisodeRecord(
     @SerializedName("user_id") val userId: String,
+    @SerializedName("profile_id") val profileId: String? = null,
     @SerializedName("tmdb_id") val showTmdbId: Int, // Show TMDB ID
     val season: Int,
     val episode: Int,

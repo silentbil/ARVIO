@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +28,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed as standardItemsIndexed
@@ -78,6 +81,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -87,6 +92,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.foundation.lazy.list.TvLazyColumn
@@ -128,6 +134,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
@@ -461,14 +468,12 @@ fun DetailsScreen(
                                                 uiState.playPositionMs
                                             } else null
 
-                                            if (uiState.autoPlaySingleSource && !uiState.imdbId.isNullOrBlank()) {
-                                                pendingAutoPlayRequest = PendingAutoPlayRequest(
-                                                    season = season,
-                                                    episode = episode,
-                                                    startPositionMs = startPositionMs
-                                                )
+                                            if (!uiState.autoPlaySingleSource) {
+                                                // Autoplay OFF → open the source picker; never auto-play.
+                                                showStreamSelector = true
                                                 viewModel.loadStreams(uiState.imdbId, season, episode)
                                             } else {
+                                                // Autoplay ON → go straight to the player; PlayerScreen auto-picks.
                                                 onNavigateToPlayer(
                                                     mediaType,
                                                     mediaId,
@@ -594,6 +599,7 @@ fun DetailsScreen(
                     budget = uiState.budget,
                     seasonProgress = uiState.seasonProgress,
                     playLabel = uiState.playLabel,
+                    hasTrailer = uiState.trailerKey != null,
                     contentHasFocus = !isSidebarFocused,
                     usePosterCards = usePosterCards,
                     isMobile = isMobile,
@@ -622,14 +628,12 @@ fun DetailsScreen(
                                     uiState.playPositionMs
                                 } else null
 
-                                if (uiState.autoPlaySingleSource && !uiState.imdbId.isNullOrBlank()) {
-                                    pendingAutoPlayRequest = PendingAutoPlayRequest(
-                                        season = season,
-                                        episode = episode,
-                                        startPositionMs = startPositionMs
-                                    )
+                                if (!uiState.autoPlaySingleSource) {
+                                    // Autoplay OFF → open the source picker; never auto-play.
+                                    showStreamSelector = true
                                     viewModel.loadStreams(uiState.imdbId, season, episode)
                                 } else {
+                                    // Autoplay ON → go straight to the player; PlayerScreen auto-picks.
                                     onNavigateToPlayer(
                                         mediaType, mediaId, season, episode,
                                         uiState.imdbId, null, null, null, startPositionMs
@@ -954,6 +958,7 @@ private fun DetailsContent(
     budget: String? = null,
     seasonProgress: Map<Int, Pair<Int, Int>> = emptyMap(),
     playLabel: String? = null,
+    hasTrailer: Boolean = false,
     contentHasFocus: Boolean = true,
     usePosterCards: Boolean = false,
     isMobile: Boolean = false,
@@ -981,17 +986,33 @@ private fun DetailsContent(
     if (isMobile) {
         val configuration = LocalConfiguration.current
         val screenHeightDp = configuration.screenHeightDp.dp
-        val backdropHeight = screenHeightDp * 0.35f
+        val backdropHeight = (screenHeightDp * 0.53f).coerceAtLeast(400.dp)
         val mobileScrollState = rememberScrollState()
+        val density = LocalDensity.current
+        var stickyThreshold by remember { mutableStateOf(-1f) }
+        val topBarAlpha by remember {
+            derivedStateOf {
+                if (stickyThreshold >= 0f && mobileScrollState.value > stickyThreshold) {
+                    val overscroll = mobileScrollState.value - stickyThreshold
+                    val maxOverscroll = 150f
+                    (overscroll / maxOverscroll).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+            }
+        }
 
-        val genreText = genres.take(2).joinToString(" / ").ifEmpty {
+        val genreText = genres.take(2).joinToString(" / ").ifBlank {
             if (item.mediaType == MediaType.TV) "TV Series" else "Movie"
         }
-        val displayDate = item.releaseDate?.takeIf { it.isNotEmpty() } ?: item.year
+        val displayDate = item.year.takeIf { it.isNotBlank() }
+            ?: item.releaseDate?.trim()?.takeIf { it.isNotEmpty() }?.let { date ->
+                Regex("\\d{4}").find(date)?.value ?: date
+            }
+            ?: ""
         val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
         val rating = item.imdbRating.ifEmpty { item.tmdbRating }
         val ratingValue = parseRatingValue(rating)
-
         val buttonWatched = if (item.mediaType == MediaType.TV) {
             episodes.getOrNull(episodeIndex)?.isWatched ?: item.isWatched
         } else {
@@ -1009,6 +1030,7 @@ private fun DetailsContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(backdropHeight)
+                        .zIndex(10f)
                 ) {
                     AsyncImage(
                         model = item.backdrop ?: item.image,
@@ -1024,135 +1046,236 @@ private fun DetailsContent(
                                 brush = Brush.verticalGradient(
                                     colorStops = arrayOf(
                                         0.0f to Color.Transparent,
-                                        0.4f to Color.Transparent,
-                                        0.7f to Color.Black.copy(alpha = 0.8f),
+                                        0.55f to Color.Transparent,
+                                        0.8f to Color.Black.copy(alpha = 0.84f),
                                         1.0f to Color.Black
                                     )
                                 )
                             )
                     )
-                    // Title over backdrop bottom
-                    Box(
+                    
+                    if (topBarAlpha > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .graphicsLayer { 
+                                    alpha = topBarAlpha
+                                    translationY = mobileScrollState.value.toFloat()
+                                }
+                                .background(Color.Black.copy(alpha = 0.85f))
+                        ) {
+                            Spacer(modifier = Modifier.statusBarsPadding().height(64.dp))
+                        }
+                    }
+
+                    // Title and metadata over backdrop bottom
+                    Column(
                         modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        if (logoUrl != null) {
-                            AsyncImage(
-                                model = logoUrl,
-                                contentDescription = item.title,
-                                contentScale = ContentScale.Fit,
-                                alignment = Alignment.CenterStart,
-                                modifier = Modifier
-                                    .height(48.dp)
-                                    .width(200.dp)
-                            )
-                        } else {
+                        val statusBarsTop = WindowInsets.statusBars.getTop(density)
+                        Box(
+                            modifier = Modifier
+                                .zIndex(11f)
+                                .onGloballyPositioned { coords ->
+                                    val currentInitialY = coords.positionInWindow().y + mobileScrollState.value
+                                    val pinnedY = statusBarsTop - with(density) { 12.dp.toPx() }
+                                    val calculatedThreshold = currentInitialY - pinnedY
+                                    
+                                    // Update if uninitialized, or if the layout shifts significantly (e.g. metadata loaded)
+                                    // The > 10f check prevents infinite recomposition loops and ignores 1-2px scroll jitter.
+                                    if (stickyThreshold < 0f || kotlin.math.abs(calculatedThreshold - stickyThreshold) > 10f) {
+                                        stickyThreshold = calculatedThreshold
+                                    }
+                                }
+                                .graphicsLayer {
+                                    if (stickyThreshold >= 0f && mobileScrollState.value > stickyThreshold) {
+                                        val overscroll = mobileScrollState.value - stickyThreshold
+                                        translationY = overscroll
+                                        
+                                        // Smooth scale down to feel like a header
+                                        val maxOverscroll = 200f
+                                        val progress = (overscroll / maxOverscroll).coerceIn(0f, 1f)
+                                        val scale = 1f - (0.28f * progress) 
+                                        scaleX = scale
+                                        scaleY = scale
+                                    }
+                                }
+                        ) {
+                            if (logoUrl != null) {
+                                AsyncImage(
+                                    model = logoUrl,
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Fit,
+                                    alignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.78f)
+                                        .height(86.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = item.title,
+                                    style = ArflixTypography.heroTitle.copy(
+                                        fontSize = 28.sp,
+                                        fontWeight = FontWeight.Black,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.fillMaxWidth(0.82f)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            if (ratingValue > 0f) {
+                                MobileScoreBadge(
+                                    label = "IMDb",
+                                    value = rating,
+                                    backgroundColor = Color(0xFFF5C518),
+                                    contentColor = Color.Black
+                                )
+                            }
+                            // MyAnimeList community score for anime only. Populated
+                            // asynchronously after details load via Jikan API.
+                            if (malScore != null && malScore > 0.0) {
+                                MobileScoreBadge(
+                                    label = "MAL",
+                                    value = String.format("%.1f", malScore),
+                                    backgroundColor = Color(0xFF2E51A2),
+                                    contentColor = Color.White
+                                )
+                            }
+                            if (displayDate.isNotEmpty()) {
+                                MobileMetadataSeparator()
+                                Text(
+                                    text = displayDate,
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White.copy(alpha = 0.78f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (hasDuration) {
+                                MobileMetadataSeparator()
+                                Text(
+                                    text = item.duration,
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White.copy(alpha = 0.78f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        if (genreText.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = item.title,
-                                style = ArflixTypography.heroTitle.copy(
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold,
+                                text = genreText,
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
                                     shadow = textShadow
                                 ),
-                                color = Color.White,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                color = Color.White.copy(alpha = 0.74f),
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth(0.9f)
                             )
                         }
                     }
+
                 }
 
-                // --- Metadata & content on black background ---
+                // --- Content on black background ---
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color.Black)
                         .padding(horizontal = 16.dp)
                 ) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Metadata row - horizontally scrollable to prevent clipping on narrow screens
+                    // Primary mobile actions
+                    val playButtonLabel = if (!playLabel.isNullOrBlank()) playLabel else "Play"
+                    MobileActionButton(
+                        icon = Icons.Default.PlayArrow,
+                        text = playButtonLabel,
+                        isPrimary = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(58.dp),
+                        onClick = { onButtonClick(0) }
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = genreText,
-                            style = ArflixTypography.caption.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
-                            color = Color.White.copy(alpha = 0.7f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                        MobileIconActionButton(
+                            icon = Icons.Default.List,
+                            contentDescription = "Sources",
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(54.dp),
+                            onClick = { onButtonClick(1) }
                         )
-                        if (displayDate.isNotEmpty()) {
-                            Text(text = "|", style = ArflixTypography.caption.copy(fontSize = 12.sp), color = Color.White.copy(alpha = 0.4f), maxLines = 1)
-                            Text(
-                                text = displayDate,
-                                style = ArflixTypography.caption.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
-                                color = Color.White.copy(alpha = 0.7f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        if (hasDuration) {
-                            Text(text = "|", style = ArflixTypography.caption.copy(fontSize = 12.sp), color = Color.White.copy(alpha = 0.4f), maxLines = 1)
-                            Text(
-                                text = item.duration,
-                                style = ArflixTypography.caption.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
-                                color = Color.White.copy(alpha = 0.7f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        if (ratingValue > 0f) {
-                            Text(text = "|", style = ArflixTypography.caption.copy(fontSize = 12.sp), color = Color.White.copy(alpha = 0.4f))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                modifier = Modifier
-                                    .background(Color(0xFFF5C518), RoundedCornerShape(3.dp))
-                                    .padding(horizontal = 5.dp, vertical = 1.dp)
-                            ) {
-                                Text(
-                                    text = "IMDb",
-                                    style = ArflixTypography.caption.copy(fontSize = 8.sp, fontWeight = FontWeight.Black),
-                                    color = Color.Black
-                                )
-                                Text(
-                                    text = rating,
-                                    style = ArflixTypography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
-                                    color = Color.Black
-                                )
-                            }
-                        }
-                        // MyAnimeList community score badge for anime only. Populated
-                        // asynchronously after details load via Jikan API. Hidden when
-                        // the content isn't anime or Jikan returns null. Issue #45.
-                        if (malScore != null && malScore > 0.0) {
-                            Text(text = "|", style = ArflixTypography.caption.copy(fontSize = 12.sp), color = Color.White.copy(alpha = 0.4f))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                modifier = Modifier
-                                    .background(Color(0xFF2E51A2), RoundedCornerShape(3.dp))
-                                    .padding(horizontal = 5.dp, vertical = 1.dp)
-                            ) {
-                                Text(
-                                    text = "MAL",
-                                    style = ArflixTypography.caption.copy(fontSize = 8.sp, fontWeight = FontWeight.Black),
-                                    color = Color.White
-                                )
-                                Text(
-                                    text = String.format("%.1f", malScore),
-                                    style = ArflixTypography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
-                                    color = Color.White
-                                )
-                            }
-                        }
+                        MobileIconActionButton(
+                            icon = Icons.Default.Movie,
+                            contentDescription = "Trailer",
+                            enabled = hasTrailer,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(54.dp),
+                            onClick = { onButtonClick(2) }
+                        )
+                        MobileIconActionButton(
+                            icon = if (buttonWatched) Icons.Default.Check else Icons.Default.Visibility,
+                            contentDescription = if (buttonWatched) "Watched" else "Mark watched",
+                            isActive = buttonWatched,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(54.dp),
+                            onClick = { onButtonClick(3) }
+                        )
+                        MobileIconActionButton(
+                            icon = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            contentDescription = if (isInWatchlist) "In watchlist" else "Add to watchlist",
+                            isActive = isInWatchlist,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(54.dp),
+                            onClick = { onButtonClick(4) }
+                        )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
                     // Description
                     Text(
@@ -1166,33 +1289,6 @@ private fun DetailsContent(
                         maxLines = 4,
                         overflow = TextOverflow.Ellipsis
                     )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Action buttons row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        val playButtonLabel = if (!playLabel.isNullOrBlank()) playLabel else "Play"
-                        MobileActionButton(icon = Icons.Default.PlayArrow, text = playButtonLabel, isPrimary = true, onClick = { onButtonClick(0) })
-                        MobileActionButton(icon = Icons.Default.List, text = "Sources", onClick = { onButtonClick(1) })
-                        MobileActionButton(icon = Icons.Default.Movie, text = "Trailer", onClick = { onButtonClick(2) })
-                        MobileActionButton(
-                            icon = if (buttonWatched) Icons.Default.Check else Icons.Default.Visibility,
-                            text = if (buttonWatched) "Watched" else "Watched",
-                            isActive = buttonWatched,
-                            onClick = { onButtonClick(3) }
-                        )
-                        MobileActionButton(
-                            icon = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                            text = "Watchlist",
-                            isActive = isInWatchlist,
-                            onClick = { onButtonClick(4) }
-                        )
-                    }
 
                     // --- TV Show: Season selector & Episodes ---
                     if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
@@ -1240,6 +1336,7 @@ private fun DetailsContent(
                 // Episodes LazyRow (outside the inner Column to allow independent horizontal scroll)
                 if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
                     LazyRow(
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -1273,6 +1370,7 @@ private fun DetailsContent(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                     LazyRow(
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
@@ -1306,6 +1404,7 @@ private fun DetailsContent(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                     LazyRow(
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -1341,6 +1440,7 @@ private fun DetailsContent(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                     LazyRow(
+                        modifier = Modifier.arvioDpadFocusGroup(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -1366,7 +1466,7 @@ private fun DetailsContent(
             // when the system nav bar auto-hides. Issue #43.
             com.arflix.tv.ui.components.MobileBackButton(
                 onBack = onBack,
-                modifier = Modifier.align(Alignment.TopStart)
+                modifier = Modifier.align(Alignment.TopStart).statusBarsPadding()
             )
         }
         return
@@ -1796,6 +1896,7 @@ private fun DetailsContent(
                 .fillMaxWidth()
                 .height(contentRowHeight)
                 .padding(start = 24.dp, bottom = contentRowBottomPadding)
+                .arvioDpadFocusGroup()
                 .clipToBounds(),  // Clip content to prevent overlay on hero
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(top = 12.dp)
@@ -1824,7 +1925,13 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = seasonRowState,
-                            contentPadding = PaddingValues(start = contentStartPadding, end = 150.dp),
+                            modifier = Modifier.arvioDpadFocusGroup(),
+                            contentPadding = PaddingValues(
+                                start = contentStartPadding,
+                                end = 150.dp,
+                                top = 12.dp,
+                                bottom = 12.dp,
+                            ),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             itemsIndexed(seasonItems, key = { _, s -> s }) { index, season ->
@@ -1862,7 +1969,13 @@ private fun DetailsContent(
 
                     TvLazyRow(
                         state = episodeRowState,
-                        contentPadding = PaddingValues(start = contentStartPadding, end = 520.dp),
+                        modifier = Modifier.arvioDpadFocusGroup(),
+                        contentPadding = PaddingValues(
+                            start = contentStartPadding,
+                            end = 520.dp,
+                            top = 14.dp,
+                            bottom = 14.dp,
+                        ),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         itemsIndexed(
@@ -1909,7 +2022,13 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = castRowState,
-                            contentPadding = PaddingValues(start = contentStartPadding, end = 120.dp),  // 90dp card + 30dp margin
+                            modifier = Modifier.arvioDpadFocusGroup(),
+                            contentPadding = PaddingValues(
+                                start = contentStartPadding,
+                                end = 120.dp,
+                                top = 10.dp,
+                                bottom = 10.dp,
+                            ),  // 90dp card + focus margin
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             itemsIndexed(
@@ -1956,7 +2075,13 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = reviewRowState,
-                            contentPadding = PaddingValues(start = contentStartPadding, end = 350.dp),  // 320dp card + 30dp margin
+                            modifier = Modifier.arvioDpadFocusGroup(),
+                            contentPadding = PaddingValues(
+                                start = contentStartPadding,
+                                end = 350.dp,
+                                top = 14.dp,
+                                bottom = 14.dp,
+                            ),  // 320dp card + focus margin
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             itemsIndexed(
@@ -2002,9 +2127,12 @@ private fun DetailsContent(
 
                         TvLazyRow(
                             state = similarRowState,
+                            modifier = Modifier.arvioDpadFocusGroup(),
                             contentPadding = PaddingValues(
                                 start = contentStartPadding,
-                                end = if (usePosterCards) 140.dp else 210.dp
+                                end = if (usePosterCards) 140.dp else 210.dp,
+                                top = 14.dp,
+                                bottom = 14.dp,
                             ),
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
@@ -2112,16 +2240,55 @@ private fun HomeStyleRowAutoScroll(
         val currentLast = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: currentFirst
         val targetOutsideViewport = focusedItemIndex < currentFirst || focusedItemIndex > currentLast
         val delta = scrollTargetIndex - currentFirst
-        if (extraOffset > 0 || targetOutsideViewport || abs(delta) > 1) {
+        if (abs(delta) > 6) {
             rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-        } else if (delta != 0) {
+        } else if (delta != 0 || targetOutsideViewport || lastScrollOffset != extraOffset) {
             rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-        } else if (lastScrollOffset != extraOffset) {
-            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         }
         lastScrollIndex = scrollTargetIndex
         lastScrollOffset = extraOffset
     }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun MobileScoreBadge(
+    label: String,
+    value: String,
+    backgroundColor: Color,
+    contentColor: Color
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .background(backgroundColor, RoundedCornerShape(3.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = label,
+            style = ArflixTypography.caption.copy(fontSize = 8.sp, fontWeight = FontWeight.Black),
+            color = contentColor,
+            maxLines = 1
+        )
+        Text(
+            text = value,
+            style = ArflixTypography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            color = contentColor,
+            maxLines = 1
+        )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun MobileMetadataSeparator() {
+    Text(
+        text = "•",
+        style = ArflixTypography.caption.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+        color = Color.White.copy(alpha = 0.42f),
+        maxLines = 1
+    )
 }
 
 /**
@@ -2134,40 +2301,91 @@ private fun MobileActionButton(
     text: String,
     isPrimary: Boolean = false,
     isActive: Boolean = false,
+    isOutlined: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(percent = 50)
     val bgColor = when {
         isPrimary -> Color.White
+        isOutlined -> Color.Transparent
         isActive -> Color.White.copy(alpha = 0.15f)
         else -> Color.White.copy(alpha = 0.08f)
     }
-    val contentColor = if (isPrimary) Color.Black else Color.White.copy(alpha = 0.9f)
+    val contentColor = if (isPrimary) Color.Black else Color.White.copy(alpha = 0.92f)
+    val borderColor = if (isOutlined) Color.White.copy(alpha = if (isActive) 0.55f else 0.22f) else Color.Transparent
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .clip(shape)
             .background(bgColor, shape)
+            .border(1.dp, borderColor, shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = contentColor,
-            modifier = Modifier.size(18.dp)
+            modifier = Modifier.size(if (isPrimary) 24.dp else 22.dp)
         )
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = text,
             style = ArvioSkin.typography.button.copy(
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
             ),
             color = contentColor,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+    }
+}
+
+@Composable
+private fun MobileIconActionButton(
+    icon: ImageVector,
+    contentDescription: String,
+    isActive: Boolean = false,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(20.dp)
+    val backgroundColor = when {
+        !enabled -> Color.White.copy(alpha = 0.04f)
+        isActive -> Color.White.copy(alpha = 0.18f)
+        else -> Color.White.copy(alpha = 0.08f)
+    }
+    val contentColor = if (enabled) {
+        Color.White.copy(alpha = if (isActive) 0.96f else 0.88f)
+    } else {
+        Color.White.copy(alpha = 0.3f)
+    }
+    val borderColor = if (isActive) {
+        Color.White.copy(alpha = 0.28f)
+    } else {
+        Color.White.copy(alpha = 0.12f)
+    }
+
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(backgroundColor, shape)
+            .border(1.dp, borderColor, shape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = contentColor,
+            modifier = Modifier.size(24.dp)
         )
     }
 }

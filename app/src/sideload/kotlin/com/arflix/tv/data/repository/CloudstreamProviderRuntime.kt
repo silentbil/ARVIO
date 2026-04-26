@@ -80,7 +80,9 @@ class CloudstreamProviderRuntime @Inject constructor(
             ?: return@resolveAcrossAddons emptyList()
         val dataUrl = loadResponseToDataUrl(load)
             ?: return@resolveAcrossAddons emptyList()
-        extractLinksFromApi(api, dataUrl, addon)
+        val links = extractLinksFromApi(api, dataUrl, addon)
+        Log.d(TAG, "resolveMovieStreams returned ${links.size} stream(s) for ${addon.name}")
+        links
     }
 
     suspend fun resolveEpisodeStreams(
@@ -104,7 +106,9 @@ class CloudstreamProviderRuntime @Inject constructor(
             }
             else -> null
         } ?: return@resolveAcrossAddons emptyList()
-        extractLinksFromApi(api, target.data, addon)
+        val links = extractLinksFromApi(api, target.data, addon)
+        Log.d(TAG, "resolveEpisodeStreams returned ${links.size} stream(s) for ${addon.name}")
+        links
     }
 
     private suspend fun resolveAcrossAddons(
@@ -139,17 +143,48 @@ class CloudstreamProviderRuntime @Inject constructor(
         data: String,
         addon: Addon
     ): List<StreamSource> {
-        val links = mutableListOf<ExtractorLink>()
+        val rawLinks = mutableListOf<ExtractorLink>()
+        val finalLinks = mutableListOf<ExtractorLink>()
+
         val ok = runCatchingTimeout(LINKS_TIMEOUT_MS, "loadLinks") {
             api.loadLinks(
                 data = data,
                 isCasting = false,
                 subtitleCallback = { /* subtitles integration is phase 2 */ },
-                callback = { link -> synchronized(links) { links.add(link) } }
+                callback = { link -> synchronized(rawLinks) { rawLinks.add(link) } }
             )
         } ?: return emptyList()
-        if (!ok && links.isEmpty()) return emptyList()
-        return links.map { it.toStreamSource(addon) }
+
+        if (!ok && rawLinks.isEmpty()) return emptyList()
+
+        // Phase 2: Extract direct video urls from the links using ExtractorApi.
+        // Track the count before/after each call so that if an extractor matches the URL
+        // but fails internally (emitting zero links), the original rawLink is still
+        // preserved — loadExtractor() returns true on a URL-pattern match, even when
+        // the extractor itself emits nothing.
+        rawLinks.forEach { rawLink ->
+            val before = synchronized(finalLinks) { finalLinks.size }
+
+            val handled = runCatchingTimeout(LINKS_TIMEOUT_MS, "loadExtractor") {
+                com.lagradost.cloudstream3.utils.loadExtractor(
+                    url = rawLink.url,
+                    referer = rawLink.referer,
+                    subtitleCallback = { },
+                    callback = { extractedLink ->
+                        synchronized(finalLinks) { finalLinks.add(extractedLink) }
+                    }
+                )
+            } ?: false
+
+            val emitted = synchronized(finalLinks) { finalLinks.size > before }
+            if (!handled || !emitted) {
+                // Either no extractor matched, or the extractor matched but produced
+                // nothing — fall back to the original playable raw link.
+                synchronized(finalLinks) { finalLinks.add(rawLink) }
+            }
+        }
+
+        return finalLinks.map { it.toStreamSource(addon) }
     }
 
     /**
@@ -180,11 +215,14 @@ class CloudstreamProviderRuntime @Inject constructor(
         return results.firstOrNull { it.name.trim().equals(title, ignoreCase = true) }
             ?: results.firstOrNull { it.name.trim().lowercase() == lower }
             ?: results.firstOrNull { it.name.lowercase().contains(lower) }
-            ?: results.first()
+            ?: results.firstOrNull { me.xdrop.fuzzywuzzy.FuzzySearch.partialRatio(lower, it.name.lowercase()) > 85 }
     }
 
     private fun loadResponseToDataUrl(response: LoadResponse): String? = when (response) {
         is MovieLoadResponse -> response.dataUrl.takeIf { it.isNotBlank() }
+        is TvSeriesLoadResponse -> response.episodes.firstOrNull()?.data?.takeIf { it.isNotBlank() }
+        is AnimeLoadResponse -> response.episodes.values.flatten().firstOrNull()?.data?.takeIf { it.isNotBlank() }
+        is com.lagradost.cloudstream3.LiveStreamLoadResponse -> response.dataUrl.takeIf { it.isNotBlank() }
         else -> null
     }
 
@@ -301,9 +339,9 @@ class CloudstreamProviderRuntime @Inject constructor(
     }.getOrNull()
 
     companion object {
-        private const val SEARCH_TIMEOUT_MS = 15_000L
-        private const val LOAD_TIMEOUT_MS = 15_000L
-        private const val LINKS_TIMEOUT_MS = 20_000L
+        private const val SEARCH_TIMEOUT_MS = 8_000L
+        private const val LOAD_TIMEOUT_MS = 6_000L
+        private const val LINKS_TIMEOUT_MS = 8_000L
     }
 }
 

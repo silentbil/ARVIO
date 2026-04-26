@@ -585,7 +585,8 @@ fun MainAPI.fixUrlNull(url: String?): String? {
 fun MainAPI.fixUrl(url: String): String {
     if (url.startsWith("http") ||
         // Do not fix JSON objects when passed as urls.
-        url.startsWith("{\"")
+        url.startsWith("{") || url.startsWith("[") || 
+        url.startsWith("magnet:") || url.startsWith("intent:") || url.startsWith("data:")
     ) {
         return url
     }
@@ -597,10 +598,10 @@ fun MainAPI.fixUrl(url: String): String {
     if (startsWithNoHttp) {
         return "https:$url"
     } else {
-        if (url.startsWith('/')) {
-            return mainUrl + url
+        if (url.startsWith('/') || url.startsWith('?') || url.startsWith('#')) {
+            return if (mainUrl.endsWith("/")) mainUrl.dropLast(1) + url else mainUrl + url
         }
-        return "$mainUrl/$url"
+        return if (mainUrl.endsWith("/")) mainUrl + url else "$mainUrl/$url"
     }
 }
 
@@ -726,7 +727,22 @@ fun TvType.isAnimeOp(): Boolean {
     return this == TvType.Anime || this == TvType.OVA
 }
 
-data class SubtitleFile(val lang: String, val url: String)
+data class SubtitleFile @Deprecated("Use newSubtitleFile", level = DeprecationLevel.WARNING) constructor(
+    var lang: String,
+    var url: String,
+    var headers: Map<String, String>? = null
+)
+
+suspend fun newSubtitleFile(
+    lang: String,
+    url: String,
+    initializer: suspend SubtitleFile.() -> Unit = { }
+): SubtitleFile {
+    @Suppress("DEPRECATION")
+    val builder = SubtitleFile(lang, url)
+    builder.initializer()
+    return builder
+}
 
 data class HomePageResponse(
     val items: List<HomePageList>,
@@ -813,6 +829,7 @@ interface SearchResponse {
     var posterHeaders: Map<String, String>?
     var id: Int?
     var quality: SearchQuality?
+    var score: Score?
 }
 
 fun MainAPI.newMovieSearchResponse(
@@ -903,6 +920,7 @@ data class AnimeSearchResponse(
     override var id: Int? = null,
     override var quality: SearchQuality? = null,
     override var posterHeaders: Map<String, String>? = null,
+    override var score: Score? = null,
 ) : SearchResponse
 
 fun AnimeSearchResponse.addDubStatus(status: DubStatus, episodes: Int? = null) {
@@ -957,6 +975,7 @@ data class TorrentSearchResponse(
     override var id: Int? = null,
     override var quality: SearchQuality? = null,
     override var posterHeaders: Map<String, String>? = null,
+    override var score: Score? = null,
 ) : SearchResponse
 
 data class MovieSearchResponse(
@@ -970,6 +989,7 @@ data class MovieSearchResponse(
     override var id: Int? = null,
     override var quality: SearchQuality? = null,
     override var posterHeaders: Map<String, String>? = null,
+    override var score: Score? = null,
 ) : SearchResponse
 
 data class LiveSearchResponse(
@@ -983,6 +1003,7 @@ data class LiveSearchResponse(
     override var quality: SearchQuality? = null,
     override var posterHeaders: Map<String, String>? = null,
     val lang: String? = null,
+    override var score: Score? = null,
 ) : SearchResponse
 
 data class TvSeriesSearchResponse(
@@ -997,6 +1018,7 @@ data class TvSeriesSearchResponse(
     override var id: Int? = null,
     override var quality: SearchQuality? = null,
     override var posterHeaders: Map<String, String>? = null,
+    override var score: Score? = null,
 ) : SearchResponse
 
 data class TrailerData(

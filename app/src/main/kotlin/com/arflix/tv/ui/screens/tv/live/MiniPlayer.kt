@@ -144,6 +144,7 @@ private fun VideoCard(
                     PlayerView(ctx).apply {
                         this.player = exoPlayer
                         useController = false
+                        setKeepContentOnPlayerReset(true)
                     }
                 },
                 update = { it.player = exoPlayer },

@@ -8,8 +8,10 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.TraktRepository
+import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.ui.components.ToastType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -33,7 +35,11 @@ data class ProfileUiState(
     val selectedAvatarId: Int = 0, // 0 = legacy letter, 1-24 = cartoon avatar
     val isKidsProfile: Boolean = false,
     // Edit profile dialog state
-    val editingProfile: Profile? = null
+    val editingProfile: Profile? = null,
+    // Toast state
+    val toastMessage: String? = null,
+    val toastType: ToastType = ToastType.SUCCESS,
+    val showToast: Boolean = false
 )
 
 @HiltViewModel
@@ -41,6 +47,7 @@ class ProfileViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
+    private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
     private val iptvRepository: IptvRepository,
     private val cloudSyncRepository: CloudSyncRepository
@@ -80,6 +87,22 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
+    private fun showToast(message: String, type: ToastType = ToastType.SUCCESS) {
+        _uiState.value = _uiState.value.copy(
+            toastMessage = message,
+            toastType = type,
+            showToast = true
+        )
+        viewModelScope.launch {
+            delay(3500)
+            _uiState.value = _uiState.value.copy(showToast = false)
+        }
+    }
+
+    fun dismissToast() {
+        _uiState.value = _uiState.value.copy(showToast = false)
+    }
+
     /**
      * Preload Continue Watching data when a profile is focused (before selection).
      * This enables instant display when the user actually selects the profile.
@@ -101,6 +124,7 @@ class ProfileViewModel @Inject constructor(
                     // Keep this off the main thread; some profiles carry enough data here to stall
                     // touch devices during the profile tap transition.
                     traktRepository.clearAllProfileCaches()
+                    watchHistoryRepository.clearProfileCaches()
                     watchlistRepository.clearWatchlistCache()
                     iptvRepository.invalidateCache()
                 }
@@ -128,7 +152,7 @@ class ProfileViewModel @Inject constructor(
 
                 // Defer IPTV warmup/network parse to keep initial Home navigation smooth.
                 viewModelScope.launch(Dispatchers.IO) {
-                    delay(250L)
+                    delay(45_000L)
                     if (profileRepository.getActiveProfileId() != profile.id) return@launch
                     runCatching {
                         iptvRepository.prefetchFreshStartupData()
@@ -143,6 +167,7 @@ class ProfileViewModel @Inject constructor(
     fun switchProfile() {
         // Clear all caches when leaving a profile to prevent data leakage
         traktRepository.clearAllProfileCaches()
+        watchHistoryRepository.clearProfileCaches()
         watchlistRepository.clearWatchlistCache()
         iptvRepository.invalidateCache()
 
@@ -191,6 +216,7 @@ class ProfileViewModel @Inject constructor(
                 isKidsProfile = false
             )
             _uiState.value = _uiState.value.copy(showAddDialog = false)
+            showToast("Profile created successfully", ToastType.SUCCESS)
             runCatching { cloudSyncRepository.pushToCloud() }
         }
     }
@@ -226,6 +252,7 @@ class ProfileViewModel @Inject constructor(
                 )
             )
             _uiState.value = _uiState.value.copy(editingProfile = null)
+            showToast("Profile updated", ToastType.SUCCESS)
             runCatching { cloudSyncRepository.pushToCloud() }
         }
     }
@@ -244,8 +271,10 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             val activeId = _uiState.value.activeProfile?.id
             profileRepository.deleteProfile(profile.id)
+            showToast("Profile deleted", ToastType.SUCCESS)
             if (activeId == profile.id) {
                 traktRepository.clearAllProfileCaches()
+                watchHistoryRepository.clearProfileCaches()
                 watchlistRepository.clearWatchlistCache()
                 iptvRepository.invalidateCache()
                 profileManager.setCurrentProfileId("default")

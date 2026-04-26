@@ -49,6 +49,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import retrofit2.HttpException
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -101,7 +102,7 @@ class TraktRepository @Inject constructor(
     private fun expiresAtKey() = profileManager.profileLongKey("trakt_expires_at")
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("trakt_include_specials")
     private fun dismissedContinueWatchingKey() = profileManager.profileStringKey("trakt_dismissed_continue_watching_v1")
-    private fun continueWatchingCacheKey() = profileManager.profileStringKey("trakt_continue_watching_cache_v1")
+    private fun continueWatchingCacheKey() = profileManager.profileStringKey("trakt_continue_watching_cache_v4")
     // Local Continue Watching for profiles without Trakt - stores progress locally per profile
     private fun localContinueWatchingKey() = profileManager.profileStringKey("local_continue_watching_v1")
     private fun localWatchedMoviesKey() = profileManager.profileStringKey("local_watched_movies_v1")
@@ -115,9 +116,12 @@ class TraktRepository @Inject constructor(
 
     private var attemptedProfileTokenLoad = false
     @Volatile private var cachedContinueWatching: List<ContinueWatchingItem> = emptyList()
+    @Volatile private var cachedContinueWatchingProfileId: String? = null
     @Volatile private var continueWatchingFetching = false
+    @Volatile private var continueWatchingFetchingProfileId: String? = null
     private var lastContinueWatchingFetch = 0L
     private val CONTINUE_WATCHING_CACHE_MS = 300_000L // 5 minute cache to reduce API calls and improve performance
+    private val TRAKT_UP_NEXT_RECENT_WINDOW_MS = 548L * 24L * 60L * 60L * 1000L // 18 months
 
     @Serializable
     private data class TraktTokenUpdate(
@@ -1082,46 +1086,84 @@ class TraktRepository @Inject constructor(
         return all
     }
 
+    private suspend fun getAllHiddenProgressShows(auth: String): List<TraktHiddenItem> {
+        val all = mutableListOf<TraktHiddenItem>()
+        var page = 1
+        val limit = 100
+
+        while (true) {
+            val pageItems = traktApi.getHiddenProgressShows(auth, clientId, page = page, limit = limit)
+            if (pageItems.isEmpty()) break
+            all.addAll(pageItems)
+            if (pageItems.size < limit) break
+            page++
+        }
+
+        return all
+    }
+
+    private suspend fun getAllHiddenProgressResetShows(auth: String): List<TraktHiddenItem> {
+        val all = mutableListOf<TraktHiddenItem>()
+        var page = 1
+        val limit = 100
+
+        while (true) {
+            val pageItems = traktApi.getHiddenProgressResetShows(auth, clientId, page = page, limit = limit)
+            if (pageItems.isEmpty()) break
+            all.addAll(pageItems)
+            if (pageItems.size < limit) break
+            page++
+        }
+
+        return all
+    }
+
     /**
-     * Get items to continue watching - Uses Trakt API directly for accuracy and speed.
+     * Get items to continue watching - Uses Trakt paused playback directly for accuracy and speed.
      * For profiles without Trakt, falls back to local Continue Watching storage.
-     * Refactored to fetch more shows and process in parallel.
      */
     suspend fun getContinueWatching(forceRefresh: Boolean = false): List<ContinueWatchingItem> = coroutineScope {
+        val requestProfileId = profileManager.getProfileIdSync()
         val auth = getAuthHeader()
 
         // If no Trakt auth, use local Continue Watching for this profile
         if (auth == null) {
             val localItems = loadLocalContinueWatching()
             cachedContinueWatching = localItems
+            cachedContinueWatchingProfileId = requestProfileId
             return@coroutineScope localItems
         }
 
         // Return cached data if still fresh (unless forced)
         val now = System.currentTimeMillis()
-        if (!forceRefresh && cachedContinueWatching.isNotEmpty() && now - lastContinueWatchingFetch < CONTINUE_WATCHING_CACHE_MS) {
+        if (
+            !forceRefresh &&
+            cachedContinueWatchingProfileId == requestProfileId &&
+            cachedContinueWatching.isNotEmpty() &&
+            now - lastContinueWatchingFetch < CONTINUE_WATCHING_CACHE_MS
+        ) {
             return@coroutineScope cachedContinueWatching
         }
 
         // Prevent duplicate fetches
-        if (continueWatchingFetching) {
-            while (continueWatchingFetching) { delay(50) }
-            if (cachedContinueWatching.isNotEmpty()) {
+        if (continueWatchingFetching && continueWatchingFetchingProfileId == requestProfileId) {
+            while (continueWatchingFetching && continueWatchingFetchingProfileId == requestProfileId) { delay(50) }
+            if (cachedContinueWatchingProfileId == requestProfileId && cachedContinueWatching.isNotEmpty()) {
                 return@coroutineScope cachedContinueWatching
             }
         }
         continueWatchingFetching = true
+        continueWatchingFetchingProfileId = requestProfileId
 
         try {
         val candidates = mutableListOf<ContinueWatchingCandidate>()
-        val includeSpecials = context.settingsDataStore.data.first()[includeSpecialsKey()] ?: false
 
         initializeWatchedCache()
 
-            // Mirror Trakt progress page:
-            // 1. Fetch watched shows + hidden shows in parallel
-            // 2. Filter out hidden & stale shows
-            // 3. Check progress for remaining shows
+            // Trakt Continue Watching is built from explicit paused playback
+            // plus recent watched-show progress. We cannot call Trakt's website
+            // progress activity feed from API clients, so keep this bounded and
+            // respect both hidden and reset progress sections.
             // Helper: detect HTTP 401/403 from Retrofit exceptions
             fun isAuthError(e: Exception): Boolean {
                 val httpEx = e as? retrofit2.HttpException ?: return false
@@ -1129,12 +1171,14 @@ class TraktRepository @Inject constructor(
             }
             // Re-acquire auth if the original token was stale
             val authHolder = arrayOf(auth)
-            val watchedShowsDeferred = async {
+            suspend fun <T> traktCallWithAuthRetry(
+                label: String,
+                block: suspend (String) -> T
+            ): T {
                 var lastErr: Exception? = null
                 repeat(2) { attempt ->
                     try {
-                        return@async traktApi.getWatchedShows(authHolder[0], clientId)
-                            .sortedByDescending { it.lastWatchedAt }
+                        return block(authHolder[0])
                     } catch (e: Exception) {
                         lastErr = e
                         if (attempt == 0 && isAuthError(e)) {
@@ -1147,38 +1191,48 @@ class TraktRepository @Inject constructor(
                         }
                     }
                 }
-                System.err.println("TraktRepo:getCW: getWatchedShows FAILED: ${lastErr?.message}")
-                emptyList()
+                throw lastErr ?: IllegalStateException("$label failed")
             }
             val hiddenShowsDeferred = async {
                 try {
-                    traktApi.getHiddenProgressShows(authHolder[0], clientId)
+                    traktCallWithAuthRetry("hidden progress shows") { currentAuth ->
+                        getAllHiddenProgressShows(currentAuth)
+                    }
                 } catch (e: Exception) {
                     System.err.println("TraktRepo:getCW: getHiddenShows failed: ${e.message}")
                     emptyList()
                 }
             }
+            val hiddenResetShowsDeferred = async {
+                try {
+                    traktCallWithAuthRetry("hidden progress reset shows") { currentAuth ->
+                        getAllHiddenProgressResetShows(currentAuth)
+                    }
+                } catch (e: Exception) {
+                    System.err.println("TraktRepo:getCW: getHiddenResetShows failed: ${e.message}")
+                    emptyList()
+                }
+            }
+            val playbackDeferred = async {
+                traktCallWithAuthRetry("playback progress") { currentAuth ->
+                    getAllPlaybackProgress(currentAuth)
+                }
+            }
+            val watchedShowsDeferred = async {
+                traktCallWithAuthRetry("watched shows") { currentAuth ->
+                    traktApi.getWatchedShows(currentAuth, clientId)
+                }
+            }
 
-            val watchedShows = watchedShowsDeferred.await()
-            val hiddenTraktIds = hiddenShowsDeferred.await()
+            val hiddenTraktIds = (hiddenShowsDeferred.await() + hiddenResetShowsDeferred.await())
                 .mapNotNull { it.show?.ids?.trakt }
                 .toSet()
-
-            // Filter: only remove hidden shows. No recency cutoff — old shows with
-            // new seasons or unfinished episodes should still appear. Shows with no
-            // next episode (nextEpisode=null from progress API) are filtered downstream.
-            val filteredShows = watchedShows
-                .filter { show ->
-                    val traktId = show.show.ids.trakt
-                    traktId != null && traktId !in hiddenTraktIds
-                }
-
-            // Step 1: Fetch actively paused playback items FIRST (sync/playback).
-            // These are truly in-progress items the user was actively watching.
+            // Fetch actively paused playback items (sync/playback).
             val processedKeys = mutableSetOf<String>()
-            val playbackTmdbIds = mutableSetOf<Int>() // Track TV show TMDB IDs from playback
+            var playbackFetched = false
             try {
-                val playbackItems = getAllPlaybackProgress(authHolder[0])
+                val playbackItems = playbackDeferred.await()
+                playbackFetched = true
                 for (item in playbackItems) {
                     if (item.progress < Constants.MIN_PROGRESS_THRESHOLD || item.progress > Constants.WATCHED_THRESHOLD) continue
 
@@ -1203,6 +1257,7 @@ class TraktRepository @Inject constructor(
                             )
                         )
                         processedKeys.add(key)
+                        processedKeys.add("${MediaType.MOVIE}:$tmdbId")
                         continue
                     }
 
@@ -1238,105 +1293,98 @@ class TraktRepository @Inject constructor(
                         )
                     )
                     processedKeys.add(key)
-                    playbackTmdbIds.add(tmdbId)
+                    processedKeys.add("${MediaType.TV}:$tmdbId")
                 }
             } catch (e: Exception) {
                 System.err.println("TraktRepo:getCW: playback progress failed: ${e.message}")
             }
 
-            // Step 2: Fetch show progress for all watched shows (no recency filter).
-            // Skip shows already covered by playback items above.
-            val semaphore = Semaphore(10)
+            try {
+                val includeSpecials = context.settingsDataStore.data.first()[includeSpecialsKey()] ?: false
+                val allWatchedShows = watchedShowsDeferred.await()
+                    .asSequence()
+                    .filter { watched ->
+                        val show = watched.show
+                        val traktId = show.ids.trakt
+                        show.ids.tmdb != null && traktId != null && traktId !in hiddenTraktIds
+                    }
+                    .sortedByDescending { it.lastWatchedAt ?: it.lastUpdatedAt ?: "" }
+                    .toList()
 
-            val showTasks = filteredShows
-                .filter { show ->
-                    // Skip shows already represented by a playback item
-                    val tmdbId = show.show.ids.tmdb
-                    tmdbId == null || tmdbId !in playbackTmdbIds
+                val recentCutoffMs = System.currentTimeMillis() - TRAKT_UP_NEXT_RECENT_WINDOW_MS
+                val recentWatchedShows = allWatchedShows.filter { watched ->
+                    parseIso8601(watched.lastWatchedAt ?: watched.lastUpdatedAt ?: "") >= recentCutoffMs
                 }
-                .map { show ->
-                async {
-                    semaphore.withPermit {
-                        val tmdbId = show.show.ids.tmdb ?: return@withPermit null
-                        val traktId = show.show.ids.trakt ?: return@withPermit null
+                val watchedShows = (if (recentWatchedShows.size >= 8) recentWatchedShows else allWatchedShows)
+                    .take(Constants.MAX_PROGRESS_ENTRIES)
 
-                        try {
-                            val progress = traktApi.getShowProgress(
-                                authHolder[0], clientId, "2", traktId.toString(),
-                                specials = includeSpecials.toString(),
-                                countSpecials = includeSpecials.toString()
+                val semaphore = Semaphore(8)
+                val watchedProgressCandidates = watchedShows.map { watched ->
+                    async {
+                        semaphore.withPermit {
+                            val show = watched.show
+                            val traktId = show.ids.trakt ?: return@withPermit null
+                            val tmdbId = show.ids.tmdb ?: return@withPermit null
+                            val progress = try {
+                                traktCallWithAuthRetry("show progress") { currentAuth ->
+                                    traktApi.getShowProgress(
+                                        currentAuth,
+                                        clientId,
+                                        "2",
+                                        traktId.toString(),
+                                        hidden = "false",
+                                        specials = includeSpecials.toString(),
+                                        countSpecials = includeSpecials.toString()
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                System.err.println("TraktRepo:getCW: show progress failed for ${show.title}: ${e.message}")
+                                return@withPermit null
+                            }
+
+                            val nextEpisode = progress.nextEpisode ?: return@withPermit null
+                            if (progress.aired <= 0 || progress.completed >= progress.aired) return@withPermit null
+                            if (!includeSpecials && nextEpisode.season == 0) return@withPermit null
+
+                            val exactKey = "${MediaType.TV}:$tmdbId:${nextEpisode.season}:${nextEpisode.number}"
+                            val showKey = "${MediaType.TV}:$tmdbId"
+                            if (exactKey in processedKeys || showKey in processedKeys) return@withPermit null
+
+                            val completionPercent = ((progress.completed.toFloat() / progress.aired.toFloat()) * 100f)
+                                .toInt()
+                                .coerceIn(0, 99)
+                            ContinueWatchingCandidate(
+                                item = ContinueWatchingItem(
+                                    id = tmdbId,
+                                    title = show.title,
+                                    mediaType = MediaType.TV,
+                                    progress = completionPercent,
+                                    resumePositionSeconds = 0L,
+                                    durationSeconds = 0L,
+                                    season = nextEpisode.season,
+                                    episode = nextEpisode.number,
+                                    episodeTitle = nextEpisode.title,
+                                    year = show.year?.toString() ?: "",
+                                    isUpNext = true
+                                ),
+                                lastActivityAt = progress.lastWatchedAt ?: watched.lastWatchedAt ?: watched.lastUpdatedAt ?: ""
                             )
-
-                            // Handle reset_at: if user is rewatching, recalculate completed count
-                            val effectiveCompleted = if (progress.resetAt != null) {
-                                val resetMs = parseIso8601(progress.resetAt)
-                                progress.seasons?.sumOf { season ->
-                                    season.episodes?.count { ep ->
-                                        ep.completed && parseIso8601(ep.lastWatchedAt ?: "") > resetMs
-                                    } ?: 0
-                                } ?: progress.completed
-                            } else {
-                                progress.completed
-                            }
-
-                            val nextEp = progress.nextEpisode
-                            val isIncomplete = effectiveCompleted < progress.aired
-                            val syntheticProgress = if (progress.aired > 0) {
-                                ((effectiveCompleted.toFloat() / progress.aired.toFloat()) * 100f)
-                                    .toInt()
-                                    .coerceIn(1, 99)
-                            } else {
-                                1
-                            }
-
-                            // Validate next episode actually exists:
-                            // Check that the season has aired episodes in Trakt's progress data
-                            val nextEpValid = if (nextEp != null && progress.seasons != null) {
-                                val seasonData = progress.seasons.find { it.number == nextEp.season }
-                                seasonData != null && seasonData.aired > 0
-                            } else {
-                                nextEp != null
-                            }
-                            val validNextEp = if (nextEpValid) nextEp else null
-
-                            // Include the show if EITHER:
-                            // 1. It's incomplete (completed < aired) AND has a next episode, OR
-                            // 2. Trakt says there's a nextEpisode even if completed == aired
-                            //    (this happens when new episodes air after the aired count
-                            //    was computed — Trakt's nextEpisode field updates faster
-                            //    than the aired count).
-                            // The previous code required isIncomplete which dropped shows
-                            // like "Dr. Stone S4E26", "Invincible S4E6", etc. where the
-                            // user watched everything previously aired but new episodes
-                            // just became available.
-                            val shouldInclude = validNextEp != null && effectiveCompleted >= 1
-                            if (shouldInclude && validNextEp != null) {
-                                ContinueWatchingCandidate(
-                                    item = ContinueWatchingItem(
-                                        id = tmdbId,
-                                        title = show.show.title,
-                                        mediaType = MediaType.TV,
-                                        progress = syntheticProgress,
-                                        season = validNextEp.season,
-                                        episode = validNextEp.number,
-                                        episodeTitle = validNextEp.title,
-                                        year = show.show.year?.toString() ?: ""
-                                    ),
-                                    lastActivityAt = show.lastWatchedAt ?: ""
-                                )
-                            } else {
-                                null
-                            }
-                        } catch (e: Exception) {
-                            System.err.println("TraktRepo:getCW: progress fetch failed for show: ${e.message}")
-                            null
                         }
                     }
-                }
-            }
+                }.awaitAll().filterNotNull()
 
-            val showResults = showTasks.awaitAll().filterNotNull()
-            candidates.addAll(showResults)
+                watchedProgressCandidates.forEach { candidate ->
+                    val exactKey = "${candidate.item.mediaType}:${candidate.item.id}:${candidate.item.season}:${candidate.item.episode}"
+                    val showKey = "${candidate.item.mediaType}:${candidate.item.id}"
+                    if (exactKey !in processedKeys && showKey !in processedKeys) {
+                        candidates.add(candidate)
+                        processedKeys.add(exactKey)
+                        processedKeys.add(showKey)
+                    }
+                }
+            } catch (e: Exception) {
+                System.err.println("TraktRepo:getCW: watched progress failed: ${e.message}")
+            }
 
             // 3. Hydrate with TMDB Details (Parallel)
             // Only hydrate the top items we will actually display
@@ -1373,6 +1421,12 @@ class TraktRepository @Inject constructor(
             }
 
             val topCandidates = filteredCandidates.sortedByDescending { it.lastActivityAt }.take(Constants.MAX_CONTINUE_WATCHING)
+            if (topCandidates.isEmpty() && playbackFetched) {
+                cachedContinueWatching = emptyList()
+                lastContinueWatchingFetch = System.currentTimeMillis()
+                persistContinueWatchingCache(emptyList())
+                return@coroutineScope emptyList()
+            }
 
             val hydrationTasks = topCandidates.map { candidate ->
                 async {
@@ -1425,6 +1479,7 @@ class TraktRepository @Inject constructor(
                 val fallbackItems = topCandidates.map { it.item }
                     .filter { it.mediaType != MediaType.TV || (it.season != null && it.episode != null) }
                 cachedContinueWatching = fallbackItems
+                cachedContinueWatchingProfileId = requestProfileId
                 lastContinueWatchingFetch = System.currentTimeMillis()
                 persistContinueWatchingCache(fallbackItems)
                 return@coroutineScope fallbackItems
@@ -1432,31 +1487,43 @@ class TraktRepository @Inject constructor(
 
         val resolvedItems = if (hydratedItems.isNotEmpty()) {
             cachedContinueWatching = hydratedItems
+            cachedContinueWatchingProfileId = requestProfileId
             lastContinueWatchingFetch = System.currentTimeMillis()
             persistContinueWatchingCache(hydratedItems)
             hydratedItems
         } else {
-            val cached = if (cachedContinueWatching.isNotEmpty()) {
+            val cached = if (cachedContinueWatchingProfileId == requestProfileId && cachedContinueWatching.isNotEmpty()) {
                 cachedContinueWatching
             } else {
-                loadContinueWatchingCache().also { cachedContinueWatching = it }
+                loadContinueWatchingCache().also {
+                    cachedContinueWatching = it
+                    cachedContinueWatchingProfileId = requestProfileId
+                }
             }
             cached
         }
         return@coroutineScope resolvedItems
         } finally {
             continueWatchingFetching = false
+            continueWatchingFetchingProfileId = null
         }
     }
 
-    fun getCachedContinueWatching(): List<ContinueWatchingItem> = cachedContinueWatching
+    fun getCachedContinueWatching(): List<ContinueWatchingItem> {
+        return if (cachedContinueWatchingProfileId == profileManager.getProfileIdSync()) {
+            cachedContinueWatching
+        } else {
+            emptyList()
+        }
+    }
 
     // Cache for preloaded profile data (keyed by profileId)
     private val preloadedProfileCache = ConcurrentHashMap<String, List<ContinueWatchingItem>>()
 
     suspend fun preloadContinueWatchingCache(): List<ContinueWatchingItem> {
+        val currentProfileId = profileManager.getProfileIdSync()
         // Return existing cache if available
-        if (cachedContinueWatching.isNotEmpty()) {
+        if (cachedContinueWatchingProfileId == currentProfileId && cachedContinueWatching.isNotEmpty()) {
             cachedContinueWatching = filterDismissedContinueWatchingItems(cachedContinueWatching)
             return cachedContinueWatching
         }
@@ -1477,14 +1544,15 @@ class TraktRepository @Inject constructor(
             // Profile genuinely has no Trakt — use local CW
             val local = filterDismissedContinueWatchingItems(loadLocalContinueWatchingRaw())
             cachedContinueWatching = local
+            cachedContinueWatchingProfileId = currentProfileId
             return cachedContinueWatching
         }
 
         // Trakt profile: check preloaded cache first (from ProfileSelectionScreen)
-        val currentProfileId = profileManager.getProfileIdSync()
         val preloaded = preloadedProfileCache[currentProfileId]
         if (!preloaded.isNullOrEmpty()) {
             cachedContinueWatching = filterDismissedContinueWatchingItems(preloaded)
+            cachedContinueWatchingProfileId = currentProfileId
             return cachedContinueWatching
         }
 
@@ -1493,6 +1561,7 @@ class TraktRepository @Inject constructor(
         // resolveContinueWatchingItems). Do NOT fall back to local CW here.
         val cached = filterDismissedContinueWatchingItems(loadContinueWatchingCache())
         cachedContinueWatching = cached
+        cachedContinueWatchingProfileId = currentProfileId
         return cachedContinueWatching
     }
 
@@ -1529,6 +1598,7 @@ class TraktRepository @Inject constructor(
             // If this profile becomes active, pre-populate the main cache
             if (profileManager.getProfileIdSync() == profileId) {
                 cachedContinueWatching = filtered
+                cachedContinueWatchingProfileId = profileId
             }
         } catch (e: Exception) {
             // Silently ignore preload failures - not critical
@@ -1550,12 +1620,14 @@ class TraktRepository @Inject constructor(
     fun activatePreloadedCache(profileId: String) {
         // CRITICAL: Clear existing cache first to prevent profile data leakage
         cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
 
         // Then load this profile's preloaded data if available
         val preloaded = preloadedProfileCache[profileId]
         if (!preloaded.isNullOrEmpty()) {
             cachedContinueWatching = preloaded
+            cachedContinueWatchingProfileId = profileId
         }
     }
 
@@ -1564,6 +1636,7 @@ class TraktRepository @Inject constructor(
      */
     fun clearContinueWatchingCache() {
         cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
     }
 
@@ -1576,6 +1649,7 @@ class TraktRepository @Inject constructor(
      */
     suspend fun purgeLocalContinueWatchingForTraktProfile() {
         cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
         preloadedProfileCache.clear()
         context.traktDataStore.edit { prefs ->
@@ -1605,8 +1679,11 @@ class TraktRepository @Inject constructor(
 
         // Continue watching caches
         cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
         preloadedProfileCache.clear()
+        continueWatchingFetching = false
+        continueWatchingFetchingProfileId = null
 
         // Scrobble state (prevent cross-profile scrobble deduplication issues)
         lastScrobbleKey = null
@@ -1625,6 +1702,7 @@ class TraktRepository @Inject constructor(
 
         if (cachedContinueWatching.isEmpty()) {
             cachedContinueWatching = loadContinueWatchingCache()
+            cachedContinueWatchingProfileId = profileManager.getProfileIdSync()
         }
 
         cachedContinueWatching = cachedContinueWatching.filter { item ->
@@ -2149,58 +2227,333 @@ class TraktRepository @Inject constructor(
 
     suspend fun getWatchlist(): List<MediaItem> {
         val auth = getAuthHeader() ?: return emptyList()
-        val items = mutableListOf<MediaItem>()
+        return getWatchlistFromTrakt(auth)
+    }
 
-        try {
-            val watchlist = traktApi.getWatchlist(auth, clientId)
-
-            for (item in watchlist) {
-                when (item.type) {
-                    "movie" -> {
-                        val tmdbId = item.movie?.ids?.tmdb ?: continue
-                        try {
-                            val details = tmdbApi.getMovieDetails(tmdbId, Constants.TMDB_API_KEY)
-                            items.add(
-                                MediaItem(
-                                    id = tmdbId,
-                                    title = details.title,
-                                    subtitle = "Movie",
-                                    overview = details.overview ?: "",
-                                    year = details.releaseDate?.take(4) ?: "",
-                                    imdbRating = String.format("%.1f", details.voteAverage),
-                                    mediaType = MediaType.MOVIE,
-                                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
-                                        ?: details.backdropPath?.let { "${Constants.BACKDROP_BASE}$it" } ?: "",
-                                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
-                                )
-                            )
-                        } catch (e: Exception) { }
+    private suspend fun getWatchlistFromTrakt(auth: String): List<MediaItem> {
+        return try {
+            val watchlist = fetchAllWatchlistItems(auth)
+            val semaphore = Semaphore(6)
+            coroutineScope {
+                watchlist.map { item ->
+                    async {
+                        semaphore.withPermit {
+                            mapWatchlistItemFast(item)
+                        }
                     }
-                    "show" -> {
-                        val tmdbId = item.show?.ids?.tmdb ?: continue
-                        try {
-                            val details = tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY)
-                            items.add(
-                                MediaItem(
-                                    id = tmdbId,
-                                    title = details.name,
-                                    subtitle = "TV Series",
-                                    overview = details.overview ?: "",
-                                    year = details.firstAirDate?.take(4) ?: "",
-                                    imdbRating = String.format("%.1f", details.voteAverage),
-                                    mediaType = MediaType.TV,
-                                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
-                                        ?: details.backdropPath?.let { "${Constants.BACKDROP_BASE}$it" } ?: "",
-                                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
-                                )
-                            )
-                        } catch (e: Exception) { }
+                }.awaitAll().filterNotNull()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private suspend fun fetchAllWatchlistItems(auth: String): List<TraktWatchlistItem> {
+        val typedItems = fetchWatchlistItemsByType(auth, "movies") + fetchWatchlistItemsByType(auth, "shows")
+        if (typedItems.isNotEmpty()) {
+            return typedItems
+                .distinctBy { watchlistIdentity(it) }
+                .sortedByDescending { it.listedAt }
+        }
+
+        return traktApi.getWatchlist(auth, clientId)
+            .sortedByDescending { it.listedAt }
+            .distinctBy { watchlistIdentity(it) }
+    }
+
+    private suspend fun fetchWatchlistItemsByType(auth: String, type: String): List<TraktWatchlistItem> {
+        val all = mutableListOf<TraktWatchlistItem>()
+        val seen = LinkedHashSet<String>()
+        val limit = 100
+        var page = 1
+
+        while (true) {
+            val response = try {
+                traktApi.getWatchlistAddedPage(
+                    auth = auth,
+                    clientId = clientId,
+                    type = type,
+                    page = page,
+                    limit = limit
+                )
+            } catch (_: Exception) {
+                break
+            }
+
+            if (!response.isSuccessful) {
+                break
+            }
+
+            val pageItems = response.body().orEmpty()
+            pageItems.forEach { item ->
+                val key = watchlistIdentity(item)
+                if (seen.add(key)) all.add(item)
+            }
+
+            val totalPages = response.headers()["X-Pagination-Page-Count"]?.toIntOrNull()
+            val hasMorePages = if (totalPages != null) {
+                page < totalPages
+            } else {
+                pageItems.size >= limit
+            }
+            if (!hasMorePages) break
+            page += 1
+        }
+
+        return all
+    }
+
+    private suspend fun mapWatchlistItemFast(item: TraktWatchlistItem): MediaItem? {
+        return when (item.type) {
+            "movie" -> item.movie?.let { movie ->
+                val tmdbId = resolveWatchlistMovieTmdbId(movie) ?: return null
+                MediaItem(
+                    id = tmdbId,
+                    title = movie.title,
+                    subtitle = "Movie",
+                    overview = "",
+                    year = movie.year?.toString().orEmpty(),
+                    mediaType = MediaType.MOVIE,
+                    image = "",
+                    backdrop = null
+                )
+            }
+            "show" -> item.show?.let { show ->
+                val tmdbId = resolveWatchlistShowTmdbId(show) ?: return null
+                MediaItem(
+                    id = tmdbId,
+                    title = show.title,
+                    subtitle = "TV Series",
+                    overview = "",
+                    year = show.year?.toString().orEmpty(),
+                    mediaType = MediaType.TV,
+                    image = "",
+                    backdrop = null
+                )
+            }
+            else -> null
+        }
+    }
+
+    private suspend fun resolveWatchlistMovieTmdbId(movie: TraktMovieInfo): Int? {
+        val imdbId = movie.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
+        val ids = buildList {
+            imdbId?.let { id ->
+                runCatching {
+                    tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).movieResults
+                        .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
+                }.getOrNull()?.let { addAll(it) }
+            }
+            movie.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
+        }.distinct()
+
+        for (id in ids) {
+            val details = runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            if (isWatchlistMatch(movie.title, movie.year, details.title, details.releaseDate)) {
+                return id
+            }
+        }
+        return searchTmdbWatchlistMatch(movie.title, movie.year, MediaType.MOVIE)
+    }
+
+    private suspend fun resolveWatchlistShowTmdbId(show: TraktShowInfo): Int? {
+        val imdbId = show.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
+        val ids = buildList {
+            imdbId?.let { id ->
+                runCatching {
+                    tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).tvResults
+                        .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
+                }.getOrNull()?.let { addAll(it) }
+            }
+            show.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
+        }.distinct()
+
+        for (id in ids) {
+            val details = runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            if (isWatchlistMatch(show.title, show.year, details.name, details.firstAirDate)) {
+                return id
+            }
+        }
+        return searchTmdbWatchlistMatch(show.title, show.year, MediaType.TV)
+    }
+
+    private fun watchlistIdentity(item: TraktWatchlistItem): String {
+        val ids = when (item.type) {
+            "movie" -> item.movie?.ids
+            "show" -> item.show?.ids
+            else -> null
+        }
+        return listOfNotNull(
+            item.type,
+            ids?.trakt?.let { "trakt:$it" },
+            ids?.tmdb?.let { "tmdb:$it" },
+            ids?.imdb?.takeIf { it.isNotBlank() }?.let { "imdb:$it" }
+        ).joinToString(":").ifBlank { "${item.type}:${item.rank}:${item.listedAt}" }
+    }
+
+    private suspend fun hydrateWatchlistItem(item: TraktWatchlistItem): MediaItem? {
+        return when (item.type) {
+            "movie" -> item.movie?.let { movie ->
+                val details = resolveWatchlistMovieDetails(movie) ?: return null
+                MediaItem(
+                    id = details.id,
+                    title = details.title,
+                    subtitle = "Movie",
+                    overview = details.overview ?: "",
+                    year = details.releaseDate?.take(4) ?: "",
+                    imdbRating = String.format("%.1f", details.voteAverage),
+                    mediaType = MediaType.MOVIE,
+                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
+                        ?: details.backdropPath?.let { "${Constants.BACKDROP_BASE}$it" } ?: "",
+                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
+                )
+            }
+            "show" -> item.show?.let { show ->
+                val details = resolveWatchlistShowDetails(show) ?: return null
+                MediaItem(
+                    id = details.id,
+                    title = details.name,
+                    subtitle = "TV Series",
+                    overview = details.overview ?: "",
+                    year = details.firstAirDate?.take(4) ?: "",
+                    imdbRating = String.format("%.1f", details.voteAverage),
+                    mediaType = MediaType.TV,
+                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
+                        ?: details.backdropPath?.let { "${Constants.BACKDROP_BASE}$it" } ?: "",
+                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
+                )
+            }
+            else -> null
+        }
+    }
+
+    private suspend fun resolveWatchlistMovieDetails(movie: TraktMovieInfo): TmdbMovieDetails? {
+        val imdbId = movie.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
+        val ids = buildList {
+            imdbId?.let { id ->
+                runCatching {
+                    tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).movieResults
+                        .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
+                }.getOrNull()?.let { addAll(it) }
+            }
+            movie.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
+        }.distinct()
+
+        for (id in ids) {
+            val details = runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            if (isWatchlistMatch(movie.title, movie.year, details.title, details.releaseDate)) {
+                return details
+            }
+        }
+
+        val searchMatch = searchTmdbWatchlistMatch(movie.title, movie.year, MediaType.MOVIE)
+        if (searchMatch != null) {
+            return runCatching { tmdbApi.getMovieDetails(searchMatch, Constants.TMDB_API_KEY) }.getOrNull()
+        }
+
+        return if (normalizeWatchlistTitle(movie.title).isBlank()) {
+            ids.firstNotNullOfOrNull { id ->
+                runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull()
+            }
+        } else {
+            null
+        }
+    }
+
+    private suspend fun resolveWatchlistShowDetails(show: TraktShowInfo): TmdbTvDetails? {
+        val imdbId = show.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
+        val ids = buildList {
+            imdbId?.let { id ->
+                runCatching {
+                    tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).tvResults
+                        .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
+                }.getOrNull()?.let { addAll(it) }
+            }
+            show.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
+        }.distinct()
+
+        for (id in ids) {
+            val details = runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            if (isWatchlistMatch(show.title, show.year, details.name, details.firstAirDate)) {
+                return details
+            }
+        }
+
+        val searchMatch = searchTmdbWatchlistMatch(show.title, show.year, MediaType.TV)
+        if (searchMatch != null) {
+            return runCatching { tmdbApi.getTvDetails(searchMatch, Constants.TMDB_API_KEY) }.getOrNull()
+        }
+
+        return if (normalizeWatchlistTitle(show.title).isBlank()) {
+            ids.firstNotNullOfOrNull { id ->
+                runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull()
+            }
+        } else {
+            null
+        }
+    }
+
+    private suspend fun searchTmdbWatchlistMatch(title: String, year: Int?, mediaType: MediaType): Int? {
+        val normalizedTitle = normalizeWatchlistTitle(title)
+        if (normalizedTitle.isBlank()) return null
+
+        return runCatching {
+            tmdbApi.searchMulti(Constants.TMDB_API_KEY, title, page = 1).results
+                .asSequence()
+                .filter { result ->
+                    when (mediaType) {
+                        MediaType.MOVIE -> result.mediaType == "movie"
+                        MediaType.TV -> result.mediaType == "tv"
                     }
                 }
-            }
-        } catch (e: Exception) { }
+                .filter { result ->
+                    val candidateTitle = result.title ?: result.name ?: ""
+                    normalizeWatchlistTitle(candidateTitle) == normalizedTitle &&
+                        yearCompatible(year, (result.releaseDate ?: result.firstAirDate)?.take(4)?.toIntOrNull())
+                }
+                .sortedWith(
+                    compareBy<com.arflix.tv.data.api.TmdbMediaItem> {
+                        yearDistance(year, (it.releaseDate ?: it.firstAirDate)?.take(4)?.toIntOrNull()) ?: Int.MAX_VALUE
+                    }.thenByDescending { it.popularity }
+                )
+                .firstOrNull()
+                ?.id
+                ?.takeIf { it > 0 }
+        }.getOrNull()
+    }
 
-        return items
+    private fun isWatchlistMatch(
+        traktTitle: String,
+        traktYear: Int?,
+        tmdbTitle: String,
+        tmdbDate: String?
+    ): Boolean {
+        return normalizeWatchlistTitle(traktTitle) == normalizeWatchlistTitle(tmdbTitle) &&
+            yearCompatible(traktYear, tmdbDate?.take(4)?.toIntOrNull())
+    }
+
+    private fun normalizeWatchlistTitle(title: String): String {
+        return Normalizer.normalize(title, Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .lowercase(Locale.US)
+            .replace("&", "and")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+            .removePrefix("the ")
+            .removePrefix("a ")
+            .removePrefix("an ")
+            .replace(" ", "")
+    }
+
+    private fun yearCompatible(first: Int?, second: Int?): Boolean {
+        if (first == null || second == null) return true
+        val diff = if (first > second) first - second else second - first
+        return diff <= 1
+    }
+
+    private fun yearDistance(first: Int?, second: Int?): Int? {
+        if (first == null || second == null) return null
+        return if (first > second) first - second else second - first
     }
 
     suspend fun addToWatchlist(mediaType: MediaType, tmdbId: Int) {

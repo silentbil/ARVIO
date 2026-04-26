@@ -7,6 +7,7 @@ import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.IptvTvSessionState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,12 +16,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
-private const val FAVORITES_GROUP_NAME = "My Favorites"
+internal const val FAVORITES_GROUP_NAME = "My Favorites"
 
 data class TvUiState(
     val isLoading: Boolean = false,
@@ -30,6 +32,11 @@ data class TvUiState(
     val config: IptvConfig = IptvConfig(),
     val snapshot: IptvSnapshot = IptvSnapshot(),
     val channelLookup: Map<String, IptvChannel> = emptyMap(),
+    val groups: List<String> = emptyList(),
+    val channelsByGroup: Map<String, List<IptvChannel>> = emptyMap(),
+    val tvSession: IptvTvSessionState = IptvTvSessionState(),
+    val iptvPreferencesLoaded: Boolean = false,
+    val tvSessionLoaded: Boolean = false,
     val favoritesOnly: Boolean = false,
     val query: String = ""
 ) {
@@ -37,53 +44,6 @@ data class TvUiState(
         config.m3uUrl.isNotBlank() ||
             config.stalkerPortalUrl.isNotBlank() ||
             config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
-
-    fun filteredChannels(group: String): List<IptvChannel> {
-        val source = if (group == FAVORITES_GROUP_NAME) {
-            val favorites = snapshot.favoriteChannels.toHashSet()
-            if (favorites.isEmpty()) emptyList() else snapshot.channels.filter { favorites.contains(it.id) }
-        } else {
-            snapshot.grouped[group].orEmpty()
-        }
-
-        val trimmed = query.trim().lowercase()
-        if (trimmed.isBlank()) return source
-
-        return source.mapNotNull { channel ->
-            val name = channel.name.lowercase()
-            val groupName = channel.group.lowercase()
-            val score = when {
-                name.startsWith(trimmed) -> 100
-                name.contains(trimmed) -> 80
-                groupName.startsWith(trimmed) -> 60
-                groupName.contains(trimmed) -> 45
-                else -> 0
-            }
-            if (score > 0) channel to score else null
-        }
-            .sortedByDescending { it.second }
-            .map { it.first }
-    }
-
-    fun groups(): List<String> {
-        val dynamicGroups = snapshot.grouped.keys.toList()
-        val hiddenSet = snapshot.hiddenGroups.toHashSet()
-        val visibleGroups = dynamicGroups.filterNot { hiddenSet.contains(it) }
-        val favorites = snapshot.favoriteGroups.filter { visibleGroups.contains(it) }
-        val others = visibleGroups.filterNot { snapshot.favoriteGroups.contains(it) }
-        val baseOrdered = if (snapshot.groupOrder.isNotEmpty()) {
-            val orderMap = snapshot.groupOrder.withIndex().associate { (i, g) -> g to i }
-            (favorites + others).sortedBy { orderMap[it] ?: Int.MAX_VALUE }
-        } else { favorites + others }
-        val hasFavoriteChannelsInSnapshot = snapshot.favoriteChannels
-            .toHashSet()
-            .let { ids -> snapshot.channels.any { ids.contains(it.id) } }
-        return if (hasFavoriteChannelsInSnapshot) {
-            listOf(FAVORITES_GROUP_NAME) + baseOrdered
-        } else {
-            baseOrdered
-        }
-    }
 }
 
 @HiltViewModel
@@ -105,6 +65,12 @@ class TvViewModel @Inject constructor(
     private var visibleEpgRefreshJob: Job? = null
     private var lastVisibleEpgRefreshKey: String? = null
     private var lastVisibleEpgRefreshAt: Long = 0L
+    private var tvSessionSaveJob: Job? = null
+    private var startupGuideWarmupKey: String? = null
+    private var fullEpgWarmupJob: Job? = null
+    private var lastFullEpgWarmupKey: String? = null
+    private var preparedContentJob: Job? = null
+    private var preparedContentRevision: Long = 0L
 
     /**
      * In-memory cache of the live-TV enriched channel list + category tree.
@@ -118,6 +84,7 @@ class TvViewModel @Inject constructor(
 
     init {
         observeConfigAndFavorites()
+        observeTvSession()
         viewModelScope.launch {
             runCatching { iptvRepository.warmupFromCacheOnly() }
             // Try fast non-blocking in-memory read first; fall back to mutex-guarded disk read
@@ -125,14 +92,32 @@ class TvViewModel @Inject constructor(
                 ?: iptvRepository.getCachedSnapshotOrNull()
             if (cached != null) {
                 val config = iptvRepository.observeConfig().first()
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = null,
-                    snapshot = cached,
-                    channelLookup = emptyMap(),
-                    loadingMessage = null,
-                    loadingPercent = 0
+                // The observeConfigAndFavorites() coroutine may have already read fresh
+                // favorites from DataStore before this cached snapshot was loaded from disk.
+                // Prefer those in-memory favorites over whatever was baked into the cache,
+                // which can be stale if the user added/removed favorites since the last save.
+                val liveSnapshot = _uiState.value.snapshot
+                val snapshotToUse = if (liveSnapshot.favoriteChannels.isNotEmpty() || liveSnapshot.favoriteGroups.isNotEmpty()) {
+                    cached.copy(
+                        favoriteChannels = liveSnapshot.favoriteChannels,
+                        favoriteGroups = liveSnapshot.favoriteGroups,
+                        hiddenGroups = liveSnapshot.hiddenGroups,
+                        groupOrder = liveSnapshot.groupOrder
+                    )
+                } else {
+                    cached
+                }
+                setUiState(
+                    _uiState.value.copy(
+                        isLoading = false,
+                        error = null,
+                        snapshot = snapshotToUse,
+                        loadingMessage = null,
+                        loadingPercent = 0
+                    )
                 )
+                maybeWarmStartupGuide()
+                startFullEpgWarmup()
                 warmXtreamVodCache()
                 val hasPotentialEpg = config.epgUrl.isNotBlank() || config.m3uUrl.contains("get.php", ignoreCase = true) || config.m3uUrl.contains("player_api.php", ignoreCase = true)
                 val needsChannelReload = config.m3uUrl.isNotBlank() && cached.channels.isEmpty()
@@ -163,6 +148,20 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    private fun observeTvSession() {
+        viewModelScope.launch {
+            iptvRepository.observeTvSessionState()
+                .distinctUntilChanged()
+                .collect { session ->
+                    _uiState.value = _uiState.value.copy(
+                        tvSession = session,
+                        tvSessionLoaded = true,
+                    )
+                    maybeWarmStartupGuide()
+                }
+        }
+    }
+
     private fun observeConfigAndFavorites() {
         viewModelScope.launch {
             combine(
@@ -185,7 +184,15 @@ class TvViewModel @Inject constructor(
                     hiddenGroups = hiddenGroups,
                     groupOrder = groupOrder
                 )
-                _uiState.value = _uiState.value.copy(config = config, snapshot = snapshot)
+                setUiState(
+                    _uiState.value.copy(
+                        config = config,
+                        snapshot = snapshot,
+                        iptvPreferencesLoaded = true,
+                    )
+                )
+                maybeWarmStartupGuide()
+                startFullEpgWarmup()
 
                 val hasAnyIptvConfig = config.m3uUrl.isNotBlank() ||
                     config.stalkerPortalUrl.isNotBlank() ||
@@ -220,7 +227,7 @@ class TvViewModel @Inject constructor(
                 )
             }
             runCatching {
-                kotlinx.coroutines.withTimeoutOrNull(45_000L) {
+                kotlinx.coroutines.withTimeoutOrNull(180_000L) {
                     iptvRepository.loadSnapshot(
                         forcePlaylistReload = force,
                         forceEpgReload = forceEpg,
@@ -243,36 +250,45 @@ class TvViewModel @Inject constructor(
                                 ).orEmpty()
                             }
                             val currentSnapshot = _uiState.value.snapshot
-                            _uiState.value = _uiState.value.copy(
-                                isLoading = false,
-                                error = null,
-                                snapshot = currentSnapshot.copy(
-                                    channels = channels,
-                                    grouped = currentSnapshot.grouped,
-                                    nowNext = if (cachedNowNext.isNotEmpty()) {
-                                        currentSnapshot.nowNext.toMutableMap().apply { putAll(cachedNowNext) }
-                                    } else {
-                                        currentSnapshot.nowNext
-                                    }
-                                ),
-                                channelLookup = emptyMap(),
-                                loadingMessage = null,
-                                loadingPercent = 0
+                            // Rebuild grouped from the new channels so that all playlist
+                            // groups (Norway, Sweden, Denmark …) appear immediately rather
+                            // than inheriting the stale groups from the previous snapshot.
+                            val freshGrouped = channels.groupBy { it.group.ifBlank { "Uncategorized" } }
+                            setUiState(
+                                _uiState.value.copy(
+                                    isLoading = false,
+                                    error = null,
+                                    snapshot = currentSnapshot.copy(
+                                        channels = channels,
+                                        grouped = freshGrouped,
+                                        nowNext = if (cachedNowNext.isNotEmpty()) {
+                                            currentSnapshot.nowNext.toMutableMap().apply { putAll(cachedNowNext) }
+                                        } else {
+                                            currentSnapshot.nowNext
+                                        }
+                                    ),
+                                    loadingMessage = null,
+                                    loadingPercent = 0
+                                )
                             )
+                            startFullEpgWarmup()
                         }
                     )
                 } ?: throw IllegalStateException("IPTV load timed out")
             }.onSuccess { snapshot ->
                 cachedEnrichedChannels = null
                 cachedChannelsSignature = null
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = null,
-                    snapshot = snapshot,
-                    channelLookup = emptyMap(),
-                    loadingMessage = null,
-                    loadingPercent = 0
+                setUiState(
+                    _uiState.value.copy(
+                        isLoading = false,
+                        error = null,
+                        snapshot = snapshot,
+                        loadingMessage = null,
+                        loadingPercent = 0
+                    )
                 )
+                maybeWarmStartupGuide()
+                startFullEpgWarmup()
                 warmXtreamVodCache()
                 if (!force && _uiState.value.isConfigured && snapshot.channels.isEmpty()) {
                     // Soft refresh returned empty even though IPTV is configured:
@@ -284,14 +300,17 @@ class TvViewModel @Inject constructor(
                     iptvRepository.getMemoryCachedSnapshot() ?: iptvRepository.getCachedSnapshotOrNull()
                 }.getOrNull()
                 if (fallback != null && fallback.channels.isNotEmpty()) {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = null,
-                        snapshot = fallback,
-                        channelLookup = emptyMap(),
-                        loadingMessage = null,
-                        loadingPercent = 0
+                    setUiState(
+                        _uiState.value.copy(
+                            isLoading = false,
+                            error = null,
+                            snapshot = fallback,
+                            loadingMessage = null,
+                            loadingPercent = 0
+                        )
                     )
+                    maybeWarmStartupGuide()
+                    startFullEpgWarmup()
                 } else {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
@@ -338,15 +357,21 @@ class TvViewModel @Inject constructor(
     }
 
     private suspend fun refreshGuideFromCache() {
-        val channelIds = _uiState.value.snapshot.channels.asSequence().map { it.id }.toSet()
+        val state = _uiState.value
+        val channelIds = buildPriorityEpgChannelIds(
+            state = state,
+            maxChannels = if (state.snapshot.channels.size > 10_000) 1_800 else 3_200
+        )
         if (channelIds.isEmpty()) return
         val updated = withContext(Dispatchers.Default) {
             iptvRepository.reDeriveCachedNowNext(channelIds)
         } ?: return
         val current = _uiState.value
-        _uiState.value = current.copy(
-            snapshot = current.snapshot.copy(
-                nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(updated) }
+        setUiState(
+            current.copy(
+                snapshot = current.snapshot.copy(
+                    nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(updated) }
+                )
             )
         )
     }
@@ -373,29 +398,87 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    private fun startFullEpgWarmup() {
+        val state = _uiState.value
+        val channels = state.snapshot.channels
+        if (channels.isEmpty()) return
+        val warmChannelIds = buildPriorityEpgChannelIds(
+            state = state,
+            maxChannels = if (channels.size > 10_000) 1_600 else 3_200
+        )
+        if (warmChannelIds.isEmpty()) return
+        val missingCount = warmChannelIds.count { id -> !hasProgramData(state.snapshot.nowNext[id]) }
+        if (missingCount == 0) return
+
+        val warmupKey = buildString {
+            append(state.config.syncSignature())
+            append('|')
+            append(channels.size)
+            append('|')
+            append(warmChannelIds.size)
+            append('|')
+            append(warmChannelIds.firstOrNull().orEmpty())
+            append('|')
+            append(warmChannelIds.lastOrNull().orEmpty())
+        }
+        if (warmupKey == lastFullEpgWarmupKey) return
+        lastFullEpgWarmupKey = warmupKey
+
+        fullEpgWarmupJob?.cancel()
+        fullEpgWarmupJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(if (channels.size > 10_000) 4_000L else 1_500L)
+            System.err.println("[EPG-Warm] warming priority guide for ${warmChannelIds.size} channels, missing=$missingCount")
+            val refreshed = runCatching {
+                iptvRepository.refreshEpgForChannels(warmChannelIds, maxChannels = warmChannelIds.size)
+            }.getOrNull()
+
+            if (!refreshed.isNullOrEmpty()) {
+                val current = _uiState.value
+                setUiState(
+                    current.copy(
+                        snapshot = current.snapshot.copy(
+                            nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(refreshed) }
+                        )
+                    )
+                )
+            }
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (fullEpgWarmupJob === job) {
+                    fullEpgWarmupJob = null
+                }
+            }
+        }
+    }
+
     fun setQuery(query: String) {
-        _uiState.value = _uiState.value.copy(query = query)
+        setUiState(_uiState.value.copy(query = query))
     }
 
     fun toggleFavoriteGroup(groupName: String) {
         viewModelScope.launch {
             iptvRepository.toggleFavoriteGroup(groupName)
-            scheduleIptvFavoritesCloudSync()
+            scheduleIptvCloudSync()
         }
     }
 
     fun toggleFavoriteChannel(channelId: String) {
         viewModelScope.launch {
             iptvRepository.toggleFavoriteChannel(channelId)
-            scheduleIptvFavoritesCloudSync()
+            scheduleIptvCloudSync()
         }
     }
 
     fun toggleHiddenGroup(groupName: String) {
-        viewModelScope.launch { iptvRepository.toggleHiddenGroup(groupName); scheduleIptvFavoritesCloudSync() }
+        viewModelScope.launch { iptvRepository.toggleHiddenGroup(groupName); scheduleIptvCloudSync() }
     }
 
-    fun prefetchVisibleCategoryEpg(channelIds: List<String>, selectedChannelId: String?) {
+    fun prefetchVisibleCategoryEpg(
+        channelIds: List<String>,
+        selectedChannelId: String?,
+        eagerLimit: Int = 96,
+        backgroundLimit: Int = 640
+    ) {
         if (channelIds.isEmpty()) return
         val orderedIds = buildList {
             selectedChannelId?.takeIf { it in channelIds }?.let { add(it) }
@@ -414,6 +497,8 @@ class TvViewModel @Inject constructor(
             append('|')
             append(orderedIds.size)
             append('|')
+            append(eagerLimit)
+            append('|')
             append(orderedIds.firstOrNull().orEmpty())
             append('|')
             append(orderedIds.lastOrNull().orEmpty())
@@ -425,7 +510,7 @@ class TvViewModel @Inject constructor(
         lastVisibleEpgRefreshAt = now
         visibleEpgRefreshJob?.cancel()
         visibleEpgRefreshJob = viewModelScope.launch {
-            val eagerIds = orderedIds.take(96)
+            val eagerIds = orderedIds.take(eagerLimit.coerceAtLeast(1))
             System.err.println("[EPG-Category] eager=${eagerIds.size} totalVisible=${orderedIds.size} selected=${selectedChannelId.orEmpty()}")
             val eagerRefreshed = runCatching {
                 iptvRepository.refreshEpgForChannels(
@@ -436,16 +521,18 @@ class TvViewModel @Inject constructor(
 
             if (!eagerRefreshed.isNullOrEmpty()) {
                 val current = _uiState.value
-                _uiState.value = current.copy(
-                    snapshot = current.snapshot.copy(
-                        nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(eagerRefreshed) }
+                setUiState(
+                    current.copy(
+                        snapshot = current.snapshot.copy(
+                            nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(eagerRefreshed) }
+                        )
                     )
                 )
             }
 
             val backgroundIds = orderedIds
                 .drop(eagerIds.size)
-                .take(640)
+                .let { ids -> if (backgroundLimit > 0) ids.take(backgroundLimit) else ids }
                 .filterNot { id -> hasProgramData(_uiState.value.snapshot.nowNext[id]) }
             if (backgroundIds.isEmpty()) return@launch
 
@@ -459,9 +546,11 @@ class TvViewModel @Inject constructor(
 
             if (!backgroundRefreshed.isNullOrEmpty()) {
                 val current = _uiState.value
-                _uiState.value = current.copy(
-                    snapshot = current.snapshot.copy(
-                        nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(backgroundRefreshed) }
+                setUiState(
+                    current.copy(
+                        snapshot = current.snapshot.copy(
+                            nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(backgroundRefreshed) }
+                        )
                     )
                 )
             }
@@ -476,21 +565,137 @@ class TvViewModel @Inject constructor(
 
     fun moveGroupUp(groupName: String) {
         viewModelScope.launch {
-            val current = _uiState.value.groups().filterNot { it == FAVORITES_GROUP_NAME }
+            val current = _uiState.value.groups.filterNot { it == FAVORITES_GROUP_NAME }
             iptvRepository.moveGroupUp(groupName, current)
-            scheduleIptvFavoritesCloudSync()
+            scheduleIptvCloudSync()
         }
     }
 
     fun moveGroupDown(groupName: String) {
         viewModelScope.launch {
-            val current = _uiState.value.groups().filterNot { it == FAVORITES_GROUP_NAME }
+            val current = _uiState.value.groups.filterNot { it == FAVORITES_GROUP_NAME }
             iptvRepository.moveGroupDown(groupName, current)
-            scheduleIptvFavoritesCloudSync()
+            scheduleIptvCloudSync()
         }
     }
 
-    private fun scheduleIptvFavoritesCloudSync() {
+    fun rememberTvSession(
+        lastChannelId: String?,
+        lastGroupName: String?,
+        lastFocusedZone: String,
+        markOpened: Boolean = false
+    ) {
+        val current = _uiState.value.tvSession
+        val normalizedChannelId = lastChannelId.orEmpty().trim().ifBlank { current.lastChannelId }
+        val normalizedGroupName = lastGroupName.orEmpty().trim().ifBlank { current.lastGroupName }
+        val normalizedFocusZone = lastFocusedZone.trim().ifBlank { current.lastFocusedZone.ifBlank { "GUIDE" } }
+        val channelChanged = normalizedChannelId.isNotBlank() && normalizedChannelId != current.lastChannelId
+        val next = current.copy(
+            lastChannelId = normalizedChannelId,
+            lastGroupName = normalizedGroupName,
+            lastFocusedZone = normalizedFocusZone,
+            lastOpenedAt = if (markOpened || channelChanged) System.currentTimeMillis() else current.lastOpenedAt
+        )
+        if (next == current) return
+
+        _uiState.value = _uiState.value.copy(tvSession = next)
+        maybeWarmStartupGuide()
+        tvSessionSaveJob?.cancel()
+        tvSessionSaveJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(if (markOpened || channelChanged) 0L else 220L)
+            iptvRepository.saveTvSessionState(next)
+            if (markOpened || channelChanged) {
+                scheduleIptvCloudSync()
+            }
+        }
+    }
+
+    private fun setUiState(nextState: TvUiState) {
+        val previous = _uiState.value
+        if (canReusePreparedContent(previous, nextState)) {
+            _uiState.value = nextState.copy(
+                channelLookup = previous.channelLookup,
+                groups = previous.groups,
+                channelsByGroup = previous.channelsByGroup
+            )
+        } else {
+            val revision = ++preparedContentRevision
+            preparedContentJob?.cancel()
+            _uiState.value = nextState.copy(
+                channelLookup = previous.channelLookup,
+                groups = previous.groups,
+                channelsByGroup = previous.channelsByGroup
+            )
+            preparedContentJob = viewModelScope.launch(Dispatchers.Default) {
+                val prepared = setPreparedContent(nextState)
+                withContext(Dispatchers.Main.immediate) {
+                    if (revision == preparedContentRevision) {
+                        val latest = _uiState.value
+                        _uiState.value = latest.copy(
+                            channelLookup = prepared.channelLookup,
+                            groups = prepared.groups,
+                            channelsByGroup = prepared.channelsByGroup
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun canReusePreparedContent(previous: TvUiState, next: TvUiState): Boolean {
+        val previousSnapshot = previous.snapshot
+        val nextSnapshot = next.snapshot
+        return previous.query == next.query &&
+            previousSnapshot.channels === nextSnapshot.channels &&
+            previousSnapshot.grouped === nextSnapshot.grouped &&
+            previousSnapshot.favoriteChannels == nextSnapshot.favoriteChannels &&
+            previousSnapshot.favoriteGroups == nextSnapshot.favoriteGroups &&
+            previousSnapshot.hiddenGroups == nextSnapshot.hiddenGroups &&
+            previousSnapshot.groupOrder == nextSnapshot.groupOrder
+    }
+
+    private fun maybeWarmStartupGuide() {
+        val state = _uiState.value
+        if (state.channelsByGroup.isEmpty()) return
+
+        val warmGroups = buildStartupWarmGroups(state)
+        if (warmGroups.isEmpty()) return
+        val warmChannels = buildList {
+            warmGroups.forEachIndexed { index, groupName ->
+                val limit = if (groupName == FAVORITES_GROUP_NAME || index == 0) 96 else 56
+                addAll(state.channelsByGroup[groupName].orEmpty().take(limit))
+            }
+        }
+            .distinctBy { it.id }
+        if (warmChannels.isEmpty()) return
+
+        val coverage = warmChannels.count { hasProgramData(state.snapshot.nowNext[it.id]) }
+        if (coverage >= minOf(warmChannels.size, 24)) return
+
+        val preferredSelectedId = state.tvSession.lastChannelId
+            .takeIf { id -> id.isNotBlank() && warmChannels.any { channel -> channel.id == id } }
+            ?: warmChannels.firstOrNull()?.id
+        val warmupKey = buildString {
+            append(warmGroups.joinToString(","))
+            append('|')
+            append(warmChannels.firstOrNull()?.id.orEmpty())
+            append('|')
+            append(warmChannels.size)
+            append('|')
+            append(preferredSelectedId.orEmpty())
+        }
+        if (warmupKey == startupGuideWarmupKey) return
+        startupGuideWarmupKey = warmupKey
+
+        prefetchVisibleCategoryEpg(
+            channelIds = warmChannels.map { it.id },
+            selectedChannelId = preferredSelectedId,
+            eagerLimit = minOf(warmChannels.size, 520),
+            backgroundLimit = minOf(warmChannels.size, 1600)
+        )
+    }
+
+    private fun scheduleIptvCloudSync() {
         iptvCloudSyncJob?.cancel()
         iptvCloudSyncJob = viewModelScope.launch(Dispatchers.IO) {
             kotlinx.coroutines.delay(350L)
@@ -501,6 +706,158 @@ class TvViewModel @Inject constructor(
             }
         }
     }
+}
+
+private fun buildStartupWarmGroups(state: TvUiState): List<String> {
+    if (state.channelsByGroup.isEmpty()) return emptyList()
+    val favoritesFirst = state.channelsByGroup[FAVORITES_GROUP_NAME]
+        .orEmpty()
+        .takeIf { it.isNotEmpty() }
+        ?.let { listOf(FAVORITES_GROUP_NAME) }
+        .orEmpty()
+    val sessionGroup = state.tvSession.lastGroupName
+        .takeIf { it.isNotBlank() && state.channelsByGroup[it].orEmpty().isNotEmpty() }
+        ?.let(::listOf)
+        .orEmpty()
+    val favoriteGroups = state.snapshot.favoriteGroups
+        .filter { state.channelsByGroup[it].orEmpty().isNotEmpty() }
+    val netherlandsGroups = state.groups.filter { groupName ->
+        state.channelsByGroup[groupName].orEmpty().isNotEmpty() && groupName.isPriorityStartupGroup()
+    }
+    val fallbackGroups = state.groups.filter { state.channelsByGroup[it].orEmpty().isNotEmpty() }
+    return (favoritesFirst + sessionGroup + favoriteGroups + netherlandsGroups + fallbackGroups)
+        .distinct()
+        .take(16)
+}
+
+private fun buildPriorityEpgChannelIds(
+    state: TvUiState,
+    maxChannels: Int
+): LinkedHashSet<String> {
+    if (maxChannels <= 0 || state.channelsByGroup.isEmpty()) return LinkedHashSet()
+    val selectedGroups = buildStartupWarmGroups(state)
+    val result = LinkedHashSet<String>(maxChannels)
+    selectedGroups.forEachIndexed { index, groupName ->
+        if (result.size >= maxChannels) return@forEachIndexed
+        val perGroupLimit = when {
+            groupName == FAVORITES_GROUP_NAME -> 520
+            index == 0 -> 420
+            groupName.isPriorityStartupGroup() -> 280
+            else -> 120
+        }
+        state.channelsByGroup[groupName].orEmpty()
+            .asSequence()
+            .take(perGroupLimit)
+            .forEach { channel ->
+                if (result.size < maxChannels) {
+                    result.add(channel.id)
+                }
+            }
+    }
+    if (result.isEmpty()) {
+        state.snapshot.channels.asSequence()
+            .take(maxChannels)
+            .forEach { result.add(it.id) }
+    }
+    return result
+}
+
+private fun setPreparedContent(state: TvUiState): TvUiState {
+    val preparedGroups = buildPreparedGroups(state.snapshot)
+    val preparedChannelsByGroup = buildPreparedChannelsByGroup(
+        snapshot = state.snapshot,
+        query = state.query,
+        groups = preparedGroups
+    )
+    return state.copy(
+        channelLookup = state.snapshot.channels.associateBy { it.id },
+        groups = preparedGroups,
+        channelsByGroup = preparedChannelsByGroup
+    )
+}
+
+private fun buildPreparedGroups(snapshot: IptvSnapshot): List<String> {
+    val dynamicGroups = snapshot.grouped.keys.toList()
+    val hiddenSet = snapshot.hiddenGroups.toHashSet()
+    val visibleGroups = dynamicGroups.filterNot { hiddenSet.contains(it) }
+    val favorites = snapshot.favoriteGroups.filter { visibleGroups.contains(it) }
+    val others = visibleGroups.filterNot { snapshot.favoriteGroups.contains(it) }
+    val baseOrdered = if (snapshot.groupOrder.isNotEmpty()) {
+        val orderMap = snapshot.groupOrder.withIndex().associate { (i, groupName) -> groupName to i }
+        (favorites + others).sortedBy { orderMap[it] ?: Int.MAX_VALUE }
+    } else {
+        favorites + others
+    }
+    val hasFavoriteChannelsInSnapshot = snapshot.favoriteChannels
+        .toHashSet()
+        .let { ids -> snapshot.channels.any { ids.contains(it.id) } }
+    return if (hasFavoriteChannelsInSnapshot) {
+        listOf(FAVORITES_GROUP_NAME) + baseOrdered
+    } else {
+        baseOrdered
+    }
+}
+
+private fun buildPreparedChannelsByGroup(
+    snapshot: IptvSnapshot,
+    query: String,
+    groups: List<String>
+): Map<String, List<IptvChannel>> {
+    if (groups.isEmpty()) return emptyMap()
+    val trimmedQuery = query.trim().lowercase()
+    val favoriteChannelIds = snapshot.favoriteChannels.toHashSet()
+    return buildMap(groups.size) {
+        groups.forEach { group ->
+            val source = if (group == FAVORITES_GROUP_NAME) {
+                if (favoriteChannelIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    val favoriteOrder = snapshot.favoriteChannels
+                        .withIndex()
+                        .associate { (index, id) -> id to index }
+                    snapshot.channels
+                        .filter { favoriteChannelIds.contains(it.id) }
+                        .sortedBy { favoriteOrder[it.id] ?: Int.MAX_VALUE }
+                }
+            } else {
+                snapshot.grouped[group].orEmpty()
+            }
+            put(group, filterTvChannels(source, trimmedQuery))
+        }
+    }
+}
+
+private fun String.isNetherlandsGroup(): Boolean {
+    val tokens = lowercase()
+        .split(Regex("[^a-z0-9]+"))
+        .filter { it.isNotBlank() }
+        .toSet()
+    return "netherlands" in tokens || "nederland" in tokens || "nl" in tokens
+}
+
+private fun String.isPriorityStartupGroup(): Boolean {
+    return isNetherlandsGroup() || lowercase().contains("4k")
+}
+
+private fun filterTvChannels(
+    source: List<IptvChannel>,
+    trimmedQuery: String
+): List<IptvChannel> {
+    if (trimmedQuery.isBlank()) return source
+    return source.mapNotNull { channel ->
+        val name = channel.name.lowercase()
+        val groupName = channel.group.lowercase()
+        val score = when {
+            name.startsWith(trimmedQuery) -> 100
+            name.contains(trimmedQuery) -> 80
+            groupName.startsWith(trimmedQuery) -> 60
+            groupName.contains(trimmedQuery) -> 45
+            else -> 0
+        }
+        if (score > 0) channel to score else null
+    }
+        .sortedByDescending { it.second }
+        .map { it.first }
 }
 
 private fun IptvConfig.syncSignature(): String {

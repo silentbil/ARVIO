@@ -48,7 +48,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -63,6 +62,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -82,6 +82,7 @@ import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.components.rememberCardLayoutMode
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
@@ -140,10 +141,12 @@ fun SearchScreen(
     var sidebarFocusIndex by remember { mutableIntStateOf(if (hasProfile) 1 else 0) }
     var isSearchInputFocused by remember { mutableStateOf(false) }
     var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
+    val fastScrollThresholdMs = 220L
 
     // Manual row/item focus tracking (like HomeScreen)
     var currentRowIndex by remember { mutableIntStateOf(0) }
     var currentItemIndex by remember { mutableIntStateOf(0) }
+    var resultsLastNavEventTime by remember { mutableLongStateOf(0L) }
 
     val searchFocusRequester = remember { FocusRequester() }
     val filtersFocusRequester = remember { FocusRequester() }
@@ -194,7 +197,12 @@ fun SearchScreen(
                     FocusZone.FILTERS -> false // Let native focus handle up/down between 3 filter chip rows
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
-                        else if (currentRowIndex > 0) { currentRowIndex--; currentItemIndex = 0; true }
+                        else if (currentRowIndex > 0) {
+                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
+                            currentRowIndex--
+                            currentItemIndex = 0
+                            true
+                        }
                         else if (showFilters) { focusZone = FocusZone.FILTERS; try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}; true }
                         else { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     }
@@ -203,19 +211,37 @@ fun SearchScreen(
                     FocusZone.SIDEBAR -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.SEARCH_INPUT -> {
                         if (showFilters) { focusZone = FocusZone.FILTERS; try { filtersFocusRequester.requestFocus() } catch (_: Exception) {} }
-                        else if (activeCategories.isNotEmpty() || hasAiResults) { focusZone = FocusZone.RESULTS; currentRowIndex = 0; currentItemIndex = 0 }
+                        else if (activeCategories.isNotEmpty() || hasAiResults) {
+                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
+                            focusZone = FocusZone.RESULTS
+                            currentRowIndex = 0
+                            currentItemIndex = 0
+                        }
                         true
                     }
                     FocusZone.FILTERS -> false // Let native focus handle up/down between 3 filter chip rows
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
-                        else if (currentRowIndex < activeCategories.size - 1) { currentRowIndex++; currentItemIndex = 0; true }
+                        else if (currentRowIndex < activeCategories.size - 1) {
+                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
+                            currentRowIndex++
+                            currentItemIndex = 0
+                            true
+                        }
                         else true
                     }
                 }
                 Key.DirectionLeft -> when (focusZone) {
                     FocusZone.SIDEBAR -> { if (sidebarFocusIndex > 0) sidebarFocusIndex--; true }
-                    FocusZone.RESULTS -> { if (hasAiResults) false else { if (currentItemIndex > 0) currentItemIndex--; true } }
+                    FocusZone.RESULTS -> {
+                        if (hasAiResults) false else {
+                            if (currentItemIndex > 0) {
+                                resultsLastNavEventTime = SystemClock.elapsedRealtime()
+                                currentItemIndex--
+                            }
+                            true
+                        }
+                    }
                     FocusZone.FILTERS -> false
                     else -> false
                 }
@@ -223,7 +249,15 @@ fun SearchScreen(
                     FocusZone.SIDEBAR -> { if (sidebarFocusIndex < maxSidebarIndex) sidebarFocusIndex++; true }
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
-                        else { val cats = activeCategories.filter { it.items.isNotEmpty() }; val maxItem = (cats.getOrNull(currentRowIndex)?.items?.size ?: 1) - 1; if (currentItemIndex < maxItem) currentItemIndex++; true }
+                        else {
+                            val cats = activeCategories.filter { it.items.isNotEmpty() }
+                            val maxItem = (cats.getOrNull(currentRowIndex)?.items?.size ?: 1) - 1
+                            if (currentItemIndex < maxItem) {
+                                resultsLastNavEventTime = SystemClock.elapsedRealtime()
+                                currentItemIndex++
+                            }
+                            true
+                        }
                     }
                     FocusZone.FILTERS -> false
                     else -> false
@@ -297,15 +331,15 @@ fun SearchScreen(
                         }
                     }
                 ) {
-                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
+                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                         items(DiscoverType.entries.size, key = { DiscoverType.entries[it].name }) { i -> val t = DiscoverType.entries[i]; GlowChip(t.label, uiState.selectedType == t) { viewModel.selectType(t) } }
                     }
-                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
+                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                         val genres = viewModel.getGenresForType()
                         item(key = "all_g") { GlowChip("All Genres", uiState.selectedGenre == null) { viewModel.selectGenre(null) } }
                         items(genres.size, key = { "g_${genres[it].id}" }) { i -> GlowChip(genres[i].name, uiState.selectedGenre == genres[i]) { viewModel.selectGenre(genres[i]) } }
                     }
-                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
+                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                         item(key = "any_l") { GlowChip("Any Language", uiState.selectedCountry == null) { viewModel.selectCountry(null) } }
                         items(COUNTRIES.size, key = { "c_${COUNTRIES[it].code}" }) { i -> GlowChip(COUNTRIES[i].name, uiState.selectedCountry == COUNTRIES[i]) { viewModel.selectCountry(COUNTRIES[i]) } }
                     }
@@ -337,6 +371,8 @@ fun SearchScreen(
                         cardLogoUrls = activeLogoUrls,
                         currentRowIndex = currentRowIndex,
                         currentItemIndex = currentItemIndex,
+                        lastNavEventTime = resultsLastNavEventTime,
+                        fastScrollThresholdMs = fastScrollThresholdMs,
                         isFocused = focusZone == FocusZone.RESULTS,
                         usePosterCards = usePosterCards,
                         isTouchDevice = isTouchDevice,
@@ -346,11 +382,6 @@ fun SearchScreen(
             }
         }
 
-        // Persistent back button for phone users (hidden on tablet/TV). Issue #43.
-        com.arflix.tv.ui.components.MobileBackButton(
-            onBack = onBack,
-            modifier = Modifier.align(Alignment.TopStart)
-        )
     }
 }
 
@@ -384,11 +415,15 @@ private fun GlowChip(label: String, isSelected: Boolean, onSelect: () -> Unit) {
 @Composable
 private fun RowsLayer(
     categories: List<Category>, cardLogoUrls: Map<String, String>,
-    currentRowIndex: Int, currentItemIndex: Int, isFocused: Boolean,
+    currentRowIndex: Int, currentItemIndex: Int,
+    lastNavEventTime: Long,
+    fastScrollThresholdMs: Long,
+    isFocused: Boolean,
     usePosterCards: Boolean, isTouchDevice: Boolean,
     onItemClick: (MediaItem) -> Unit
 ) {
     val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
     val screenHeight = configuration.screenHeightDp
 
     val itemWidth = if (isTouchDevice) {
@@ -396,30 +431,49 @@ private fun RowsLayer(
     } else {
         if (usePosterCards) 134.dp else 260.dp
     }
-    val rowHeight = if (isTouchDevice) {
+    val baseRowHeight = if (isTouchDevice) {
         if (usePosterCards) 220.dp else 160.dp
     } else if (usePosterCards) {
         if (screenHeight <= 640) 245.dp else 320.dp
     } else {
         if (screenHeight <= 640) 200.dp else 260.dp
     }
+    val focusBleedPadding = if (isTouchDevice) 14.dp else 22.dp
+    val rowHeight = baseRowHeight + focusBleedPadding
 
     val listState = rememberLazyListState()
+    var lastAppliedTargetIndex by remember { mutableIntStateOf(-1) }
     val targetIndex = currentRowIndex.coerceIn(0, (categories.size - 1).coerceAtLeast(0))
 
-    // Scroll to focused row (smooth like HomeScreen)
-    LaunchedEffect(targetIndex) {
+    // Only move the results viewport in response to actual D-pad navigation.
+    // Search result rows update frequently while typing/loading, and snapping the
+    // LazyColumn on every target change makes the screen feel unstable.
+    LaunchedEffect(targetIndex, lastNavEventTime) {
         val currentFirst = listState.firstVisibleItemIndex
-        if (currentFirst == targetIndex) return@LaunchedEffect
+        val initialPlacement = lastAppliedTargetIndex < 0
+        if (currentFirst == targetIndex) {
+            lastAppliedTargetIndex = targetIndex
+            return@LaunchedEffect
+        }
+
+        val recentUserNav = lastNavEventTime > 0L &&
+            (SystemClock.elapsedRealtime() - lastNavEventTime) <= fastScrollThresholdMs
+        if (!initialPlacement && !recentUserNav) return@LaunchedEffect
+
         val jump = kotlin.math.abs(targetIndex - currentFirst)
-        if (jump <= 1) listState.animateScrollToItem(targetIndex) else listState.scrollToItem(targetIndex)
+        if (!initialPlacement && jump <= 5) {
+            listState.animateScrollToItem(targetIndex)
+        } else {
+            listState.scrollToItem(targetIndex)
+        }
+        lastAppliedTargetIndex = targetIndex
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(bottom = maxHeight * 0.6f),
-            modifier = Modifier.fillMaxSize().clipToBounds(),
+            contentPadding = PaddingValues(top = focusBleedPadding / 2, bottom = maxHeight * 0.6f),
+            modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             items(categories.size, key = { categories[it].id }) { index ->
@@ -431,30 +485,72 @@ private fun RowsLayer(
                     animationSpec = tween(250), label = "rowAlpha"
                 )
 
-                Box(modifier = Modifier.fillMaxWidth().height(rowHeight).clipToBounds().graphicsLayer { alpha = rowAlpha }) {
+                Box(modifier = Modifier.fillMaxWidth().height(rowHeight).graphicsLayer { alpha = rowAlpha }) {
                     Column {
                         Text(
                             category.title,
                             style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp),
                             color = Color.White.copy(alpha = if (isCurrentRow) 0.9f else 0.5f),
-                            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp, top = 4.dp)
+                            modifier = Modifier.padding(start = focusBleedPadding, bottom = 8.dp, top = 4.dp)
                         )
 
                         val rowState = rememberLazyListState()
+                        var lastScrollIndex by remember(category.id) { mutableIntStateOf(-1) }
+                        var lastScrollOffset by remember(category.id) { mutableIntStateOf(Int.MIN_VALUE) }
                         // Scroll to focused item in current row
-                        LaunchedEffect(isCurrentRow, currentItemIndex) {
+                        LaunchedEffect(isCurrentRow, currentItemIndex, lastNavEventTime) {
                             if (!isCurrentRow) return@LaunchedEffect
                             val safeIndex = currentItemIndex.coerceIn(0, (category.items.size - 1).coerceAtLeast(0))
                             val first = rowState.firstVisibleItemIndex
-                            val last = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: first
-                            if (safeIndex < first || safeIndex > last) rowState.scrollToItem(safeIndex)
-                            else if (safeIndex != first) rowState.animateScrollToItem(safeIndex)
+                            val visibleItems = rowState.layoutInfo.visibleItemsInfo
+                            val last = visibleItems.lastOrNull()?.index ?: first
+                            val targetInfo = visibleItems.firstOrNull { it.index == safeIndex }
+                            val targetOutsideViewport = safeIndex < first || safeIndex > last
+                            val viewportEnd = rowState.layoutInfo.viewportEndOffset
+                            val trailingPaddingPx = rowState.layoutInfo.afterContentPadding
+                            val targetNearViewportEnd = targetInfo != null &&
+                                targetInfo.offset + targetInfo.size > viewportEnd - trailingPaddingPx
+                            val scrollTargetIndex = safeIndex
+                            val extraOffset = if (targetNearViewportEnd) {
+                                (with(density) { itemWidth.roundToPx() } * 0.35f).toInt()
+                            } else 0
+
+                            if (lastScrollIndex == scrollTargetIndex && lastScrollOffset == extraOffset) {
+                                return@LaunchedEffect
+                            }
+                            if (lastScrollIndex == -1) {
+                                rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+                                lastScrollIndex = scrollTargetIndex
+                                lastScrollOffset = extraOffset
+                                return@LaunchedEffect
+                            }
+
+                            val recentUserNav = lastNavEventTime > 0L &&
+                                (SystemClock.elapsedRealtime() - lastNavEventTime) <= fastScrollThresholdMs
+                            if (!recentUserNav) return@LaunchedEffect
+
+                            val jumpDistance = kotlin.math.abs(scrollTargetIndex - first)
+                            if (jumpDistance > 6) {
+                                rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+                            } else if (scrollTargetIndex != first || targetOutsideViewport) {
+                                rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+                            } else {
+                                rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+                            }
+                            lastScrollIndex = scrollTargetIndex
+                            lastScrollOffset = extraOffset
                         }
 
                         LazyRow(
                             state = rowState,
-                            contentPadding = PaddingValues(start = 8.dp, end = itemWidth + 30.dp, top = 12.dp, bottom = 24.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            modifier = Modifier.arvioDpadFocusGroup(),
+                            contentPadding = PaddingValues(
+                                start = focusBleedPadding,
+                                end = itemWidth + 56.dp,
+                                top = focusBleedPadding,
+                                bottom = focusBleedPadding + 12.dp
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(18.dp)
                         ) {
                             itemsIndexed(category.items, key = { _, item -> "${item.mediaType}_${item.id}" }) { itemIdx, item ->
                                 val itemIsFocused = isCurrentRow && itemIdx == currentItemIndex
@@ -491,8 +587,9 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
     val gridState = rememberLazyGridState()
     LaunchedEffect(gridState.firstVisibleItemIndex, items.size) { val lv = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0; if (items.isNotEmpty() && lv >= items.size - 8) onLoadMore() }
 
-    LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = itemWidth + 16.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxSize()) {
+    val focusBleedPadding = if (isTouchDevice) 14.dp else 24.dp
+    LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = itemWidth + focusBleedPadding), contentPadding = PaddingValues(horizontal = focusBleedPadding, vertical = focusBleedPadding),
+        horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(26.dp), modifier = Modifier.fillMaxSize().arvioDpadFocusGroup()) {
         items(items.size, key = { "${items[it].mediaType}_${items[it].id}" }) { idx ->
             val item = items[idx]
             MediaCard(item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),

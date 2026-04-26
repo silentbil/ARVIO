@@ -36,6 +36,27 @@ data class EnrichedChannel(
     val logo: String? get() = source.logo
 }
 
+data class LiveCategoryIndex(
+    val byCategory: Map<String, List<EnrichedChannel>>,
+    val byId: Map<String, EnrichedChannel>,
+) {
+    fun channelsFor(
+        categoryId: String,
+        favorites: Collection<String>,
+        recents: Collection<String>,
+    ): List<EnrichedChannel> {
+        return when (categoryId) {
+            "fav" -> favorites.mapNotNull(byId::get).filterNot { it.isAdult }
+            "recent" -> recents.toList().asReversed().mapNotNull(byId::get).filterNot { it.isAdult }
+            else -> byCategory[categoryId].orEmpty()
+        }
+    }
+
+    companion object {
+        val Empty = LiveCategoryIndex(emptyMap(), emptyMap())
+    }
+}
+
 private data class ChannelTraits(
     val country: String?,
     val genre: Genre,
@@ -221,6 +242,21 @@ fun IptvChannel.enrich(number: Int): EnrichedChannel {
 // ─────────────────────────────────────────────────────────────────────────
 // Category tree (spec §5)
 // ─────────────────────────────────────────────────────────────────────────
+
+fun IptvChannel.enrichForFastStartup(number: Int): EnrichedChannel {
+    val brand = brandForGenre(Genre.General)
+    return EnrichedChannel(
+        source = this,
+        number = number,
+        country = null,
+        genre = Genre.General,
+        quality = Quality.SD,
+        lang = "EN",
+        brandBg = brand.bg,
+        brandFg = brand.fg,
+        isAdult = isAdultGroup(group, name),
+    )
+}
 
 data class LiveCategory(
     val id: String,
@@ -464,9 +500,10 @@ fun buildCategoryTree(
         }
     }
 
+    val channelIds = channels.asSequence().map { it.id }.toHashSet()
     val top = listOf(
-        LiveCategory("fav", "Favorites", favorites.count { favoriteId -> channels.any { it.id == favoriteId } }, CategoryIcon.Favorite),
-        LiveCategory("recent", "Recent", recents.count { recentId -> channels.any { it.id == recentId } }, CategoryIcon.Recent),
+        LiveCategory("fav", "Favorites", favorites.count { it in channelIds }, CategoryIcon.Favorite),
+        LiveCategory("recent", "Recent", recents.count { it in channelIds }, CategoryIcon.Recent),
         LiveCategory("all", "All Channels", allCount, CategoryIcon.All),
     )
 
@@ -580,6 +617,38 @@ fun buildInitialCategoryChannels(
     limit: Int,
 ): List<EnrichedChannel> {
     if (channels.isEmpty() || limit <= 0) return emptyList()
+    if (categoryId == "all") {
+        return buildList(limit.coerceAtMost(channels.size)) {
+            channels.forEachIndexed { index, channel ->
+                if (!isAdultGroup(channel.group, channel.name)) {
+                    add(channel.enrichForFastStartup(100 + index))
+                    if (size >= limit) return@buildList
+                }
+            }
+        }
+    }
+    if (categoryId == "fav") {
+        return buildList(limit.coerceAtMost(favorites.size)) {
+            channels.forEachIndexed { index, channel ->
+                if (channel.id in favorites && !isAdultGroup(channel.group, channel.name)) {
+                    add(channel.enrichForFastStartup(100 + index))
+                    if (size >= limit) return@buildList
+                }
+            }
+        }
+    }
+    if (categoryId == "recent") {
+        val indexById = channels.withIndex().associate { (index, channel) -> channel.id to (index to channel) }
+        return buildList(limit.coerceAtMost(recents.size)) {
+            recents.toList().asReversed().forEach { id ->
+                val (index, channel) = indexById[id] ?: return@forEach
+                if (!isAdultGroup(channel.group, channel.name)) {
+                    add(channel.enrichForFastStartup(100 + index))
+                    if (size >= limit) return@buildList
+                }
+            }
+        }
+    }
     val matcher = rawCategoryMatcher(categoryId, favorites, recents)
     return buildList(limit.coerceAtMost(channels.size)) {
         channels.forEachIndexed { index, channel ->
@@ -589,6 +658,63 @@ fun buildInitialCategoryChannels(
             }
         }
     }
+}
+
+fun buildCategoryIndex(channels: List<EnrichedChannel>): LiveCategoryIndex {
+    if (channels.isEmpty()) return LiveCategoryIndex.Empty
+
+    val byId = LinkedHashMap<String, EnrichedChannel>(channels.size)
+    val buckets = LinkedHashMap<String, MutableList<EnrichedChannel>>()
+
+    fun add(categoryId: String, channel: EnrichedChannel) {
+        buckets.getOrPut(categoryId) { ArrayList() }.add(channel)
+    }
+
+    channels.forEach { channel ->
+        byId[channel.id] = channel
+        if (channel.isAdult) {
+            add("adult", channel)
+            return@forEach
+        }
+
+        add("all", channel)
+
+        if (channel.quality == Quality.K4) add("g-4k", channel)
+        when (channel.genre) {
+            Genre.Sports -> add("g-sports", channel)
+            Genre.Movies -> add("g-movies", channel)
+            Genre.News -> add("g-news", channel)
+            Genre.Kids -> add("g-kids", channel)
+            Genre.Docs -> add("g-docs", channel)
+            Genre.Music -> add("g-music", channel)
+            else -> Unit
+        }
+
+        val country = channel.country
+        if (!country.isNullOrBlank()) {
+            add(country, channel)
+            when (channel.genre) {
+                Genre.General -> add("$country-general", channel)
+                Genre.Sports -> add("$country-sports", channel)
+                Genre.Movies -> add("$country-movies", channel)
+                Genre.News -> add("$country-news", channel)
+                Genre.Kids -> add("$country-kids", channel)
+                Genre.Series -> add("$country-entertainment", channel)
+                Genre.Docs -> add("$country-documentary", channel)
+                else -> Unit
+            }
+            when (channel.quality) {
+                Quality.K4 -> add("$country-4k", channel)
+                Quality.FHD -> add("$country-fhd", channel)
+                else -> Unit
+            }
+        }
+    }
+
+    return LiveCategoryIndex(
+        byCategory = buckets.mapValues { (_, value) -> value.toList() },
+        byId = byId,
+    )
 }
 
 fun bestCategoryIdForChannel(

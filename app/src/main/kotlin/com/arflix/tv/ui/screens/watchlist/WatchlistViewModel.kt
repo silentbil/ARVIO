@@ -119,6 +119,8 @@ class WatchlistViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
             try {
+                // Sync Trakt first so any items added externally show up in this refresh.
+                syncTraktWatchlistSuspend()
                 val items = watchlistRepository.refreshWatchlistItems()
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -160,36 +162,31 @@ class WatchlistViewModel @Inject constructor(
 
     /**
      * Pull Trakt watchlist and merge new items into local watchlist.
-     * Items on Trakt but not local get added; local-only items are preserved.
+     * Trakt is the source of truth for order: items are inserted oldest-first so
+     * that the newest item ends up at the front (repository prepends at index 0).
+     * Local-only items are preserved after all Trakt items.
      */
     private fun syncTraktWatchlist() {
         viewModelScope.launch {
-            try {
-                val traktItems = traktRepository.getWatchlist()
-                if (traktItems.isEmpty()) return@launch
+            runCatching { syncTraktWatchlistSuspend() }
+        }
+    }
 
-                // Merge: add any Trakt items not already in local watchlist
-                var addedNew = false
-                for (item in traktItems) {
-                    val inLocal = watchlistRepository.isInWatchlist(item.mediaType, item.id)
-                    if (!inLocal) {
-                        watchlistRepository.addToWatchlist(item.mediaType, item.id, item)
-                        addedNew = true
-                    }
-                }
+    private suspend fun syncTraktWatchlistSuspend() {
+        try {
+            val traktItems = traktRepository.getWatchlist()  // newest-first by listed_at
+            if (traktItems.isEmpty()) return
 
-                // Only refresh if we actually added new items (avoids clearing cache)
-                if (addedNew) {
-                    val items = watchlistRepository.refreshWatchlistItems()
-                    _uiState.value = _uiState.value.copy(items = items, isLoading = false)
-                    // Push cloud snapshot so other devices get the merged watchlist.
-                    // Without this, Trakt items merged on device A never synced to device B
-                    // until some other action triggered a push.
-                    runCatching { cloudSyncRepository.pushToCloud() }
-                }
-            } catch (_: Exception) {
-                // Trakt sync is best-effort, don't show errors
-            }
+            // Reorder local to match Trakt newest-first, preserving local-only
+            // items at the end. This corrects both the "wrong order" and "out of
+            // sync after the first fetch" cases.
+            watchlistRepository.syncFromTraktOrder(traktItems)
+
+            val items = watchlistRepository.refreshWatchlistItems()
+            _uiState.value = _uiState.value.copy(items = items, isLoading = false)
+            runCatching { cloudSyncRepository.pushToCloud() }
+        } catch (_: Exception) {
+            // Trakt sync is best-effort, don't show errors
         }
     }
 

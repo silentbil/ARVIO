@@ -20,11 +20,6 @@ class Moviesm4u : Filesim() {
     override val name = "Moviesm4u"
 }
 
-class FileMoonIn : Filesim() {
-    override val mainUrl = "https://filemoon.in"
-    override val name = "FileMoon"
-}
-
 class StreamhideTo : Filesim() {
     override val mainUrl = "https://streamhide.to"
     override val name = "Streamhide"
@@ -41,18 +36,10 @@ class Movhide : Filesim() {
 }
 
 class Ztreamhub : Filesim() {
-    override val mainUrl: String = "https://ztreamhub.com" //Here 'cause works
+    override val mainUrl: String = "https://ztreamhub.com"
     override val name = "Zstreamhub"
 }
-class FileMoon : Filesim() {
-    override val mainUrl = "https://filemoon.to"
-    override val name = "FileMoon"
-}
 
-class FileMoonSx : Filesim() {
-    override val mainUrl = "https://filemoon.sx"
-    override val name = "FileMoonSx"
-}
 
 open class Filesim : ExtractorApi() {
     override val name = "Filesim"

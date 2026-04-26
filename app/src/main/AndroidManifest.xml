@@ -31,6 +31,10 @@
         android:theme="@style/Theme.ArflixTV"
         android:usesCleartextTraffic="true">
 
+        <meta-data
+            android:name="io.sentry.auto-init"
+            android:value="false" />
+
         <!-- Main Activity - Compose Host -->
         <activity
             android:name=".MainActivity"

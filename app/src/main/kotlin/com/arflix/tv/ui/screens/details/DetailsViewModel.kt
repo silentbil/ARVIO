@@ -217,6 +217,7 @@ class DetailsViewModel @Inject constructor(
             tmdbRating = if (isBlankRating(primary.tmdbRating)) fallback.tmdbRating else primary.tmdbRating,
             image = primary.image.ifBlank { fallback.image },
             backdrop = primary.backdrop ?: fallback.backdrop,
+            primaryNetworkLogo = primary.primaryNetworkLogo ?: fallback.primaryNetworkLogo,
             genreIds = if (primary.genreIds.isEmpty()) fallback.genreIds else primary.genreIds,
             originalLanguage = primary.originalLanguage ?: fallback.originalLanguage,
             isOngoing = primary.isOngoing || fallback.isOngoing,

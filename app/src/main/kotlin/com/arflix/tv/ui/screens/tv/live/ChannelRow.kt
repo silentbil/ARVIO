@@ -66,24 +66,27 @@ fun ChannelRow(
     stripe: Boolean = false,
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit,
+    onFocused: () -> Unit = {},
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
+    forceFocused: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val visuallyFocused = focused || forceFocused
     val bg = when {
-        focused -> LiveColors.PanelRaised
+        visuallyFocused -> LiveColors.PanelRaised
         isActive -> LiveColors.FocusBg
         stripe -> LiveColors.RowStripe
         else -> Color.Transparent
     }
     val now = nowNext?.now
     val animatedBorderWidth by animateDpAsState(
-        targetValue = if (focused) 3.dp else 0.dp,
+        targetValue = if (visuallyFocused) 3.dp else 0.dp,
         animationSpec = tween(durationMillis = 130),
         label = "channel-row-border",
     )
     val animatedScale by animateFloatAsState(
-        targetValue = if (focused) 1.01f else 1f,
+        targetValue = if (visuallyFocused) 1.01f else 1f,
         animationSpec = tween(durationMillis = 150),
         label = "channel-row-scale",
     )
@@ -95,12 +98,15 @@ fun ChannelRow(
                 scaleX = animatedScale
                 scaleY = animatedScale
             }
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.hasFocus
+                if (it.hasFocus) onFocused()
+            }
             .border(
                 width = animatedBorderWidth,
-                color = if (focused) LiveColors.FocusRing else Color.Transparent,
+                color = if (visuallyFocused) LiveColors.FocusRing else Color.Transparent,
             )
-            .background(if (focused) LiveColors.PanelRaised else bg)
+            .background(if (visuallyFocused) LiveColors.PanelRaised else bg)
             .focusable()
             .combinedClickable(
                 onClick = onClick,

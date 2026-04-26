@@ -74,6 +74,7 @@ import androidx.tv.foundation.lazy.list.rememberTvLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.ui.theme.Pink
@@ -473,7 +474,7 @@ fun StreamSelector(
                             state = listState,
                             contentPadding = PaddingValues(vertical = 4.dp),
                             verticalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize().arvioDpadFocusGroup()
                         ) {
                             // Show flat list - no addon headers, sorted by Cached → Size → Quality
                             flatStreams.forEachIndexed { index, stream ->
@@ -657,6 +658,7 @@ fun StreamSelector(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .weight(1f)
+                                .arvioDpadFocusGroup()
                         ) {
                             items(flatStreams) { stream ->
                                 MobileStreamCard(
@@ -1025,7 +1027,7 @@ private fun GlassyStreamCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .padding(horizontal = 8.dp, vertical = 8.dp)
             .scale(scale)
             .clickable { onClick() }
             .background(

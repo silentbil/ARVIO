@@ -47,7 +47,8 @@ data class LocalWatchlistItem(
 class WatchlistRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val profileManager: ProfileManager,
-    private val tmdbApi: TmdbApi
+    private val tmdbApi: TmdbApi,
+    private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
 
@@ -187,6 +188,16 @@ class WatchlistRepository @Inject constructor(
             return@withContext emptyList()
         }
 
+        val instantItems = rawItems.map { it.toBasicMediaItem() }
+        cacheMutex.withLock {
+            keyCache.clear()
+            instantItems.forEach { item ->
+                keyCache.add(cacheKey(item.mediaType, item.id))
+            }
+            _watchlistItems.value = instantItems
+            cacheLoaded = true
+        }
+
         // Enrich items with TMDB data in parallel
         val enrichedItems = coroutineScope {
             rawItems.map { item ->
@@ -225,6 +236,66 @@ class WatchlistRepository @Inject constructor(
     }
 
     /**
+     * Reorder the local watchlist to match Trakt's newest-first list.
+     * Adds missing Trakt items, keeps local-only items at the end, and writes
+     * the resulting order to DataStore + in-memory cache.
+     */
+    suspend fun syncFromTraktOrder(traktItems: List<MediaItem>) = withContext(Dispatchers.IO) {
+        if (traktItems.isEmpty()) return@withContext
+
+        val existing = loadWatchlistRaw()
+        val existingByKey = existing.associateBy { "${it.mediaType}:${it.tmdbId}" }
+
+        val ordered = mutableListOf<LocalWatchlistItem>()
+        val seen = mutableSetOf<String>()
+
+        // 1. Put Trakt items first, in Trakt order (already newest-first).
+        for (item in traktItems) {
+            val typeStr = if (item.mediaType == MediaType.TV) "tv" else "movie"
+            val key = "$typeStr:${item.id}"
+            seen.add(key)
+            val local = existingByKey[key]
+            ordered.add(
+                local?.copy(
+                    title = item.title.ifBlank { local.title },
+                    posterPath = item.image.ifBlank { local.posterPath },
+                    backdropPath = item.backdrop ?: local.backdropPath
+                ) ?: LocalWatchlistItem(
+                    tmdbId = item.id,
+                    mediaType = typeStr,
+                    title = item.title,
+                    posterPath = item.image,
+                    backdropPath = item.backdrop,
+                    addedAt = System.currentTimeMillis()
+                )
+            )
+        }
+
+        // 2. Append any local-only items at the end (preserve original relative order).
+        for (local in existing) {
+            val key = "${local.mediaType}:${local.tmdbId}"
+            val sameTitleAlreadySynced = ordered.any {
+                it.mediaType == local.mediaType && normalizeTitleForDuplicateCheck(it.title) == normalizeTitleForDuplicateCheck(local.title)
+            }
+            if (key !in seen && !sameTitleAlreadySynced) ordered.add(local)
+        }
+
+        saveWatchlist(ordered)
+
+        // Invalidate enriched cache so the UI picks up the new order on next refresh.
+        cacheMutex.withLock {
+            itemsCache.clear()
+            keyCache.clear()
+            ordered.forEach { raw ->
+                val type = if (raw.mediaType == "tv") MediaType.TV else MediaType.MOVIE
+                keyCache.add(cacheKey(type, raw.tmdbId))
+            }
+            _watchlistItems.value = ordered.map { it.toBasicMediaItem() }
+            cacheLoaded = true
+        }
+    }
+
+    /**
      * Clear all caches (call on profile switch)
      */
     fun clearWatchlistCache() {
@@ -255,6 +326,7 @@ class WatchlistRepository @Inject constructor(
         context.traktDataStore.edit { prefs ->
             prefs[watchlistKeyFor(safeProfileId)] = json
         }
+        invalidationBus.markDirty(CloudSyncScope.WATCHLIST, safeProfileId, "import watchlist")
         if (profileManager.getProfileIdSync() == safeProfileId) {
             clearWatchlistCache()
         }
@@ -286,6 +358,7 @@ class WatchlistRepository @Inject constructor(
             context.traktDataStore.edit { prefs ->
                 prefs[watchlistKey()] = json
             }
+            invalidationBus.markDirty(CloudSyncScope.WATCHLIST, profileManager.getProfileIdSync(), "save watchlist")
         } catch (_: Exception) {}
     }
 
@@ -345,5 +418,32 @@ class WatchlistRepository @Inject constructor(
         val hours = runtime / 60
         val mins = runtime % 60
         return if (hours > 0) "${hours}h ${mins}m" else "${mins}m"
+    }
+
+    private fun LocalWatchlistItem.toBasicMediaItem(): MediaItem {
+        val type = if (mediaType == "tv") MediaType.TV else MediaType.MOVIE
+        return MediaItem(
+            id = tmdbId,
+            title = title,
+            subtitle = if (type == MediaType.TV) "TV Series" else "Movie",
+            overview = "",
+            year = "",
+            mediaType = type,
+            image = posterPath.orEmpty(),
+            backdrop = backdropPath
+        )
+    }
+
+    private fun normalizeTitleForDuplicateCheck(title: String): String {
+        return java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .lowercase()
+            .replace("&", "and")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+            .removePrefix("the ")
+            .removePrefix("a ")
+            .removePrefix("an ")
+            .replace(" ", "")
     }
 }

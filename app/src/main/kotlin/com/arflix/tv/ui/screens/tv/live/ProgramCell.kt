@@ -58,7 +58,10 @@ fun ProgramCell(
     isNow: Boolean,
     isPast: Boolean,
     isFocusTarget: Boolean,
+    focusable: Boolean = true,
     onClick: () -> Unit,
+    onFocused: () -> Unit = {},
+    rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -89,7 +92,7 @@ fun ProgramCell(
     )
     Box(
         modifier = modifier
-            .height(LiveDims.EpgRowHeight)
+            .height(rowHeight)
             .width(width)
             // Outer gutter was 3dp×2 + inner 10dp×2 = 26dp of horizontal
             // overhead. On a 60dp min-width block that left only ~34dp for
@@ -100,7 +103,16 @@ fun ProgramCell(
                 scaleX = scale
                 scaleY = scale
             }
-            .onFocusChanged { focused = it.isFocused }
+            .then(
+                if (focusable) {
+                    Modifier.onFocusChanged {
+                        focused = it.hasFocus
+                        if (it.hasFocus) onFocused()
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .border(
                 width = borderWidth,
                 color = borderColor,
@@ -109,13 +121,19 @@ fun ProgramCell(
             .clip(RoundedCornerShape(LiveDims.CellRadius))
             .background(bg)
             .alpha(contentAlpha)
-            .focusable()
-            .onKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyDown &&
-                    (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) {
-                    onClick(); true
-                } else false
-            }
+            .then(if (focusable) Modifier.focusable() else Modifier)
+            .then(
+                if (focusable) {
+                    Modifier.onKeyEvent { ev ->
+                        if (ev.type == KeyEventType.KeyDown &&
+                            (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) {
+                            onClick(); true
+                        } else false
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) }
             .padding(horizontal = 6.dp, vertical = 4.dp),
     ) {

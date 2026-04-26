@@ -50,10 +50,8 @@ class StartupViewModel @Inject constructor(
     private val networkDispatcher = Dispatchers.IO.limitedParallelism(8)
     private val heroLogoPreloadWidth = 300
     private val heroLogoPreloadHeight = 70
-    // PERFORMANCE: Use smaller backdrop for preload - will upscale but loads faster
-    // Full resolution is loaded lazily when actually displayed
-    private val heroBackdropPreloadWidth = 1280
-    private val heroBackdropPreloadHeight = 720
+    private val heroBackdropPreloadWidth = 3840
+    private val heroBackdropPreloadHeight = 2160
 
     private val _state = MutableStateFlow(StartupState())
     val state: StateFlow<StartupState> = _state.asStateFlow()

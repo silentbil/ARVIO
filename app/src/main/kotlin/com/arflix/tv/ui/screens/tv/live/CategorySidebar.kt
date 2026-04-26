@@ -80,6 +80,7 @@ fun CategorySidebar(
     onSelect: (String) -> Unit,
     onOpenSearch: () -> Unit,
     onFocusEnter: () -> Unit = {},
+    onMoveRight: () -> Unit = {},
     onTopBoundaryFocusChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -107,7 +108,16 @@ fun CategorySidebar(
             // Trap DPAD_LEFT at the sidebar edge so the key doesn't bubble
             // up to the Activity and back out to the Android launcher.
             .onPreviewKeyEvent { ev ->
-                ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft
+                if (ev.type != KeyEventType.KeyDown) {
+                    false
+                } else when (ev.key) {
+                    Key.DirectionLeft -> true
+                    Key.DirectionRight -> {
+                        onMoveRight()
+                        true
+                    }
+                    else -> false
+                }
             }
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),

@@ -234,6 +234,65 @@ import com.lagradost.cloudstream3.extractors.FlaswishCom
 import com.lagradost.cloudstream3.extractors.SfastwishCom
 import com.lagradost.cloudstream3.extractors.Vtbe
 import com.lagradost.cloudstream3.extractors.WishembedPro
+// Newly added extractors
+import com.lagradost.cloudstream3.extractors.HubCloud
+import com.lagradost.cloudstream3.extractors.Videa
+import com.lagradost.cloudstream3.extractors.GUpload
+import com.lagradost.cloudstream3.extractors.VkExtractor
+import com.lagradost.cloudstream3.extractors.Luluvdoo
+import com.lagradost.cloudstream3.extractors.Lulustream1
+import com.lagradost.cloudstream3.extractors.Lulustream2
+import com.lagradost.cloudstream3.extractors.LuluStream
+import com.lagradost.cloudstream3.extractors.VidStack
+import com.lagradost.cloudstream3.extractors.Server1uns
+import com.lagradost.cloudstream3.extractors.StreamEmbed
+import com.lagradost.cloudstream3.extractors.InternetArchive
+import com.lagradost.cloudstream3.extractors.ByseSX
+import com.lagradost.cloudstream3.extractors.Bysezejataos
+import com.lagradost.cloudstream3.extractors.ByseBuho
+import com.lagradost.cloudstream3.extractors.ByseVepoin
+import com.lagradost.cloudstream3.extractors.ByseQekaho
+import com.lagradost.cloudstream3.extractors.VidHidePro
+import com.lagradost.cloudstream3.extractors.Ryderjet
+import com.lagradost.cloudstream3.extractors.VidHideHub
+import com.lagradost.cloudstream3.extractors.VidHidePro1
+import com.lagradost.cloudstream3.extractors.VidHidePro2
+import com.lagradost.cloudstream3.extractors.VidHidePro3
+import com.lagradost.cloudstream3.extractors.VidHidePro4
+import com.lagradost.cloudstream3.extractors.VidHidePro5
+import com.lagradost.cloudstream3.extractors.VidHidePro6
+import com.lagradost.cloudstream3.extractors.Smoothpre
+import com.lagradost.cloudstream3.extractors.Dhtpre
+import com.lagradost.cloudstream3.extractors.Peytonepre
+import com.lagradost.cloudstream3.extractors.HgplayCDN
+import com.lagradost.cloudstream3.extractors.Habetar
+import com.lagradost.cloudstream3.extractors.Yuguaab
+import com.lagradost.cloudstream3.extractors.Guxhag
+import com.lagradost.cloudstream3.extractors.Auvexiug
+import com.lagradost.cloudstream3.extractors.Xenolyzb
+import com.lagradost.cloudstream3.extractors.Haxloppd
+import com.lagradost.cloudstream3.extractors.Cavanhabg
+import com.lagradost.cloudstream3.extractors.Dumbalag
+import com.lagradost.cloudstream3.extractors.Uasopt
+import com.lagradost.cloudstream3.extractors.Dhcplay
+import com.lagradost.cloudstream3.extractors.HglinkTo
+import com.lagradost.cloudstream3.extractors.SecvideoOnline
+import com.lagradost.cloudstream3.extractors.FsstOnline
+import com.lagradost.cloudstream3.extractors.CsstOnline
+import com.lagradost.cloudstream3.extractors.DsstOnline
+import com.lagradost.cloudstream3.extractors.GDMirrorbot
+import com.lagradost.cloudstream3.extractors.Techinmind
+import com.lagradost.cloudstream3.extractors.Filegram
+import com.lagradost.cloudstream3.extractors.GamoVideo
+import com.lagradost.cloudstream3.extractors.StreamSilk
+import com.lagradost.cloudstream3.extractors.Up4Stream
+import com.lagradost.cloudstream3.extractors.Up4FunTop
+import com.lagradost.cloudstream3.extractors.VinovoTo
+import com.lagradost.cloudstream3.extractors.VinovoSi
+import com.lagradost.cloudstream3.extractors.Vidoza
+import com.lagradost.cloudstream3.extractors.Videzz
+import com.lagradost.cloudstream3.extractors.Vidsonic
+import com.lagradost.cloudstream3.extractors.CloudMailRu
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.mvvm.normalSafeApiCall
 import kotlinx.coroutines.delay
@@ -264,15 +323,15 @@ fun Long.toUs(): Long {
  * use this.
  * */
 data class ExtractorLinkPlayList(
-    override val source: String,
-    override val name: String,
+    override var source: String,
+    override var name: String,
     val playlist: List<PlayListItem>,
-    override val referer: String,
-    override val quality: Int,
-    override val headers: Map<String, String> = mapOf(),
+    override var referer: String,
+    override var quality: Int,
+    override var headers: Map<String, String> = mapOf(),
     /** Used for getExtractorVerifierJob() */
-    override val extractorData: String? = null,
-    override val type: ExtractorLinkType,
+    override var extractorData: String? = null,
+    override var type: ExtractorLinkType,
 ) : ExtractorLink(
     source = source,
     name = name,
@@ -368,15 +427,15 @@ val WIDEVINE_UUID = UUID(-0x121074568629b532L, -0x5c37d8232ae2de13L)
 val PLAYREADY_UUID = UUID(-0x65fb0f8667bfbd7aL, -0x546d19a41f77a06bL)
 
 open class DrmExtractorLink private constructor(
-    override val source: String,
-    override val name: String,
-    override val url: String,
-    override val referer: String,
-    override val quality: Int,
-    override val headers: Map<String, String> = mapOf(),
+    override var source: String,
+    override var name: String,
+    override var url: String,
+    override var referer: String,
+    override var quality: Int,
+    override var headers: Map<String, String> = mapOf(),
     /** Used for getExtractorVerifierJob() */
-    override val extractorData: String? = null,
-    override val type: ExtractorLinkType,
+    override var extractorData: String? = null,
+    override var type: ExtractorLinkType,
     open val kid : String,
     open val key : String,
     open val uuid : UUID,
@@ -420,15 +479,15 @@ open class DrmExtractorLink private constructor(
 }
 
 open class ExtractorLink constructor(
-    open val source: String,
-    open val name: String,
-    override val url: String,
-    override val referer: String,
-    open val quality: Int,
-    override val headers: Map<String, String> = mapOf(),
+    open var source: String,
+    open var name: String,
+    override var url: String,
+    override var referer: String,
+    open var quality: Int,
+    override var headers: Map<String, String> = mapOf(),
     /** Used for getExtractorVerifierJob() */
-    open val extractorData: String? = null,
-    open val type: ExtractorLinkType,
+    open var extractorData: String? = null,
+    open var type: ExtractorLinkType,
 ) : IDownloadableMinimum {
     val isM3u8: Boolean get() = type == ExtractorLinkType.M3U8
     val isDash: Boolean get() = type == ExtractorLinkType.DASH
@@ -526,6 +585,27 @@ open class ExtractorLink constructor(
     override fun toString(): String {
         return "ExtractorLink(name=$name, url=$url, referer=$referer, type=$type)"
     }
+}
+
+suspend fun newExtractorLink(
+    source: String,
+    name: String,
+    url: String,
+    type: ExtractorLinkType? = null,
+    initializer: suspend ExtractorLink.() -> Unit = {}
+): ExtractorLink {
+    val link = ExtractorLink(
+        source = source,
+        name = name,
+        url = url,
+        referer = "",
+        quality = Qualities.Unknown.value,
+        type = type ?: inferTypeFromUrl(url),
+        headers = mapOf(),
+        extractorData = null
+    )
+    link.initializer()
+    return link
 }
 
 /**
@@ -631,10 +711,22 @@ suspend fun loadExtractor(
     }
 
     // this is to match mirror domains - like example.com, example.net
+    val currentDomain = try {
+        java.net.URI(currentUrl.takeIf { it.startsWith("http") } ?: "https://$currentUrl").host ?: currentUrl
+    } catch (e: Exception) {
+        currentUrl
+    }
+
     for (extractor in extractorApis) {
+        val extractorDomain = try {
+            java.net.URI(extractor.mainUrl.takeIf { it.startsWith("http") } ?: "https://${extractor.mainUrl}").host ?: extractor.mainUrl
+        } catch (e: Exception) {
+            extractor.mainUrl
+        }
+
         if (FuzzySearch.partialRatio(
-                extractor.mainUrl,
-                currentUrl
+                extractorDomain,
+                currentDomain
             ) > 80
         ) {
             extractor.getSafeUrl(currentUrl, referer, subtitleCallback, callback)
@@ -912,7 +1004,89 @@ val extractorApis: MutableList<ExtractorApi> = arrayListOf(
     Yipsu(),
     MetaGnathTuggers(),
     Geodailymotion(),
-    
+
+    // Newly registered extractors
+    HubCloud(),
+    Videa(),
+    GUpload(),
+    VkExtractor(),
+
+    // LuluStream variants
+    Luluvdoo(),
+    Lulustream1(),
+    Lulustream2(),
+    LuluStream(),
+
+    // VidStack variants
+    VidStack(),
+    Server1uns(),
+
+    StreamEmbed(),
+    InternetArchive(),
+
+    // ByseSX variants
+    ByseSX(),
+    Bysezejataos(),
+    ByseBuho(),
+    ByseVepoin(),
+    ByseQekaho(),
+
+    // VidHidePro variants
+    VidHidePro(),
+    Ryderjet(),
+    VidHideHub(),
+    VidHidePro1(),
+    VidHidePro2(),
+    VidHidePro3(),
+    VidHidePro4(),
+    VidHidePro5(),
+    VidHidePro6(),
+    Smoothpre(),
+    Dhtpre(),
+    Peytonepre(),
+
+    // CineMMRedirect / VidHidePro mirror variants
+    HgplayCDN(),
+    Habetar(),
+    Yuguaab(),
+    Guxhag(),
+    Auvexiug(),
+    Xenolyzb(),
+    Haxloppd(),
+    Cavanhabg(),
+    Dumbalag(),
+    Uasopt(),
+    Dhcplay(),
+    HglinkTo(),
+
+    // SecvideoOnline variants
+    SecvideoOnline(),
+    FsstOnline(),
+    CsstOnline(),
+    DsstOnline(),
+
+    // GDMirrorbot variants
+    GDMirrorbot(),
+    Techinmind(),
+
+    Filegram(),
+    GamoVideo(),
+    StreamSilk(),
+
+    // Up4Stream variants
+    Up4Stream(),
+    Up4FunTop(),
+
+    // Vinovo variants
+    VinovoTo(),
+    VinovoSi(),
+
+    // Vidoza variants
+    Vidoza(),
+    Videzz(),
+
+    Vidsonic(),
+    CloudMailRu(),
 )
 
 
@@ -970,7 +1144,8 @@ suspend fun getPostForm(requestUrl: String, html: String): String? {
 fun ExtractorApi.fixUrl(url: String): String {
     if (url.startsWith("http") ||
         // Do not fix JSON objects when passed as urls.
-        url.startsWith("{\"")
+        url.startsWith("{") || url.startsWith("[") || 
+        url.startsWith("magnet:") || url.startsWith("intent:") || url.startsWith("data:")
     ) {
         return url
     }
@@ -982,10 +1157,10 @@ fun ExtractorApi.fixUrl(url: String): String {
     if (startsWithNoHttp) {
         return "https:$url"
     } else {
-        if (url.startsWith('/')) {
-            return mainUrl + url
+        if (url.startsWith('/') || url.startsWith('?') || url.startsWith('#')) {
+            return if (mainUrl.endsWith("/")) mainUrl.dropLast(1) + url else mainUrl + url
         }
-        return "$mainUrl/$url"
+        return if (mainUrl.endsWith("/")) mainUrl + url else "$mainUrl/$url"
     }
 }
 

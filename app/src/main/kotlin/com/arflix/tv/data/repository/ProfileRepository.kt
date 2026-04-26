@@ -20,7 +20,8 @@ import javax.inject.Singleton
 @Singleton
 class ProfileRepository @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
     private val profileListType = object : TypeToken<List<Profile>>() {}.type
@@ -88,6 +89,7 @@ class ProfileRepository @Inject constructor(
             currentList.add(profile)
             prefs[PROFILES_KEY] = encodeProfiles(currentList)
         }
+        invalidationBus.markDirty(CloudSyncScope.PROFILES, profile.id, "create profile")
         pushProfilesStateToCloud()
 
         return profile
@@ -105,6 +107,7 @@ class ProfileRepository @Inject constructor(
                 prefs[PROFILES_KEY] = encodeProfiles(currentList)
             }
         }
+        invalidationBus.markDirty(CloudSyncScope.PROFILES, profile.id, "update profile")
         pushProfilesStateToCloud()
     }
 
@@ -122,6 +125,7 @@ class ProfileRepository @Inject constructor(
                 prefs.remove(ACTIVE_PROFILE_KEY)
             }
         }
+        invalidationBus.markDirty(CloudSyncScope.PROFILES, profileId, "delete profile")
         pushProfilesStateToCloud()
     }
 
@@ -140,6 +144,7 @@ class ProfileRepository @Inject constructor(
                 prefs[PROFILES_KEY] = encodeProfiles(currentList)
             }
         }
+        invalidationBus.markDirty(CloudSyncScope.PROFILES, profileId, "set active profile")
         pushProfilesStateToCloud()
     }
 
@@ -150,6 +155,7 @@ class ProfileRepository @Inject constructor(
         context.profilesDataStore.edit { prefs ->
             prefs.remove(ACTIVE_PROFILE_KEY)
         }
+        invalidationBus.markDirty(CloudSyncScope.PROFILES, reason = "clear active profile")
         pushProfilesStateToCloud()
     }
 
@@ -167,7 +173,9 @@ class ProfileRepository @Inject constructor(
                 prefs.remove(ACTIVE_PROFILE_KEY)
             }
         }
-        pushProfilesStateToCloud()
+        if (!invalidationBus.isApplyingRemoteState) {
+            pushProfilesStateToCloud()
+        }
     }
 
     private suspend fun pushProfilesStateToCloud() {

@@ -60,6 +60,7 @@ import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.ProfileColors
 import com.arflix.tv.ui.components.AvatarIcon
 import com.arflix.tv.ui.components.AvatarRegistry
+import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.theme.BackgroundGradientCenter
 import com.arflix.tv.ui.theme.BackgroundGradientEnd
 import com.arflix.tv.ui.theme.BackgroundGradientStart
@@ -338,6 +339,14 @@ fun ProfileSelectionScreen(
                 onDismiss = { viewModel.hideEditDialog() }
             )
         }
+
+        // Toast Notification
+        Toast(
+            message = uiState.toastMessage ?: "",
+            type = uiState.toastType,
+            isVisible = uiState.showToast,
+            onDismiss = { viewModel.dismissToast() }
+        )
     }
 }
 

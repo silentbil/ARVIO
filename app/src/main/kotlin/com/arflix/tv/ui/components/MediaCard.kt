@@ -45,9 +45,6 @@ import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 
 /**
@@ -59,14 +56,10 @@ import androidx.compose.ui.zIndex
  * - Uses `ArvioSkin` for consistent styling
  */
 
-// Shared gradient overlay for all cards - avoids per-card Brush allocation.
-// Uses pre-computed ARGB values for BackgroundDark (0x0D0D14).
-private val sharedCardOverlayBrush = Brush.verticalGradient(
+private val missingArtworkBrush = Brush.linearGradient(
     colors = listOf(
-        Color.Transparent,
-        Color.Transparent,
-        Color(0x66_0D0D14),  // ~40% alpha
-        Color(0xB3_0D0D14),  // ~70% alpha
+        Color(0xFF1F2333),
+        Color(0xFF0D0D14)
     )
 )
 
@@ -81,6 +74,10 @@ fun MediaCard(
     // that swaps in when the card is focused, so the row stays static
     // when idle and only the hovered tile animates.
     focusImageUrl: String? = null,
+    enableFocusedImageSwap: Boolean = true,
+    animateFocus: Boolean = true,
+    showLogoImage: Boolean = true,
+    raiseOnFocus: Boolean = true,
     showProgress: Boolean = false,
     showTitle: Boolean = true,
     titleMaxLines: Int = 1,
@@ -131,7 +128,7 @@ fun MediaCard(
     } else null
     val showCollectionTitleOverlay = isCollectionTile && showTitle
     val isGenreCollectionTile = item.collectionGroup == CollectionGroupKind.GENRE
-    val rawImageUrl = if (visualFocused) {
+    val rawImageUrl = if (visualFocused && enableFocusedImageSwap) {
         explicitFocusUrl ?: collectionFocusUrl ?: baseImageUrl
     } else {
         baseImageUrl
@@ -139,7 +136,7 @@ fun MediaCard(
     val shape = rememberArvioCardShape(ArvioSkin.radius.md)
 
     val showFocusOutline = visualFocused
-    val jumpBorderWidth = if (showFocusOutline) 3.dp else 0.dp
+    val jumpBorderWidth = if (showFocusOutline) 2.5.dp else 0.dp
 
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -157,14 +154,15 @@ fun MediaCard(
             .build()
     }
     // Performance: Removed context/density from keys
-    val logoRequest = remember(logoImageUrl) {
+    val effectiveLogoImageUrl = logoImageUrl.takeIf { showLogoImage }
+    val logoRequest = remember(effectiveLogoImageUrl) {
         val logoWidthPx = with(density) { 220.dp.roundToPx() }.coerceAtLeast(1)
         val logoHeightPx = with(density) { 64.dp.roundToPx() }.coerceAtLeast(1)
-        if (logoImageUrl.isNullOrBlank()) {
+        if (effectiveLogoImageUrl.isNullOrBlank()) {
             null
         } else {
             ImageRequest.Builder(context)
-                .data(logoImageUrl)
+                .data(effectiveLogoImageUrl)
                 .size(logoWidthPx, logoHeightPx)
                 .precision(Precision.INEXACT)
                 .allowHardware(true)
@@ -176,7 +174,7 @@ fun MediaCard(
     Column(
         modifier = modifier
             .width(width)
-            .zIndex(if (visualFocused) 1f else 0f)
+            .zIndex(if (visualFocused && raiseOnFocus) 1f else 0f)
     ) {
         ArvioFocusableSurface(
             modifier = Modifier
@@ -186,9 +184,10 @@ fun MediaCard(
             backgroundColor = ArvioSkin.colors.surface,
             outlineColor = ArvioSkin.colors.focusOutline,
             outlineWidth = jumpBorderWidth,
-            focusedScale = 1.05f,
+            focusedScale = 1.045f,
             pressedScale = 0.97f,
             focusedTransformOriginX = 0.5f,
+            animateFocus = animateFocus,
             enableSystemFocus = enableSystemFocus,
             isFocusedOverride = isFocusedOverride,
             onClick = onClick,
@@ -217,14 +216,7 @@ fun MediaCard(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        Color(0xFF1F2333),
-                                        Color(0xFF0D0D14)
-                                    )
-                                )
-                            ),
+                            .background(missingArtworkBrush),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -299,7 +291,11 @@ fun MediaCard(
                 // Collection tiles already embed their own branding, so they
                 // stay logo-free in both layouts.
                 if (logoRequest != null && isLandscape && !isCollectionTile) {
-                    Box(
+                    AsyncImage(
+                        model = logoRequest,
+                        contentDescription = "${item.title} logo",
+                        contentScale = ContentScale.Fit,
+                        alignment = if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter,
                         modifier = Modifier
                             .align(if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter)
                             .fillMaxWidth(if (isLandscape) 0.52f else 0.74f)
@@ -309,29 +305,7 @@ fun MediaCard(
                                 end = if (isLandscape) 0.dp else 8.dp,
                                 bottom = if (isLandscape) 18.dp else 12.dp
                             )
-                    ) {
-                        AsyncImage(
-                            model = logoRequest,
-                            contentDescription = null,
-                            contentScale = ContentScale.Fit,
-                            alignment = if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter,
-                            colorFilter = ColorFilter.tint(Color.White, BlendMode.SrcIn),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    alpha = 0.55f
-                                    translationX = 1.dp.toPx()
-                                    translationY = 1.dp.toPx()
-                                }
-                        )
-                        AsyncImage(
-                            model = logoRequest,
-                            contentDescription = "${item.title} logo",
-                            contentScale = ContentScale.Fit,
-                            alignment = if (isLandscape) Alignment.BottomStart else Alignment.BottomCenter,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+                    )
                 }
 
                 // Subtle green watched badge

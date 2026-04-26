@@ -85,6 +85,18 @@ class TraktSyncService @Inject constructor(
         return "profile:${profileManager.getProfileIdSync()}:$base"
     }
 
+    private fun activeProfileId(): String {
+        return profileManager.getProfileIdSync().ifBlank { "default" }
+    }
+
+    private fun recordBelongsToActiveProfile(profileId: String?): Boolean {
+        return if (!profileId.isNullOrBlank()) {
+            profileId == activeProfileId()
+        } else {
+            profileManager.isDefaultProfile()
+        }
+    }
+
     /**
      * Perform a full sync from Trakt to Supabase
      * This imports ALL watched movies and episodes, overwriting existing data
@@ -471,6 +483,7 @@ class TraktSyncService @Inject constructor(
             if (hasSupabase) {
                 val record = WatchedMovieRecord(
                     userId = userId ?: "local",
+                    profileId = activeProfileId(),
                     tmdbId = tmdbId,
                     traktId = traktId,
                     watchedAt = now
@@ -511,6 +524,7 @@ class TraktSyncService @Inject constructor(
                         supabaseApi.deleteWatchHistory(
                             auth = auth,
                             userId = "eq.$userId",
+                            profileId = "eq.${activeProfileId()}",
                             showTmdbId = "eq.$tmdbId",
                             mediaType = "eq.movie"
                         )
@@ -547,16 +561,21 @@ class TraktSyncService @Inject constructor(
             //    handle token refresh so expired sessions don't silently skip writes.
             if (userId != null) {
                 try {
+                    val now = Instant.now().toString()
                     executeSupabaseCall("mark episode watched") { auth ->
-                        supabaseApi.markEpisodeWatchedRpc(
+                        supabaseApi.markEpisodeWatched(
                             auth,
-                            params = MarkEpisodeWatchedParams(
+                            record = WatchedEpisodeRecord(
                                 userId = userId,
-                                tmdbId = showTmdbId,
+                                profileId = activeProfileId(),
+                                showTmdbId = showTmdbId,
                                 season = season,
                                 episode = episode,
                                 showTraktId = showTraktId,
-                                source = "arvio"
+                                watched = true,
+                                watchedAt = now,
+                                source = "arvio",
+                                updatedAt = now
                             )
                         )
                     }
@@ -610,6 +629,7 @@ class TraktSyncService @Inject constructor(
                         supabaseApi.deleteWatchHistory(
                             auth = auth,
                             userId = "eq.$userId",
+                            profileId = "eq.${activeProfileId()}",
                             showTmdbId = "eq.$showTmdbId",
                             mediaType = "eq.tv",
                             season = "eq.$season",
@@ -640,7 +660,12 @@ class TraktSyncService @Inject constructor(
             // 1. Delete from Supabase
             if (hasSupabase) {
                 executeSupabaseCall("delete watched movie") { auth ->
-                    supabaseApi.deleteWatchedMovie(auth, userId = "eq.$userId", tmdbId = "eq.$tmdbId")
+                    supabaseApi.deleteWatchedMovie(
+                        auth,
+                        userId = "eq.$userId",
+                        profileId = "eq.${activeProfileId()}",
+                        tmdbId = "eq.$tmdbId"
+                    )
                 }
             }
 
@@ -673,6 +698,7 @@ class TraktSyncService @Inject constructor(
                     supabaseApi.deleteWatchedEpisode(
                         auth,
                         userId = "eq.$userId",
+                        profileId = "eq.${activeProfileId()}",
                         tmdbId = "eq.$showTmdbId",
                         season = "eq.$season",
                         episode = "eq.$episode"
@@ -731,6 +757,7 @@ class TraktSyncService @Inject constructor(
 
             val record = WatchHistoryRecord(
                 userId = userId,
+                profileId = activeProfileId(),
                 mediaType = mediaType,
                 showTmdbId = tmdbId,
                 showTraktId = showTraktId,
@@ -767,7 +794,11 @@ class TraktSyncService @Inject constructor(
             val userId = getUserId()
             val hasSupabase = userId != null && getSupabaseAuth() != null
             if (!hasSupabase) {
-                return@withContext cachedWatchedMovies?.map { it.tmdbId }?.toSet() ?: emptySet()
+                return@withContext cachedWatchedMovies
+                    ?.filter { recordBelongsToActiveProfile(it.profileId) }
+                    ?.map { it.tmdbId }
+                    ?.toSet()
+                    ?: emptySet()
             }
 
             // Paginate to get ALL watched movies (PostgREST default limit is 1000)
@@ -776,16 +807,26 @@ class TraktSyncService @Inject constructor(
             var offset = 0
             while (true) {
                 val page = executeSupabaseCall("get watched movies page $offset") { auth ->
-                    supabaseApi.getWatchedMovies(auth, userId = "eq.$userId", offset = offset, limit = pageSize)
+                    supabaseApi.getWatchedMovies(
+                        auth,
+                        userId = "eq.$userId",
+                        profileId = "eq.${activeProfileId()}",
+                        offset = offset,
+                        limit = pageSize
+                    )
                 }
                 allRecords.addAll(page)
                 if (page.size < pageSize) break // Last page
                 offset += pageSize
             }
             if (allRecords.isEmpty() && cachedWatchedMovies != null) {
-                return@withContext cachedWatchedMovies?.map { it.tmdbId }?.toSet() ?: emptySet()
+                return@withContext cachedWatchedMovies
+                    ?.filter { recordBelongsToActiveProfile(it.profileId) }
+                    ?.map { it.tmdbId }
+                    ?.toSet()
+                    ?: emptySet()
             }
-            allRecords.map { it.tmdbId }.toSet()
+            allRecords.filter { recordBelongsToActiveProfile(it.profileId) }.map { it.tmdbId }.toSet()
         } catch (e: Exception) {
             emptySet()
         }
@@ -803,7 +844,7 @@ class TraktSyncService @Inject constructor(
             if (!hasSupabase) {
                 val cached = cachedWatchedEpisodes ?: return@withContext emptySet()
                 val keys = mutableSetOf<String>()
-                cached.forEach { record ->
+                cached.filter { recordBelongsToActiveProfile(it.profileId) }.forEach { record ->
                     val season = record.season
                     val episode = record.episode
                     if (season == null || episode == null) return@forEach
@@ -820,7 +861,13 @@ class TraktSyncService @Inject constructor(
             var offset = 0
             while (true) {
                 val page = executeSupabaseCall("get watched episodes page $offset") { auth ->
-                    supabaseApi.getWatchedEpisodes(auth, userId = "eq.$userId", offset = offset, limit = pageSize)
+                    supabaseApi.getWatchedEpisodes(
+                        auth,
+                        userId = "eq.$userId",
+                        profileId = "eq.${activeProfileId()}",
+                        offset = offset,
+                        limit = pageSize
+                    )
                 }
                 allRecords.addAll(page)
                 if (page.size < pageSize) break // Last page
@@ -828,7 +875,7 @@ class TraktSyncService @Inject constructor(
             }
 
             val keys = mutableSetOf<String>()
-            allRecords.forEach { record ->
+            allRecords.filter { recordBelongsToActiveProfile(it.profileId) }.forEach { record ->
                 val season = record.season
                 val episode = record.episode
                 if (season == null || episode == null) return@forEach
@@ -839,7 +886,7 @@ class TraktSyncService @Inject constructor(
             }
             if (keys.isEmpty() && cachedWatchedEpisodes != null) {
                 val cachedKeys = mutableSetOf<String>()
-                cachedWatchedEpisodes?.forEach { record ->
+                cachedWatchedEpisodes?.filter { recordBelongsToActiveProfile(it.profileId) }?.forEach { record ->
                     val season = record.season
                     val episode = record.episode
                     if (season == null || episode == null) return@forEach
@@ -865,7 +912,12 @@ class TraktSyncService @Inject constructor(
             if (!hasSupabase) return@withContext emptySet()
 
             val records = executeSupabaseCall("get watched episodes for show $showTmdbId") { auth ->
-                supabaseApi.getWatchedEpisodesForShow(auth, userId = "eq.$userId", tmdbId = "eq.$showTmdbId")
+                supabaseApi.getWatchedEpisodesForShow(
+                    auth,
+                    userId = "eq.$userId",
+                    profileId = "eq.${activeProfileId()}",
+                    tmdbId = "eq.$showTmdbId"
+                )
             }
             val keys = mutableSetOf<String>()
             records.forEach { record ->
@@ -887,14 +939,18 @@ class TraktSyncService @Inject constructor(
     suspend fun getWatchedEpisodesDetailed(): List<WatchedEpisodeRecord> = withContext(Dispatchers.IO) {
         // Use in-memory cache if available (populated by sync)
         cachedWatchedEpisodes?.let {
-             return@withContext it
+             return@withContext it.filter { record -> recordBelongsToActiveProfile(record.profileId) }
         }
 
         try {
             val userId = getUserId() ?: return@withContext emptyList()
             if (getSupabaseAuth() == null) return@withContext emptyList()
             executeSupabaseCall("get watched episodes detailed") { auth ->
-                supabaseApi.getWatchedEpisodes(auth, userId = "eq.$userId")
+                supabaseApi.getWatchedEpisodes(
+                    auth,
+                    userId = "eq.$userId",
+                    profileId = "eq.${activeProfileId()}"
+                )
             }
         } catch (e: Exception) {
             emptyList()
@@ -914,6 +970,7 @@ class TraktSyncService @Inject constructor(
                 supabaseApi.getWatchHistory(
                     auth,
                     userId = "eq.$userId",
+                    profileId = "eq.${activeProfileId()}",
                     order = "updated_at.desc",
                     limit = 500
                 )
@@ -1100,6 +1157,7 @@ class TraktSyncService @Inject constructor(
             if (existing == null || isAfter(watchedAt, existing.watchedAt)) {
                 byTmdbId[tmdbId] = WatchedMovieRecord(
                     userId = userId,
+                    profileId = activeProfileId(),
                     tmdbId = tmdbId,
                     traktId = movie.ids.trakt,
                     watchedAt = watchedAt
@@ -1127,6 +1185,7 @@ class TraktSyncService @Inject constructor(
             if (existing == null || isAfter(watchedAt, existing.watchedAt)) {
                 byTmdbId[tmdbId] = WatchedMovieRecord(
                     userId = userId,
+                    profileId = activeProfileId(),
                     tmdbId = tmdbId,
                     traktId = movie.ids.trakt,
                     watchedAt = watchedAt
@@ -1174,6 +1233,7 @@ class TraktSyncService @Inject constructor(
                     if (existing == null || isAfter(watchedAt, existing.watchedAt)) {
                         byKey[key] = WatchedEpisodeRecord(
                             userId = userId,
+                            profileId = activeProfileId(),
                             showTmdbId = showTmdbId,
                             season = season.number,
                             episode = episode.number,
@@ -1226,6 +1286,7 @@ class TraktSyncService @Inject constructor(
                 if (existing == null || isAfter(watchedAt, existing.watchedAt)) {
                     byKey[key] = WatchedEpisodeRecord(
                         userId = userId,
+                        profileId = activeProfileId(),
                         showTmdbId = showTmdbId,
                         season = seasonNumber,
                         episode = episodeNumber,
@@ -1335,6 +1396,7 @@ class TraktSyncService @Inject constructor(
             if (existing == null || isAfter(watchedAt, existing.watchedAt)) {
                 byKey[key] = WatchedEpisodeRecord(
                     userId = userId,
+                    profileId = activeProfileId(),
                     showTmdbId = showTmdbId,
                     season = episode.season,
                     episode = episode.number,
@@ -1373,6 +1435,7 @@ class TraktSyncService @Inject constructor(
                     records.add(
                         WatchHistoryRecord(
                             userId = userId,
+                            profileId = activeProfileId(),
                             mediaType = "movie",
                             showTmdbId = tmdbId,
                             progress = progress,
@@ -1393,6 +1456,7 @@ class TraktSyncService @Inject constructor(
                     records.add(
                         WatchHistoryRecord(
                             userId = userId,
+                            profileId = activeProfileId(),
                             mediaType = "tv",
                             showTmdbId = showTmdbId,
                             showTraktId = item.show?.ids?.trakt,

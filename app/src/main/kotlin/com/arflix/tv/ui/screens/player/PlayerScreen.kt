@@ -319,7 +319,7 @@ fun PlayerScreen(
     var midPlaybackRecoveryAttempts by remember { mutableIntStateOf(0) }
     var blackVideoRecoveryStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
     var blackVideoReadySinceMs by remember { mutableStateOf<Long?>(null) }
-    val heavyStartupMaxRetries = 6
+    val heavyStartupMaxRetries = 1
     var rebufferRecoverAttempted by remember { mutableStateOf(false) }
     var longRebufferCount by remember { mutableIntStateOf(0) }
     var autoAdvanceAttempts by remember { mutableIntStateOf(0) }
@@ -416,9 +416,9 @@ fun PlayerScreen(
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
             .dns(OkHttpProvider.dns)
-            .connectTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(180, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
             .build()
     }
     val httpDataSourceFactory = remember(playbackHttpClient) {
@@ -460,10 +460,10 @@ fun PlayerScreen(
     val exoPlayer = remember {
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15_000,    // minBufferMs — 15s safety net
-                50_000,    // maxBufferMs — 50s max lookahead
-                500,       // bufferForPlaybackMs — stable start
-                2_500      // bufferForPlaybackAfterRebufferMs — stable resume
+                12_000,    // minBufferMs
+                45_000,    // maxBufferMs
+                500,       // bufferForPlaybackMs
+                2_000      // bufferForPlaybackAfterRebufferMs
             )
             .setTargetBufferBytes(80 * 1024 * 1024)   // 80 MB hard cap
             .setPrioritizeTimeOverSizeThresholds(false) // byte cap is authoritative
@@ -1210,10 +1210,15 @@ fun PlayerScreen(
                         }
                     }
                 }
-                val hardTimeoutMs = (initialBufferingTimeoutMs + if (isHeavyStartupSource) 45_000L else 20_000L)
-                    .coerceAtMost(180_000L)
+                val hardTimeoutMs = (initialBufferingTimeoutMs + if (isHeavyStartupSource) 12_000L else 8_000L)
+                    .coerceAtMost(45_000L)
                 if (!startupHardFailureReported && startupBufferDuration > hardTimeoutMs) {
-                    if (!startupSameSourceRefreshAttempted) {
+                    if (allowStartupSourceFallback &&
+                        !userSelectedSourceManually &&
+                        tryAdvanceToNextStream()
+                    ) {
+                        // auto advanced to a fallback stream
+                    } else if (!startupSameSourceRefreshAttempted) {
                         startupSameSourceRefreshAttempted = true
                         uiState.selectedStream?.let { viewModel.selectStream(it) }
                     } else {
@@ -1368,6 +1373,15 @@ fun PlayerScreen(
                 )
             }
             runCatching { exoPlayer.release() }
+            // Restore the system stream volume if the player left it at zero.
+            // setStreamVolume(STREAM_MUSIC, 0) silences HDMI ARC, optical, and
+            // Bluetooth receivers globally — not just this app — so we must undo
+            // it when leaving the player, regardless of whether the user muted
+            // intentionally or accidentally scrolled the volume down.
+            if (isMuted || currentVolume == 0) {
+                val restoreLevel = volumeBeforeMute.coerceAtLeast(1)
+                runCatching { audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, restoreLevel, 0) }
+            }
         }
     }
 
@@ -3126,7 +3140,7 @@ private fun SubtitleMenu(
                                 )
                             }
 
-                            itemsIndexed(subtitles) { index, subtitle ->
+                            itemsIndexed(subtitles, key = { _, subtitle -> subtitle.id }) { index, subtitle ->
                                 // Use actual track label as main text, full language name as secondary
                                 val trackLabel = subtitle.label.ifBlank { subtitle.lang }
                                 val languageInfo = getFullLanguageName(subtitle.lang)
@@ -3161,7 +3175,7 @@ private fun SubtitleMenu(
                                     )
                                 }
                             } else {
-                                itemsIndexed(audioTracks) { index, track ->
+                                itemsIndexed(audioTracks, key = { _, track -> audioTrackKey(track) }) { index, track ->
                                     // Use track label if available, otherwise full language name
                                     val languageName = getFullLanguageName(track.language)
                                     val trackLabel = track.label?.takeIf { it.isNotBlank() } ?: languageName
@@ -3344,7 +3358,7 @@ private fun SubtitleMenu(
                             )
                         }
 
-                        itemsIndexed(subtitles) { index, sub ->
+                        itemsIndexed(subtitles, key = { _, sub -> sub.id }) { index, sub ->
                             val trackLabel = sub.label.ifBlank { sub.lang }
                             val languageInfo = getFullLanguageName(sub.lang)
                             val description = if (trackLabel.lowercase() != languageInfo.lowercase() &&
@@ -3380,7 +3394,7 @@ private fun SubtitleMenu(
                                 )
                             }
                         } else {
-                            itemsIndexed(audioTracks) { index, track ->
+                            itemsIndexed(audioTracks, key = { _, track -> audioTrackKey(track) }) { index, track ->
                                 val languageName = getFullLanguageName(track.language)
                                 val trackLabel = track.label?.takeIf { it.isNotBlank() } ?: languageName
                                 val codecInfo = detectAudioCodecLabel(track.codec, trackLabel)
@@ -3630,6 +3644,19 @@ private fun subtitleTrackId(subtitle: Subtitle): String {
     return "ext_$stableHash"
 }
 
+private fun audioTrackKey(track: AudioTrackInfo): String {
+    return listOf(
+        track.index,
+        track.groupIndex,
+        track.trackIndex,
+        track.language.orEmpty(),
+        track.label.orEmpty(),
+        track.channelCount,
+        track.sampleRate,
+        track.codec.orEmpty(),
+    ).joinToString(separator = "|")
+}
+
 private fun buildExternalSubtitleConfigurations(subtitles: List<Subtitle>): List<MediaItem.SubtitleConfiguration> {
     return subtitles
         .asSequence()
@@ -3673,7 +3700,7 @@ private fun estimateInitialStartupTimeoutMs(
     stream: StreamSource?,
     isManualSelection: Boolean
 ): Long {
-    var timeoutMs = if (isManualSelection) 40_000L else 18_000L
+    var timeoutMs = if (isManualSelection) 25_000L else 10_000L
     if (stream == null) return timeoutMs
 
     val haystack = buildString {
@@ -3691,22 +3718,22 @@ private fun estimateInitialStartupTimeoutMs(
     val sizeBytes = parseSizeToBytes(stream.size)
 
     if (haystack.contains("4k") || haystack.contains("2160")) {
-        timeoutMs = timeoutMs.coerceAtLeast(70_000L)
+        timeoutMs = timeoutMs.coerceAtLeast(18_000L)
     }
     if (haystack.contains("remux") || haystack.contains("dolby vision") || haystack.contains(" dovi")) {
-        timeoutMs = timeoutMs.coerceAtLeast(80_000L)
+        timeoutMs = timeoutMs.coerceAtLeast(22_000L)
     }
 
     timeoutMs = when {
-        sizeBytes >= 60L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(180_000L)
-        sizeBytes >= 40L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(150_000L)
-        sizeBytes >= 30L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(120_000L)
-        sizeBytes >= 20L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(90_000L)
-        sizeBytes >= 10L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(60_000L)
+        sizeBytes >= 60L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(30_000L)
+        sizeBytes >= 40L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(25_000L)
+        sizeBytes >= 30L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(22_000L)
+        sizeBytes >= 20L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(18_000L)
+        sizeBytes >= 10L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(14_000L)
         else -> timeoutMs
     }
 
-    return timeoutMs.coerceAtMost(200_000L)
+    return timeoutMs.coerceAtMost(if (isManualSelection) 35_000L else 30_000L)
 }
 
 private fun playbackErrorMessageFor(

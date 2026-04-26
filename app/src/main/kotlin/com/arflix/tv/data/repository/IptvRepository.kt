@@ -110,14 +110,23 @@ data class IptvCloudProfileState(
     val favoriteChannels: List<String> = emptyList(),
     val hiddenGroups: List<String> = emptyList(),
     val groupOrder: List<String> = emptyList(),
-    val playlists: List<IptvPlaylistEntry> = emptyList()
+    val playlists: List<IptvPlaylistEntry> = emptyList(),
+    val tvSession: IptvTvSessionState = IptvTvSessionState()
+)
+
+data class IptvTvSessionState(
+    val lastChannelId: String = "",
+    val lastGroupName: String = "",
+    val lastFocusedZone: String = "GUIDE",
+    val lastOpenedAt: Long = 0L
 )
 
 @Singleton
 class IptvRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val okHttpClient: OkHttpClient,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
     private val loadMutex = Mutex()
@@ -140,6 +149,8 @@ class IptvRepository @Inject constructor(
 
     @Volatile
     private var cachedEpgAt: Long = 0L
+    @Volatile
+    private var lastEpgCachePersistAt: Long = 0L
 
     @Volatile
     private var preferredDerivedEpgUrl: String? = null
@@ -196,12 +207,13 @@ class IptvRepository @Inject constructor(
     private val playlistCacheMs = staleAfterMs
     private val epgCacheMs = staleAfterMs
     private val epgEmptyRetryMs = 30_000L
-    private val epgUpcomingProgramLimit = 8
+    private val epgUpcomingProgramLimit = 14
     private val epgRecentProgramLimit = 2
     private val xtreamShortEpgLimit = 8
     private val startupShortEpgChannelLimit = 1200
-    private val generalShortEpgChannelLimit = 4000
-    private val cacheUpcomingProgramLimit = 4
+    private val xtreamShortEpgBatchSize = 512
+    private val xtreamShortEpgConcurrency = 32
+    private val cacheUpcomingProgramLimit = 8
     private val cacheRecentProgramLimit = 1
     private val xtreamVodCacheMs = 6 * 60 * 60_000L
     private val iptvHttpClient: OkHttpClient by lazy {
@@ -225,12 +237,13 @@ class IptvRepository @Inject constructor(
             .build()
     }
     private val iptvCatalogHttpClient: OkHttpClient by lazy {
-        // IPTV catalog/bootstrap calls should fail far sooner than full XMLTV downloads.
+        // Live catalog payloads can be very large (50k+ streams), so keep them
+        // below XMLTV timeouts but long enough to finish on TV WiFi.
         okHttpClient.newBuilder()
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(8, TimeUnit.SECONDS)
-            .callTimeout(40, TimeUnit.SECONDS)
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .writeTimeout(12, TimeUnit.SECONDS)
+            .callTimeout(120, TimeUnit.SECONDS)
             .build()
     }
 
@@ -274,6 +287,28 @@ class IptvRepository @Inject constructor(
             decodeGroupOrder(prefs)
         }
 
+    fun observeTvSessionState(): Flow<IptvTvSessionState> =
+        profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
+            decodeTvSessionState(prefs)
+        }
+
+    suspend fun saveTvSessionState(state: IptvTvSessionState) {
+        context.settingsDataStore.edit { prefs ->
+            if (state == IptvTvSessionState()) {
+                prefs.remove(tvSessionKey())
+            } else {
+                prefs[tvSessionKey()] = gson.toJson(
+                    state.copy(
+                        lastChannelId = state.lastChannelId.trim(),
+                        lastGroupName = state.lastGroupName.trim(),
+                        lastFocusedZone = state.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                    )
+                )
+            }
+        }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save tv session")
+    }
+
     suspend fun saveConfig(m3uUrl: String, epgUrl: String) {
         val normalizedM3u = normalizeIptvInput(m3uUrl)
         val normalizedEpg = normalizeEpgInput(epgUrl)
@@ -286,6 +321,7 @@ class IptvRepository @Inject constructor(
             prefs[playlistsKey()] = gson.toJson(primary)
         }
         invalidateCache()
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save iptv config")
     }
 
     suspend fun savePlaylists(playlists: List<IptvPlaylistEntry>) {
@@ -306,6 +342,7 @@ class IptvRepository @Inject constructor(
             prefs[epgUrlKey()] = encryptConfigValue(primary?.epgUrl.orEmpty())
         }
         invalidateCache()
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save iptv playlists")
     }
 
     suspend fun saveStalkerConfig(portalUrl: String, macAddress: String) {
@@ -318,6 +355,7 @@ class IptvRepository @Inject constructor(
             prefs[stalkerMacAddressKey()] = normalizedMac
         }
         invalidateCache()
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save stalker config")
     }
 
     /**
@@ -552,9 +590,13 @@ class IptvRepository @Inject constructor(
             prefs.remove(playlistsKey())
             prefs.remove(favoriteGroupsKey())
             prefs.remove(favoriteChannelsKey())
+            prefs.remove(hiddenGroupsKey())
+            prefs.remove(groupOrderKey())
+            prefs.remove(tvSessionKey())
         }
         invalidateCache()
         runCatching { cacheFile().delete() }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "clear iptv config")
     }
 
     suspend fun importCloudConfig(
@@ -598,6 +640,7 @@ class IptvRepository @Inject constructor(
             }
         }
         invalidateCache()
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "import iptv config")
     }
 
     suspend fun toggleFavoriteGroup(groupName: String) {
@@ -613,6 +656,7 @@ class IptvRepository @Inject constructor(
             }
             prefs[favoriteGroupsKey()] = gson.toJson(existing)
         }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "toggle favorite group")
     }
 
     suspend fun toggleHiddenGroup(groupName: String) {
@@ -627,6 +671,7 @@ class IptvRepository @Inject constructor(
             }
             prefs[hiddenGroupsKey()] = gson.toJson(existing)
         }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "toggle hidden group")
     }
 
     suspend fun moveGroupUp(groupName: String, currentGroups: List<String> = emptyList()) {
@@ -638,6 +683,7 @@ class IptvRepository @Inject constructor(
             if (idx > 0) { order.removeAt(idx); order.add(idx - 1, groupName) }
             prefs[groupOrderKey()] = gson.toJson(order)
         }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group up")
     }
 
     suspend fun moveGroupDown(groupName: String, currentGroups: List<String> = emptyList()) {
@@ -649,6 +695,7 @@ class IptvRepository @Inject constructor(
             if (idx >= 0 && idx < order.size - 1) { order.removeAt(idx); order.add(idx + 1, groupName) }
             prefs[groupOrderKey()] = gson.toJson(order)
         }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group down")
     }
 
     suspend fun toggleFavoriteChannel(channelId: String) {
@@ -664,6 +711,7 @@ class IptvRepository @Inject constructor(
             }
             prefs[favoriteChannelsKey()] = gson.toJson(existing)
         }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "toggle favorite channel")
     }
 
     suspend fun loadSnapshot(
@@ -987,7 +1035,6 @@ class IptvRepository @Inject constructor(
                 cachedNowNext = ConcurrentHashMap(cached.nowNext)
                 cachedPlaylistAt = cached.loadedAtEpochMs
                 cachedEpgAt = cached.loadedAtEpochMs
-                reDeriveCachedNowNext(cached.channels.asSequence().map { it.id }.toSet())
             }
         }
     }
@@ -1021,7 +1068,6 @@ class IptvRepository @Inject constructor(
                     cachedNowNext = ConcurrentHashMap(cached.nowNext)
                     cachedPlaylistAt = cached.loadedAtEpochMs
                     cachedEpgAt = cached.loadedAtEpochMs
-                    reDeriveCachedNowNext(cached.channels.asSequence().map { it.id }.toSet())
                 }
 
                 val favoriteGroups = observeFavoriteGroups().first()
@@ -1029,12 +1075,10 @@ class IptvRepository @Inject constructor(
                 val grouped = cachedGroupedChannels
                 val loadedAtMillis = if (cachedPlaylistAt > 0L) cachedPlaylistAt else System.currentTimeMillis()
 
-                val nowNext = reDeriveCachedNowNext(cachedChannels.asSequence().map { it.id }.toSet()) ?: cachedNowNext
-
                 IptvSnapshot(
                     channels = cachedChannels,
                     grouped = grouped,
-                    nowNext = nowNext,
+                    nowNext = cachedNowNext,
                     favoriteGroups = favoriteGroups,
                     favoriteChannels = favoriteChannels,
                     epgWarning = null,
@@ -1068,11 +1112,10 @@ class IptvRepository @Inject constructor(
         val favoriteChannels = observeFavoriteChannels().first()
         val grouped = cachedGroupedChannels
         val loadedAtMillis = if (cachedPlaylistAt > 0L) cachedPlaylistAt else System.currentTimeMillis()
-        val nowNext = reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()) ?: cachedNowNext
         return IptvSnapshot(
             channels = channels,
             grouped = grouped,
-            nowNext = nowNext,
+            nowNext = cachedNowNext,
             favoriteGroups = favoriteGroups,
             favoriteChannels = favoriteChannels,
             epgWarning = null,
@@ -1181,7 +1224,11 @@ class IptvRepository @Inject constructor(
 
             val streamIds = xtreamChannels.mapNotNull { resolveXtreamStreamId(it) }
             var errors = 0
-            val allListings = fetchXtreamEpgListingsAsync(creds, streamIds) { _, hadError ->
+            val allListings = fetchXtreamEpgListingsAsync(
+                creds = creds,
+                streamIds = streamIds,
+                timeoutMillis = xtreamShortEpgTimeout(streamIds.size)
+            ) { _, hadError ->
                 if (hadError) errors++
             }
             System.err.println("[EPG-Refresh] Done: ${allListings.size} listings, $errors errors")
@@ -1194,7 +1241,10 @@ class IptvRepository @Inject constructor(
             // Merge into cache (in-place, no copy)
             cachedNowNext.putAll(freshNowNext)
             cachedEpgAt = System.currentTimeMillis()
-            persistCurrentCacheSnapshot(config, cachedEpgAt)
+            if (cachedEpgAt - lastEpgCachePersistAt > 30_000L) {
+                lastEpgCachePersistAt = cachedEpgAt
+                persistCurrentCacheSnapshot(config, cachedEpgAt)
+            }
 
             System.err.println("[EPG-Refresh] Updated ${freshNowNext.size} channels in cache")
             freshNowNext
@@ -1365,6 +1415,9 @@ class IptvRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "iptv_group_order")
     private fun playlistsKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_playlists_json")
+    private fun tvSessionKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_tv_session")
+    private fun tvSessionKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_tv_session")
 
     private fun decodeHiddenGroups(prefs: Preferences): List<String> {
         val raw = prefs[hiddenGroupsKey()].orEmpty()
@@ -1397,6 +1450,22 @@ class IptvRepository @Inject constructor(
         }.getOrDefault(emptyList())
     }
 
+    private fun decodeTvSessionState(prefs: Preferences): IptvTvSessionState =
+        decodeTvSessionState(prefs[tvSessionKey()].orEmpty())
+
+    private fun decodeTvSessionState(raw: String): IptvTvSessionState {
+        if (raw.isBlank()) return IptvTvSessionState()
+        return runCatching {
+            gson.fromJson(raw, IptvTvSessionState::class.java)?.let { session ->
+                session.copy(
+                    lastChannelId = session.lastChannelId.trim(),
+                    lastGroupName = session.lastGroupName.trim(),
+                    lastFocusedZone = session.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                )
+            } ?: IptvTvSessionState()
+        }.getOrDefault(IptvTvSessionState())
+    }
+
     private fun decodeFavoriteGroups(raw: String): List<String> {
         if (raw.isBlank()) return emptyList()
         return runCatching {
@@ -1427,6 +1496,7 @@ class IptvRepository @Inject constructor(
         val hiddenRaw = prefs[hiddenGroupsKeyFor(safeProfileId)].orEmpty()
         val orderRaw = prefs[groupOrderKeyFor(safeProfileId)].orEmpty()
         val playlistsRaw = prefs[playlistsKeyFor(safeProfileId)].orEmpty()
+        val tvSessionRaw = prefs[tvSessionKeyFor(safeProfileId)].orEmpty()
         return IptvCloudProfileState(
             m3uUrl = decryptConfigValue(prefs[m3uUrlKeyFor(safeProfileId)].orEmpty()),
             epgUrl = decryptConfigValue(prefs[epgUrlKeyFor(safeProfileId)].orEmpty()),
@@ -1449,7 +1519,8 @@ class IptvRepository @Inject constructor(
                     val type = object : TypeToken<List<IptvPlaylistEntry>>() {}.type
                     gson.fromJson<List<IptvPlaylistEntry>>(playlistsRaw, type) ?: emptyList()
                 }.getOrDefault(emptyList())
-            } else emptyList()
+            } else emptyList(),
+            tvSession = decodeTvSessionState(tvSessionRaw)
         )
     }
 
@@ -1471,6 +1542,17 @@ class IptvRepository @Inject constructor(
             if (state.playlists.isNotEmpty()) {
                 prefs[playlistsKeyFor(safeProfileId)] = gson.toJson(state.playlists)
             }
+            if (state.tvSession != IptvTvSessionState()) {
+                prefs[tvSessionKeyFor(safeProfileId)] = gson.toJson(
+                    state.tvSession.copy(
+                        lastChannelId = state.tvSession.lastChannelId.trim(),
+                        lastGroupName = state.tvSession.lastGroupName.trim(),
+                        lastFocusedZone = state.tvSession.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                    )
+                )
+            } else {
+                prefs.remove(tvSessionKeyFor(safeProfileId))
+            }
         }
         if (profileManager.getProfileIdSync() == safeProfileId) {
             invalidateCache()
@@ -1484,7 +1566,7 @@ class IptvRepository @Inject constructor(
         resolveXtreamCredentials(playlist)?.let { creds ->
             onProgress(IptvLoadProgress("Detected Xtream provider. Loading live channels...", 6))
             runCatching {
-                withTimeoutOrNull(30_000L) {
+                withTimeoutOrNull(120_000L) {
                     fetchXtreamLiveChannels(creds, onProgress)
                 } ?: throw IllegalStateException("Xtream provider timed out while loading live channels.")
             }
@@ -1505,7 +1587,7 @@ class IptvRepository @Inject constructor(
         resolveXtreamCredentials(url)?.let { creds ->
             onProgress(IptvLoadProgress("Detected Xtream provider. Loading live channels...", 6))
             runCatching {
-                withTimeoutOrNull(45_000L) {
+                withTimeoutOrNull(120_000L) {
                     fetchXtreamLiveChannels(creds, onProgress)
                 } ?: throw IllegalStateException("Xtream provider timed out while loading live channels.")
             }
@@ -3581,7 +3663,7 @@ class IptvRepository @Inject constructor(
         // to serve per playlist, so effectively "all available". Combined
         // with the widened concurrency in fetchXtreamEpgListingsAsync this
         // completes within the 60s budget for most providers.
-        val toFetch = prioritized.take(generalShortEpgChannelLimit)
+        val toFetch = prioritized
         System.err.println("[EPG] Xtream short EPG: fetching ${toFetch.size}/${xtreamChannels.size} channels")
         if (toFetch.isEmpty()) return null
 
@@ -3590,7 +3672,11 @@ class IptvRepository @Inject constructor(
         val total = toFetch.size
         val streamIds = toFetch.mapNotNull { resolveXtreamStreamId(it) }
 
-        val allListings = fetchXtreamEpgListingsAsync(creds, streamIds) { _, hadError ->
+        val allListings = fetchXtreamEpgListingsAsync(
+            creds = creds,
+            streamIds = streamIds,
+            timeoutMillis = xtreamShortEpgTimeout(streamIds.size)
+        ) { _, hadError ->
             fetched++
             if (hadError) errors++
             if (fetched % 50 == 0) {
@@ -3637,11 +3723,16 @@ class IptvRepository @Inject constructor(
         // the enlarged 180s budget. Providers typically tolerate this; any
         // over-limit request simply fails and the fallback per-channel call
         // handles it silently.
+        val distinctStreamIds = streamIds.distinct()
+        if (distinctStreamIds.isEmpty()) return emptyList()
+        val gate = Semaphore(xtreamShortEpgConcurrency)
         val result = withTimeoutOrNull(timeoutMillis) {
             withContext(Dispatchers.IO.limitedParallelism(32)) {
-                val sampleLogged = java.util.concurrent.atomic.AtomicBoolean(false)
-                streamIds.map { sid ->
+                val sampleLogged = AtomicBoolean(false)
+                distinctStreamIds.chunked(xtreamShortEpgBatchSize).flatMap { batch ->
+                    batch.map { sid ->
                     async {
+                        gate.withPermit {
                         var hadError = false
                         val url = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
                             "&password=${creds.password}&action=get_short_epg&stream_id=$sid&limit=$xtreamShortEpgLimit"
@@ -3662,12 +3753,22 @@ class IptvRepository @Inject constructor(
                         } catch (_: Exception) { hadError = true }
                         onStreamProcessed(sid, hadError)
                         listings ?: emptyList()
+                        }
                     }
-                }.awaitAll().flatten()
+                    }.awaitAll().flatten()
+                }
             }
         }
         return result ?: emptyList()
     }
+
+    private fun xtreamShortEpgTimeout(streamCount: Int): Long =
+        when {
+            streamCount > 25_000 -> 1_200_000L
+            streamCount > 10_000 -> 900_000L
+            streamCount > 4_000 -> 420_000L
+            else -> 180_000L
+        }
 
     /**
      * Constructs a mapping of IPTV channel IDs to their current and upcoming program windows from a list of Xtream short EPG listings.
@@ -4231,12 +4332,24 @@ class IptvRepository @Inject constructor(
 
     private fun buildChannelId(streamUrl: String, epgId: String?): String {
         val normalizedEpg = normalizeChannelKey(epgId ?: "")
+        val streamKey = stableStreamKey(streamUrl)
         return if (normalizedEpg.isNotBlank()) {
-            "epg:$normalizedEpg"
+            "m3u:$normalizedEpg:$streamKey"
         } else {
-            "url:${streamUrl.trim()}"
+            "m3u:$streamKey"
         }
     }
+
+    private fun stableStreamKey(streamUrl: String): String {
+        val normalized = streamUrl.trim()
+        if (normalized.isEmpty()) return "empty"
+        return "${normalized.length}-${sha1Hex(normalized).take(16)}"
+    }
+
+    private fun sha1Hex(value: String): String =
+        MessageDigest.getInstance("SHA-1")
+            .digest(value.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     private fun extractChannelName(metadata: String?): String {
         if (metadata.isNullOrBlank()) return "Unknown Channel"

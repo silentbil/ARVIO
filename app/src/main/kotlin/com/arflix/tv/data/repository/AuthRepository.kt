@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -157,12 +158,11 @@ class AuthRepository @Inject constructor(
             // Supabase SDK requires main thread for initialization (lifecycle observers)
             // First try: Load from SessionManager via Supabase SDK
             try {
-                session = withContext(Dispatchers.Main) {
-                    supabase.auth.loadFromStorage(true)
-                    supabase.auth.currentSessionOrNull()
-                }
-                if (session != null) {
-                } else {
+                session = withTimeoutOrNull(2_500L) {
+                    withContext(Dispatchers.Main) {
+                        supabase.auth.loadFromStorage(true)
+                        supabase.auth.currentSessionOrNull()
+                    }
                 }
             } catch (e: Exception) {
             }
@@ -170,9 +170,11 @@ class AuthRepository @Inject constructor(
             // Second try: Import from cached tokens
             if (session == null && hasAccessToken && hasRefreshToken) {
                 try {
-                    session = withContext(Dispatchers.Main) {
-                        supabase.auth.importAuthToken(accessToken ?: "", refreshToken ?: "", false, true)
-                        supabase.auth.currentSessionOrNull()
+                    session = withTimeoutOrNull(2_500L) {
+                        withContext(Dispatchers.Main) {
+                            supabase.auth.importAuthToken(accessToken ?: "", refreshToken ?: "", false, true)
+                            supabase.auth.currentSessionOrNull()
+                        }
                     }
                     if (session != null) {
                         // Save the imported session to SessionManager
@@ -184,10 +186,10 @@ class AuthRepository @Inject constructor(
 
             // Third try: Refresh the session
             if (session == null && hasRefreshToken) {
-                session = withContext(Dispatchers.Main) {
-                    ensureValidSession()
-                }
-                if (session != null) {
+                session = withTimeoutOrNull(3_000L) {
+                    withContext(Dispatchers.Main) {
+                        ensureValidSession()
+                    }
                 }
             }
             if (hasAccessToken || hasRefreshToken || session != null || !cachedUserId.isNullOrBlank()) {
@@ -197,30 +199,27 @@ class AuthRepository @Inject constructor(
                 if (session != null && userId != null && email != null) {
                     storeSession(session)
                     // Load profile
-                    val profile = loadUserProfile(userId)
+                    val profile = withTimeoutOrNull(3_000L) { loadUserProfile(userId) }
                     _userProfile.value = profile
                     _authState.value = AuthState.Authenticated(userId, email, profile)
                 } else if (userId != null && email != null) {
                     // Fallback to cached identity even if refresh failed (avoid forcing daily logins).
                     val profile = try {
-                        loadUserProfile(userId)
+                        withTimeoutOrNull(3_000L) { loadUserProfile(userId) }
                     } catch (_: Exception) {
                         null
                     } ?: UserProfile(id = userId, email = email)
                     traktRepositoryProvider.get().setUserId(userId)
-                    traktRepositoryProvider.get().syncLocalTokensToProfileIfNeeded()
+                    withTimeoutOrNull(1_500L) {
+                        traktRepositoryProvider.get().syncLocalTokensToProfileIfNeeded()
+                    }
                     _userProfile.value = profile
                     _authState.value = AuthState.Authenticated(userId, email, profile)
                 } else {
                     _authState.value = AuthState.NotAuthenticated
                 }
             } else {
-                if (!cachedUserId.isNullOrBlank() && !cachedEmail.isNullOrBlank()) {
-                    _userProfile.value = UserProfile(id = cachedUserId, email = cachedEmail)
-                    _authState.value = AuthState.Authenticated(cachedUserId, cachedEmail, _userProfile.value)
-                } else {
-                    _authState.value = AuthState.NotAuthenticated
-                }
+                _authState.value = AuthState.NotAuthenticated
             }
         } catch (e: Exception) {
             _authState.value = AuthState.NotAuthenticated
@@ -242,7 +241,7 @@ class AuthRepository @Inject constructor(
             val session = supabase.auth.currentSessionOrNull()
             val user = session?.user
 
-            if (user != null && session != null) {
+            if (user != null) {
                 storeSession(session)
 
                 // Load or create profile
@@ -895,7 +894,8 @@ class AuthRepository @Inject constructor(
                 .upsert(
                     mapOf(
                         "user_id" to userId,
-                        "payload" to payload
+                        "payload" to payload,
+                        "updated_at" to Clock.System.now().toString()
                     )
                 )
             Result.success(Unit)

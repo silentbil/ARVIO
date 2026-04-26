@@ -44,6 +44,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -62,6 +63,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -84,9 +86,11 @@ fun EpgGrid(
     selectedChannelId: String?,
     focusSelectedChannelSignal: Int,
     onChannelSelect: (EnrichedChannel) -> Unit,
+    onChannelFocused: (EnrichedChannel) -> Unit = {},
     onChannelFavoriteToggle: (String) -> Unit,
     favorites: Set<String>,
     compact: Boolean = false,
+    gridFocused: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -116,6 +120,7 @@ fun EpgGrid(
     // snapshotFlow below.
     val channelListState = rememberLazyListState()
     val programListState = rememberLazyListState()
+    var didPositionInitialSelection by remember(channels) { mutableStateOf(false) }
 
     // Two-way scroll sync without feedback loop.
     // A single leader token flips to whichever list registered a user
@@ -170,12 +175,14 @@ fun EpgGrid(
     // on both selection and channel list identity so a late-arriving list
     // still lands on the right row.
     LaunchedEffect(selectedChannelId, channels) {
+        if (didPositionInitialSelection) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channels.indexOfFirst { it.id == id }
         if (idx < 0) return@LaunchedEffect
         leader = 0 // avoid triggering the two-way sync during the jump
         programListState.scrollToItem(idx)
         channelListState.scrollToItem(idx)
+        didPositionInitialSelection = true
     }
 
     LaunchedEffect(focusSelectedChannelSignal, selectedChannelId, channels) {
@@ -287,6 +294,7 @@ fun EpgGrid(
                     modifier = Modifier
                         .width(channelColumnWidth)
                         .fillMaxHeight()
+                        .arvioDpadFocusGroup()
                         .background(LiveColors.PanelDeep),
                 ) {
                     itemsIndexed(
@@ -302,8 +310,10 @@ fun EpgGrid(
                             isFavorite = ch.id in favorites,
                             stripe = idx % 2 == 1,
                             onClick = { onChannelSelect(ch) },
+                            onFocused = { onChannelFocused(ch) },
                             onFavoriteToggle = { onChannelFavoriteToggle(ch.id) },
                             rowHeight = rowHeight,
+                            forceFocused = gridFocused && ch.id == selectedChannelId,
                             modifier = if (ch.id == selectedChannelId) {
                                 Modifier.focusRequester(selectedChannelFocusRequester)
                             } else {
@@ -322,6 +332,7 @@ fun EpgGrid(
                 Box(modifier = Modifier.fillMaxSize()) {
                     LazyColumn(
                         state = programListState,
+                        userScrollEnabled = false,
                         modifier = Modifier
                             .fillMaxSize()
                             .horizontalScroll(hScroll),
@@ -349,12 +360,14 @@ fun EpgGrid(
                                 programs = rowPrograms,
                                 clockTickMillis = clockTickMillis,
                                 windowStartMillis = windowStartMillis,
+                                windowEndMillis = windowEndMillis,
                                 totalWidth = halfHourWidth * slots.size,
                                 pxPerMin = pxPerMin,
                                 stripe = idx % 2 == 1,
                                 isActive = ch.id == selectedChannelId,
                                 rowHeight = rowHeight,
                                 onClick = { onChannelSelect(ch) },
+                                onFocused = { onChannelFocused(ch) },
                             )
                         }
                     }
@@ -378,18 +391,21 @@ private fun ProgramsRow(
     programs: List<IptvProgram>,
     clockTickMillis: Long,
     windowStartMillis: Long,
+    windowEndMillis: Long,
     totalWidth: Dp,
     pxPerMin: Int,
     stripe: Boolean,
     isActive: Boolean,
     rowHeight: Dp,
     onClick: () -> Unit,
+    onFocused: () -> Unit,
 ) {
     val nowMillis = clockTickMillis
     Box(
         modifier = Modifier
             .width(totalWidth)
             .height(rowHeight)
+            .clipToBounds()
             .background(
                 when {
                     isActive -> LiveColors.FocusBg
@@ -398,22 +414,24 @@ private fun ProgramsRow(
                 }
             ),
     ) {
-        if (programs.isNotEmpty()) {
-            programs.forEach { p ->
-                val startMin = ((p.startUtcMillis - windowStartMillis) / 60_000L).toInt().coerceAtLeast(0)
-                val durationMin = ((p.endUtcMillis - p.startUtcMillis) / 60_000L).toInt().coerceAtLeast(1)
-                val offset = (startMin * pxPerMin).dp
-                val width = (durationMin * pxPerMin).dp
-                val isNow = nowMillis in p.startUtcMillis..p.endUtcMillis
-                val isPast = p.endUtcMillis < nowMillis
+        val placements = remember(programs, windowStartMillis, windowEndMillis, nowMillis) {
+            buildProgramPlacements(programs, windowStartMillis, windowEndMillis, nowMillis)
+        }
+        if (placements.isNotEmpty()) {
+            placements.forEach { placement ->
+                val offset = (placement.startMin * pxPerMin).dp
+                val width = (placement.durationMin * pxPerMin).dp
                 ProgramCell(
-                    program = p,
+                    program = placement.program,
                     clockTickMillis = clockTickMillis,
                     width = width,
-                    isNow = isNow,
-                    isPast = isPast,
-                    isFocusTarget = isNow,
+                    isNow = placement.isNow,
+                    isPast = placement.isPast,
+                    isFocusTarget = placement.isNow,
+                    focusable = false,
                     onClick = onClick,
+                    onFocused = onFocused,
+                    rowHeight = rowHeight,
                     modifier = Modifier.offset(x = offset),
                 )
             }
@@ -491,7 +509,41 @@ private fun programsInWindow(
     add(item.next)
     add(item.later)
     item.upcoming.forEach(::add)
-    // De-dup by start time
-    return buf.distinctBy { it.startUtcMillis }
+    return buf.distinctBy { Triple(it.startUtcMillis, it.endUtcMillis, it.title) }
         .sortedBy { it.startUtcMillis }
+}
+
+private data class ProgramPlacement(
+    val program: IptvProgram,
+    val startMin: Int,
+    val durationMin: Int,
+    val isNow: Boolean,
+    val isPast: Boolean
+)
+
+private fun buildProgramPlacements(
+    programs: List<IptvProgram>,
+    windowStartMillis: Long,
+    windowEndMillis: Long,
+    nowMillis: Long
+): List<ProgramPlacement> {
+    if (programs.isEmpty()) return emptyList()
+
+    val placements = mutableListOf<ProgramPlacement>()
+    var cursor = windowStartMillis
+    programs.forEach { program ->
+        val clampedStart = maxOf(program.startUtcMillis, windowStartMillis, cursor)
+        val clampedEnd = minOf(program.endUtcMillis, windowEndMillis)
+        if (clampedEnd <= clampedStart) return@forEach
+
+        placements += ProgramPlacement(
+            program = program,
+            startMin = ((clampedStart - windowStartMillis) / 60_000L).toInt().coerceAtLeast(0),
+            durationMin = ((clampedEnd - clampedStart) / 60_000L).toInt().coerceAtLeast(1),
+            isNow = nowMillis in clampedStart until clampedEnd,
+            isPast = clampedEnd <= nowMillis
+        )
+        cursor = clampedEnd
+    }
+    return placements
 }

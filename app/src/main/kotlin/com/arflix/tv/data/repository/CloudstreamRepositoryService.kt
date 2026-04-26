@@ -50,7 +50,32 @@ class CloudstreamRepositoryService @Inject constructor(
         return requireHttpsUrl(resolved, "Plugin packages must use HTTPS")
     }
 
-    suspend fun normalizeRepositoryUrl(rawUrl: String): String = withContext(Dispatchers.Default) {
+    private fun repairLegacyGithubRawUrl(url: String): String {
+        val parsed = URI(url)
+        if (!parsed.host.equals("raw.githubusercontent.com", ignoreCase = true)) {
+            return parsed.toString()
+        }
+
+        val segments = parsed.path
+            .split('/')
+            .filter { it.isNotBlank() }
+        if (segments.size != 3) {
+            return parsed.toString()
+        }
+
+        val repoAndBranch = segments[1]
+        val splitIndex = repoAndBranch.lastIndexOf('_')
+        if (splitIndex <= 0 || splitIndex >= repoAndBranch.lastIndex) {
+            return parsed.toString()
+        }
+
+        val repo = repoAndBranch.substring(0, splitIndex)
+        val branch = repoAndBranch.substring(splitIndex + 1)
+        val repairedPath = "/" + listOf(segments[0], repo, branch, segments[2]).joinToString("/")
+        return URI(parsed.scheme, parsed.authority, repairedPath, parsed.query, parsed.fragment).toString()
+    }
+
+    private fun normalizeRepositoryUrlValue(rawUrl: String): String {
         val trimmed = rawUrl.trim()
         require(trimmed.isNotBlank()) { "Repository URL is empty" }
         val cloudstreamRepoPrefix = "cloudstreamrepo://"
@@ -69,7 +94,19 @@ class CloudstreamRepositoryService @Inject constructor(
             trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true) -> trimmed
             else -> "https://$trimmed"
         }
-        requireHttpsUrl(expanded, "Cloudstream repositories must use HTTPS")
+        val repaired = repairLegacyGithubRawUrl(expanded)
+        return requireHttpsUrl(repaired, "Cloudstream repositories must use HTTPS")
+    }
+
+    fun normalizeStoredRepositoryUrl(rawUrl: String?): String? {
+        val trimmed = rawUrl?.trim().orEmpty()
+        if (trimmed.isBlank()) return null
+        return runCatching { normalizeRepositoryUrlValue(trimmed) }
+            .getOrDefault(trimmed)
+    }
+
+    suspend fun normalizeRepositoryUrl(rawUrl: String): String = withContext(Dispatchers.Default) {
+        normalizeRepositoryUrlValue(rawUrl)
     }
 
     suspend fun fetchRepositoryManifest(url: String): CloudstreamRepositoryManifest = withContext(Dispatchers.IO) {

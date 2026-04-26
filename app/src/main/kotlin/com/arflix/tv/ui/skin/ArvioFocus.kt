@@ -1,7 +1,6 @@
 package com.arflix.tv.ui.skin
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -19,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
@@ -49,6 +49,7 @@ fun Modifier.arvioFocusable(
     useGradientBorder: Boolean = false,  // Arctic Fuse 2: SOLID border, not gradient
     gradientStartColor: Color = Color(0xFFFF00FF),  // Magenta (unused when solid)
     gradientEndColor: Color = Color(0xFF00D4FF),    // Cyan (unused when solid)
+    animateFocus: Boolean = true,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     onFocusChanged: (Boolean) -> Unit = {},
@@ -65,21 +66,19 @@ fun Modifier.arvioFocusable(
     }
 
     val tokens = ArvioSkin.focus
+    val focusScaleDurationMs = if (animateFocus) 105 else 72
+    val focusAlphaDurationMs = if (animateFocus) 120 else 82
 
-    // Use spring physics for natural, bouncy feel
     val scale by animateFloatAsState(
         targetValue = targetScale,
-        animationSpec = spring(
-            dampingRatio = 0.75f,  // Slight bounce for premium feel
-            stiffness = 400f       // Snappy but smooth
-        ),
+        animationSpec = tween(durationMillis = focusScaleDurationMs, easing = tokens.easing),
         label = "arvio_focus_scale",
     )
 
     // Animate alpha for smooth border fade in/out
     val highlightAlpha by animateFloatAsState(
         targetValue = if (visualFocused) 1f else 0f,
-        animationSpec = tween(durationMillis = 120, easing = tokens.easing),
+        animationSpec = tween(durationMillis = focusAlphaDurationMs, easing = tokens.easing),
         label = "arvio_focus_alpha",
     )
 
@@ -142,23 +141,26 @@ fun Modifier.arvioFocusable(
             val outline = shape.createOutline(size, layoutDirection, this)
             val borderWidth = outlineWidth.toPx()
             val ringColor = outlineColor.copy(alpha = highlightAlpha)
+            val glowColor = outlineColor.copy(alpha = highlightAlpha * 0.4f)
 
             when (outline) {
                 is Outline.Rounded -> {
                     val path = Path().apply { addRoundRect(outline.roundRect) }
-                    // Soft glow layers (cheap multi-stroke, no shader blur)
-                    // Creates the "focused card floats" perception like Netflix.
-                    val glow1 = Stroke(width = borderWidth + 10f)
-                    drawPath(path, outlineColor.copy(alpha = highlightAlpha * 0.08f), style = glow1)
-                    val glow2 = Stroke(width = borderWidth + 5f)
-                    drawPath(path, outlineColor.copy(alpha = highlightAlpha * 0.18f), style = glow2)
-                    // Sharp border on top
+                    // Draw outer glow (softer, larger stroke)
+                    drawPath(path, glowColor, style = Stroke(width = borderWidth + 2.dp.toPx()))
+                    // Draw inner bright border
                     drawPath(path, ringColor, style = Stroke(width = borderWidth))
                 }
                 is Outline.Rectangle -> {
+                    // Draw outer glow (softer, larger stroke)
+                    drawRect(color = glowColor, style = Stroke(width = borderWidth + 2.dp.toPx()))
+                    // Draw inner bright border
                     drawRect(color = ringColor, style = Stroke(width = borderWidth))
                 }
                 is Outline.Generic -> {
+                    // Draw outer glow (softer, larger stroke)
+                    drawPath(path = outline.path, color = glowColor, style = Stroke(width = borderWidth + 2.dp.toPx()))
+                    // Draw inner bright border
                     drawPath(path = outline.path, color = ringColor, style = Stroke(width = borderWidth))
                 }
             }
@@ -188,6 +190,7 @@ fun ArvioFocusableSurface(
     useGradientBorder: Boolean = false,  // Arctic Fuse 2: SOLID border, not gradient
     gradientStartColor: Color = ArvioSkin.colors.focusGradientStart,
     gradientEndColor: Color = ArvioSkin.colors.focusGradientEnd,
+    animateFocus: Boolean = true,
     enabled: Boolean = true,
     enableSystemFocus: Boolean = true,
     isFocusedOverride: Boolean = false,
@@ -216,6 +219,7 @@ fun ArvioFocusableSurface(
                 useGradientBorder = useGradientBorder,
                 gradientStartColor = gradientStartColor,
                 gradientEndColor = gradientEndColor,
+                animateFocus = animateFocus,
                 onClick = onClick,
                 onLongClick = onLongClick,
                 onFocusChanged = {

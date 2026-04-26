@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.player
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
@@ -409,11 +410,10 @@ class PlayerViewModel @Inject constructor(
                     )
                 }
 
-                // Collect progressive emissions, updating the UI as sources arrive.
-                // If the first emission is already a cache hit (isFinal on first emit),
-                // pick immediately — no collection window needed.
-                // Otherwise wait up to AUTOPLAY_COLLECTION_WINDOW_MS for more addons.
-                val AUTOPLAY_COLLECTION_WINDOW_MS = 3_500L
+                // Collect progressive emissions. Wait a very short window so
+                // cached/debrid-ready sources can arrive before autoplay picks.
+                val AUTOPLAY_COLLECTION_WINDOW_MS = 1_500L
+                val AUTOPLAY_QUALITY_WINDOW_MS = 1_000L
                 val collectionStartMs = System.currentTimeMillis()
                 var autoplaySelected = false
                 var lastMergedStreams: List<StreamSource> = emptyList()
@@ -426,8 +426,11 @@ class PlayerViewModel @Inject constructor(
                             u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                         }
                     val existingVod = _uiState.value.streams.filter { it.addonId == "iptv_xtream_vod" }
-                    val mergedStreams = (allStreams + existingVod)
-                        .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                    val mergedStreams = sortStreamsByQualityAndSize(
+                        (allStreams + existingVod)
+                            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" },
+                        preferredLanguage
+                    )
                     lastMergedStreams = mergedStreams
 
                     val errorMessage = if (progressive.isFinal && mergedStreams.isEmpty()) {
@@ -462,14 +465,22 @@ class PlayerViewModel @Inject constructor(
                         streamLoadPhase = phaseLabel
                     )
 
-                    // Cache hit path: first emission is already final (prefetch completed)
-                    // → pick immediately, no waiting.
                     val cacheHit = isFirstEmission && progressive.isFinal && mergedStreams.isNotEmpty()
                     isFirstEmission = false
 
                     val elapsedMs = System.currentTimeMillis() - collectionStartMs
-                    val shouldSelectNow = !autoplaySelected && mergedStreams.isNotEmpty() &&
-                        (cacheHit || progressive.isFinal || elapsedMs >= AUTOPLAY_COLLECTION_WINDOW_MS)
+                    val hasCachedReadyStream = mergedStreams.any { stream ->
+                        stream.behaviorHints?.cached == true &&
+                            stream.behaviorHints.notWebReady != true &&
+                            !stream.url.isNullOrBlank()
+                    }
+                    val shouldSelectNow = !autoplaySelected && mergedStreams.isNotEmpty() && (
+                        cacheHit ||
+                            progressive.isFinal ||
+                            hasCachedReadyStream ||
+                            elapsedMs >= AUTOPLAY_QUALITY_WINDOW_MS ||
+                            elapsedMs >= AUTOPLAY_COLLECTION_WINDOW_MS
+                        )
 
                     if (shouldSelectNow) {
                         autoplaySelected = true
@@ -752,37 +763,47 @@ class PlayerViewModel @Inject constructor(
             }
         }.lowercase()
 
-        var score = qualityScore(stream.quality) * 100
+        // Quality is the PRIMARY signal — 4K beats 1080p beats 720p regardless of size.
+        var score = qualityScore(stream.quality) * 1_000
 
+        // Within the same quality tier, prefer larger files because they usually
+        // indicate better bitrate/encodes. Do not cap huge files: autoplay should
+        // still pick the best source and let fast failover handle bad starts.
         val sizeBytes = parseSize(stream.size)
         score += when {
-            sizeBytes <= 0L -> 30
-            sizeBytes <= 8L * 1024 * 1024 * 1024 -> 80
-            sizeBytes <= 15L * 1024 * 1024 * 1024 -> 55
-            sizeBytes <= 25L * 1024 * 1024 * 1024 -> 20
-            sizeBytes <= 40L * 1024 * 1024 * 1024 -> -10
-            else -> -90
+            sizeBytes <= 0L -> 0
+            else -> (sizeBytes / (512L * 1024L * 1024L)).toInt().coerceAtMost(240)
         }
 
-        if (text.contains("remux")) score -= 120
-        if (text.contains("dolby vision") || text.contains(" dovi") || text.contains(" dv ")) score -= 120
-        if (text.contains("cam") || text.contains("hdcam") || text.contains("telesync")) score -= 300
-        if (text.contains("web-dl") || text.contains("webrip")) score += 45
-        if (text.contains("x264") || text.contains("h264")) score += 15
-        if (stream.behaviorHints?.cached == true || text.contains(" rd+")) score += 220
-        if (stream.behaviorHints?.notWebReady == true) score -= 260
-        if (!stream.url.isNullOrBlank() && stream.url.startsWith("http", ignoreCase = true)) score += 80
-        if (stream.url?.startsWith("magnet:", ignoreCase = true) == true) score -= 500
+        if (text.contains("cam") || text.contains("hdcam") || text.contains("telesync")) score -= 600
+        if (text.contains("web-dl") || text.contains("webrip")) score += 50
+        if (text.contains("bluray") || text.contains("blu-ray")) score += 60
+        if (text.contains("remux")) score += 80
+        if (text.contains("dolby vision") || text.contains(" dovi") || text.contains(" dv ")) score += 30
+        if (text.contains("x265") || text.contains("hevc") || text.contains("h265")) score += 30
+        if (text.contains("x264") || text.contains("h264")) score += 20
+        if (stream.behaviorHints?.cached == true || text.contains(" rd+")) score += 500
+        if (stream.behaviorHints?.notWebReady == true) score -= 150
+        if (!stream.url.isNullOrBlank() && stream.url.startsWith("http", ignoreCase = true)) score += 100
+        if (stream.url?.startsWith("magnet:", ignoreCase = true) == true) score -= 800
         score += streamRepository.getAddonHealthBias(stream.addonId)
 
         return score
     }
 
     fun onPlaybackStarted(startupMs: Long, startupRetries: Int, autoFailovers: Int) {
-        val addonId = _uiState.value.selectedStream?.addonId?.trim().orEmpty()
+        val addonId = _uiState.value.selectedStream?.addonId?.trim()
+            .takeUnless { it.isNullOrBlank() }
+            ?: currentPreferredAddonId.orEmpty()
         if (addonId.isNotBlank()) {
             streamRepository.noteAddonPlaybackStarted(addonId, startupMs)
         }
+        Log.i(
+            TAG,
+            "Playback started addonId=${addonId.ifBlank { "unknown" }} " +
+                "source=${_uiState.value.selectedStream?.source ?: currentPreferredSourceName ?: "unknown"} " +
+                "startupMs=$startupMs retries=$startupRetries failovers=$autoFailovers"
+        )
         viewModelScope.launch {
             playbackTelemetryRepository.recordStartup(
                 startupMs = startupMs,
@@ -793,7 +814,9 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onSelectedStreamPlaybackFailure() {
-        val addonId = _uiState.value.selectedStream?.addonId?.trim().orEmpty()
+        val addonId = _uiState.value.selectedStream?.addonId?.trim()
+            .takeUnless { it.isNullOrBlank() }
+            ?: currentPreferredAddonId.orEmpty()
         if (addonId.isNotBlank()) {
             streamRepository.noteAddonPlaybackFailure(addonId)
         }
@@ -882,21 +905,21 @@ class PlayerViewModel @Inject constructor(
     ): StreamSource? {
         if (streams.isEmpty()) return null
 
-        val maxSizeBytes = 20L * 1024 * 1024 * 1024 // 20GB - anything larger is likely a season pack
+        return sortStreamsByQualityAndSize(streams, preferredLanguage).firstOrNull()
+    }
 
-        // Step 1: Filter out season packs (>20GB) when possible.
-        val candidates = streams.filter {
-            val size = parseSize(it.size)
-            size == 0L || size < maxSizeBytes // 0 = unknown size, keep those
-        }
-        val pool = if (candidates.isNotEmpty()) candidates else streams
-
-        // Step 2: Score by language affinity and playback stability.
-        return pool.maxByOrNull { stream ->
-            val langScore = streamLanguageScore(stream, preferredLanguage)
-            val stabilityScore = playbackPriorityScore(stream)
-            (langScore * 10_000) + stabilityScore
-        }
+    private fun sortStreamsByQualityAndSize(
+        streams: List<StreamSource>,
+        preferredLanguage: String
+    ): List<StreamSource> {
+        return streams.sortedWith(
+            compareByDescending<StreamSource> { qualityScore(it.quality) }
+                .thenByDescending { parseSize(it.size) }
+                .thenByDescending { streamLanguageScore(it, preferredLanguage) }
+                .thenByDescending { if (it.behaviorHints?.cached == true) 1 else 0 }
+                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
+                .thenByDescending { streamRepository.getAddonHealthBias(it.addonId) }
+        )
     }
 
     // Robust size string parser - identical to StreamSelector's parseSizeString()
@@ -1831,6 +1854,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     companion object {
+        private const val TAG = "PlayerViewModel"
+
         /** Known debrid service CDN domains. Reachability checks are skipped for these. */
         private val DEBRID_CDN_DOMAINS = setOf(
             // Real-Debrid

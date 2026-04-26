@@ -8,6 +8,7 @@ import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.ContinueWatchingItem
 import com.arflix.tv.ui.components.CARD_LAYOUT_MODE_LANDSCAPE
 import com.arflix.tv.ui.components.normalizeCardLayoutMode
+import com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -38,9 +39,35 @@ class CloudSyncRepository @Inject constructor(
     private val iptvRepository: IptvRepository,
     private val streamRepository: StreamRepository,
     private val traktRepository: TraktRepository,
-    private val watchlistRepository: WatchlistRepository
+    private val watchHistoryRepository: WatchHistoryRepository,
+    private val watchlistRepository: WatchlistRepository,
+    private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
+
+    private fun mergeAddonsForSharedRestore(addonLists: Iterable<List<Addon>>): List<Addon> {
+        val merged = LinkedHashMap<String, Addon>()
+        addonLists.flatten().forEach { addon ->
+            val id = addon.id.trim()
+            if (id.isNotBlank()) {
+                merged.putIfAbsent(id, addon)
+            }
+        }
+        return merged.values.toList()
+    }
+
+    private fun mergeRepositoriesForSharedRestore(
+        repositoryLists: Iterable<List<CloudstreamRepositoryRecord>>
+    ): List<CloudstreamRepositoryRecord> {
+        val merged = LinkedHashMap<String, CloudstreamRepositoryRecord>()
+        repositoryLists.flatten().forEach { repository ->
+            val url = repository.url.trim()
+            if (url.isNotBlank()) {
+                merged.putIfAbsent(url.lowercase(), repository.copy(url = url))
+            }
+        }
+        return merged.values.toList()
+    }
 
     /**
      * Serializes push/pull so they can never overlap. Without this, a manual
@@ -63,6 +90,10 @@ class CloudSyncRepository @Inject constructor(
     var isPushDirty: Boolean = false
         private set
 
+    fun markLocalStateDirty() {
+        isPushDirty = true
+    }
+
     enum class RestoreResult { RESTORED, NO_BACKUP, FAILED }
 
     // ── Data class for per-profile settings stored in cloud ──
@@ -83,6 +114,8 @@ class CloudSyncRepository @Inject constructor(
         val showBudget: Boolean = true,
         val volumeBoostDb: Int = 0,
         val includeSpecials: Boolean = false,
+        val dnsProvider: String = "system",
+        val subtitleUsageJson: String = "",
         val iptvHiddenGroups: String = "",
         val iptvGroupOrder: String = ""
     )
@@ -99,6 +132,10 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileBooleanKeyFor(profileId, "show_budget_on_home")
     private fun volumeBoostDbKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "volume_boost_db")
+    private fun dnsProviderKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "dns_provider")
+    private fun subtitleUsageKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "subtitle_usage_v1")
 
     private fun subtitleSizeKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "subtitle_size")
@@ -124,6 +161,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "auto_play_min_quality")
     private fun includeSpecialsKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "include_specials")
+    private fun dnsProviderKey() = profileManager.profileStringKey("dns_provider")
+    private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
 
     // Active-profile key shortcuts (used for legacy flat fields in snapshot)
     private fun defaultSubtitleKey() = profileManager.profileStringKey("default_subtitle")
@@ -183,6 +222,8 @@ class CloudSyncRepository @Inject constructor(
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
                         volumeBoostDb = prefs[volumeBoostDbKeyFor(profile.id)]?.toIntOrNull()?.coerceIn(0, 15) ?: 0,
+                        dnsProvider = prefs[dnsProviderKeyFor(profile.id)] ?: "system",
+                        subtitleUsageJson = prefs[subtitleUsageKeyFor(profile.id)] ?: "",
                         subtitleSize = prefs[subtitleSizeKeyFor(profile.id)] ?: "Medium",
                         subtitleColor = prefs[subtitleColorKeyFor(profile.id)] ?: "White",
                         iptvHiddenGroups = prefs[iptvHiddenGroupsKeyFor(profile.id)] ?: "",
@@ -215,6 +256,9 @@ class CloudSyncRepository @Inject constructor(
         root.put("autoPlaySingleSource", prefs[autoPlaySingleSourceKey()] ?: true)
         root.put("autoPlayMinQuality", normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()] ?: "Any"))
         root.put("includeSpecials", prefs[includeSpecialsKey()] ?: false)
+        root.put("dnsProvider", prefs[dnsProviderKey()] ?: "system")
+        root.put("subtitleUsageJson", prefs[subtitleUsageKey()] ?: "")
+        root.put("skipProfileSelection", prefs[SKIP_PROFILE_SELECTION_KEY] ?: false)
 
         root.put("activeProfileId", profileRepository.getActiveProfileId() ?: JSONObject.NULL)
         root.put("profiles", JSONArray(gson.toJson(profiles)))
@@ -253,13 +297,29 @@ class CloudSyncRepository @Inject constructor(
             JSONObject(gson.toJson(localWatchedEpisodesByProfile))
         )
 
-        // Addons per profile
+        // Addons are shared account state. Keep the per-profile payload shape
+        // for older clients, but each profile receives the same shared list.
+        val sharedAddons = sanitizeAddonsForCloudSync(streamRepository.installedAddons.first())
         val addonsByProfile = buildMap<String, List<Addon>> {
             profiles.forEach { profile ->
-                put(profile.id, streamRepository.getAddonsForProfile(profile.id))
+                put(profile.id, sharedAddons)
             }
         }
         root.put("addonsByProfile", JSONObject(gson.toJson(addonsByProfile)))
+
+        val sharedCloudstreamRepositories = mergeCloudstreamRepositoriesFromAddons(
+            streamRepository.cloudstreamRepositories.first(),
+            sharedAddons
+        )
+        val cloudstreamRepositoriesByProfile = buildMap<String, List<CloudstreamRepositoryRecord>> {
+            profiles.forEach { profile ->
+                put(profile.id, sharedCloudstreamRepositories)
+            }
+        }
+        root.put(
+            "cloudstreamRepositoriesByProfile",
+            JSONObject(gson.toJson(cloudstreamRepositoriesByProfile))
+        )
 
         // Catalogs per profile
         val catalogsByProfile = buildMap<String, List<CatalogConfig>> {
@@ -276,6 +336,15 @@ class CloudSyncRepository @Inject constructor(
             }
         }
         root.put("hiddenPreinstalledByProfile", JSONObject(gson.toJson(hiddenPreinstalledByProfile)))
+
+        // Hidden addon catalogs per profile — without this, a deletion on one
+        // device is undone by another device's next addon sync.
+        val hiddenAddonByProfile = buildMap<String, List<String>> {
+            profiles.forEach { profile ->
+                put(profile.id, catalogRepository.getHiddenAddonCatalogIdsForProfile(profile.id))
+            }
+        }
+        root.put("hiddenAddonByProfile", JSONObject(gson.toJson(hiddenAddonByProfile)))
 
         // IPTV config per profile (including favorites)
         val iptvByProfile = buildMap<String, IptvCloudProfileState> {
@@ -294,7 +363,7 @@ class CloudSyncRepository @Inject constructor(
         root.put("watchlistByProfile", JSONObject(gson.toJson(watchlistByProfile)))
 
         // Backward compatibility fields (legacy single-profile clients)
-        root.put("addons", JSONArray(gson.toJson(streamRepository.installedAddons.first())))
+        root.put("addons", JSONArray(gson.toJson(sharedAddons)))
         root.put("catalogs", JSONArray(gson.toJson(catalogRepository.getCatalogs())))
         root.put(
             "hiddenPreinstalledCatalogs",
@@ -355,7 +424,9 @@ class CloudSyncRepository @Inject constructor(
         if (payload.isBlank()) return@withLock RestoreResult.NO_BACKUP
 
         runCatching {
-            applyCloudPayload(payload)
+            invalidationBus.suppressDuringRemoteApply {
+                applyCloudPayload(payload)
+            }
         }.fold(
             onSuccess = { RestoreResult.RESTORED },
             onFailure = { e ->
@@ -414,6 +485,12 @@ class CloudSyncRepository @Inject constructor(
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
                         prefs[showBudgetKeyFor(profileId)] = state.showBudget
                         prefs[volumeBoostDbKeyFor(profileId)] = state.volumeBoostDb.coerceIn(0, 15).toString()
+                        prefs[dnsProviderKeyFor(profileId)] = state.dnsProvider.ifBlank { "system" }
+                        if (state.subtitleUsageJson.isBlank()) {
+                            prefs.remove(subtitleUsageKeyFor(profileId))
+                        } else {
+                            prefs[subtitleUsageKeyFor(profileId)] = state.subtitleUsageJson
+                        }
                         prefs[subtitleSizeKeyFor(profileId)] = state.subtitleSize
                         prefs[subtitleColorKeyFor(profileId)] = state.subtitleColor
                         if (state.iptvHiddenGroups.isNotBlank()) prefs[iptvHiddenGroupsKeyFor(profileId)] = state.iptvHiddenGroups
@@ -438,6 +515,15 @@ class CloudSyncRepository @Inject constructor(
                 prefs[autoPlaySingleSourceKeyFor(activeProfileId)] = fallbackAutoPlaySingleSource
                 prefs[autoPlayMinQualityKeyFor(activeProfileId)] = fallbackAutoPlayMinQuality
                 prefs[includeSpecialsKeyFor(activeProfileId)] = fallbackIncludeSpecials
+                prefs[dnsProviderKeyFor(activeProfileId)] = root.optString("dnsProvider", "system").ifBlank { "system" }
+                root.optString("subtitleUsageJson", "").let { usage ->
+                    if (usage.isBlank()) prefs.remove(subtitleUsageKeyFor(activeProfileId)) else prefs[subtitleUsageKeyFor(activeProfileId)] = usage
+                }
+            }
+        }
+        if (root.has("skipProfileSelection")) {
+            context.settingsDataStore.edit { prefs ->
+                prefs[SKIP_PROFILE_SELECTION_KEY] = root.optBoolean("skipProfileSelection", false)
             }
         }
         authRepository.saveDefaultSubtitleToProfile(fallbackDefaultSubtitle)
@@ -454,8 +540,9 @@ class CloudSyncRepository @Inject constructor(
         root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
             val type = object : TypeToken<Map<String, List<Addon>>>() {}.type
             val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
-            map.forEach { (profileId, addons) ->
-                streamRepository.replaceAddonsForProfile(profileId, addons)
+            val sharedAddons = mergeAddonsForSharedRestore(map.values)
+            if (sharedAddons.isNotEmpty()) {
+                streamRepository.replaceSharedAddonsFromCloud(sharedAddons)
             }
         }
         root.optJSONArray("addons")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
@@ -463,7 +550,31 @@ class CloudSyncRepository @Inject constructor(
                 val type = object : TypeToken<List<Addon>>() {}.type
                 val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
                 if (addons.isNotEmpty()) {
-                    streamRepository.replaceAddonsForProfile(activeProfileId, addons)
+                    streamRepository.replaceSharedAddonsFromCloud(addons)
+                }
+            }
+        }
+
+        root.optJSONObject("cloudstreamRepositoriesByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+            val type = object : TypeToken<Map<String, List<CloudstreamRepositoryRecord>>>() {}.type
+            val map: Map<String, List<CloudstreamRepositoryRecord>> = gson.fromJson(json, type) ?: emptyMap()
+            val merged = mergeCloudstreamRepositoriesFromAddons(
+                mergeRepositoriesForSharedRestore(map.values),
+                emptyList()
+            )
+            if (merged.isNotEmpty()) {
+                streamRepository.replaceSharedCloudstreamRepositoriesFromCloud(merged)
+            }
+        } ?: run {
+            root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = object : TypeToken<Map<String, List<Addon>>>() {}.type
+                val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
+                val recoveredRepositories = mergeCloudstreamRepositoriesFromAddons(
+                    emptyList(),
+                    mergeAddonsForSharedRestore(map.values)
+                )
+                if (recoveredRepositories.isNotEmpty()) {
+                    streamRepository.replaceSharedCloudstreamRepositoriesFromCloud(recoveredRepositories)
                 }
             }
         }
@@ -506,9 +617,17 @@ class CloudSyncRepository @Inject constructor(
             }
         }
 
+        // ── Hidden addon catalogs ──
+        root.optJSONObject("hiddenAddonByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+            val type = object : TypeToken<Map<String, List<String>>>() {}.type
+            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
+            map.forEach { (profileId, hidden) ->
+                catalogRepository.setHiddenAddonCatalogIdsForProfile(profileId, hidden)
+            }
+        }
+
         // ── IPTV config + favorites ──
         var importedActiveProfileIptv = false
-        var importedActiveProfileM3u = ""
         root.optJSONObject("iptvByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
             val type = object : TypeToken<Map<String, IptvCloudProfileState>>() {}.type
             val map: Map<String, IptvCloudProfileState> = gson.fromJson(json, type) ?: emptyMap()
@@ -516,7 +635,6 @@ class CloudSyncRepository @Inject constructor(
                 iptvRepository.importCloudConfigForProfile(profileId, state)
                 if (profileId == activeProfileId) {
                     importedActiveProfileIptv = true
-                    importedActiveProfileM3u = state.m3uUrl
                 }
             }
         }
@@ -545,18 +663,11 @@ class CloudSyncRepository @Inject constructor(
         if (!root.has("iptvByProfile") && cloudHasIptvKeys && (cloudHasIptvData || !localHasIptvData)) {
             iptvRepository.importCloudConfig(m3u, epg, favorites, favoriteChannels)
             importedLegacyIptv = true
-            importedActiveProfileM3u = m3u
         }
 
         if (importedActiveProfileIptv || importedLegacyIptv) {
             runCatching {
                 iptvRepository.invalidateCache()
-                if (importedActiveProfileM3u.isNotBlank()) {
-                    iptvRepository.loadSnapshot(
-                        forcePlaylistReload = false,
-                        forceEpgReload = false
-                    )
-                }
             }
         }
 
@@ -634,6 +745,7 @@ class CloudSyncRepository @Inject constructor(
         }
 
         traktRepository.clearAllProfileCaches()
+        watchHistoryRepository.clearProfileCaches()
 
         System.err.println("[CLOUD-SYNC] Full cloud restore applied successfully")
     }

@@ -57,6 +57,7 @@ import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCardLayoutMode
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundDark
 import com.arflix.tv.ui.theme.TextPrimary
@@ -530,6 +531,7 @@ private fun CollectionTabBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .arvioDpadFocusGroup()
             .padding(start = 42.dp, end = 42.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -630,7 +632,10 @@ private fun CollectionItemsGrid(
     topContentPadding: androidx.compose.ui.unit.Dp
 ) {
     val cardContentType = if (usePosterCards) "poster_card" else "landscape_card"
-    LaunchedEffect(gridState, items.size) {
+    // Collect scroll position without restarting on page-load-size changes —
+    // items.size used to live in the key, which relaunched the snapshotFlow on
+    // every page append and caused a stutter frame during scroll.
+    LaunchedEffect(gridState) {
         androidx.compose.runtime.snapshotFlow {
             val layout = gridState.layoutInfo
             val last = layout.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -643,7 +648,7 @@ private fun CollectionItemsGrid(
     TvLazyVerticalGrid(
         columns = TvGridCells.Fixed(gridColumns),
         state = gridState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(),
         contentPadding = PaddingValues(
             start = 42.dp,
             top = topContentPadding,
