@@ -103,6 +103,7 @@ data class SettingsUiState(
     // Trakt
     val isTraktAuthenticated: Boolean = false,
     val traktCode: TraktDeviceCode? = null,
+    val isTraktAuthStarting: Boolean = false,
     val isTraktPolling: Boolean = false,
     val traktExpiration: String? = null,
     // Trakt Sync
@@ -2222,29 +2223,65 @@ class SettingsViewModel @Inject constructor(
     // ========== Trakt Authentication ==========
     
     fun startTraktAuth() {
+        val current = _uiState.value
+        if (current.isTraktAuthStarting || current.isTraktPolling) return
+
         viewModelScope.launch {
+            traktPollingJob?.cancel()
+            _uiState.value = _uiState.value.copy(
+                traktCode = null,
+                isTraktAuthStarting = true,
+                isTraktPolling = false,
+                toastMessage = null
+            )
+
             try {
-                val deviceCode = traktRepository.getDeviceCode()
+                val deviceCode = withContext(Dispatchers.IO) {
+                    traktRepository.getDeviceCode()
+                }
                 _uiState.value = _uiState.value.copy(
                     traktCode = deviceCode,
+                    isTraktAuthStarting = false,
+                    isTraktAuthenticated = false,
                     isTraktPolling = true
                 )
-                
+
                 // Start polling for token
                 startTraktPolling(deviceCode)
             } catch (e: Exception) {
+                System.err.println("SettingsVM: failed to start Trakt auth: ${e.message}")
+                val message = when (e) {
+                    is retrofit2.HttpException -> "Trakt activation failed (${e.code()})"
+                    else -> e.message?.takeIf { it.isNotBlank() } ?: "Trakt activation failed"
+                }
                 _uiState.value = _uiState.value.copy(
                     traktCode = null,
-                    isTraktPolling = false
+                    isTraktAuthStarting = false,
+                    isTraktPolling = false,
+                    toastMessage = message,
+                    toastType = ToastType.ERROR
                 )
             }
         }
     }
-    
+
+    fun reconnectTrakt() {
+        viewModelScope.launch {
+            cancelTraktAuth()
+            traktRepository.logout()
+            _uiState.value = _uiState.value.copy(
+                isTraktAuthenticated = false,
+                traktExpiration = null
+            )
+            startTraktAuth()
+        }
+    }
+
     private fun startTraktPolling(deviceCode: TraktDeviceCode) {
         traktPollingJob?.cancel()
         traktPollingJob = viewModelScope.launch {
             val expiresAt = System.currentTimeMillis() + (deviceCode.expiresIn * 1000)
+            var lastFailure: String? = null
             
             while (System.currentTimeMillis() < expiresAt) {
                 delay(deviceCode.interval * 1000L)
@@ -2259,6 +2296,7 @@ class SettingsViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         isTraktAuthenticated = true,
                         traktCode = null,
+                        isTraktAuthStarting = false,
                         isTraktPolling = false,
                         traktExpiration = expirationDate,
                         toastMessage = "Trakt connected successfully",
@@ -2279,7 +2317,10 @@ class SettingsViewModel @Inject constructor(
                                 e.message?.contains("pending") == true
                     }
                     if (!is400) {
-                        // Stop on actual error (401, 500, etc.)
+                        lastFailure = when (e) {
+                            is retrofit2.HttpException -> "Trakt authorization failed (${e.code()})"
+                            else -> e.message?.takeIf { it.isNotBlank() } ?: "Trakt authorization failed"
+                        }
                         break
                     }
                     // 400 = pending, continue polling
@@ -2289,7 +2330,10 @@ class SettingsViewModel @Inject constructor(
             // Expired or failed
             _uiState.value = _uiState.value.copy(
                 traktCode = null,
-                isTraktPolling = false
+                isTraktAuthStarting = false,
+                isTraktPolling = false,
+                toastMessage = lastFailure ?: "Trakt activation code expired",
+                toastType = ToastType.ERROR
             )
         }
     }
@@ -2298,22 +2342,25 @@ class SettingsViewModel @Inject constructor(
         traktPollingJob?.cancel()
         _uiState.value = _uiState.value.copy(
             traktCode = null,
+            isTraktAuthStarting = false,
             isTraktPolling = false
         )
     }
     
     fun disconnectTrakt() {
         viewModelScope.launch {
+            cancelTraktAuth()
             traktRepository.logout()
             _uiState.value = _uiState.value.copy(
                 isTraktAuthenticated = false,
+                traktExpiration = null,
                 toastMessage = "Trakt disconnected",
                 toastType = ToastType.SUCCESS
             )
             syncLocalStateToCloud(silent = true, force = true)
         }
     }
-    
+
     fun dismissToast() {
         _uiState.value = _uiState.value.copy(toastMessage = null)
     }
