@@ -522,6 +522,7 @@ fun SettingsScreen(
         showUiModeWarningDialog ||
         uiState.showCloudPairDialog ||
         uiState.showCloudEmailPasswordDialog ||
+        uiState.traktCode != null ||
         uiState.showAppUpdateDialog ||
         uiState.showUnknownSourcesDialog ||
         (uiState.pendingCloudstreamManifest != null && uiState.pendingCloudstreamRepoUrl != null)
@@ -1123,6 +1124,7 @@ fun SettingsScreen(
                             isTraktAuthenticated = uiState.isTraktAuthenticated,
                             traktCode = uiState.traktCode?.userCode,
                             traktUrl = uiState.traktCode?.verificationUrl,
+                            isTraktAuthStarting = uiState.isTraktAuthStarting,
                             isTraktPolling = uiState.isTraktPolling,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
                             isCheckingForUpdate = uiState.isCheckingForUpdate,
@@ -1437,6 +1439,14 @@ fun SettingsScreen(
                 isWorking = uiState.isCloudAuthWorking,
                 onDismiss = { viewModel.cancelCloudAuth() },
                 onUseEmailPassword = { viewModel.openCloudEmailPasswordDialog() }
+            )
+        }
+
+        uiState.traktCode?.let { traktCode ->
+            TraktActivationModal(
+                verificationUrl = traktCode.verificationUrl,
+                userCode = traktCode.userCode,
+                onDismiss = { viewModel.cancelTraktAuth() }
             )
         }
 
@@ -2289,6 +2299,130 @@ private fun CloudPairModal(
                 }
             }
         }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TraktActivationModal(
+    verificationUrl: String,
+    userCode: String,
+    onDismiss: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    val isMobile = LocalDeviceType.current.isTouchDevice()
+    val qrContainerSize = if (isMobile) 0.dp else 172.dp
+    val qrBitmapSizePx = if (isMobile) 0 else 512
+
+    LaunchedEffect(userCode) {
+        focusRequester.requestFocus()
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        ModalScrim(onDismiss = onDismiss) {
+            Column(
+                modifier = Modifier
+                    .then(
+                        if (isMobile) Modifier.fillMaxWidth(0.92f).widthIn(max = 520.dp)
+                        else Modifier.width(560.dp)
+                    )
+                    .background(BackgroundElevated, RoundedCornerShape(16.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
+                    .padding(if (isMobile) 20.dp else 28.dp)
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.Back, Key.Escape -> {
+                                onDismiss()
+                                true
+                            }
+                            Key.Enter, Key.DirectionCenter -> {
+                                onDismiss()
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+            ) {
+                Text(
+                    text = "Connect Trakt.tv",
+                    style = ArflixTypography.sectionTitle,
+                    color = TextPrimary
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Go to $verificationUrl and enter this code",
+                    style = ArflixTypography.body,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    if (!isMobile && verificationUrl.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .size(qrContainerSize)
+                                .background(Color.White, RoundedCornerShape(14.dp))
+                                .padding(12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            QrCodeImage(
+                                data = verificationUrl,
+                                sizePx = qrBitmapSizePx,
+                                modifier = Modifier.fillMaxSize(),
+                                foreground = android.graphics.Color.BLACK,
+                                background = android.graphics.Color.WHITE
+                            )
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = userCode,
+                            style = ArflixTypography.heroTitle.copy(fontSize = 42.sp),
+                            color = Pink,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Waiting for authorization",
+                            style = ArflixTypography.caption,
+                            color = TextSecondary.copy(alpha = 0.78f)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(28.dp))
+
+                Box(
+                    modifier = Modifier
+                        .background(Pink, RoundedCornerShape(10.dp))
+                        .clickable { onDismiss() }
+                        .padding(vertical = 12.dp, horizontal = 18.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Cancel",
+                        style = ArflixTypography.button,
+                        color = Color.White
+                    )
+                }
+            }
         }
     }
 }
@@ -5223,6 +5357,7 @@ private fun AccountsSettings(
     isTraktAuthenticated: Boolean,
     traktCode: String?,
     traktUrl: String?,
+    isTraktAuthStarting: Boolean,
     isTraktPolling: Boolean,
     isSelfUpdateSupported: Boolean,
     isCheckingForUpdate: Boolean,
@@ -5252,7 +5387,7 @@ private fun AccountsSettings(
             name = "ARVIO Cloud",
             description = cloudEmail ?: "Optional account for syncing profiles, addons, catalogs and IPTV settings",
             isConnected = isCloudAuthenticated,
-            isPolling = false,
+            isWorking = false,
             authCode = null,
             authUrl = null,
             isFocused = focusedIndex == 0,
@@ -5271,7 +5406,7 @@ private fun AccountsSettings(
             name = "Trakt.tv",
             description = "Sync watch history, progress, and watchlist",
             isConnected = isTraktAuthenticated,
-            isPolling = isTraktPolling,
+            isWorking = isTraktAuthStarting || isTraktPolling,
             authCode = traktCode,
             authUrl = traktUrl,
             isFocused = focusedIndex == 1,
@@ -5466,7 +5601,7 @@ private fun AccountRow(
     name: String,
     description: String,
     isConnected: Boolean,
-    isPolling: Boolean,
+    isWorking: Boolean,
     authCode: String?,
     authUrl: String?,
     isFocused: Boolean,
@@ -5479,7 +5614,7 @@ private fun AccountRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(enabled = !isPolling) {
+            .clickable(enabled = !isWorking) {
                 if (isConnected) onDisconnect() else onConnect()
             }
             .background(
@@ -5535,7 +5670,7 @@ private fun AccountRow(
                         color = SuccessGreen
                     )
                 }
-            } else if (isPolling) {
+            } else if (isWorking) {
                 LoadingIndicator(
                     color = Pink,
                     size = 24.dp,
@@ -5575,7 +5710,7 @@ private fun AccountRow(
         }
 
         // Show auth code when polling
-        if (!isConnected && isPolling && !authCode.isNullOrBlank() && !authUrl.isNullOrBlank()) {
+        if (!isConnected && isWorking && !authCode.isNullOrBlank() && !authUrl.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
