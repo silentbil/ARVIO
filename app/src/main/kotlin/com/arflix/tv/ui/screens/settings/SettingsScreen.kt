@@ -995,6 +995,7 @@ fun SettingsScreen(
                             traktUrl = uiState.traktCode?.verificationUrl,
                             isTraktAuthStarting = uiState.isTraktAuthStarting,
                             isTraktPolling = uiState.isTraktPolling,
+                            isForceCloudSyncing = uiState.isForceCloudSyncing,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
                             isCheckingForUpdate = uiState.isCheckingForUpdate,
                             isAppUpdateAvailable = uiState.isAppUpdateAvailable,
@@ -1230,6 +1231,7 @@ fun SettingsScreen(
                             traktUrl = uiState.traktCode?.verificationUrl,
                             isTraktAuthStarting = uiState.isTraktAuthStarting,
                             isTraktPolling = uiState.isTraktPolling,
+                            isForceCloudSyncing = uiState.isForceCloudSyncing,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
                             isCheckingForUpdate = uiState.isCheckingForUpdate,
                             isAppUpdateAvailable = uiState.isAppUpdateAvailable,
@@ -4610,6 +4612,7 @@ private fun AccountsSettings(
     traktUrl: String?,
     isTraktAuthStarting: Boolean,
     isTraktPolling: Boolean,
+    isForceCloudSyncing: Boolean,
     isSelfUpdateSupported: Boolean,
     isCheckingForUpdate: Boolean,
     isAppUpdateAvailable: Boolean,
@@ -4671,14 +4674,16 @@ private fun AccountsSettings(
 
         SettingsActionRow(
             title = "Force Cloud Sync",
-            description = if (isCloudAuthenticated) {
+            description = if (isForceCloudSyncing) {
+                "Syncing local and cloud state now"
+            } else if (isCloudAuthenticated) {
                 "Upload local state, then restore from cloud now"
             } else {
                 "Sign in to ARVIO Cloud to force sync"
             },
-            actionLabel = "SYNC",
+            actionLabel = if (isForceCloudSyncing) "SYNCING" else "SYNC",
             isFocused = focusedIndex == 2,
-            onClick = { onForceCloudSync() },
+            onClick = { if (!isForceCloudSyncing) onForceCloudSync() },
             modifier = Modifier.settingsFocusSlot(2)
         )
 

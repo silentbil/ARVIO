@@ -54,9 +54,9 @@ fun Toast(
     durationMs: Long = 3000,
     onDismiss: () -> Unit = {}
 ) {
-    var visible by remember(isVisible) { mutableStateOf(isVisible) }
+    var visible by remember(isVisible, message, type) { mutableStateOf(isVisible) }
     
-    LaunchedEffect(isVisible) {
+    LaunchedEffect(isVisible, message, type) {
         if (isVisible) {
             visible = true
             delay(durationMs)
