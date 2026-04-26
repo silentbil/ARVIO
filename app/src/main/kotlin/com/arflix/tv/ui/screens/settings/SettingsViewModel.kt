@@ -91,6 +91,7 @@ data class SettingsUiState(
     // Volume boost in decibels (0 = off, up to 15 dB). Applied via system LoudnessEnhancer
     // attached to the ExoPlayer audio session. Issue #88.
     val volumeBoostDb: Int = 0,
+    val showLoadingStats: Boolean = true,
     val includeSpecials: Boolean = false,
     val isLoggedIn: Boolean = false,
     val accountEmail: String? = null,
@@ -219,6 +220,7 @@ class SettingsViewModel @Inject constructor(
     // Stored as a string because ProfileManager has no int helper and we only persist
     // a handful of discrete dB values. Parsed back to Int on read.
     private fun volumeBoostDbKey() = profileManager.profileStringKey("volume_boost_db")
+    private fun showLoadingStatsKey() = profileManager.profileBooleanKey("show_loading_stats")
 
     private fun subtitleSizeKey() = profileManager.profileStringKey("subtitle_size")
     private fun subtitleColorKey() = profileManager.profileStringKey("subtitle_color")
@@ -348,6 +350,7 @@ class SettingsViewModel @Inject constructor(
             val showBudget = prefs[showBudgetKey()] ?: true
             val clockFormat = prefs[clockFormatKey()] ?: "24h"
             val volumeBoostDb = prefs[volumeBoostDbKey()]?.toIntOrNull()?.coerceIn(0, 15) ?: 0
+            val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
 
             val subtitleSize = prefs[subtitleSizeKey()] ?: "Medium"
             val subtitleColor = prefs[subtitleColorKey()] ?: "White"
@@ -397,6 +400,7 @@ class SettingsViewModel @Inject constructor(
                 trailerAutoPlay = trailerAutoPlay,
                 showBudget = showBudget,
                 volumeBoostDb = volumeBoostDb,
+                showLoadingStats = showLoadingStats,
 
                 subtitleSize = subtitleSize,
                 subtitleColor = subtitleColor,
@@ -886,6 +890,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[showBudgetKey()] = enabled }
             _uiState.value = _uiState.value.copy(showBudget = enabled)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun setShowLoadingStats(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[showLoadingStatsKey()] = enabled }
+            _uiState.value = _uiState.value.copy(showLoadingStats = enabled)
             syncLocalStateToCloud(silent = true)
         }
     }

@@ -68,6 +68,8 @@ data class PlayerUiState(
     // Volume boost in decibels. 0 = disabled, up to 15 dB. The player observes this
     // and attaches a LoudnessEnhancer to the ExoPlayer audio session. Issue #88.
     val volumeBoostDb: Int = 0,
+    // Show loading progress during stream resolution
+    val showLoadingStats: Boolean = true,
     // Skip intro/recap
     val activeSkipInterval: SkipInterval? = null,
     val skipIntervalDismissed: Boolean = false,
@@ -138,6 +140,8 @@ class PlayerViewModel @Inject constructor(
     private fun defaultAudioLanguageKey() = profileManager.profileStringKey("default_audio_language")
     private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
     private fun frameRateMatchingModeKey() = profileManager.profileStringKey("frame_rate_matching_mode")
+    private fun autoPlayNextKey() = profileManager.profileBooleanKey("auto_play_next")
+    private fun showLoadingStatsKey() = profileManager.profileBooleanKey("show_loading_stats")
     private val gson = Gson()
     private val knownLanguageCodes = setOf(
         "en", "es", "fr", "de", "it", "pt", "nl", "ru", "zh", "ja", "ko",
@@ -192,7 +196,8 @@ class PlayerViewModel @Inject constructor(
             val frameRateMatchingMode = resolveFrameRateMatchingMode()
             val subSize = context.settingsDataStore.data.first()[profileManager.profileStringKey("subtitle_size")] ?: "Medium"
             val subColor = context.settingsDataStore.data.first()[profileManager.profileStringKey("subtitle_color")] ?: "White"
-            val autoPlayNext = context.settingsDataStore.data.first()[profileManager.profileBooleanKey("auto_play_next")] ?: true
+            val autoPlayNext = context.settingsDataStore.data.first()[autoPlayNextKey()] ?: true
+            val showLoadingStats = context.settingsDataStore.data.first()[showLoadingStatsKey()] ?: true
             val volumeBoostDb = context.settingsDataStore.data.first()[
                 profileManager.profileStringKey("volume_boost_db")
             ]?.toIntOrNull()?.coerceIn(0, 15) ?: 0
@@ -204,6 +209,7 @@ class PlayerViewModel @Inject constructor(
                 subtitleSize = subSize,
                 subtitleColor = subColor,
                 autoPlayNext = autoPlayNext,
+                showLoadingStats = showLoadingStats,
                 volumeBoostDb = volumeBoostDb
             )
 

@@ -1895,8 +1895,8 @@ fun PlayerScreen(
                 PulsingLogo(
                     logoUrl = uiState.logoUrl,
                     title = uiState.title,
-                    progress = uiState.streamProgress,
-                    phaseLabel = uiState.streamLoadPhase
+                    progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
+                    phaseLabel = if (uiState.showLoadingStats) uiState.streamLoadPhase else null
                 )
             }
         }

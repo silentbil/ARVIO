@@ -305,7 +305,7 @@ fun SettingsScreen(
     }
     val sectionMaxIndex: (String) -> Int = { section ->
         when (section) {
-            "general" -> 17 // 18 rows
+            "general" -> 18 // 19 rows
             "iptv" -> 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
@@ -718,7 +718,8 @@ fun SettingsScreen(
                                                 14 -> viewModel.cycleClockFormat()
                                                 15 -> viewModel.setShowBudget(!uiState.showBudget)
                                                 16 -> openDnsProviderPicker()
-                                                17 -> viewModel.cycleVolumeBoost()
+                                                17 -> viewModel.setShowLoadingStats(!uiState.showLoadingStats)
+                                                18 -> viewModel.cycleVolumeBoost()
                                             }
                                         }
                                         "iptv" -> {
@@ -1035,6 +1036,8 @@ fun SettingsScreen(
                             onSkipProfileSelectionToggle = { viewModel.setSkipProfileSelection(it) },
                             onClockFormatClick = { viewModel.cycleClockFormat() },
                             onShowBudgetToggle = { viewModel.setShowBudget(it) },
+                            showLoadingStats = uiState.showLoadingStats,
+                            onShowLoadingStatsToggle = { viewModel.setShowLoadingStats(it) },
                             onVolumeBoostClick = { viewModel.cycleVolumeBoost() },
                             onSubtitleSizeClick = { viewModel.cycleSubtitleSize() },
                             onSubtitleColorClick = { viewModel.cycleSubtitleColor() },
@@ -3329,6 +3332,8 @@ private fun GeneralSettings(
     onSkipProfileSelectionToggle: (Boolean) -> Unit = {},
     onClockFormatClick: () -> Unit = {},
     onShowBudgetToggle: (Boolean) -> Unit = {},
+    showLoadingStats: Boolean = true,
+    onShowLoadingStatsToggle: (Boolean) -> Unit = {},
     onVolumeBoostClick: () -> Unit = {},
     trailerAutoPlay: Boolean = false,
     onSubtitleSizeClick: () -> Unit = {},
@@ -3544,6 +3549,15 @@ private fun GeneralSettings(
             onClick = onDnsProviderClick,
             modifier = Modifier.settingsFocusSlot(16)
         )
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsToggleRow(
+            title = "Show Loading Stats",
+            subtitle = "Display stream resolution progress",
+            isEnabled = showLoadingStats,
+            isFocused = focusedIndex == 17,
+            onToggle = onShowLoadingStatsToggle,
+            modifier = Modifier.settingsFocusSlot(17)
+        )
 
         // ── Audio ──
         Spacer(modifier = Modifier.height(24.dp))
@@ -3562,9 +3576,9 @@ private fun GeneralSettings(
                 0 -> "Off"
                 else -> "+${volumeBoostDb} dB"
             },
-            isFocused = focusedIndex == 17,
+            isFocused = focusedIndex == 18,
             onClick = onVolumeBoostClick,
-            modifier = Modifier.settingsFocusSlot(17)
+            modifier = Modifier.settingsFocusSlot(18)
         )
     }
 }
