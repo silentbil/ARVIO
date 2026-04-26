@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -292,7 +293,9 @@ fun WatchlistScreen(
                 when {
                     uiState.isLoading -> {
                         Box(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
                             contentAlignment = Alignment.Center
                         ) {
                             LoadingIndicator(color = Pink, size = 64.dp)
