@@ -202,12 +202,8 @@ fun ProfileSelectionScreen(
                                 if (uiState.isManageMode) {
                                     viewModel.showEditDialog(profile)
                                 } else {
-                                    if (uiState.activeProfile?.id == profile.id) {
-                                        onProfileSelected()
-                                    } else {
-                                        navigateTriggered = true
-                                        viewModel.selectProfileWithLockCheck(profile)
-                                    }
+                                    navigateTriggered = true
+                                    viewModel.selectProfileWithLockCheck(profile)
                                 }
                             },
                             onFocus = { viewModel.preloadForProfile(profile) },
@@ -246,12 +242,8 @@ fun ProfileSelectionScreen(
                                 if (uiState.isManageMode) {
                                     viewModel.showEditDialog(profile)
                                 } else {
-                                    if (uiState.activeProfile?.id == profile.id) {
-                                        onProfileSelected()
-                                    } else {
-                                        navigateTriggered = true
-                                        viewModel.selectProfileWithLockCheck(profile)
-                                    }
+                                    navigateTriggered = true
+                                    viewModel.selectProfileWithLockCheck(profile)
                                 }
                             },
                             onFocus = { viewModel.preloadForProfile(profile) },
@@ -357,7 +349,8 @@ fun ProfileSelectionScreen(
                     title = "Enter PIN to unlock",
                     onPinConfirmed = { pin -> viewModel.verifyPinAndSelectProfile(pin) },
                     onDismiss = { viewModel.hidePinDialog() },
-                    isSetup = false
+                    isSetup = false,
+                    pinError = uiState.pinError
                 )
             } else if (uiState.pinDialogMode == "setup") {
                 PinEntryDialog(

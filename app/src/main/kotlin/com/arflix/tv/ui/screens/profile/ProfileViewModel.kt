@@ -12,6 +12,7 @@ import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.ui.components.ToastType
+import com.arflix.tv.util.PinUtil
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -43,7 +44,9 @@ data class ProfileUiState(
     // PIN dialog state
     val showPinDialog: Boolean = false,
     val pinDialogMode: String = "", // "verify" or "setup"
-    val pendingProfileForPin: Profile? = null
+    val pendingProfileForPin: Profile? = null,
+    val pinContext: String = "", // "select", "edit", or "delete"
+    val pinError: String = "" // Error message for wrong PIN
 )
 
 @HiltViewModel
@@ -235,13 +238,23 @@ class ProfileViewModel @Inject constructor(
     // ========== Edit Profile ==========
 
     fun showEditDialog(profile: Profile) {
-        _uiState.value = _uiState.value.copy(
-            editingProfile = profile,
-            newProfileName = profile.name,
-            selectedColorIndex = ProfileColors.colors.indexOf(profile.avatarColor).takeIf { it >= 0 } ?: 0,
-            selectedAvatarId = profile.avatarId,
-            isKidsProfile = false
-        )
+        // If profile is locked, require PIN verification before allowing edit
+        if (profile.isLocked && !profile.pin.isNullOrEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                showPinDialog = true,
+                pinDialogMode = "verify",
+                pendingProfileForPin = profile,
+                pinContext = "edit"
+            )
+        } else {
+            _uiState.value = _uiState.value.copy(
+                editingProfile = profile,
+                newProfileName = profile.name,
+                selectedColorIndex = ProfileColors.colors.indexOf(profile.avatarColor).takeIf { it >= 0 } ?: 0,
+                selectedAvatarId = profile.avatarId,
+                isKidsProfile = false
+            )
+        }
     }
 
     fun hideEditDialog() {
@@ -279,6 +292,20 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun deleteProfile(profile: Profile) {
+        // If profile is locked, require PIN verification before allowing delete
+        if (profile.isLocked && !profile.pin.isNullOrEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                showPinDialog = true,
+                pinDialogMode = "verify",
+                pendingProfileForPin = profile,
+                pinContext = "delete"
+            )
+        } else {
+            performDeleteProfile(profile)
+        }
+    }
+
+    private fun performDeleteProfile(profile: Profile) {
         viewModelScope.launch {
             val activeId = _uiState.value.activeProfile?.id
             profileRepository.deleteProfile(profile.id)
@@ -302,7 +329,8 @@ class ProfileViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 showPinDialog = true,
                 pinDialogMode = "verify",
-                pendingProfileForPin = profile
+                pendingProfileForPin = profile,
+                pinContext = "select"
             )
         } else {
             selectProfile(profile)
@@ -320,27 +348,56 @@ class ProfileViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             showPinDialog = false,
             pinDialogMode = "",
-            pendingProfileForPin = null
+            pendingProfileForPin = null,
+            pinContext = "",
+            pinError = ""
         )
     }
 
     fun verifyPinAndSelectProfile(enteredPin: String) {
         val profile = _uiState.value.pendingProfileForPin ?: return
-        if (profile.pin == enteredPin) {
+        val context = _uiState.value.pinContext
+        if (PinUtil.verifyPin(enteredPin, profile.pin)) {
             hidePinDialog()
-            selectProfile(profile)
+            // Handle PIN verification context
+            when (context) {
+                "edit" -> {
+                    // Open edit dialog for locked profile
+                    _uiState.value = _uiState.value.copy(
+                        editingProfile = profile,
+                        newProfileName = profile.name,
+                        selectedColorIndex = ProfileColors.colors.indexOf(profile.avatarColor).takeIf { it >= 0 } ?: 0,
+                        selectedAvatarId = profile.avatarId,
+                        isKidsProfile = false
+                    )
+                }
+                "delete" -> {
+                    // Delete locked profile after PIN verification
+                    performDeleteProfile(profile)
+                }
+                else -> {
+                    // "select": select the locked profile
+                    selectProfile(profile)
+                }
+            }
         } else {
-            // PIN incorrect - just stay in dialog, will show error in PinEntryDialog
+            // PIN incorrect - show error message in dialog
+            _uiState.value = _uiState.value.copy(
+                pinError = "Incorrect PIN. Please try again."
+            )
         }
     }
 
     fun setupProfilePin(pin: String) {
         val profile = _uiState.value.editingProfile ?: return
-        val updatedProfile = profile.copy(pin = pin, isLocked = true)
+        // Hash the PIN before storing
+        val hashedPin = PinUtil.hashPin(pin)
+        val updatedProfile = profile.copy(pin = hashedPin, isLocked = true)
         viewModelScope.launch {
             profileRepository.updateProfile(updatedProfile)
             _uiState.value = _uiState.value.copy(editingProfile = updatedProfile)
             hidePinDialog()
+            showToast("Profile PIN set successfully", ToastType.SUCCESS)
             runCatching { cloudSyncRepository.pushToCloud() }
         }
     }

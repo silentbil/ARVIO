@@ -48,12 +48,13 @@ fun PinEntryDialog(
     title: String = "Enter PIN",
     onPinConfirmed: (String) -> Unit,
     onDismiss: () -> Unit,
-    isSetup: Boolean = false
+    isSetup: Boolean = false,
+    pinError: String = ""
 ) {
     var pinInput by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
     var isConfirmingSetup by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf(pinError) }
 
     Dialog(
         onDismissRequest = onDismiss,
