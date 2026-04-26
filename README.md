@@ -65,14 +65,19 @@ Requirements:
 - JDK 17
 - Android SDK 35
 
-Use the tracked POSIX Gradle wrapper from Linux, macOS, Git Bash, or WSL:
+Use the tracked Gradle wrapper:
 
 ```bash
 ./gradlew :app:assemblePlayDebug
 ./gradlew :app:assembleSideloadDebug
 ```
 
-The repository does not track `gradlew.bat`. On Windows, run `./gradlew` from Git Bash/WSL, or regenerate the Windows wrapper locally with Gradle if you need PowerShell or Command Prompt support. Keep generated `gradlew.bat` local.
+On Windows PowerShell or Command Prompt, use `gradlew.bat`:
+
+```powershell
+.\gradlew.bat :app:assemblePlayDebug
+.\gradlew.bat :app:assembleSideloadDebug
+```
 
 Install a debug build on a connected Android TV, Fire TV, emulator, phone, or tablet:
 
@@ -119,28 +124,15 @@ The old checked-in `epg_sample.xml` was removed because it was a large local sam
 
 ## Release Checks
 
-The old GitHub workflow and CSV release gate were removed. Before publishing a build, manually smoke-test at least startup, profile switching, playback, stream fallback, subtitle/audio switching, IPTV/EPG loading, addon add/remove, search, settings navigation, background sync, and repeated player open/close on the device classes you support.
+The old GitHub workflow and CSV release gate were removed. Until a replacement CI/release pipeline is added, use this manual release checklist before publishing:
 
-## Star History
+```bash
+./gradlew :app:compilePlayDebugKotlin
+./gradlew :app:assemblePlayRelease
+./gradlew :app:assembleSideloadRelease
+```
 
-<p align="center">
-  <a href="https://www.star-history.com/#ProdigyV21/ARVIO&Date">
-    <picture>
-      <source
-        media="(prefers-color-scheme: dark)"
-        srcset="https://api.star-history.com/svg?repos=ProdigyV21/ARVIO&type=Date&theme=dark"
-      />
-      <source
-        media="(prefers-color-scheme: light)"
-        srcset="https://api.star-history.com/svg?repos=ProdigyV21/ARVIO&type=Date"
-      />
-      <img
-        alt="Star History Chart"
-        src="https://api.star-history.com/svg?repos=ProdigyV21/ARVIO&type=Date"
-      />
-    </picture>
-  </a>
-</p>
+Smoke-test at least startup, profile switching, playback, stream fallback, subtitle/audio switching, IPTV/EPG loading, addon add/remove, search, settings navigation, background sync, and repeated player open/close on the device classes you support. For Windows verification, also run `.\gradlew.bat :app:compilePlayDebugKotlin` from PowerShell or Command Prompt.
 
 ## Support
 
