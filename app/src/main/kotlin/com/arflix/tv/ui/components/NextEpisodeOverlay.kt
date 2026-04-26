@@ -53,6 +53,7 @@ import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
+import com.arflix.tv.util.tr
 import kotlinx.coroutines.delay
 
 /**
@@ -157,7 +158,7 @@ fun NextEpisodeOverlay(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "UP NEXT",
+                            text = tr("UP NEXT"),
                             style = ArflixTypography.label,
                             color = Pink
                         )
@@ -286,7 +287,7 @@ fun NextEpisodeOverlay(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "PLAY NOW",
+                                    text = tr("PLAY NOW"),
                                     style = ArflixTypography.button,
                                     color = if (focusedButton == 0) Color.Black else TextSecondary
                                 )
@@ -310,7 +311,7 @@ fun NextEpisodeOverlay(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Cancel",
+                                contentDescription = tr("Cancel"),
                                 tint = if (focusedButton == 1) Color.Black else TextSecondary,
                                 modifier = Modifier.size(24.dp)
                             )

@@ -149,6 +149,7 @@ import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.isInCinema
 import com.arflix.tv.util.parseRatingValue
+import com.arflix.tv.util.tr
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -735,7 +736,7 @@ fun DetailsScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Close trailer",
+                        contentDescription = tr("Close trailer"),
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)
                     )
@@ -1240,7 +1241,7 @@ private fun DetailsContent(
                     ) {
                         MobileIconActionButton(
                             icon = Icons.Default.List,
-                            contentDescription = "Sources",
+                            contentDescription = tr("Sources"),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(54.dp),
@@ -1248,7 +1249,7 @@ private fun DetailsContent(
                         )
                         MobileIconActionButton(
                             icon = Icons.Default.Movie,
-                            contentDescription = "Trailer",
+                            contentDescription = tr("Trailer"),
                             enabled = hasTrailer,
                             modifier = Modifier
                                 .weight(1f)
@@ -1295,7 +1296,7 @@ private fun DetailsContent(
                         if (totalSeasons > 1) {
                             Spacer(modifier = Modifier.height(20.dp))
                             Text(
-                                text = "Seasons",
+                                text = tr("Seasons"),
                                 style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold),
                                 color = Color.White.copy(alpha = 0.9f)
                             )
@@ -1325,7 +1326,7 @@ private fun DetailsContent(
 
                         Spacer(modifier = Modifier.height(20.dp))
                         Text(
-                            text = "Episodes",
+                            text = tr("Episodes"),
                             style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold),
                             color = Color.White.copy(alpha = 0.9f)
                         )
@@ -1363,7 +1364,7 @@ private fun DetailsContent(
                     ) {
                         Spacer(modifier = Modifier.height(24.dp))
                         Text(
-                            text = "Cast",
+                            text = tr("Cast"),
                             style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold),
                             color = Color.White.copy(alpha = 0.9f)
                         )
@@ -1397,7 +1398,7 @@ private fun DetailsContent(
                     ) {
                         Spacer(modifier = Modifier.height(24.dp))
                         Text(
-                            text = "More Like This",
+                            text = tr("More Like This"),
                             style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold),
                             color = Color.White.copy(alpha = 0.9f)
                         )
@@ -1433,7 +1434,7 @@ private fun DetailsContent(
                     ) {
                         Spacer(modifier = Modifier.height(24.dp))
                         Text(
-                            text = "Reviews",
+                            text = tr("Reviews"),
                             style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold),
                             color = Color.White.copy(alpha = 0.9f)
                         )
@@ -1605,7 +1606,7 @@ private fun DetailsContent(
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                text = "In Cinema",
+                                text = tr("In Cinema"),
                                 style = ArflixTypography.caption.copy(
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
@@ -1722,7 +1723,7 @@ private fun DetailsContent(
                     if (!budgetText.isNullOrBlank()) {
                         Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
                         Text(
-                            text = "Budget $budgetText",
+                            text = "${tr("Budget")} $budgetText",
                             style = ArflixTypography.caption.copy(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1794,7 +1795,7 @@ private fun DetailsContent(
                 Box(modifier = Modifier.clickable { onButtonClick(1) }) {
                     PremiumActionButton(
                         icon = Icons.Default.List,
-                        text = "Sources",
+                        text = tr("Sources"),
                         isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 1,
                         isIconOnly = true
                     )
@@ -1802,7 +1803,7 @@ private fun DetailsContent(
                 Box(modifier = Modifier.clickable { onButtonClick(2) }) {
                     PremiumActionButton(
                         icon = Icons.Default.Movie,
-                        text = "Trailer",
+                        text = tr("Trailer"),
                         isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 2,
                         isIconOnly = true
                     )
@@ -1819,7 +1820,7 @@ private fun DetailsContent(
                 Box(modifier = Modifier.clickable { onButtonClick(4) }) {
                     PremiumActionButton(
                         icon = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        text = "Watchlist",
+                        text = tr("Watchlist"),
                         isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 4,
                         isIconOnly = true,
                         isActive = isInWatchlist
@@ -2011,7 +2012,7 @@ private fun DetailsContent(
 
                     Column {
                         Text(
-                            text = "Cast",
+                            text = tr("Cast"),
                             style = ArvioSkin.typography.sectionTitle.copy(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
@@ -2064,7 +2065,7 @@ private fun DetailsContent(
 
                     Column {
                         Text(
-                            text = "Reviews",
+                            text = tr("Reviews"),
                             style = ArvioSkin.typography.sectionTitle.copy(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
@@ -2116,7 +2117,7 @@ private fun DetailsContent(
 
                     Column {
                         Text(
-                            text = "More Like This",
+                            text = tr("More Like This"),
                             style = ArvioSkin.typography.sectionTitle.copy(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
@@ -2834,7 +2835,7 @@ private fun SeasonButton(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = "Season $season",
+            text = "${tr("Season")} $season",
             style = ArvioSkin.typography.button.copy(
                 fontSize = 13.sp,
                 fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Medium
@@ -3262,7 +3263,7 @@ private fun OngoingBadge() {
             modifier = Modifier.size(14.dp)
         )
         Text(
-            text = "ONGOING",
+            text = tr("ONGOING"),
             style = ArflixTypography.label,
             color = cyanColor
         )
@@ -3319,7 +3320,7 @@ private fun BudgetBadge(budget: String) {
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
-            text = "BUDGET: $budget",
+            text = "${tr("BUDGET")}: $budget",
             style = ArflixTypography.label,
             color = greenColor
         )

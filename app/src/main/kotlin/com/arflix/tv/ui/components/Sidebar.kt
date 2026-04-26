@@ -48,6 +48,7 @@ import com.arflix.tv.data.model.Profile
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.theme.AnimationConstants
 import com.arflix.tv.ui.theme.TextSecondary
+import com.arflix.tv.util.tr
 
 /**
  * Premium navigation sidebar with smooth animations
@@ -265,6 +266,7 @@ private fun SidebarIcon(
         ),
         label = "sidebar_indicator_alpha"
     )
+    val label = tr(item.label)
 
     Box(
         modifier = Modifier
@@ -293,7 +295,7 @@ private fun SidebarIcon(
         ) {
             Icon(
                 imageVector = item.icon,
-                contentDescription = item.label,
+                contentDescription = label,
                 tint = iconColor,
                 modifier = Modifier
                     .size(20.dp)

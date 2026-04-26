@@ -65,10 +65,13 @@ import com.arflix.tv.util.DEVICE_MODE_OVERRIDE_KEY
 import com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.LocalHasTouchScreen
+import com.arflix.tv.util.LocalAppLanguage
 import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.util.deviceHasTouchScreen
+import com.arflix.tv.util.localizedAppContext
 import com.arflix.tv.util.settingsDataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
@@ -208,6 +211,18 @@ class MainActivity : ComponentActivity() {
             val activeProfileLoaded by remember {
                 profileRepository.get().activeProfileId.map { true }
             }.collectAsStateWithLifecycle(initialValue = false)
+            val activeProfileId by remember {
+                profileRepository.get().activeProfileId
+            }.collectAsStateWithLifecycle(initialValue = null)
+            val appLanguage by remember(activeProfileId) {
+                this@MainActivity.settingsDataStore.data.map { prefs ->
+                    val profileId = activeProfileId ?: "default"
+                    prefs[stringPreferencesKey("profile_${profileId}_content_language")] ?: "en-US"
+                }
+            }.collectAsStateWithLifecycle(initialValue = "en-US")
+            val localizedContext = remember(appLanguage) {
+                localizedAppContext(this@MainActivity, appLanguage)
+            }
             val deviceType = when (deviceModeOverride) {
                 "tv" -> DeviceType.TV
                 "tablet" -> DeviceType.TABLET
@@ -219,6 +234,8 @@ class MainActivity : ComponentActivity() {
             // (prevents tablet/phone UI on devices with only D-pad input)
             val effectiveDeviceType = if (!hasTouchScreen && deviceType != DeviceType.TV) DeviceType.TV else deviceType
             CompositionLocalProvider(
+                LocalContext provides localizedContext,
+                LocalAppLanguage provides appLanguage,
                 LocalDeviceType provides effectiveDeviceType,
                 LocalHasTouchScreen provides hasTouchScreen,
                 androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr

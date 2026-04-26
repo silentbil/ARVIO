@@ -117,6 +117,8 @@ import com.arflix.tv.data.repository.CloudstreamRepositoryRecord
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.tr
+import com.arflix.tv.util.trUpper
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
@@ -1029,7 +1031,7 @@ fun SettingsScreen(
                         .padding(vertical = 32.dp, horizontal = 24.dp)
                 ) {
                     Text(
-                        text = "Settings",
+                        text = tr("Settings"),
                         style = ArflixTypography.heroTitle.copy(fontSize = androidx.compose.ui.unit.TextUnit.Unspecified),
                         color = TextPrimary,
                         modifier = Modifier
@@ -1064,7 +1066,7 @@ fun SettingsScreen(
                                     "stremio" -> "Addons"
                                     "cloudstream" -> "Cloudstream"
                                     "accounts" -> "Account"
-                                    else -> section.replaceFirstChar { it.uppercase() }
+                                    else -> tr(section.replaceFirstChar { it.uppercase() })
                                 },
                                 isSelected = sectionIndex == index,
                                 isFocused = activeZone == Zone.SECTION && sectionIndex == index,
@@ -1461,7 +1463,7 @@ fun SettingsScreen(
 
         if (showContentLanguagePicker) {
             SubtitlePickerModal(
-                title = "Content Language",
+                title = "App Language",
                 options = TMDB_LANGUAGES.map { it.second },
                 selected = TMDB_LANGUAGES.firstOrNull { it.first == uiState.contentLanguage }?.second ?: "English",
                 focusedIndex = contentLanguagePickerIndex,
@@ -2295,7 +2297,7 @@ private fun MobileSettingsLayout(
     ) {
         // Title
         Text(
-            text = "Settings",
+            text = tr("Settings"),
             style = ArflixTypography.heroTitle.copy(fontSize = androidx.compose.ui.unit.TextUnit.Unspecified),
             color = TextPrimary,
             modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 12.dp)
@@ -2321,7 +2323,7 @@ private fun MobileSettingsLayout(
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Text(
-                        text = section.replaceFirstChar { it.uppercase() },
+                        text = tr(section.replaceFirstChar { it.uppercase() }),
                         style = ArflixTypography.button,
                         color = if (isSelected) Color.Black else TextSecondary
                     )
@@ -2425,7 +2427,7 @@ private fun AppUpdateModal(
                         }
                     }
             ) {
-            Text("App Update", style = ArflixTypography.sectionTitle, color = TextPrimary)
+            Text(tr("App Update"), style = ArflixTypography.sectionTitle, color = TextPrimary)
             Spacer(modifier = Modifier.height(10.dp))
 
             val subtitle = when {
@@ -2660,7 +2662,7 @@ private fun SettingsSectionItem(
         )
         Spacer(modifier = Modifier.width(16.dp))
         Text(
-            text = title,
+            text = tr(title),
             style = ArflixTypography.body,
             color = textColor
         )
@@ -2711,7 +2713,7 @@ private fun GeneralSettings(
     Column {
         // ── Language & Subtitles ──
         Text(
-            text = "Language & Subtitles",
+            text = tr("Language & Subtitles"),
             style = ArflixTypography.caption.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
             color = TextSecondary.copy(alpha = 0.5f),
             modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
@@ -2719,8 +2721,8 @@ private fun GeneralSettings(
 
         SettingsRow(
             icon = Icons.Default.Subtitles,
-            title = "Content Language",
-            subtitle = "Titles, descriptions and metadata",
+            title = "App Language",
+            subtitle = "App text, titles, descriptions and metadata",
             value = TMDB_LANGUAGES.firstOrNull { it.first == contentLanguage }?.second ?: contentLanguage,
             isFocused = focusedIndex == 0,
             onClick = onContentLanguageClick,
@@ -2770,7 +2772,7 @@ private fun GeneralSettings(
         // ── Playback ──
         Spacer(modifier = Modifier.height(24.dp))
         Text(
-            text = "Playback",
+            text = tr("Playback"),
             style = ArflixTypography.caption.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
             color = TextSecondary.copy(alpha = 0.5f),
             modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
@@ -2836,7 +2838,7 @@ private fun GeneralSettings(
         // ── Interface ──
         Spacer(modifier = Modifier.height(24.dp))
         Text(
-            text = "Interface",
+            text = tr("Interface"),
             style = ArflixTypography.caption.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
             color = TextSecondary.copy(alpha = 0.5f),
             modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
@@ -2900,7 +2902,7 @@ private fun GeneralSettings(
         // ── Network ──
         Spacer(modifier = Modifier.height(24.dp))
         Text(
-            text = "Network",
+            text = tr("Network"),
             style = ArflixTypography.caption.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
             color = TextSecondary.copy(alpha = 0.5f),
             modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
@@ -2919,7 +2921,7 @@ private fun GeneralSettings(
         // ── Audio ──
         Spacer(modifier = Modifier.height(24.dp))
         Text(
-            text = "Audio",
+            text = tr("Audio"),
             style = ArflixTypography.caption.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
             color = TextSecondary.copy(alpha = 0.5f),
             modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
@@ -2964,7 +2966,7 @@ private fun IptvSettings(
 ) {
     Column {
         Text(
-            text = "IPTV",
+            text = tr("IPTV"),
             style = ArflixTypography.sectionTitle,
             color = TextPrimary,
             modifier = Modifier.padding(bottom = 24.dp)
@@ -3080,7 +3082,7 @@ private fun IptvSettings(
         if (isLoading && !progressText.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "${progressText} (${progressPercent.coerceIn(0, 100)}%)",
+            text = "${tr(progressText)} (${progressPercent.coerceIn(0, 100)}%)",
                 style = ArflixTypography.caption,
                 color = TextSecondary
             )
@@ -3122,7 +3124,7 @@ private fun IptvSettings(
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = statusMessage,
+                    text = tr(statusMessage),
                     style = ArflixTypography.caption,
                     color = statusColor
                 )
@@ -3170,14 +3172,14 @@ private fun SettingsRow(
             Spacer(modifier = Modifier.width(16.dp))
             Column {
                 Text(
-                    text = title,
+                    text = tr(title),
                     style = ArflixTypography.cardTitle,
                     color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = subtitle,
+                    text = tr(subtitle),
                     style = ArflixTypography.caption,
                     color = TextSecondary,
                     maxLines = 2,
@@ -3187,7 +3189,7 @@ private fun SettingsRow(
         }
         
         Text(
-            text = value.uppercase(),
+            text = trUpper(value),
             style = ArflixTypography.label,
             color = Pink,
             maxLines = 1,
@@ -3225,14 +3227,14 @@ private fun SettingsToggleRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = title,
+                text = tr(title),
                 style = ArflixTypography.cardTitle,
                 color = TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = subtitle,
+                text = tr(subtitle),
                 style = ArflixTypography.caption,
                 color = TextSecondary,
                 maxLines = 2,
@@ -3278,13 +3280,13 @@ private fun CatalogsSettings(
 ) {
     Column {
         Text(
-            text = "Catalogs",
+            text = tr("Catalogs"),
             style = ArflixTypography.sectionTitle,
             color = TextPrimary,
             modifier = Modifier.padding(bottom = 12.dp)
         )
         Text(
-            text = "Trakt/MDBList URLs can be added manually. Addon catalogs appear automatically.",
+            text = tr("Trakt/MDBList URLs can be added manually. Addon catalogs appear automatically."),
             style = ArflixTypography.caption,
             color = TextSecondary.copy(alpha = 0.65f),
             modifier = Modifier.padding(bottom = 20.dp)
@@ -4487,7 +4489,7 @@ private fun AccountsSettings(
 ) {
     Column {
         Text(
-            text = "Linked Accounts",
+            text = tr("Linked Accounts"),
             style = ArflixTypography.sectionTitle,
             color = TextPrimary,
             modifier = Modifier.padding(bottom = 24.dp)
@@ -4596,14 +4598,14 @@ private fun AccountActionRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = title,
+                text = tr(title),
                 style = ArflixTypography.cardTitle,
                 color = TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = description,
+                text = tr(description),
                 style = ArflixTypography.caption,
                 color = TextSecondary,
                 maxLines = 2,
@@ -4628,7 +4630,7 @@ private fun AccountActionRow(
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = actionLabel,
+                text = trUpper(actionLabel),
                 style = ArflixTypography.label,
                 color = if (isEnabled) Pink else TextSecondary
             )
@@ -4665,14 +4667,14 @@ private fun SettingsActionRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = title,
+                text = tr(title),
                 style = ArflixTypography.cardTitle,
                 color = TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = description,
+                text = tr(description),
                 style = ArflixTypography.caption,
                 color = TextSecondary,
                 maxLines = 2,
@@ -4697,7 +4699,7 @@ private fun SettingsActionRow(
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = actionLabel,
+                text = trUpper(actionLabel),
                 style = ArflixTypography.label,
                 color = Pink
             )
@@ -4745,14 +4747,14 @@ private fun AccountRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = name,
+                    text = tr(name),
                     style = ArflixTypography.cardTitle,
                     color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = description,
+                    text = tr(description),
                     style = ArflixTypography.caption,
                     color = TextSecondary,
                     maxLines = 2,
@@ -4775,7 +4777,7 @@ private fun AccountRow(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "CONNECTED",
+                        text = trUpper("CONNECTED"),
                         style = ArflixTypography.label,
                         color = SuccessGreen
                     )
@@ -4801,7 +4803,7 @@ private fun AccountRow(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "CONNECT",
+                        text = trUpper("CONNECT"),
                         style = ArflixTypography.label,
                         color = Pink
                     )
@@ -4833,7 +4835,7 @@ private fun AccountRow(
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "Enter code:",
+                    text = tr("Enter code:"),
                     style = ArflixTypography.caption,
                     color = TextSecondary.copy(alpha = 0.9f)
                 )
@@ -4855,7 +4857,7 @@ private fun AccountRow(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Waiting for authorization... (Press OK to cancel)",
+                text = tr("Waiting for authorization... (Press OK to cancel)"),
                 style = ArflixTypography.caption,
                 color = TextSecondary.copy(alpha = 0.7f)
             )
@@ -4983,7 +4985,7 @@ private fun InputModalLegacy(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
             Text(
-                text = title,
+                text = tr(title),
                 style = ArflixTypography.sectionTitle,
                 color = TextPrimary,
                 modifier = Modifier.padding(bottom = 24.dp)
@@ -5096,7 +5098,7 @@ private fun InputModalLegacy(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Cancel",
+                        text = tr("Cancel"),
                         style = ArflixTypography.button,
                         color = if (isCancelFocused) TextPrimary else TextSecondary
                     )
@@ -5120,7 +5122,7 @@ private fun InputModalLegacy(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Confirm",
+                        text = tr("Confirm"),
                         style = ArflixTypography.button,
                         color = Color.White
                     )
@@ -5319,7 +5321,7 @@ private fun InputModal(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = title,
+                    text = tr(title),
                     style = ArflixTypography.sectionTitle,
                     color = TextPrimary
                 )
@@ -5565,7 +5567,7 @@ private fun InputModal(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Cancel",
+                            text = tr("Cancel"),
                             style = ArflixTypography.button,
                             color = if (isCancelFocused) Color.Black else Color.White
                         )
@@ -5593,7 +5595,7 @@ private fun InputModal(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Confirm",
+                            text = tr("Confirm"),
                             style = ArflixTypography.button,
                             color = if (isConfirmFocused) Color.Black else Color.White
                         )
@@ -5681,7 +5683,7 @@ private fun SubtitlePickerModal(
                     }
             ) {
                 Text(
-                    text = title,
+                    text = tr(title),
                     style = ArflixTypography.sectionTitle,
                     color = TextPrimary
                 )
@@ -5713,7 +5715,7 @@ private fun SubtitlePickerModal(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = option,
+                                text = tr(option),
                                 style = ArflixTypography.body,
                                 color = if (isFocused) TextPrimary else TextSecondary,
                                 modifier = Modifier.weight(1f)
@@ -5846,7 +5848,7 @@ private fun UiModeWarningDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Confirm",
+                            text = tr("Confirm"),
                             style = ArflixTypography.button,
                             color = Color.White
                         )
@@ -5870,7 +5872,7 @@ private fun UiModeWarningDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Cancel",
+                            text = tr("Cancel"),
                             style = ArflixTypography.button,
                             color = if (isCancelFocused) TextPrimary else TextSecondary
                         )

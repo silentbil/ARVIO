@@ -44,6 +44,7 @@ import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
+import com.arflix.tv.util.tr
 
 /**
  * Audio track data class
@@ -126,7 +127,7 @@ fun AudioTrackSelector(
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = "Audio Track",
+                        text = tr("Audio Track"),
                         style = ArflixTypography.sectionTitle,
                         color = TextPrimary
                     )
@@ -141,7 +142,7 @@ fun AudioTrackSelector(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No audio tracks available",
+                            text = tr("No audio tracks available"),
                             style = ArflixTypography.body,
                             color = TextSecondary
                         )
@@ -167,7 +168,7 @@ fun AudioTrackSelector(
                 
                 // Help text
                 Text(
-                    text = "Press BACK to close",
+                    text = tr("Press BACK to close"),
                     style = ArflixTypography.caption,
                     color = TextSecondary.copy(alpha = 0.5f),
                     modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -240,7 +241,7 @@ private fun AudioTrackItem(
         if (isSelected) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Selected",
+                contentDescription = tr("Selected"),
                 tint = if (isFocused) Color.White else Pink,
                 modifier = Modifier.size(20.dp)
             )

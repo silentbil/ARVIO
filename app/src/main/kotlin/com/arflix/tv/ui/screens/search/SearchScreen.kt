@@ -95,6 +95,7 @@ import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.tr
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -124,8 +125,8 @@ fun SearchScreen(
     val activeCategories: List<Category> = when {
         hasSearchResults -> {
             val list = mutableListOf<Category>()
-            if (uiState.movieResults.isNotEmpty()) list.add(Category("s_m", "Movies (${uiState.movieResults.size})", uiState.movieResults))
-            if (uiState.tvResults.isNotEmpty()) list.add(Category("s_t", "TV Shows (${uiState.tvResults.size})", uiState.tvResults))
+            if (uiState.movieResults.isNotEmpty()) list.add(Category("s_m", "${tr("Movies")} (${uiState.movieResults.size})", uiState.movieResults))
+            if (uiState.tvResults.isNotEmpty()) list.add(Category("s_t", "${tr("TV Shows")} (${uiState.tvResults.size})", uiState.tvResults))
             list
         }
         uiState.query.isEmpty() -> uiState.discoverCategories.filter { it.items.isNotEmpty() }
@@ -297,7 +298,7 @@ fun SearchScreen(
             Box(modifier = Modifier.fillMaxWidth().padding(bottom = if (isCompactHeight) 3.dp else 5.dp), contentAlignment = Alignment.Center) {
                 if (isTouchDevice) {
                     OutlinedTextField(value = uiState.query, onValueChange = { viewModel.updateQuery(it) },
-                        placeholder = { Text("Search or discover... try \"top 10 horror movies\"", style = ArflixTypography.body, color = TextSecondary) },
+                        placeholder = { Text(tr("Search or discover... try \"top 10 horror movies\""), style = ArflixTypography.body, color = TextSecondary) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = if (isSearchInputFocused) Pink else TextSecondary, modifier = Modifier.size(22.dp)) },
                         textStyle = ArflixTypography.body.copy(color = TextPrimary), singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { viewModel.search(); keyboardController?.hide() }),
@@ -311,7 +312,7 @@ fun SearchScreen(
                             textStyle = ArflixTypography.body.copy(color = TextPrimary, fontSize = 14.sp), cursorBrush = SolidColor(Color.White), singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { viewModel.search(); keyboardController?.hide() }),
                             modifier = Modifier.weight(1f).focusRequester(searchFocusRequester).onFocusChanged { s -> isSearchInputFocused = s.isFocused; if (s.isFocused) focusZone = FocusZone.SEARCH_INPUT },
-                            decorationBox = { inner -> if (uiState.query.isEmpty()) Text("Search or discover... try \"top 10 horror movies\"", style = ArflixTypography.body.copy(fontSize = 14.sp), color = Color.White.copy(alpha = 0.25f)); inner() })
+                            decorationBox = { inner -> if (uiState.query.isEmpty()) Text(tr("Search or discover... try \"top 10 horror movies\""), style = ArflixTypography.body.copy(fontSize = 14.sp), color = Color.White.copy(alpha = 0.25f)); inner() })
                     }
                 }
             }
@@ -337,11 +338,11 @@ fun SearchScreen(
                     }
                     LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
                         val genres = viewModel.getGenresForType()
-                        item(key = "all_g") { GlowChip("All Genres", uiState.selectedGenre == null) { viewModel.selectGenre(null) } }
+                        item(key = "all_g") { GlowChip(tr("All Genres"), uiState.selectedGenre == null) { viewModel.selectGenre(null) } }
                         items(genres.size, key = { "g_${genres[it].id}" }) { i -> GlowChip(genres[i].name, uiState.selectedGenre == genres[i]) { viewModel.selectGenre(genres[i]) } }
                     }
                     LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
-                        item(key = "any_l") { GlowChip("Any Language", uiState.selectedCountry == null) { viewModel.selectCountry(null) } }
+                        item(key = "any_l") { GlowChip(tr("Any Language"), uiState.selectedCountry == null) { viewModel.selectCountry(null) } }
                         items(COUNTRIES.size, key = { "c_${COUNTRIES[it].code}" }) { i -> GlowChip(COUNTRIES[i].name, uiState.selectedCountry == COUNTRIES[i]) { viewModel.selectCountry(COUNTRIES[i]) } }
                     }
                 }
@@ -360,7 +361,7 @@ fun SearchScreen(
                 }
 
                 uiState.query.isNotEmpty() && !uiState.isAiSearch && !hasSearchResults -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No results found for \"${uiState.query}\"", style = ArflixTypography.body, color = TextSecondary) }
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(tr("No results found for \"${uiState.query}\""), style = ArflixTypography.body, color = TextSecondary) }
                 }
 
                 uiState.isDiscoverLoading && activeCategories.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator(color = Pink, size = 48.dp) }
@@ -492,7 +493,7 @@ private fun RowsLayer(
                 Box(modifier = Modifier.fillMaxWidth().height(rowHeight).clipToBounds().graphicsLayer { alpha = rowAlpha }) {
                     Column {
                         Text(
-                            category.title,
+                            tr(category.title),
                             style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp),
                             color = Color.White.copy(alpha = if (isCurrentRow) 0.9f else 0.5f),
                             modifier = Modifier.padding(start = 8.dp, bottom = 8.dp, top = 4.dp)
@@ -604,8 +605,9 @@ private fun buildCardTitle(item: MediaItem): String {
     return if (year != null) "${item.title} ($year)" else item.title
 }
 
+@Composable
 private fun buildCardSubtitle(item: MediaItem): String {
-    return when (item.mediaType) { MediaType.TV -> "Series"; MediaType.MOVIE -> "Movie" }
+    return when (item.mediaType) { MediaType.TV -> tr("Series"); MediaType.MOVIE -> tr("Movie") }
 }
 
 private enum class FocusZone { SIDEBAR, SEARCH_INPUT, FILTERS, RESULTS }

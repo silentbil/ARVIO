@@ -129,6 +129,7 @@ import com.arflix.tv.ui.theme.BackgroundDark
 
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
+import com.arflix.tv.util.tr
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -1075,7 +1076,7 @@ fun TvScreen(
                                 if (nowProg != null) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = "NOW",
+                                            text = tr("NOW"),
                                             style = ArflixTypography.caption.copy(fontSize = if (isMobile) 8.sp else 9.sp, fontWeight = FontWeight.Bold),
                                             color = Color.Black,
                                             modifier = Modifier
@@ -1104,7 +1105,7 @@ fun TvScreen(
                                     Spacer(modifier = Modifier.height(if (isMobile) 4.dp else 6.dp))
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = "NEXT",
+                                            text = tr("NEXT"),
                                             style = ArflixTypography.caption.copy(fontSize = if (isMobile) 8.sp else 9.sp, fontWeight = FontWeight.Bold),
                                             color = Color.White.copy(alpha = 0.7f),
                                             modifier = Modifier
@@ -1134,7 +1135,7 @@ fun TvScreen(
                                     Spacer(modifier = Modifier.height(if (isMobile) 3.dp else 4.dp))
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = "LATER",
+                                            text = tr("LATER"),
                                             style = ArflixTypography.caption.copy(fontSize = if (isMobile) 8.sp else 9.sp),
                                             color = Color.White.copy(alpha = 0.4f),
                                             modifier = Modifier
@@ -1327,7 +1328,7 @@ fun TvScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.ArrowBack,
-                                        contentDescription = "Back to channel list",
+                                        contentDescription = tr("Back to channel list"),
                                         tint = Color.White,
                                         modifier = Modifier.size(24.dp)
                                     )
@@ -1358,7 +1359,7 @@ fun TvScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.SkipPrevious,
-                                            contentDescription = "Previous channel",
+                                            contentDescription = tr("Previous channel"),
                                             tint = Color.White,
                                             modifier = Modifier.size(24.dp)
                                         )
@@ -1381,7 +1382,7 @@ fun TvScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.SkipNext,
-                                            contentDescription = "Next channel",
+                                            contentDescription = tr("Next channel"),
                                             tint = Color.White,
                                             modifier = Modifier.size(24.dp)
                                         )
@@ -1614,7 +1615,7 @@ private fun FullscreenEpgOverlay(
                 if (nowProgram != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "NOW",
+                            text = tr("NOW"),
                             style = ArflixTypography.caption.copy(fontWeight = FontWeight.Bold, fontSize = if (isMobile) 10.sp else 12.sp),
                             color = Color.Black,
                             modifier = Modifier
@@ -1672,7 +1673,7 @@ private fun FullscreenEpgOverlay(
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "LIVE",
+                            text = tr("LIVE"),
                             style = ArflixTypography.caption.copy(fontWeight = FontWeight.Bold, fontSize = if (isMobile) 10.sp else 12.sp),
                             color = Color.Black,
                             modifier = Modifier
@@ -1692,7 +1693,7 @@ private fun FullscreenEpgOverlay(
                     Spacer(modifier = Modifier.height(if (isMobile) 8.dp else 12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "NEXT",
+                            text = tr("NEXT"),
                             style = ArflixTypography.caption.copy(fontWeight = FontWeight.Bold, fontSize = if (isMobile) 9.sp else 11.sp),
                             color = Color.White.copy(alpha = 0.8f),
                             modifier = Modifier
@@ -1966,7 +1967,7 @@ private fun GuideChannelRow(
                 )
                 if (isPlaying) {
                     Text(
-                        text = "LIVE",
+                        text = tr("LIVE"),
                         style = ArflixTypography.caption.copy(fontSize = if (isMobile) 7.sp else 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
                         color = AccentGreen,
                         maxLines = 1
@@ -2066,7 +2067,7 @@ private fun CompactGuideLane(
             if (nextTitle != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Next: $nextTitle",
+                    text = "${tr("Next")}: $nextTitle",
                     style = ArflixTypography.caption.copy(fontSize = 9.sp),
                     color = Color.White.copy(alpha = 0.45f),
                     maxLines = 1,
@@ -2345,7 +2346,7 @@ private fun NotConfiguredPanel() {
                 modifier = Modifier.size(40.dp)
             )
             Spacer(modifier = Modifier.height(12.dp))
-            Text("IPTV is not configured", style = ArflixTypography.sectionTitle, color = TextPrimary)
+            Text(tr("IPTV is not configured"), style = ArflixTypography.sectionTitle, color = TextPrimary)
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 "Open Settings and add your M3U URL.",

@@ -47,6 +47,7 @@ import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundDark
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
+import com.arflix.tv.util.tr
 
 data class BottomBarItem(
     val label: String,
@@ -88,6 +89,7 @@ fun AppBottomBar(
             bottomBarItems.forEach { item ->
                 val isSelected = currentRoute?.contains(item.route, ignoreCase = true) == true
                 var isFocused by remember { mutableStateOf(false) }
+                val label = tr(item.label)
 
                 Column(
                     modifier = Modifier
@@ -126,7 +128,7 @@ fun AppBottomBar(
                     ) {
                         Icon(
                             imageVector = item.icon,
-                            contentDescription = item.label,
+                            contentDescription = label,
                             tint = when {
                                 isFocused -> Color.White
                                 isSelected -> TextPrimary
@@ -146,7 +148,7 @@ fun AppBottomBar(
                         Spacer(modifier = Modifier.size(4.dp))
                     }
                     Text(
-                        text = item.label,
+                        text = label,
                         style = ArflixTypography.caption.copy(fontSize = 10.sp),
                         color = when {
                             isFocused -> Color.White

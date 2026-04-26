@@ -65,6 +65,7 @@ import com.arflix.tv.ui.theme.BackgroundElevated
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
+import com.arflix.tv.util.tr
 
 /**
  * TV-friendly text input modal using native Android keyboard
@@ -288,7 +289,7 @@ fun TextInputModal(
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     ActionButton(
-                        text = "CANCEL",
+                        text = tr("CANCEL"),
                         isFocused = focusedButton == 0,
                         onClick = {
                             hideKeyboard()
@@ -296,7 +297,7 @@ fun TextInputModal(
                         }
                     )
                     ActionButton(
-                        text = "OK",
+                        text = tr("OK"),
                         isFocused = focusedButton == 1,
                         isPrimary = true,
                         onClick = {

@@ -137,6 +137,7 @@ import com.arflix.tv.ui.components.WaveLoadingDots
 import androidx.compose.ui.text.style.TextOverflow
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.settingsDataStore
+import com.arflix.tv.util.tr
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.PurpleDark
@@ -2022,7 +2023,7 @@ fun PlayerScreen(
                             Text(currentTime.value, style = ArflixTypography.body.copy(fontSize = 18.sp, fontWeight = FontWeight.Medium), color = TextSecondary, maxLines = 1)
                         }
                         if (endsAtTime.value.isNotBlank()) {
-                            Text("Ends at ${endsAtTime.value}", style = ArflixTypography.caption.copy(fontSize = 12.sp), color = TextSecondary.copy(alpha = 0.7f), maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                            Text("${tr("Ends at")} ${endsAtTime.value}", style = ArflixTypography.caption.copy(fontSize = 12.sp), color = TextSecondary.copy(alpha = 0.7f), maxLines = 1, modifier = Modifier.padding(top = 2.dp))
                         }
                     }
                 }
@@ -2104,7 +2105,7 @@ fun PlayerScreen(
                         }
 
                         // Subtitles
-                        PlayerIconButton(icon = Icons.Default.ClosedCaption, contentDescription = "Subtitles & Audio",
+                        PlayerIconButton(icon = Icons.Default.ClosedCaption, contentDescription = tr("Subtitles & Audio"),
                             focusRequester = subtitleButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
                             onFocusChanged = { if (it) focusedButton = 1 },
                             onClick = { showSubtitleMenu = true; subtitleMenuIndex = 0 },
@@ -2115,7 +2116,7 @@ fun PlayerScreen(
                         Spacer(modifier = Modifier.width(gap))
 
                         // Sources
-                        PlayerIconButton(icon = Icons.Default.Folder, contentDescription = "Sources",
+                        PlayerIconButton(icon = Icons.Default.Folder, contentDescription = tr("Sources"),
                             focusRequester = sourceButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
                             onFocusChanged = {},
                             onClick = { showSourceMenu = true; showControls = true },
@@ -2179,7 +2180,7 @@ fun PlayerScreen(
 
                         if (mediaType == MediaType.TV) {
                             Spacer(modifier = Modifier.width(gap))
-                            PlayerIconButton(icon = Icons.Default.SkipNext, contentDescription = "Next Episode",
+                            PlayerIconButton(icon = Icons.Default.SkipNext, contentDescription = tr("Next Episode"),
                                 focusRequester = nextEpisodeButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
                                 onFocusChanged = {},
                                 onClick = {
@@ -2611,7 +2612,7 @@ fun PlayerScreen(
                     if (isSetup) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "ARVIO uses community streaming addons to find video sources. Without at least one streaming addon, content cannot be played.",
+                            text = tr("ARVIO uses community streaming addons to find video sources. Without at least one streaming addon, content cannot be played."),
                             style = ArflixTypography.caption,
                             color = TextSecondary.copy(alpha = 0.7f),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -2624,7 +2625,7 @@ fun PlayerScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         if (!isSetup) {
                             ErrorButton(
-                                text = "TRY AGAIN",
+                                text = tr("TRY AGAIN"),
                                 icon = Icons.Default.Refresh,
                                 isFocused = errorModalFocusIndex == 0,
                                 isPrimary = true,
@@ -2632,7 +2633,7 @@ fun PlayerScreen(
                             )
                         }
                         ErrorButton(
-                            text = "GO BACK",
+                            text = tr("GO BACK"),
                             isFocused = if (isSetup) errorModalFocusIndex == 0 else errorModalFocusIndex == 1,
                             isPrimary = isSetup,
                             onClick = onBack
@@ -3105,12 +3106,12 @@ private fun SubtitleMenu(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     TabButton(
-                        text = "Subtitles",
+                        text = tr("Subtitles"),
                         isSelected = activeTab == 0,
                         onClick = { onTabChanged(0) }
                     )
                     TabButton(
-                        text = "Audio",
+                        text = tr("Audio"),
                         isSelected = activeTab == 1,
                         onClick = { onTabChanged(1) }
                     )
@@ -3163,7 +3164,7 @@ private fun SubtitleMenu(
                             if (audioTracks.isEmpty()) {
                                 item {
                                     Text(
-                                        text = "No audio tracks available",
+                                        text = tr("No audio tracks available"),
                                         style = ArflixTypography.body,
                                         color = TextSecondary,
                                         modifier = Modifier.padding(16.dp)
@@ -3207,7 +3208,7 @@ private fun SubtitleMenu(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "← → Switch tabs • ↑↓ Navigate • BACK Close",
+                        text = tr("Switch tabs • Navigate • BACK Close"),
                         style = ArflixTypography.caption,
                         color = TextSecondary.copy(alpha = 0.5f)
                     )
@@ -3270,7 +3271,7 @@ private fun SubtitleMenu(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = tr("Close"),
                             tint = Color.White,
                             modifier = Modifier.size(22.dp)
                         )
@@ -3382,7 +3383,7 @@ private fun SubtitleMenu(
                         if (audioTracks.isEmpty()) {
                             item {
                                 Text(
-                                    text = "No audio tracks available",
+                                    text = tr("No audio tracks available"),
                                     style = ArflixTypography.body.copy(fontSize = 14.sp),
                                     color = TextSecondary,
                                     modifier = Modifier.padding(16.dp)
@@ -3501,7 +3502,7 @@ private fun TrackMenuItem(
         if (isSelected) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Selected",
+                contentDescription = tr("Selected"),
                 tint = if (isFocused) Color.Black else Color.White,
                 modifier = Modifier.size(18.dp)
             )
@@ -3551,7 +3552,7 @@ private fun MobileTrackItem(
         if (isSelected) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Selected",
+                contentDescription = tr("Selected"),
                 tint = Color(0xFF4CAF50), // Green checkmark
                 modifier = Modifier
                     .padding(start = 12.dp)
