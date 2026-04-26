@@ -1546,16 +1546,20 @@ private fun DetailsContent(
         val isTV = item.mediaType == MediaType.TV
         val hasEpisodes = isTV && episodes.isNotEmpty()
         val hasSeasons = isTV && totalSeasons > 1
+        val hasLowerContent = cast.isNotEmpty() || reviews.isNotEmpty() || similar.isNotEmpty()
         val baseContentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(240.dp, 320.dp)
-        val contentRowHeight = if (hasEpisodes && !hasSeasons) {
-            212.dp
-        } else {
-            baseContentRowHeight
+        val contentRowHeight = when {
+            hasEpisodes && hasSeasons -> 282.dp
+            hasEpisodes -> 212.dp
+            isTV && hasLowerContent -> 180.dp
+            isTV -> 0.dp
+            else -> baseContentRowHeight
         }
-        val contentTopPadding = if (hasEpisodes && !hasSeasons) 4.dp else 12.dp
-        val contentVerticalSpacing = if (hasEpisodes && !hasSeasons) 0.dp else 8.dp
-        val episodeVerticalPadding = if (hasEpisodes && !hasSeasons) 8.dp else 14.dp
-        val contentRowBottomPadding = 12.dp
+        val contentTopPadding = if (hasEpisodes) 4.dp else 0.dp
+        val contentVerticalSpacing = if (hasEpisodes && hasSeasons) 6.dp else 0.dp
+        val seasonVerticalPadding = if (hasEpisodes && hasSeasons) 8.dp else 12.dp
+        val episodeVerticalPadding = if (hasEpisodes) 8.dp else 14.dp
+        val contentRowBottomPadding = if (contentRowHeight > 0.dp) 12.dp else 0.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
         val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 56.dp else 64.dp
@@ -1944,8 +1948,8 @@ private fun DetailsContent(
                             contentPadding = PaddingValues(
                                 start = contentStartPadding,
                                 end = 150.dp,
-                                top = 12.dp,
-                                bottom = 12.dp,
+                                top = seasonVerticalPadding,
+                                bottom = seasonVerticalPadding,
                             ),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
