@@ -841,6 +841,14 @@ fun PlayerScreen(
         if (BuildConfig.DEBUG) {
         }
         if (url != null) {
+            // Track when stream was selected (before any blocking probes)
+            streamSelectedTime = System.currentTimeMillis()
+            bufferingStartTime = null
+            hasPlaybackStarted = false  // Reset for new stream
+            playbackIssueReported = false
+            rebufferRecoverAttempted = false
+            longRebufferCount = 0
+
             // Match frame rate before touching playback so any display mode switch
             // happens up-front instead of mid-playback.
             frameRateActivity?.let { activity ->
@@ -855,10 +863,12 @@ fun PlayerScreen(
                         .orEmpty()
                         .filterKeys { it.isNotBlank() }
                     val detection = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        com.arflix.tv.util.FrameRateUtils.detectFrameRate(
-                            sourceUrl = url,
-                            headers = baseRequestHeaders + streamHeaders
-                        )
+                        kotlinx.coroutines.withTimeoutOrNull(2000L) {
+                            com.arflix.tv.util.FrameRateUtils.detectFrameRate(
+                                sourceUrl = url,
+                                headers = baseRequestHeaders + streamHeaders
+                            )
+                        }
                     }
                     if (detection != null) {
                         com.arflix.tv.util.FrameRateUtils.matchFrameRateAndWait(activity, detection.snapped)
@@ -886,12 +896,7 @@ fun PlayerScreen(
             httpDataSourceFactory.setDefaultRequestProperties(baseRequestHeaders + streamHeaders)
 
             // Track when stream was selected
-            streamSelectedTime = System.currentTimeMillis()
-            bufferingStartTime = null
-            hasPlaybackStarted = false  // Reset for new stream
-            playbackIssueReported = false
-            rebufferRecoverAttempted = false
-            longRebufferCount = 0
+            // (Moved up before frame rate probe)
 
             // Only add the selected subtitle to ExoPlayer (not all 30+).
             // Loading all external subs slows down preparation and causes non-UTF8 subs to fail.
