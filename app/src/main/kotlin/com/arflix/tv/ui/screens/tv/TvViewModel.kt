@@ -359,6 +359,19 @@ class TvViewModel @Inject constructor(
         val updated = withContext(Dispatchers.Default) {
             iptvRepository.reDeriveCachedNowNext(channelIds)
         } ?: return
+        mergeNowNext(updated)
+    }
+
+    private suspend fun refreshGuideFromCache(channelIds: Set<String>) {
+        if (channelIds.isEmpty()) return
+        val updated = withContext(Dispatchers.Default) {
+            iptvRepository.reDeriveCachedNowNext(channelIds)
+        } ?: return
+        mergeNowNext(updated)
+    }
+
+    private fun mergeNowNext(updated: Map<String, com.arflix.tv.data.model.IptvNowNext>) {
+        if (updated.isEmpty()) return
         val current = _uiState.value
         setUiState(
             current.copy(
@@ -412,21 +425,27 @@ class TvViewModel @Inject constructor(
 
         fullEpgWarmupJob?.cancel()
         fullEpgWarmupJob = viewModelScope.launch(Dispatchers.IO) {
-            val channelIds = channels.asSequence().map { it.id }.toCollection(LinkedHashSet())
+            kotlinx.coroutines.delay(3_000L)
+            if (visibleEpgRefreshJob?.isActive == true) {
+                visibleEpgRefreshJob?.join()
+            }
+            refreshGuideFromCache()
+
+            val afterCache = _uiState.value
+            val channelIds = afterCache.snapshot.channels
+                .asSequence()
+                .map { it.id }
+                .filter { id -> !hasProgramData(afterCache.snapshot.nowNext[id]) }
+                .take(1_600)
+                .toCollection(LinkedHashSet())
+            if (channelIds.isEmpty()) return@launch
             System.err.println("[EPG-Full] warming guide for ${channelIds.size} channels, missing=$missingCount")
             val refreshed = runCatching {
-                iptvRepository.refreshEpgForChannels(channelIds, maxChannels = 0)
+                iptvRepository.refreshEpgForChannels(channelIds, maxChannels = channelIds.size)
             }.getOrNull()
 
             if (!refreshed.isNullOrEmpty()) {
-                val current = _uiState.value
-                setUiState(
-                    current.copy(
-                        snapshot = current.snapshot.copy(
-                            nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(refreshed) }
-                        )
-                    )
-                )
+                mergeNowNext(refreshed)
             }
 
             val afterRefresh = _uiState.value
@@ -492,6 +511,7 @@ class TvViewModel @Inject constructor(
         backgroundLimit: Int = 640
     ) {
         if (channelIds.isEmpty()) return
+        val firstPaintLimit = 40
         val orderedIds = buildList {
             selectedChannelId?.takeIf { it in channelIds }?.let { add(it) }
             channelIds.forEach { id ->
@@ -505,6 +525,8 @@ class TvViewModel @Inject constructor(
         if (missingCount == 0) return
 
         val refreshKey = buildString {
+            append(_uiState.value.config.syncSignature())
+            append('|')
             append(selectedChannelId.orEmpty())
             append('|')
             append(orderedIds.size)
@@ -522,30 +544,48 @@ class TvViewModel @Inject constructor(
         lastVisibleEpgRefreshAt = now
         visibleEpgRefreshJob?.cancel()
         visibleEpgRefreshJob = viewModelScope.launch {
-            val eagerIds = orderedIds.take(eagerLimit.coerceAtLeast(1))
-            System.err.println("[EPG-Category] eager=${eagerIds.size} totalVisible=${orderedIds.size} selected=${selectedChannelId.orEmpty()}")
-            val eagerRefreshed = runCatching {
-                iptvRepository.refreshEpgForChannels(
-                    eagerIds.toSet(),
-                    maxChannels = eagerIds.size
-                )
-            }.getOrNull()
+            val cacheLimit = maxOf(firstPaintLimit, eagerLimit, backgroundLimit).coerceAtMost(orderedIds.size)
+            refreshGuideFromCache(orderedIds.take(cacheLimit).toCollection(LinkedHashSet()))
 
-            if (!eagerRefreshed.isNullOrEmpty()) {
-                val current = _uiState.value
-                setUiState(
-                    current.copy(
-                        snapshot = current.snapshot.copy(
-                            nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(eagerRefreshed) }
-                        )
+            val firstPaintIds = orderedIds
+                .filterNot { id -> hasProgramData(_uiState.value.snapshot.nowNext[id]) }
+                .take(minOf(firstPaintLimit, eagerLimit.coerceAtLeast(1)))
+            val firstPaintIdSet = firstPaintIds.toHashSet()
+            if (firstPaintIds.isNotEmpty()) {
+                System.err.println("[EPG-Category] firstPaint=${firstPaintIds.size} totalVisible=${orderedIds.size} selected=${selectedChannelId.orEmpty()}")
+                val firstPaintRefreshed = runCatching {
+                    iptvRepository.refreshEpgForChannels(
+                        firstPaintIds.toSet(),
+                        maxChannels = firstPaintIds.size
                     )
-                )
+                }.getOrNull()
+                if (!firstPaintRefreshed.isNullOrEmpty()) {
+                    mergeNowNext(firstPaintRefreshed)
+                }
+            }
+
+            val eagerIds = orderedIds
+                .filterNot { id -> id in firstPaintIdSet || hasProgramData(_uiState.value.snapshot.nowNext[id]) }
+                .take((eagerLimit - firstPaintIds.size).coerceAtLeast(0))
+            val eagerIdSet = eagerIds.toHashSet()
+            if (eagerIds.isNotEmpty()) {
+                System.err.println("[EPG-Category] eager=${eagerIds.size} totalVisible=${orderedIds.size} selected=${selectedChannelId.orEmpty()}")
+                val eagerRefreshed = runCatching {
+                    iptvRepository.refreshEpgForChannels(
+                        eagerIds.toSet(),
+                        maxChannels = eagerIds.size
+                    )
+                }.getOrNull()
+                if (!eagerRefreshed.isNullOrEmpty()) {
+                    mergeNowNext(eagerRefreshed)
+                }
             }
 
             val backgroundIds = orderedIds
-                .drop(eagerIds.size)
                 .let { ids -> if (backgroundLimit > 0) ids.take(backgroundLimit) else ids }
-                .filterNot { id -> hasProgramData(_uiState.value.snapshot.nowNext[id]) }
+                .filterNot { id ->
+                    id in firstPaintIdSet || id in eagerIdSet || hasProgramData(_uiState.value.snapshot.nowNext[id])
+                }
             if (backgroundIds.isEmpty()) return@launch
 
             System.err.println("[EPG-Category] background=${backgroundIds.size} selected=${selectedChannelId.orEmpty()}")
@@ -557,14 +597,7 @@ class TvViewModel @Inject constructor(
             }.getOrNull()
 
             if (!backgroundRefreshed.isNullOrEmpty()) {
-                val current = _uiState.value
-                setUiState(
-                    current.copy(
-                        snapshot = current.snapshot.copy(
-                            nowNext = current.snapshot.nowNext.toMutableMap().apply { putAll(backgroundRefreshed) }
-                        )
-                    )
-                )
+                mergeNowNext(backgroundRefreshed)
             }
         }.also { job ->
             job.invokeOnCompletion {
@@ -683,8 +716,8 @@ class TvViewModel @Inject constructor(
         prefetchVisibleCategoryEpg(
             channelIds = warmChannels.map { it.id },
             selectedChannelId = preferredSelectedId,
-            eagerLimit = minOf(warmChannels.size, 520),
-            backgroundLimit = minOf(warmChannels.size, 1600)
+            eagerLimit = minOf(warmChannels.size, 96),
+            backgroundLimit = minOf(warmChannels.size, 520)
         )
     }
 
