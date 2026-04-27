@@ -4,15 +4,19 @@ import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -1958,8 +1962,9 @@ private fun DetailsContent(
                     val episodeCardWidth = if (configuration.screenWidthDp < 1400) 292.dp else 300.dp
                     val episodeRowState = rememberTvLazyListState()
                     val episodeFixedFocus = focusSectionForUi == FocusSection.EPISODES &&
-                        detailsRailIsScrollable(
+                        detailsRailUsesFixedFirstSlotFocus(
                             totalItems = episodes.size,
+                            focusedItemIndex = episodeIndex,
                             itemWidth = episodeCardWidth,
                             itemSpacing = 16.dp
                         )
@@ -2126,8 +2131,9 @@ private fun DetailsContent(
                     val similarRowState = rememberTvLazyListState()
                     val similarCardWidth = if (usePosterCards) 126.dp else 210.dp
                     val similarFixedFocus = focusSectionForUi == FocusSection.SIMILAR &&
-                        detailsRailIsScrollable(
+                        detailsRailUsesFixedFirstSlotFocus(
                             totalItems = similar.size,
+                            focusedItemIndex = similarIndex,
                             itemWidth = similarCardWidth,
                             itemSpacing = 14.dp
                         )
@@ -2210,9 +2216,51 @@ private fun detailsRailIsScrollable(
             (configuration.screenWidthDp.dp - 56.dp - 12.dp).coerceAtLeast(1.dp).roundToPx()
         }
         val itemSpanPx = with(density) { (itemWidth + itemSpacing).roundToPx() }.coerceAtLeast(1)
-        (availablePx / itemSpanPx).coerceAtLeast(1)
+        ((availablePx + itemSpanPx - 1) / itemSpanPx).coerceAtLeast(1)
     }
     return totalItems > visibleCapacity
+}
+
+@Composable
+private fun detailsRailUsesFixedFirstSlotFocus(
+    totalItems: Int,
+    focusedItemIndex: Int,
+    itemWidth: Dp,
+    itemSpacing: Dp
+): Boolean {
+    if (focusedItemIndex < 0 || totalItems <= 0) return false
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val visibleCapacity = remember(configuration, density, itemWidth, itemSpacing) {
+        val availablePx = with(density) {
+            (configuration.screenWidthDp.dp - 56.dp - 12.dp).coerceAtLeast(1.dp).roundToPx()
+        }
+        val itemSpanPx = with(density) { (itemWidth + itemSpacing).roundToPx() }.coerceAtLeast(1)
+        ((availablePx + itemSpanPx - 1) / itemSpanPx).coerceAtLeast(1)
+    }
+    val maxFirstIndex = (totalItems - visibleCapacity).coerceAtLeast(0)
+    return totalItems > visibleCapacity && focusedItemIndex < maxFirstIndex
+}
+
+private suspend fun TvLazyListState.animateDetailsScrollDelta(
+    deltaPx: Float,
+    durationMillis: Int
+) {
+    if (abs(deltaPx) <= 1f) return
+    scroll(scrollPriority = MutatePriority.PreventUserInput) {
+        var previousValue = 0f
+        animate(
+            initialValue = 0f,
+            targetValue = deltaPx,
+            animationSpec = tween(durationMillis = durationMillis, easing = FastOutSlowInEasing)
+        ) { value, _ ->
+            val step = value - previousValue
+            if (abs(step) > 0.01f) {
+                scrollBy(step)
+            }
+            previousValue = value
+        }
+    }
 }
 
 @Composable
@@ -2257,7 +2305,7 @@ private fun HomeStyleRowAutoScroll(
     val fallbackItemsPerPage = remember(configuration, density, itemWidth, itemSpacing) {
         val availablePx = with(density) { availableWidthDp.coerceAtLeast(1.dp).roundToPx() }
         val itemSpanPx = with(density) { (itemWidth + itemSpacing).roundToPx() }.coerceAtLeast(1)
-        (availablePx / itemSpanPx).coerceAtLeast(1)
+        ((availablePx + itemSpanPx - 1) / itemSpanPx).coerceAtLeast(1)
     }
     var baseVisibleCount by remember { mutableIntStateOf(0) }
     val visibleCount = rowState.layoutInfo.visibleItemsInfo.size
@@ -2267,7 +2315,7 @@ private fun HomeStyleRowAutoScroll(
         }
     }
     val itemsPerPage = remember(fallbackItemsPerPage, baseVisibleCount) {
-        if (baseVisibleCount > 0) minOf(baseVisibleCount, fallbackItemsPerPage) else fallbackItemsPerPage
+        if (baseVisibleCount > 0) maxOf(baseVisibleCount, fallbackItemsPerPage) else fallbackItemsPerPage
     }
     val effectiveVisibleCount = remember(totalItems, itemsPerPage, visibleCount) {
         if (visibleCount > 0) minOf(visibleCount, totalItems.coerceAtLeast(1)) else itemsPerPage
@@ -2297,11 +2345,7 @@ private fun HomeStyleRowAutoScroll(
     LaunchedEffect(scrollTargetIndex, isCurrentRow, focusedItemIndex) {
         if (!isCurrentRow || scrollTargetIndex < 0) return@LaunchedEffect
 
-        val extraOffset = if (focusedItemIndex > maxFirstIndex) {
-            ((focusedItemIndex - maxFirstIndex) * itemSpanPx).toInt()
-        } else {
-            0
-        }
+        val extraOffset = 0
 
         if (focusedItemIndex == 0 && scrollTargetIndex == 0) {
             rowState.scrollToItem(index = 0, scrollOffset = 0)
@@ -2318,13 +2362,24 @@ private fun HomeStyleRowAutoScroll(
             return@LaunchedEffect
         }
         val currentFirst = rowState.firstVisibleItemIndex
+        val currentOffset = rowState.firstVisibleItemScrollOffset
         val currentLast = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: currentFirst
         val targetOutsideViewport = focusedItemIndex < currentFirst || focusedItemIndex > currentLast
         val delta = scrollTargetIndex - currentFirst
         if (abs(delta) > 6) {
             rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         } else if (delta != 0 || targetOutsideViewport || lastScrollOffset != extraOffset) {
-            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+            val deltaPx = (delta * itemSpanPx) + (extraOffset - currentOffset)
+            rowState.animateDetailsScrollDelta(
+                deltaPx = deltaPx,
+                durationMillis = if (abs(delta) >= 3) 180 else 150
+            )
+            if (
+                rowState.firstVisibleItemIndex != scrollTargetIndex ||
+                abs(rowState.firstVisibleItemScrollOffset - extraOffset) > 8
+            ) {
+                rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+            }
         }
         lastScrollIndex = scrollTargetIndex
         lastScrollOffset = extraOffset
