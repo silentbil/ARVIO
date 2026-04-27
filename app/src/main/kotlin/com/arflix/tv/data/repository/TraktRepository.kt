@@ -5,8 +5,6 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.longPreferencesKey
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.data.api.*
 import com.arflix.tv.data.model.MediaItem
@@ -17,14 +15,12 @@ import com.arflix.tv.util.EpisodePointer
 import com.arflix.tv.util.EpisodeProgressSnapshot
 import com.arflix.tv.util.WatchedEpisodeSnapshot
 import com.arflix.tv.util.Constants
-import com.arflix.tv.util.authDataStore
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.traktDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Deferred
@@ -41,12 +37,8 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import retrofit2.HttpException
 import java.text.Normalizer
@@ -95,10 +87,6 @@ class TraktRepository @Inject constructor(
     private val USER_ID_KEY = stringPreferencesKey("user_id")
     private val clientId = Constants.TRAKT_CLIENT_ID
     private val clientSecret = Constants.TRAKT_CLIENT_SECRET
-    private val LEGACY_ACCESS_TOKEN_KEY = stringPreferencesKey("trakt_access_token")
-    private val LEGACY_REFRESH_TOKEN_KEY = stringPreferencesKey("trakt_refresh_token")
-    private val LEGACY_EXPIRES_AT_KEY = longPreferencesKey("trakt_expires_at")
-
     // Profile-scoped preference keys - each profile has its own Trakt connection
     private fun accessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun refreshTokenKey() = profileManager.profileStringKey("trakt_refresh_token")
@@ -117,7 +105,7 @@ class TraktRepository @Inject constructor(
         val expiresAt: Long?
     )
 
-    private var attemptedProfileTokenLoadForProfileId: String? = null
+    @Volatile private var activeCacheProfileId: String? = null
     @Volatile private var cachedContinueWatching: List<ContinueWatchingItem> = emptyList()
     @Volatile private var cachedContinueWatchingProfileId: String? = null
     @Volatile private var continueWatchingFetching = false
@@ -126,11 +114,35 @@ class TraktRepository @Inject constructor(
     private val CONTINUE_WATCHING_CACHE_MS = 300_000L // 5 minute cache to reduce API calls and improve performance
     private val TRAKT_UP_NEXT_RECENT_WINDOW_MS = 548L * 24L * 60L * 60L * 1000L // 18 months
 
-    @Serializable
-    private data class TraktTokenUpdate(
-        val trakt_token: JsonObject,
-        val updated_at: String
-    )
+    private fun currentProfileId(): String = profileManager.getProfileIdSync().ifBlank { "default" }
+
+    private fun ensureProfileCacheScope() {
+        val profileId = currentProfileId()
+        if (activeCacheProfileId == profileId) return
+        activeCacheProfileId = profileId
+        clearProfileScopedMemoryCaches(clearPreloaded = false)
+    }
+
+    private fun clearProfileScopedMemoryCaches(clearPreloaded: Boolean) {
+        watchedMoviesCache.clear()
+        watchedEpisodesCache.clear()
+        cacheInitialized = false
+        cacheInitializing = false
+        showWatchedEpisodesCache.clear()
+        showWatchedCacheTime = 0L
+        showCompletionCache.clear()
+        tmdbToTraktIdCache.clear()
+        cachedContinueWatching = emptyList()
+        cachedContinueWatchingProfileId = null
+        lastContinueWatchingFetch = 0L
+        continueWatchingFetching = false
+        continueWatchingFetchingProfileId = null
+        lastScrobbleKey = null
+        lastScrobbleTime = 0L
+        if (clearPreloaded) {
+            preloadedProfileCache.clear()
+        }
+    }
 
     // ========== Authentication ==========
 
@@ -178,13 +190,9 @@ class TraktRepository @Inject constructor(
     }
 
     suspend fun refreshTokenIfNeeded(): String? {
-        var prefs = context.traktDataStore.data.first()
-        var accessToken = prefs[accessTokenKey()]
-        if (accessToken == null) {
-            accessToken = migrateLegacyTokenToCurrentProfile(prefs)
-            if (accessToken == null) return null
-            prefs = context.traktDataStore.data.first()
-        }
+        ensureProfileCacheScope()
+        val prefs = context.traktDataStore.data.first()
+        val accessToken = prefs[accessTokenKey()] ?: return null
         val refreshToken = prefs[refreshTokenKey()]
         val expiresAt = prefs[expiresAtKey()]
 
@@ -218,61 +226,12 @@ class TraktRepository @Inject constructor(
         }
     }
 
-    private suspend fun migrateLegacyTokenToCurrentProfile(prefs: Preferences): String? {
-        val legacyAccessToken = prefs[LEGACY_ACCESS_TOKEN_KEY]?.takeIf { it.isNotBlank() } ?: return null
-        val legacyRefreshToken = prefs[LEGACY_REFRESH_TOKEN_KEY]?.takeIf { it.isNotBlank() }
-        val legacyExpiresAt = prefs[LEGACY_EXPIRES_AT_KEY]
-
-        context.traktDataStore.edit { mutablePrefs ->
-            mutablePrefs[accessTokenKey()] = legacyAccessToken
-            if (legacyRefreshToken != null) {
-                mutablePrefs[refreshTokenKey()] = legacyRefreshToken
-            }
-            if (legacyExpiresAt != null) {
-                mutablePrefs[expiresAtKey()] = legacyExpiresAt
-            }
-            mutablePrefs.remove(LEGACY_ACCESS_TOKEN_KEY)
-            mutablePrefs.remove(LEGACY_REFRESH_TOKEN_KEY)
-            mutablePrefs.remove(LEGACY_EXPIRES_AT_KEY)
-        }
-
-        return legacyAccessToken
-    }
-
     private suspend fun saveToken(token: TraktToken) {
+        ensureProfileCacheScope()
         context.traktDataStore.edit { prefs ->
             prefs[accessTokenKey()] = token.accessToken
             prefs[refreshTokenKey()] = token.refreshToken
             prefs[expiresAtKey()] = token.createdAt + token.expiresIn
-        }
-
-        // Sync to Supabase profile
-        syncTokenToSupabase(token)
-    }
-
-    /**
-     * Sync Trakt token to Supabase profile
-     */
-    private suspend fun syncTokenToSupabase(token: TraktToken) {
-        try {
-            val prefs = context.traktDataStore.data.first()
-            val userId = prefs[USER_ID_KEY] ?: return
-
-            // Build token object matching webapp format
-            val tokenJson = buildJsonObject {
-                put("access_token", token.accessToken)
-                put("refresh_token", token.refreshToken)
-                put("expires_in", token.expiresIn)
-                put("created_at", token.createdAt)
-            }
-
-            supabase.postgrest
-                .from("profiles")
-                .update(TraktTokenUpdate(tokenJson, java.time.Instant.now().toString())) {
-                    filter { eq("id", userId) }
-                }
-
-        } catch (e: Exception) {
         }
     }
 
@@ -289,39 +248,18 @@ class TraktRepository @Inject constructor(
      * Load tokens from Supabase profile
      */
     suspend fun loadTokensFromProfile(traktToken: JsonObject?) {
-        if (traktToken == null) return
-
-        try {
-            val accessToken = traktToken["access_token"]?.toString()?.trim('"') ?: return
-            val refreshToken = traktToken["refresh_token"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
-            val expiresIn = traktToken["expires_in"]?.toString()?.toLongOrNull()
-            val createdAt = traktToken["created_at"]?.toString()?.toLongOrNull()
-
-            context.traktDataStore.edit { prefs ->
-                prefs[accessTokenKey()] = accessToken
-                if (refreshToken != null) {
-                    prefs[refreshTokenKey()] = refreshToken
-                } else {
-                    prefs.remove(refreshTokenKey())
-                }
-                if (createdAt != null && expiresIn != null) {
-                    prefs[expiresAtKey()] = createdAt + expiresIn
-                } else {
-                    prefs.remove(expiresAtKey())
-                }
-            }
-
-        } catch (e: Exception) {
-            System.err.println("TraktRepo: loadTokensFromProfile failed: ${e.message}")
-        }
+        // Legacy account-level Supabase trakt_token is intentionally ignored.
+        // Per-profile Trakt tokens are restored through importTokensForProfiles.
     }
 
     suspend fun logout() {
+        ensureProfileCacheScope()
         context.traktDataStore.edit { prefs ->
             prefs.remove(accessTokenKey())
             prefs.remove(refreshTokenKey())
             prefs.remove(expiresAtKey())
         }
+        clearProfileScopedMemoryCaches(clearPreloaded = false)
     }
 
     /**
@@ -465,44 +403,9 @@ class TraktRepository @Inject constructor(
     }
 
     private suspend fun getAuthHeader(): String? {
-        val profileId = profileManager.getProfileIdSync()
-        loadProfileTokenFromSupabaseIfNeeded(profileId)
+        ensureProfileCacheScope()
         val token = refreshTokenIfNeeded() ?: return null
         return "Bearer $token"
-    }
-
-    private suspend fun loadProfileTokenFromSupabaseIfNeeded(profileId: String) {
-        // Load Trakt tokens from Supabase profile if available.
-        // This must be tracked per profile; startup can touch Trakt before the
-        // active profile cache is initialized, and a failed default-profile
-        // attempt must not block the selected profile from loading its token.
-        if (attemptedProfileTokenLoadForProfileId != profileId) {
-            attemptedProfileTokenLoadForProfileId = profileId
-            try {
-                val userId = context.traktDataStore.data.first()[USER_ID_KEY]
-                    ?: context.authDataStore.data.first()[USER_ID_KEY]
-                if (!userId.isNullOrBlank()) {
-                    val profile = supabase.postgrest
-                        .from("profiles")
-                        .select { filter { eq("id", userId) } }
-                        .decodeSingleOrNull<JsonObject>()
-                    val traktTokenElement = profile?.get("trakt_token")
-                    when {
-                        traktTokenElement is JsonObject -> {
-                            loadTokensFromProfile(traktTokenElement)
-                        }
-                        traktTokenElement != null -> {
-                            val accessToken = traktTokenElement.jsonPrimitive.content
-                            if (accessToken.isNotBlank() && accessToken != "null") {
-                                context.traktDataStore.edit { prefs ->
-                                    prefs[accessTokenKey()] = accessToken
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
     }
 
     // ========== Watched History ==========
@@ -546,6 +449,7 @@ class TraktRepository @Inject constructor(
      * Mark movie as watched - updates local cache immediately (optimistic), then syncs to backend
      */
     suspend fun markMovieWatched(tmdbId: Int) {
+        ensureProfileCacheScope()
         // OPTIMISTIC UPDATE: Update caches immediately so the UI responds instantly
         updateWatchedCache(tmdbId, null, null, true)
         persistLocalWatchedSnapshotForCurrentProfile()
@@ -563,6 +467,7 @@ class TraktRepository @Inject constructor(
      * Mark movie as unwatched - updates local cache immediately (optimistic), then syncs to backend
      */
     suspend fun markMovieUnwatched(tmdbId: Int) {
+        ensureProfileCacheScope()
         // OPTIMISTIC UPDATE: Update cache immediately so the UI responds instantly
         updateWatchedCache(tmdbId, null, null, false)
         persistLocalWatchedSnapshotForCurrentProfile()
@@ -579,6 +484,7 @@ class TraktRepository @Inject constructor(
      * Mark episode as watched - updates local cache immediately (optimistic), then syncs to backend
      */
     suspend fun markEpisodeWatched(showTmdbId: Int, season: Int, episode: Int) {
+        ensureProfileCacheScope()
         // OPTIMISTIC UPDATE: Update all caches immediately so the UI responds instantly
         updateWatchedCache(showTmdbId, season, episode, true)
         updateShowWatchedCache(showTmdbId, season, episode, true)
@@ -596,6 +502,7 @@ class TraktRepository @Inject constructor(
      * Mark episode as unwatched - updates local cache immediately (optimistic), then syncs to backend
      */
     suspend fun markEpisodeUnwatched(showTmdbId: Int, season: Int, episode: Int) {
+        ensureProfileCacheScope()
         // OPTIMISTIC UPDATE: Update all caches immediately so the UI responds instantly
         updateWatchedCache(showTmdbId, season, episode, false)
         updateShowWatchedCache(showTmdbId, season, episode, false)
@@ -1016,39 +923,8 @@ class TraktRepository @Inject constructor(
      * Sync locally stored Trakt tokens to Supabase if profile is empty.
      */
     suspend fun syncLocalTokensToProfileIfNeeded() {
-        try {
-            val prefs = context.traktDataStore.data.first()
-            val accessToken = prefs[accessTokenKey()] ?: return
-            val refreshToken = prefs[refreshTokenKey()]
-            val expiresAt = prefs[expiresAtKey()]
-            val now = System.currentTimeMillis() / 1000
-            val computedExpiresIn = expiresAt?.let { (it - now).toInt() } ?: 0
-            val expiresIn = if (computedExpiresIn > 0) computedExpiresIn else 7776000
-            val createdAt = if (computedExpiresIn > 0 && expiresAt != null) {
-                (expiresAt - expiresIn).coerceAtMost(now)
-            } else {
-                now
-            }
-
-            val userId = prefs[USER_ID_KEY]
-                ?: context.authDataStore.data.first()[USER_ID_KEY]
-                ?: return
-
-            val tokenJson = buildJsonObject {
-                put("access_token", accessToken)
-                refreshToken?.let { put("refresh_token", it) }
-                put("expires_in", expiresIn)
-                put("created_at", createdAt)
-            }
-
-            supabase.postgrest
-                .from("profiles")
-                .update(TraktTokenUpdate(tokenJson, java.time.Instant.now().toString())) {
-                    filter { eq("id", userId) }
-                }
-
-        } catch (e: Exception) {
-        }
+        // Account-level Supabase token sync is disabled. Cloud sync stores Trakt
+        // tokens in the profile payload so one profile cannot overwrite another.
     }
 
     /**
@@ -1162,7 +1038,8 @@ class TraktRepository @Inject constructor(
      * For profiles without Trakt, falls back to local Continue Watching storage.
      */
     suspend fun getContinueWatching(forceRefresh: Boolean = false): List<ContinueWatchingItem> = coroutineScope {
-        val requestProfileId = profileManager.getProfileIdSync()
+        ensureProfileCacheScope()
+        val requestProfileId = currentProfileId()
         val auth = getAuthHeader()
 
         // If no Trakt auth, use local Continue Watching for this profile
@@ -1560,9 +1437,10 @@ class TraktRepository @Inject constructor(
     private val preloadedProfileCache = ConcurrentHashMap<String, List<ContinueWatchingItem>>()
 
     suspend fun preloadContinueWatchingCache(): List<ContinueWatchingItem> {
-        val currentProfileId = profileManager.getProfileIdSync()
+        ensureProfileCacheScope()
+        val profileId = currentProfileId()
         // Return existing cache if available
-        if (cachedContinueWatchingProfileId == currentProfileId && cachedContinueWatching.isNotEmpty()) {
+        if (cachedContinueWatchingProfileId == profileId && cachedContinueWatching.isNotEmpty()) {
             cachedContinueWatching = filterDismissedContinueWatchingItems(cachedContinueWatching)
             return cachedContinueWatching
         }
@@ -1583,15 +1461,15 @@ class TraktRepository @Inject constructor(
             // Profile genuinely has no Trakt — use local CW
             val local = filterDismissedContinueWatchingItems(loadLocalContinueWatchingRaw())
             cachedContinueWatching = local
-            cachedContinueWatchingProfileId = currentProfileId
+            cachedContinueWatchingProfileId = profileId
             return cachedContinueWatching
         }
 
         // Trakt profile: check preloaded cache first (from ProfileSelectionScreen)
-        val preloaded = preloadedProfileCache[currentProfileId]
+        val preloaded = preloadedProfileCache[profileId]
         if (!preloaded.isNullOrEmpty()) {
             cachedContinueWatching = filterDismissedContinueWatchingItems(preloaded)
-            cachedContinueWatchingProfileId = currentProfileId
+            cachedContinueWatchingProfileId = profileId
             return cachedContinueWatching
         }
 
@@ -1600,7 +1478,7 @@ class TraktRepository @Inject constructor(
         // resolveContinueWatchingItems). Do NOT fall back to local CW here.
         val cached = filterDismissedContinueWatchingItems(loadContinueWatchingCache())
         cachedContinueWatching = cached
-        cachedContinueWatchingProfileId = currentProfileId
+        cachedContinueWatchingProfileId = profileId
         return cachedContinueWatching
     }
 
@@ -1657,6 +1535,7 @@ class TraktRepository @Inject constructor(
      * IMPORTANT: Always clears existing cache first to prevent cross-profile data leakage.
      */
     fun activatePreloadedCache(profileId: String) {
+        activeCacheProfileId = profileId.ifBlank { "default" }
         // CRITICAL: Clear existing cache first to prevent profile data leakage
         cachedContinueWatching = emptyList()
         cachedContinueWatchingProfileId = null
@@ -1674,6 +1553,7 @@ class TraktRepository @Inject constructor(
      * Clear continue watching cache - call when switching profiles
      */
     fun clearContinueWatchingCache() {
+        ensureProfileCacheScope()
         cachedContinueWatching = emptyList()
         cachedContinueWatchingProfileId = null
         lastContinueWatchingFetch = 0L
@@ -1702,40 +1582,15 @@ class TraktRepository @Inject constructor(
      * This ensures complete isolation between profiles and prevents data leakage
      */
     fun clearAllProfileCaches() {
-        // Watched status caches (prevents Profile 1's Trakt data showing in Profile 2)
-        watchedMoviesCache.clear()
-        watchedEpisodesCache.clear()
-        cacheInitialized = false
-        cacheInitializing = false
-
-        // Per-show watched episode caches
-        showWatchedEpisodesCache.clear()
-        showWatchedCacheTime = 0L
-        showCompletionCache.clear()
-
-        // Trakt ID mapping cache (profile-specific Trakt account has different IDs)
-        tmdbToTraktIdCache.clear()
-
-        // Continue watching caches
-        cachedContinueWatching = emptyList()
-        cachedContinueWatchingProfileId = null
-        lastContinueWatchingFetch = 0L
-        preloadedProfileCache.clear()
-        continueWatchingFetching = false
-        continueWatchingFetchingProfileId = null
-
-        // Scrobble state (prevent cross-profile scrobble deduplication issues)
-        lastScrobbleKey = null
-        lastScrobbleTime = 0L
-
-        // Token load flag (force fresh token check for new profile)
-        attemptedProfileTokenLoadForProfileId = null
+        activeCacheProfileId = currentProfileId()
+        clearProfileScopedMemoryCaches(clearPreloaded = true)
     }
 
     /**
      * Remove an episode from Continue Watching cache when marked as watched
      */
     suspend fun removeFromContinueWatchingCache(showTmdbId: Int, seasonNum: Int?, episodeNum: Int?) {
+        ensureProfileCacheScope()
         // Always remove from local CW (for non-Trakt profiles) regardless of Trakt cache state
         removeFromLocalContinueWatching(showTmdbId, seasonNum, episodeNum)
 
@@ -1778,6 +1633,7 @@ class TraktRepository @Inject constructor(
         streamTitle: String? = null,
         year: String = ""
     ) {
+        ensureProfileCacheScope()
         val hasMeaningfulPosition = positionSeconds >= 60L
 
         // Keep accidental taps out, but still keep real partial sessions on long content
@@ -3081,6 +2937,7 @@ class TraktRepository @Inject constructor(
      * Call this after sync operations to pick up new data
      */
     fun invalidateWatchedCache() {
+        ensureProfileCacheScope()
         cacheInitialized = false
         watchedMoviesCache.clear()
         watchedEpisodesCache.clear()
@@ -3094,6 +2951,7 @@ class TraktRepository @Inject constructor(
      * so all content appears unwatched (proper profile isolation)
      */
     suspend fun initializeWatchedCache() {
+        ensureProfileCacheScope()
         if (cacheInitialized) return
         // Prevent multiple simultaneous initializations
         if (cacheInitializing) {
@@ -3104,8 +2962,6 @@ class TraktRepository @Inject constructor(
             return
         }
         cacheInitializing = true
-        val existingMovies = watchedMoviesCache.toSet()
-        val existingEpisodes = watchedEpisodesCache.toSet()
         try {
             val hasTraktAuth = refreshTokenIfNeeded() != null
             val (localSnapshotMovies, localSnapshotEpisodes) = loadLocalWatchedSnapshotForCurrentProfile()
@@ -3117,10 +2973,8 @@ class TraktRepository @Inject constructor(
             // If no Trakt auth AND no Supabase data, leave caches empty
             if (!hasTraktAuth && supabaseMovies.isEmpty() && supabaseEpisodes.isEmpty()) {
                 watchedMoviesCache.clear()
-                watchedMoviesCache.addAll(existingMovies)
                 watchedMoviesCache.addAll(localSnapshotMovies)
                 watchedEpisodesCache.clear()
-                watchedEpisodesCache.addAll(existingEpisodes)
                 watchedEpisodesCache.addAll(localSnapshotEpisodes)
                 cacheInitialized = true
                 return
@@ -3131,12 +2985,10 @@ class TraktRepository @Inject constructor(
             val traktEpisodes = if (supabaseEpisodes.isEmpty() && hasTraktAuth) getWatchedEpisodes() else emptySet()
 
             watchedMoviesCache.clear()
-            watchedMoviesCache.addAll(existingMovies)
             watchedMoviesCache.addAll(localSnapshotMovies)
             watchedMoviesCache.addAll(if (supabaseMovies.isNotEmpty()) supabaseMovies else traktMovies)
 
             watchedEpisodesCache.clear()
-            watchedEpisodesCache.addAll(existingEpisodes)
             watchedEpisodesCache.addAll(localSnapshotEpisodes)
             watchedEpisodesCache.addAll(if (supabaseEpisodes.isNotEmpty()) supabaseEpisodes else traktEpisodes)
 
@@ -3148,19 +3000,15 @@ class TraktRepository @Inject constructor(
                 val hasTraktFallback = refreshTokenIfNeeded() != null
                 if (hasTraktFallback) {
                     watchedMoviesCache.clear()
-                    watchedMoviesCache.addAll(existingMovies)
                     watchedMoviesCache.addAll(localSnapshotMovies)
                     watchedMoviesCache.addAll(getWatchedMovies())
                     watchedEpisodesCache.clear()
-                    watchedEpisodesCache.addAll(existingEpisodes)
                     watchedEpisodesCache.addAll(localSnapshotEpisodes)
                     watchedEpisodesCache.addAll(getWatchedEpisodes())
                 } else {
                     watchedMoviesCache.clear()
-                    watchedMoviesCache.addAll(existingMovies)
                     watchedMoviesCache.addAll(localSnapshotMovies)
                     watchedEpisodesCache.clear()
-                    watchedEpisodesCache.addAll(existingEpisodes)
                     watchedEpisodesCache.addAll(localSnapshotEpisodes)
                 }
                 cacheInitialized = true
@@ -3177,6 +3025,7 @@ class TraktRepository @Inject constructor(
      * Update watched cache entry
      */
     private fun updateWatchedCache(tmdbId: Int, season: Int?, episode: Int?, watched: Boolean) {
+        ensureProfileCacheScope()
         if (season == null || episode == null) {
             // Movie
             if (watched) {
@@ -3205,6 +3054,7 @@ class TraktRepository @Inject constructor(
      * Check if movie is watched (uses cache)
      */
     fun isMovieWatched(tmdbId: Int): Boolean {
+        ensureProfileCacheScope()
         return watchedMoviesCache.contains(tmdbId)
     }
 
@@ -3212,6 +3062,7 @@ class TraktRepository @Inject constructor(
      * Check if episode is watched (uses cache)
      */
     fun isEpisodeWatched(tmdbId: Int, season: Int, episode: Int): Boolean {
+        ensureProfileCacheScope()
         val key = buildEpisodeKey(
             traktEpisodeId = null,
             showTraktId = null,
@@ -3225,17 +3076,24 @@ class TraktRepository @Inject constructor(
     /**
      * Get all watched movie IDs from cache
      */
-    fun getWatchedMoviesFromCache(): Set<Int> = watchedMoviesCache.toSet()
+    fun getWatchedMoviesFromCache(): Set<Int> {
+        ensureProfileCacheScope()
+        return watchedMoviesCache.toSet()
+    }
 
     /**
      * Get all watched episode keys from cache
      */
-    fun getWatchedEpisodesFromCache(): Set<String> = watchedEpisodesCache
+    fun getWatchedEpisodesFromCache(): Set<String> {
+        ensureProfileCacheScope()
+        return watchedEpisodesCache.toSet()
+    }
 
     /**
      * Check if show has any watched episodes - optimized to avoid full iteration
      */
     fun hasWatchedEpisodes(showTmdbId: Int): Boolean {
+        ensureProfileCacheScope()
         val prefix = "show_tmdb:$showTmdbId:"
         return watchedEpisodesCache.any { it.startsWith(prefix) }
     }
