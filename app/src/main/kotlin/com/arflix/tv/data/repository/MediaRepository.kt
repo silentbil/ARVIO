@@ -1458,16 +1458,17 @@ class MediaRepository @Inject constructor(
             val page = loadCollectionCatalogPage(catalog = catalog, offset = 0, limit = maxItems)
             return@coroutineScope if (page.items.isEmpty()) null else Category(catalog.id, catalog.title, page.items)
         }
+        val effectiveMaxItems = if (catalog.isTop10Catalog()) maxItems.coerceAtMost(10) else maxItems
         val mediaRefs = when (catalog.sourceType) {
             CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
             CatalogSourceType.MDBLIST -> loadMdblistCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
-            CatalogSourceType.ADDON -> loadAddonCatalogRefsPage(catalog, offset = 0, limit = maxItems).refs
+            CatalogSourceType.ADDON -> loadAddonCatalogRefsPage(catalog, offset = 0, limit = effectiveMaxItems).refs
             CatalogSourceType.PREINSTALLED -> emptyList()
         }
         if (mediaRefs.isEmpty()) return@coroutineScope null
 
         val semaphore = Semaphore(6)
-        val jobs = mediaRefs.distinct().take(maxItems).map { (type, tmdbId) ->
+        val jobs = mediaRefs.distinct().take(effectiveMaxItems).map { (type, tmdbId) ->
             async {
                 semaphore.withPermit {
                     runCatching {
@@ -1497,13 +1498,18 @@ class MediaRepository @Inject constructor(
             return@coroutineScope loadCollectionCatalogPage(catalog, offset, limit)
         }
         if (limit <= 0 || offset < 0) return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
+        val rankedCatalogLimit = if (catalog.isTop10Catalog()) 10 else Int.MAX_VALUE
+        if (offset >= rankedCatalogLimit) {
+            return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
+        }
+        val effectiveLimit = limit.coerceAtMost(rankedCatalogLimit - offset)
 
         val pageRefs: List<Pair<MediaType, Int>>
         val hasMore: Boolean
         if (catalog.sourceType == CatalogSourceType.ADDON) {
-            val page = loadAddonCatalogRefsPage(catalog, offset, limit)
+            val page = loadAddonCatalogRefsPage(catalog, offset, effectiveLimit)
             pageRefs = page.refs
-            hasMore = page.hasMore
+            hasMore = page.hasMore && offset + pageRefs.size < rankedCatalogLimit
         } else {
             val mediaRefs = when (catalog.sourceType) {
                 CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
@@ -1514,11 +1520,12 @@ class MediaRepository @Inject constructor(
 
             if (mediaRefs.isEmpty()) return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
 
-            pageRefs = mediaRefs.drop(offset).take(limit)
+            val cappedRefs = mediaRefs.take(rankedCatalogLimit)
+            pageRefs = cappedRefs.drop(offset).take(effectiveLimit)
             if (pageRefs.isEmpty()) {
                 return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
             }
-            hasMore = offset + pageRefs.size < mediaRefs.size
+            hasMore = offset + pageRefs.size < cappedRefs.size
         }
 
         val semaphore = Semaphore(6)
@@ -2776,6 +2783,13 @@ class MediaRepository @Inject constructor(
         }
 
         return deduped.values.take(10)
+    }
+
+    private fun CatalogConfig.isTop10Catalog(): Boolean {
+        return id.contains("top10", ignoreCase = true) ||
+            title.contains("Top 10", ignoreCase = true) ||
+            sourceUrl?.contains("top-10", ignoreCase = true) == true ||
+            sourceRef?.contains("top-10", ignoreCase = true) == true
     }
 
     private fun canonicalStreamingServiceName(raw: String?): String {

@@ -116,6 +116,7 @@ class CloudSyncRepository @Inject constructor(
         val includeSpecials: Boolean = false,
         val dnsProvider: String = "system",
         val subtitleUsageJson: String = "",
+        val subtitleSettingsUpdatedAt: Long = 0L,
         val iptvHiddenGroups: String = "",
         val iptvGroupOrder: String = ""
     )
@@ -136,6 +137,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "dns_provider")
     private fun subtitleUsageKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "subtitle_usage_v1")
+    private fun subtitleSettingsUpdatedAtKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "subtitle_settings_updated_at")
 
     private fun subtitleSizeKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "subtitle_size")
@@ -163,6 +166,7 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileBooleanKeyFor(profileId, "include_specials")
     private fun dnsProviderKey() = profileManager.profileStringKey("dns_provider")
     private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
+    private fun subtitleSettingsUpdatedAtKey() = profileManager.profileStringKey("subtitle_settings_updated_at")
 
     // Active-profile key shortcuts (used for legacy flat fields in snapshot)
     private fun defaultSubtitleKey() = profileManager.profileStringKey("default_subtitle")
@@ -224,6 +228,7 @@ class CloudSyncRepository @Inject constructor(
                         volumeBoostDb = prefs[volumeBoostDbKeyFor(profile.id)]?.toIntOrNull()?.coerceIn(0, 15) ?: 0,
                         dnsProvider = prefs[dnsProviderKeyFor(profile.id)] ?: "system",
                         subtitleUsageJson = prefs[subtitleUsageKeyFor(profile.id)] ?: "",
+                        subtitleSettingsUpdatedAt = prefs[subtitleSettingsUpdatedAtKeyFor(profile.id)]?.toLongOrNull() ?: 0L,
                         subtitleSize = prefs[subtitleSizeKeyFor(profile.id)] ?: "Medium",
                         subtitleColor = prefs[subtitleColorKeyFor(profile.id)] ?: "White",
                         iptvHiddenGroups = prefs[iptvHiddenGroupsKeyFor(profile.id)] ?: "",
@@ -258,6 +263,7 @@ class CloudSyncRepository @Inject constructor(
         root.put("includeSpecials", prefs[includeSpecialsKey()] ?: false)
         root.put("dnsProvider", prefs[dnsProviderKey()] ?: "system")
         root.put("subtitleUsageJson", prefs[subtitleUsageKey()] ?: "")
+        root.put("subtitleSettingsUpdatedAt", prefs[subtitleSettingsUpdatedAtKey()]?.toLongOrNull() ?: 0L)
         root.put("skipProfileSelection", prefs[SKIP_PROFILE_SELECTION_KEY] ?: false)
 
         root.put("activeProfileId", profileRepository.getActiveProfileId() ?: JSONObject.NULL)
@@ -450,6 +456,8 @@ class CloudSyncRepository @Inject constructor(
         val fallbackAutoPlaySingleSource = root.optBoolean("autoPlaySingleSource", true)
         val fallbackAutoPlayMinQuality = normalizeAutoPlayMinQuality(root.optString("autoPlayMinQuality", "Any"))
         val fallbackIncludeSpecials = root.optBoolean("includeSpecials", false)
+        val fallbackSubtitleSettingsUpdatedAt = root.optLong("subtitleSettingsUpdatedAt", 0L)
+        var preservedNewerLocalSubtitle = false
 
         // ── Profiles ──
         root.optJSONArray("profiles")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
@@ -477,7 +485,30 @@ class CloudSyncRepository @Inject constructor(
             if (settingsByProfile.isNotEmpty()) {
                 context.settingsDataStore.edit { prefs ->
                     settingsByProfile.forEach { (profileId, state) ->
-                        prefs[defaultSubtitleKeyFor(profileId)] = state.defaultSubtitle
+                        val defaultSubtitleKey = defaultSubtitleKeyFor(profileId)
+                        val subtitleUpdatedAtKey = subtitleSettingsUpdatedAtKeyFor(profileId)
+                        val localSubtitle = prefs[defaultSubtitleKey]?.trim().orEmpty()
+                        val localSubtitleUpdatedAt = prefs[subtitleUpdatedAtKey]?.toLongOrNull() ?: 0L
+                        val cloudSubtitle = state.defaultSubtitle.trim().ifBlank { "Off" }
+                        val keepLocalSubtitle = localSubtitle.isNotBlank() &&
+                            !localSubtitle.equals(cloudSubtitle, ignoreCase = true) &&
+                            (
+                                localSubtitleUpdatedAt > state.subtitleSettingsUpdatedAt ||
+                                    (
+                                        state.subtitleSettingsUpdatedAt <= 0L &&
+                                            cloudSubtitle.equals("Off", ignoreCase = true) &&
+                                            !localSubtitle.equals("Off", ignoreCase = true)
+                                        )
+                                )
+
+                        if (keepLocalSubtitle) {
+                            preservedNewerLocalSubtitle = true
+                        } else {
+                            prefs[defaultSubtitleKey] = cloudSubtitle
+                            if (state.subtitleSettingsUpdatedAt > 0L) {
+                                prefs[subtitleUpdatedAtKey] = state.subtitleSettingsUpdatedAt.toString()
+                            }
+                        }
                         prefs[defaultAudioLanguageKeyFor(profileId)] = state.defaultAudioLanguage
                         prefs[contentLanguageKeyFor(profileId)] = state.contentLanguage
 
@@ -507,7 +538,29 @@ class CloudSyncRepository @Inject constructor(
         } ?: run {
             // Legacy fallback: single-profile settings
             context.settingsDataStore.edit { prefs ->
-                prefs[defaultSubtitleKeyFor(activeProfileId)] = fallbackDefaultSubtitle
+                val defaultSubtitleKey = defaultSubtitleKeyFor(activeProfileId)
+                val subtitleUpdatedAtKey = subtitleSettingsUpdatedAtKeyFor(activeProfileId)
+                val localSubtitle = prefs[defaultSubtitleKey]?.trim().orEmpty()
+                val localSubtitleUpdatedAt = prefs[subtitleUpdatedAtKey]?.toLongOrNull() ?: 0L
+                val cloudSubtitle = fallbackDefaultSubtitle.trim().ifBlank { "Off" }
+                val keepLocalSubtitle = localSubtitle.isNotBlank() &&
+                    !localSubtitle.equals(cloudSubtitle, ignoreCase = true) &&
+                    (
+                        localSubtitleUpdatedAt > fallbackSubtitleSettingsUpdatedAt ||
+                            (
+                                fallbackSubtitleSettingsUpdatedAt <= 0L &&
+                                    cloudSubtitle.equals("Off", ignoreCase = true) &&
+                                    !localSubtitle.equals("Off", ignoreCase = true)
+                                )
+                            )
+                if (keepLocalSubtitle) {
+                    preservedNewerLocalSubtitle = true
+                } else {
+                    prefs[defaultSubtitleKey] = cloudSubtitle
+                    if (fallbackSubtitleSettingsUpdatedAt > 0L) {
+                        prefs[subtitleUpdatedAtKey] = fallbackSubtitleSettingsUpdatedAt.toString()
+                    }
+                }
                 prefs[defaultAudioLanguageKeyFor(activeProfileId)] = fallbackDefaultAudioLanguage
                 prefs[cardLayoutModeKeyFor(activeProfileId)] = fallbackCardLayoutMode
                 prefs[frameRateMatchingModeKeyFor(activeProfileId)] = fallbackFrameRateMatchingMode
@@ -526,7 +579,11 @@ class CloudSyncRepository @Inject constructor(
                 prefs[SKIP_PROFILE_SELECTION_KEY] = root.optBoolean("skipProfileSelection", false)
             }
         }
-        authRepository.saveDefaultSubtitleToProfile(fallbackDefaultSubtitle)
+        if (preservedNewerLocalSubtitle) {
+            markLocalStateDirty()
+        } else {
+            authRepository.saveDefaultSubtitleToProfile(fallbackDefaultSubtitle)
+        }
         authRepository.saveAutoPlayNextToProfile(fallbackAutoPlayNext)
 
         // ── Trakt tokens ──

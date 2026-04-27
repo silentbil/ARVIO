@@ -298,6 +298,34 @@ class DetailsViewModel @Inject constructor(
                     async { fetchSeasonProgress(mediaId) }
                 } else null
 
+                val requestMediaId = mediaId
+                val requestMediaType = mediaType
+                fun isCurrentRequest(): Boolean {
+                    return currentMediaId == requestMediaId && currentMediaType == requestMediaType
+                }
+                fun updateState(block: (DetailsUiState) -> DetailsUiState) {
+                    if (!isCurrentRequest()) return
+                    _uiState.value = block(_uiState.value)
+                }
+
+                if (mediaType == MediaType.TV) {
+                    launch {
+                        val firstEpisodes = runCatching { episodesDeferred?.await() }.getOrNull()
+                        if (!firstEpisodes.isNullOrEmpty()) {
+                            updateState { state ->
+                                if (state.currentSeason == seasonToLoad && state.episodes == firstEpisodes) {
+                                    state
+                                } else {
+                                    state.copy(
+                                        episodes = firstEpisodes,
+                                        currentSeason = seasonToLoad
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 val item = runCatching { itemDeferred.await() }.getOrNull() ?: initialItem
                 if (item == null) {
                     _uiState.value = _uiState.value.copy(
@@ -353,16 +381,6 @@ class DetailsViewModel @Inject constructor(
                     showStatus = showStatus
                 )
                 _uiState.value = baseState
-
-                val requestMediaId = mediaId
-                val requestMediaType = mediaType
-                fun isCurrentRequest(): Boolean {
-                    return currentMediaId == requestMediaId && currentMediaType == requestMediaType
-                }
-                fun updateState(block: (DetailsUiState) -> DetailsUiState) {
-                    if (!isCurrentRequest()) return
-                    _uiState.value = block(_uiState.value)
-                }
 
                 // Calculate initial season index (0-based)
                 val initialSeasonIndex = (seasonToLoad - 1).coerceAtLeast(0)
@@ -467,7 +485,7 @@ class DetailsViewModel @Inject constructor(
 
                 launch {
                     val episodes = runCatching { episodesDeferred?.await() }.getOrNull()
-                    if (!episodes.isNullOrEmpty() && episodes != _uiState.value.episodes) {
+                    if (!episodes.isNullOrEmpty()) {
                         val resumeTarget = runCatching { resumeDeferred.await() }.getOrNull()
                         val fallbackTargetSeason = initialSeason ?: resumeTarget?.season
                         val fallbackTargetEpisode = initialEpisode ?: resumeTarget?.episode

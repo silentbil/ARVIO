@@ -201,6 +201,7 @@ class SettingsViewModel @Inject constructor(
 
     private fun defaultSubtitleKey() = profileManager.profileStringKey("default_subtitle")
     private fun defaultSubtitleKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "default_subtitle")
+    private fun subtitleSettingsUpdatedAtKey() = profileManager.profileStringKey("subtitle_settings_updated_at")
     private fun defaultAudioLanguageKey() = profileManager.profileStringKey("default_audio_language")
     private fun defaultAudioLanguageKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "default_audio_language")
     private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
@@ -586,8 +587,10 @@ class SettingsViewModel @Inject constructor(
     fun setDefaultSubtitle(language: String) {
         viewModelScope.launch {
             // Save locally
+            val changedAt = System.currentTimeMillis()
             context.settingsDataStore.edit { prefs ->
                 prefs[defaultSubtitleKey()] = language
+                prefs[subtitleSettingsUpdatedAtKey()] = changedAt.toString()
             }
             _uiState.value = _uiState.value.copy(
                 defaultSubtitle = language,
@@ -596,7 +599,7 @@ class SettingsViewModel @Inject constructor(
 
             // Sync to cloud
             authRepository.saveDefaultSubtitleToProfile(language)
-            syncLocalStateToCloud(silent = true)
+            syncLocalStateToCloud(silent = true, force = true)
         }
     }
 
@@ -1925,9 +1928,9 @@ class SettingsViewModel @Inject constructor(
         if (authRepository.getCurrentUserId().isNullOrBlank()) return
         cloudSyncRepository.markLocalStateDirty()
         viewModelScope.launch {
-            // Small delay to ensure DataStore writes from the caller have flushed
-            // before we snapshot all profiles for cloud upload.
-            delay(350)
+            if (!force) {
+                delay(350)
+            }
             var result = cloudSyncRepository.pushToCloud()
             if (result.isFailure) {
                 delay(1200)
