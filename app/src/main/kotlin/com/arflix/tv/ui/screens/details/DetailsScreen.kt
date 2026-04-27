@@ -1574,9 +1574,10 @@ private fun DetailsContent(
         val hasSeasons = isTV && totalSeasons > 1
         val baseContentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(240.dp, 320.dp)
         val contentRowHeight = baseContentRowHeight
-        val contentTopPadding = 12.dp
-        val contentVerticalSpacing = 8.dp
-        val episodeVerticalPadding = 14.dp
+        val contentTopPadding = if (hasEpisodes) 0.dp else 12.dp
+        val contentVerticalSpacing = if (hasEpisodes && hasSeasons) 0.dp else 8.dp
+        val seasonVerticalPadding = if (hasEpisodes && hasSeasons) 4.dp else 12.dp
+        val episodeVerticalPadding = if (hasEpisodes) 6.dp else 14.dp
         val contentRowBottomPadding = 12.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
@@ -1969,8 +1970,8 @@ private fun DetailsContent(
                             contentPadding = PaddingValues(
                                 start = contentStartPadding,
                                 end = 150.dp,
-                                top = 12.dp,
-                                bottom = 12.dp,
+                                top = seasonVerticalPadding,
+                                bottom = seasonVerticalPadding,
                             ),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
