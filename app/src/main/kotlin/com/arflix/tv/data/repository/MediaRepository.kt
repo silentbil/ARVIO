@@ -2762,9 +2762,10 @@ class MediaRepository @Inject constructor(
                     if (deduped.containsKey(key)) return@providerLoop
 
                     val stableId = provider.providerId.takeIf { it > 0 } ?: canonicalName.hashCode()
-                    val logoUrl = provider.logoPath?.let { path ->
-                        "https://image.tmdb.org/t/p/w92$path"
-                    }
+                    val logoUrl = localStreamingServiceLogoUrl(provider.providerId)
+                        ?: provider.logoPath?.let { path ->
+                            "https://image.tmdb.org/t/p/w92$path"
+                        }
                     deduped[key] = StreamingServiceInfo(
                         id = stableId,
                         name = canonicalName,
@@ -2793,6 +2794,13 @@ class MediaRepository @Inject constructor(
             normalized.contains("crunchyroll") -> "Crunchyroll"
             normalized.contains("youtube") -> "YouTube"
             else -> name
+        }
+    }
+
+    private fun localStreamingServiceLogoUrl(providerId: Int): String? {
+        return when (providerId) {
+            350 -> "android.resource://com.arvio.tv/drawable/apple_tv_plus_logo"
+            else -> null
         }
     }
 
