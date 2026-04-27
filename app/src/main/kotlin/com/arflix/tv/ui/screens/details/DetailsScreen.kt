@@ -109,15 +109,19 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
+import coil.decode.SvgDecoder
 import coil.request.ImageRequest
 import coil.size.Precision
+import com.arflix.tv.R
 import com.arflix.tv.data.model.CastMember
 import com.arflix.tv.data.model.Episode
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Review
+import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.EpisodeContextMenu
 import com.arflix.tv.ui.components.SeasonContextMenu
 import com.arflix.tv.ui.components.LoadingIndicator
@@ -628,7 +632,6 @@ fun DetailsScreen(
                     usePosterCards = usePosterCards,
                     isMobile = isMobile,
                     onBack = onBack,
-                    malScore = uiState.malScore,
                     onButtonClick = { idx ->
                         when (idx) {
                             0 -> { // Play
@@ -989,15 +992,20 @@ private fun DetailsContent(
     // Persistent back callback used by the phone-layout back button overlay
     // (issue #43). No-op by default so tablet/TV callers don't need to pass it.
     onBack: () -> Unit = {},
-    // MAL community score for anime (issue #45). Plumbed from DetailsUiState.malScore.
-    // Null for non-anime or when Jikan returns no score.
-    malScore: Double? = null,
     onButtonClick: (Int) -> Unit = {},
     onSeasonClick: (Int) -> Unit = {},
     onEpisodeClick: (Int) -> Unit = {},
     onCastClick: (Int) -> Unit = {},
     onSimilarClick: (Int) -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val metadataLogoImageLoader = remember(context) {
+        ImageLoader.Builder(context)
+            .okHttpClient(OkHttpProvider.coilClient)
+            .components { add(SvgDecoder.Factory()) }
+            .crossfade(false)
+            .build()
+    }
     val focusSectionForUi = if (contentHasFocus) focusedSection else null
     // === PREMIUM LAYERED TEXT SHADOWS ===
     val textShadow = Shadow(
@@ -1154,21 +1162,13 @@ private fun DetailsContent(
                                 .horizontalScroll(rememberScrollState())
                         ) {
                             if (ratingValue > 0f) {
-                                MobileScoreBadge(
-                                    label = "IMDb",
-                                    value = rating,
-                                    backgroundColor = Color(0xFFF5C518),
-                                    contentColor = Color.Black
-                                )
-                            }
-                            // MyAnimeList community score for anime only. Populated
-                            // asynchronously after details load via Jikan API.
-                            if (malScore != null && malScore > 0.0) {
-                                MobileScoreBadge(
-                                    label = "MAL",
-                                    value = String.format("%.1f", malScore),
-                                    backgroundColor = Color(0xFF2E51A2),
-                                    contentColor = Color.White
+                                DetailsImdbSvgRatingBadge(
+                                    rating = rating,
+                                    imageLoader = metadataLogoImageLoader,
+                                    ratingFontSize = 13,
+                                    logoWidth = 34.dp,
+                                    logoHeight = 14.dp,
+                                    textShadow = textShadow
                                 )
                             }
                             if (displayDate.isNotEmpty()) {
@@ -1674,47 +1674,14 @@ private fun DetailsContent(
 
                     if (ratingValue > 0f) {
                         Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier
-                                .background(Color(0xFFF5C518), RoundedCornerShape(3.dp))
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                text = "IMDb",
-                                style = ArflixTypography.caption.copy(fontSize = 8.sp, fontWeight = FontWeight.Black),
-                                color = Color.Black
-                            )
-                            Text(
-                                text = rating,
-                                style = ArflixTypography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
-                                color = Color.Black
-                            )
-                        }
-                    }
-
-                    // MAL community score badge for anime. Issue #45.
-                    if (malScore != null && malScore > 0.0) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier
-                                .background(Color(0xFF2E51A2), RoundedCornerShape(3.dp))
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                text = "MAL",
-                                style = ArflixTypography.caption.copy(fontSize = 8.sp, fontWeight = FontWeight.Black),
-                                color = Color.White
-                            )
-                            Text(
-                                text = String.format("%.1f", malScore),
-                                style = ArflixTypography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
-                                color = Color.White
-                            )
-                        }
+                        DetailsImdbSvgRatingBadge(
+                            rating = rating,
+                            imageLoader = metadataLogoImageLoader,
+                            ratingFontSize = 13,
+                            logoWidth = 34.dp,
+                            logoHeight = 14.dp,
+                            textShadow = textShadow
+                        )
                     }
 
                     if (!budgetText.isNullOrBlank()) {
@@ -2377,6 +2344,43 @@ private fun HomeStyleRowAutoScroll(
         }
         lastScrollIndex = scrollTargetIndex
         lastScrollOffset = extraOffset
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun DetailsImdbSvgRatingBadge(
+    rating: String,
+    imageLoader: ImageLoader,
+    ratingFontSize: Int,
+    logoWidth: Dp,
+    logoHeight: Dp,
+    textShadow: Shadow
+) {
+    val imdbLogoUri = remember { "android.resource://com.arvio.tv/${R.raw.logo_imdb_rectangle}" }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        AsyncImage(
+            model = imdbLogoUri,
+            imageLoader = imageLoader,
+            contentDescription = "IMDb",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .width(logoWidth)
+                .height(logoHeight)
+        )
+        Text(
+            text = rating,
+            style = ArflixTypography.caption.copy(
+                fontSize = ratingFontSize.sp,
+                fontWeight = FontWeight.Bold,
+                shadow = textShadow
+            ),
+            color = Color.White,
+            maxLines = 1
+        )
     }
 }
 

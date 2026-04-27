@@ -13,7 +13,6 @@ import com.arflix.tv.data.model.Review
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.api.TmdbApi
-import com.arflix.tv.data.repository.AnimeScoreRepository
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
@@ -85,10 +84,7 @@ data class DetailsUiState(
     val playLabel: String? = null,
     val playPositionMs: Long? = null,
     val autoPlaySingleSource: Boolean = true,
-    val autoPlayMinQuality: String = "Any",
-    // MyAnimeList community score for anime (0.0-10.0). Null for non-anime or when
-    // the Jikan / ARM lookup fails or the entry has no community score yet. Issue #45.
-    val malScore: Double? = null
+    val autoPlayMinQuality: String = "Any"
 )
 
 data class StreamingServiceUi(
@@ -168,8 +164,7 @@ class DetailsViewModel @Inject constructor(
     private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
     private val cloudSyncRepository: CloudSyncRepository,
-    private val launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
-    private val animeScoreRepository: AnimeScoreRepository
+    private val launcherContinueWatchingRepository: LauncherContinueWatchingRepository
 ) : ViewModel() {
 
     companion object {
@@ -387,24 +382,6 @@ class DetailsViewModel @Inject constructor(
                         val prefetchEpisode = if (mediaType == MediaType.TV) (initialEpisode ?: 1) else null
                         prefetchStreamsInBackground(imdbId, prefetchSeason, prefetchEpisode)
 
-                        // MAL score fetch for anime. Gated on isAnimeContent so we don't
-                        // hit Jikan for live-action content. Runs in a detached launch so
-                        // it never blocks the main details load, and failures are swallowed
-                        // by AnimeScoreRepository (null score just hides the badge). Issue #45.
-                        val currentItem = _uiState.value.item
-                        val isAnime = com.arflix.tv.util.AnimeMapper.isAnimeContentStatic(
-                            tmdbId = mediaId,
-                            genreIds = currentItem?.genreIds ?: emptyList(),
-                            originalLanguage = currentItem?.originalLanguage
-                        )
-                        if (isAnime) {
-                            launch {
-                                val score = animeScoreRepository.getMalScore(imdbId)
-                                if (score != null) {
-                                    updateState { state -> state.copy(malScore = score) }
-                                }
-                            }
-                        }
                     } else if (tvdbId != null) {
                         updateState { state -> state.copy(tvdbId = tvdbId) }
                     }

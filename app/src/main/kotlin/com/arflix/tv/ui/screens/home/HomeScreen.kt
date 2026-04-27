@@ -1350,31 +1350,14 @@ private fun HeroSection(
                                 color = Color.White.copy(alpha = 0.7f)
                             )
                         }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier
-                                .background(Color(0xFFF5C518), RoundedCornerShape(3.dp))
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                text = "IMDb",
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 8.sp,
-                                    fontWeight = FontWeight.Black
-                                ),
-                                color = Color.Black
-                            )
-                            Text(
-                                text = rating,
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = Color.Black
-                            )
-                        }
+                        ImdbSvgRatingBadge(
+                            rating = rating,
+                            imageLoader = metadataLogoImageLoader,
+                            ratingFontSize = 13,
+                            logoWidth = 34.dp,
+                            logoHeight = 14.dp,
+                            textShadow = textShadow
+                        )
                     }
 
                     // Budget line can be hidden via Settings -> General -> Show Budget on Home.
@@ -1542,6 +1525,14 @@ private fun MobileHeroOverlay(
     onPlay: () -> Unit,
     onDetails: () -> Unit
 ) {
+    val context = LocalContext.current
+    val metadataLogoImageLoader = remember(context) {
+        ImageLoader.Builder(context)
+            .okHttpClient(OkHttpProvider.coilClient)
+            .components { add(SvgDecoder.Factory()) }
+            .crossfade(false)
+            .build()
+    }
     val mobileHeroGradient = remember {
         Brush.verticalGradient(
             listOf(
@@ -1565,12 +1556,8 @@ private fun MobileHeroOverlay(
     }
     val year = item.releaseDate?.take(4)?.takeIf { it.isNotEmpty() } ?: item.year
     val rating = item.imdbRating.ifEmpty { item.tmdbRating }
-    val metaParts = listOfNotNull(
-        genreText.takeIf { it.isNotEmpty() },
-        year.takeIf { it.isNotEmpty() },
-        rating.takeIf { it.isNotEmpty() }?.let { "IMDb $it" }
-    )
-    val metaLine = metaParts.joinToString(" | ")
+    val ratingValue = parseRatingValue(rating)
+    val hasMetadata = genreText.isNotEmpty() || year.isNotEmpty() || ratingValue > 0f
 
     val displayOverview = (overviewOverride ?: item.overview)
         .replace(Regex("<[^>]*>"), " ")
@@ -1614,19 +1601,62 @@ private fun MobileHeroOverlay(
                 overflow = TextOverflow.Ellipsis
             )
 
-            if (metaLine.isNotEmpty()) {
+            if (hasMetadata) {
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = metaLine,
-                    style = ArflixTypography.caption.copy(
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        shadow = textShadow
-                    ),
-                    color = Color.White.copy(alpha = 0.8f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (genreText.isNotEmpty()) {
+                        Text(
+                            text = genreText,
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                shadow = textShadow
+                            ),
+                            color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (year.isNotEmpty()) {
+                        if (genreText.isNotEmpty()) {
+                            Text(
+                                text = "|",
+                                style = ArflixTypography.caption.copy(fontSize = 12.sp, shadow = textShadow),
+                                color = Color.White.copy(alpha = 0.6f)
+                            )
+                        }
+                        Text(
+                            text = year,
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                shadow = textShadow
+                            ),
+                            color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1
+                        )
+                    }
+                    if (ratingValue > 0f) {
+                        if (genreText.isNotEmpty() || year.isNotEmpty()) {
+                            Text(
+                                text = "|",
+                                style = ArflixTypography.caption.copy(fontSize = 12.sp, shadow = textShadow),
+                                color = Color.White.copy(alpha = 0.6f)
+                            )
+                        }
+                        ImdbSvgRatingBadge(
+                            rating = rating,
+                            imageLoader = metadataLogoImageLoader,
+                            ratingFontSize = 12,
+                            logoWidth = 32.dp,
+                            logoHeight = 13.dp,
+                            textShadow = textShadow
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -1715,6 +1745,13 @@ private fun MobileHeroCarousel(
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit
 ) {
     val context = LocalContext.current
+    val metadataLogoImageLoader = remember(context) {
+        ImageLoader.Builder(context)
+            .okHttpClient(OkHttpProvider.coilClient)
+            .components { add(SvgDecoder.Factory()) }
+            .crossfade(false)
+            .build()
+    }
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     // Hero area height: 40% of screen
@@ -1931,30 +1968,14 @@ private fun MobileHeroCarousel(
                             }
                             // IMDb rating badge (yellow rounded box)
                             if (ratingValue > 0f) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                    modifier = Modifier
-                                        .background(Color(0xFFF5C518), RoundedCornerShape(4.dp))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = "IMDb",
-                                        style = ArflixTypography.caption.copy(
-                                            fontSize = 8.sp,
-                                            fontWeight = FontWeight.Black
-                                        ),
-                                        color = Color.Black
-                                    )
-                                    Text(
-                                        text = rating,
-                                        style = ArflixTypography.caption.copy(
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = Color.Black
-                                    )
-                                }
+                                ImdbSvgRatingBadge(
+                                    rating = rating,
+                                    imageLoader = metadataLogoImageLoader,
+                                    ratingFontSize = 11,
+                                    logoWidth = 30.dp,
+                                    logoHeight = 12.dp,
+                                    textShadow = textShadow
+                                )
                             }
                         }
 
@@ -2921,6 +2942,43 @@ private fun MetaPill(text: String) {
                 fontWeight = FontWeight.Bold
             ),
             color = TextPrimary
+        )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ImdbSvgRatingBadge(
+    rating: String,
+    imageLoader: ImageLoader,
+    ratingFontSize: Int,
+    logoWidth: Dp,
+    logoHeight: Dp,
+    textShadow: Shadow
+) {
+    val imdbLogoUri = remember { "android.resource://com.arvio.tv/${R.raw.logo_imdb_rectangle}" }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        AsyncImage(
+            model = imdbLogoUri,
+            imageLoader = imageLoader,
+            contentDescription = "IMDb",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .width(logoWidth)
+                .height(logoHeight)
+        )
+        Text(
+            text = rating,
+            style = ArflixTypography.caption.copy(
+                fontSize = ratingFontSize.sp,
+                fontWeight = FontWeight.Bold,
+                shadow = textShadow
+            ),
+            color = Color.White,
+            maxLines = 1
         )
     }
 }
