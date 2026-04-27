@@ -219,7 +219,33 @@ fun DetailsScreen(
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(mediaType, mediaId, initialSeason, initialEpisode) {
+        focusedSection = FocusSection.BUTTONS
+        buttonIndex = 0
+        episodeIndex = 0
+        seasonIndex = 0
+        castIndex = 0
+        reviewIndex = 0
+        similarIndex = 0
+        isSidebarFocused = false
         viewModel.loadDetails(mediaType, mediaId, initialSeason, initialEpisode)
+    }
+
+    LaunchedEffect(uiState.episodes.size, uiState.totalSeasons, uiState.cast.size, uiState.reviews.size, uiState.similar.size) {
+        if (episodeIndex >= uiState.episodes.size) {
+            episodeIndex = (uiState.episodes.size - 1).coerceAtLeast(0)
+        }
+        if (seasonIndex >= uiState.totalSeasons) {
+            seasonIndex = (uiState.totalSeasons - 1).coerceAtLeast(0)
+        }
+        if (castIndex >= uiState.cast.size) {
+            castIndex = (uiState.cast.size - 1).coerceAtLeast(0)
+        }
+        if (reviewIndex >= uiState.reviews.size) {
+            reviewIndex = (uiState.reviews.size - 1).coerceAtLeast(0)
+        }
+        if (similarIndex >= uiState.similar.size) {
+            similarIndex = (uiState.similar.size - 1).coerceAtLeast(0)
+        }
     }
 
     // Keep watched badges and continue target fresh when returning from player.
@@ -1864,6 +1890,9 @@ private fun DetailsContent(
         // Similar has a spacer before it
         if (hasSimilar) idx++  // spacer
         val similarIdx = if (hasSimilar) idx.also { idx++ } else -1
+        LaunchedEffect(item.mediaType, item.id, currentSeason, hasEpisodes, hasSeasons) {
+            contentScrollState.scrollToItem(0, 0)
+        }
         // Smart vertical section scroll:
         // keep top cluster (buttons/episodes/seasons) stable and only scroll when moving to lower sections.
         LaunchedEffect(focusedSection, contentHasFocus) {
@@ -1886,8 +1915,8 @@ private fun DetailsContent(
                 focusSectionForUi == FocusSection.EPISODES ||
                 focusSectionForUi == FocusSection.SEASONS
             ) {
-                if (firstVisible > topClusterMaxIndex) {
-                    contentScrollState.animateScrollToItem(0)
+                if (firstVisible > topClusterMaxIndex || contentScrollState.firstVisibleItemScrollOffset != 0) {
+                    contentScrollState.scrollToItem(0, 0)
                 }
                 return@LaunchedEffect
             }
