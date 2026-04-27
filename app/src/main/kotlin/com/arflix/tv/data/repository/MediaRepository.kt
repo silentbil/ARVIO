@@ -1,5 +1,6 @@
 package com.arflix.tv.data.repository
 
+import com.arflix.tv.R
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.api.TmdbCastMember
 import com.arflix.tv.data.api.TmdbEpisode
@@ -2762,7 +2763,7 @@ class MediaRepository @Inject constructor(
                     if (deduped.containsKey(key)) return@providerLoop
 
                     val stableId = provider.providerId.takeIf { it > 0 } ?: canonicalName.hashCode()
-                    val logoUrl = localStreamingServiceLogoUrl(provider.providerId)
+                    val logoUrl = bundledStreamingLogoUri(canonicalName)
                         ?: provider.logoPath?.let { path ->
                             "https://image.tmdb.org/t/p/w92$path"
                         }
@@ -2792,16 +2793,33 @@ class MediaRepository @Inject constructor(
             normalized.contains("hulu") -> "Hulu"
             normalized.contains("peacock") -> "Peacock"
             normalized.contains("crunchyroll") -> "Crunchyroll"
+            normalized.contains("discovery") -> "Discovery+"
+            normalized.contains("mgm") -> "MGM+"
+            normalized.contains("shudder") -> "Shudder"
+            normalized.contains("starz") -> "Starz"
             normalized.contains("youtube") -> "YouTube"
             else -> name
         }
     }
 
-    private fun localStreamingServiceLogoUrl(providerId: Int): String? {
-        return when (providerId) {
-            350 -> "android.resource://com.arvio.tv/drawable/apple_tv_plus_logo"
+    private fun bundledStreamingLogoUri(canonicalName: String): String? {
+        val resId = when (canonicalName.lowercase(Locale.US)) {
+            "netflix" -> R.raw.logo_netflix
+            "hbo max" -> R.raw.logo_hbo_max
+            "hulu" -> R.raw.logo_hulu
+            "prime video" -> R.raw.logo_prime_video
+            "disney+" -> R.raw.logo_disney_plus
+            "paramount+" -> R.raw.logo_paramount_plus
+            "peacock" -> R.raw.logo_peacock
+            "crunchyroll" -> R.raw.logo_crunchyroll
+            "discovery+" -> R.raw.logo_discovery_plus
+            "mgm+" -> R.raw.logo_mgm_plus
+            "shudder" -> R.raw.logo_shudder
+            "starz" -> R.raw.logo_starz
+            "apple tv+" -> R.drawable.apple_tv_plus_logo
             else -> null
-        }
+        } ?: return null
+        return "android.resource://com.arvio.tv/$resId"
     }
 
     private fun normalizeWatchRegion(region: String?): String {

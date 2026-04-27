@@ -115,7 +115,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import coil.ImageLoader
 import coil.compose.AsyncImage
+import coil.decode.SvgDecoder
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.arflix.tv.data.model.Category
@@ -1087,6 +1089,13 @@ private fun HeroSection(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val metadataLogoImageLoader = remember(context) {
+        ImageLoader.Builder(context)
+            .okHttpClient(OkHttpProvider.coilClient)
+            .components { add(SvgDecoder.Factory()) }
+            .crossfade(false)
+            .build()
+    }
     val density = LocalDensity.current
     val logoSize = remember(density) {
         val widthPx = with(density) { 320.dp.roundToPx() }
@@ -1319,6 +1328,7 @@ private fun HeroSection(
                         }
                         AsyncImage(
                             model = primaryNetworkLogo,
+                            imageLoader = metadataLogoImageLoader,
                             contentDescription = "Primary streaming provider",
                             contentScale = ContentScale.Fit,
                             modifier = Modifier
