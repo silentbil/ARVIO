@@ -9,7 +9,8 @@ import android.widget.EditText
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,6 +50,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -159,7 +164,9 @@ private fun ProfileDialogContent(
     onRemovePin: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
+    val useMobileLayout = isTouchDevice && configuration.screenWidthDp < 700
     var editTextRef by remember { mutableStateOf<EditText?>(null) }
     val confirmButtonFocusRequester = remember { FocusRequester() }
 
@@ -211,30 +218,29 @@ private fun ProfileDialogContent(
                 .background(Color.Black.copy(alpha = 0.90f)),
             contentAlignment = Alignment.Center
         ) {
-            Row(
-                modifier = Modifier
-                    .padding(horizontal = 48.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF141414))
-                    .padding(start = 28.dp, top = 28.dp, bottom = 28.dp, end = 12.dp),
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(28.dp)
-            ) {
-                // ---- Left column: preview + name + buttons ----
+            if (useMobileLayout) {
                 Column(
-                    modifier = Modifier.width(200.dp),
+                    modifier = Modifier
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .navigationBarsPadding()
+                        .imePadding()
+                        .fillMaxWidth()
+                        .heightIn(max = (configuration.screenHeightDp - 24).dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF141414))
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         text = title,
-                        fontSize = 20.sp,
+                        fontSize = 19.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color.White
                     )
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // Preview avatar
                     val bgColors = if (selectedAvatarId > 0) {
                         val (c1, c2) = AvatarRegistry.gradientColors(selectedAvatarId)
                         c1 to c2
@@ -244,7 +250,7 @@ private fun ProfileDialogContent(
                     }
                     Box(
                         modifier = Modifier
-                            .size(110.dp)
+                            .size(84.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(
                                 Brush.verticalGradient(listOf(bgColors.first, bgColors.second))
@@ -254,21 +260,20 @@ private fun ProfileDialogContent(
                         if (selectedAvatarId > 0) {
                             AvatarIcon(
                                 avatarId = selectedAvatarId,
-                                modifier = Modifier.fillMaxSize().padding(10.dp)
+                                modifier = Modifier.fillMaxSize().padding(8.dp)
                             )
                         } else {
                             Text(
                                 text = name.firstOrNull()?.uppercase() ?: "?",
-                                fontSize = 44.sp,
+                                fontSize = 34.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Name input
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -328,9 +333,8 @@ private fun ProfileDialogContent(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // PIN Controls (edit mode only)
                     if (profile != null && onShowPinSetup != null && onRemovePin != null) {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
@@ -379,10 +383,9 @@ private fun ProfileDialogContent(
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                     }
 
-                    // Buttons
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -427,13 +430,9 @@ private fun ProfileDialogContent(
                             }
                         }
                     }
-                }
 
-                // ---- Right column: avatar picker (4 themed rows) ----
-                Column(
-                    modifier = Modifier.width(460.dp)
-                ) {
-                    // Avatar picker - 4 horizontal scrolling rows by category
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     AvatarRegistry.categories.forEachIndexed { rowIdx, (label, ids) ->
                         Text(
                             text = label,
@@ -469,6 +468,268 @@ private fun ProfileDialogContent(
                         }
 
                         if (rowIdx < AvatarRegistry.categories.size - 1) Spacer(modifier = Modifier.height(10.dp))
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 48.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF141414))
+                        .padding(start = 28.dp, top = 28.dp, bottom = 28.dp, end = 12.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(28.dp)
+                ) {
+                    // ---- Left column: preview + name + buttons ----
+                    Column(
+                        modifier = Modifier.width(200.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = title,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        // Preview avatar
+                        val bgColors = if (selectedAvatarId > 0) {
+                            val (c1, c2) = AvatarRegistry.gradientColors(selectedAvatarId)
+                            c1 to c2
+                        } else {
+                            val c = Color(ProfileColors.getByIndex(selectedColorIndex))
+                            c to c
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(110.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    Brush.verticalGradient(listOf(bgColors.first, bgColors.second))
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (selectedAvatarId > 0) {
+                                AvatarIcon(
+                                    avatarId = selectedAvatarId,
+                                    modifier = Modifier.fillMaxSize().padding(10.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = name.firstOrNull()?.uppercase() ?: "?",
+                                    fontSize = 44.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Name input
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF222222))
+                                .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                .clickable {
+                                    editTextRef?.let { et ->
+                                        et.requestFocus()
+                                        et.postDelayed({ showKeyboard(et) }, 100)
+                                    }
+                                }
+                        ) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    EditText(ctx).apply {
+                                        editTextRef = this
+                                        setText(name)
+                                        setTextColor(android.graphics.Color.WHITE)
+                                        setHintTextColor(android.graphics.Color.GRAY)
+                                        hint = "Profile name"
+                                        textSize = 16f
+                                        background = null
+                                        setPadding(36, 32, 36, 32)
+                                        isSingleLine = true
+                                        inputType = InputType.TYPE_CLASS_TEXT
+                                        imeOptions = EditorInfo.IME_ACTION_DONE
+                                        isFocusable = true
+                                        isFocusableInTouchMode = true
+                                        doAfterTextChanged { editable ->
+                                            onNameChange(editable?.toString() ?: "")
+                                        }
+                                        setOnEditorActionListener { _, actionId, event ->
+                                            val isDoneAction = actionId == EditorInfo.IME_ACTION_DONE
+                                            val isEnterKey =
+                                                event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+                                                    event.action == KeyEvent.ACTION_UP
+                                            if (isDoneAction || isEnterKey) {
+                                                hideKeyboard(this)
+                                                if (this.text?.toString()?.isNotBlank() == true) {
+                                                    onConfirm()
+                                                } else {
+                                                    runCatching { confirmButtonFocusRequester.requestFocus() }
+                                                }
+                                                true
+                                            } else false
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                update = { et ->
+                                    if (et.text.toString() != name) {
+                                        et.setText(name)
+                                        et.setSelection(name.length)
+                                    }
+                                }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        // PIN Controls (edit mode only)
+                        if (profile != null && onShowPinSetup != null && onRemovePin != null) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Profile Lock",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFB0B0B0),
+                                    modifier = Modifier.padding(start = 4.dp)
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (profile.pin.isNullOrEmpty()) {
+                                        DialogButton(
+                                            text = "Set PIN",
+                                            isPrimary = false,
+                                            onClick = {
+                                                hideKeyboard()
+                                                onShowPinSetup()
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    } else {
+                                        DialogButton(
+                                            text = "Change PIN",
+                                            isPrimary = false,
+                                            onClick = {
+                                                hideKeyboard()
+                                                onShowPinSetup()
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        DialogButton(
+                                            text = "Remove PIN",
+                                            isPrimary = false,
+                                            onClick = {
+                                                hideKeyboard()
+                                                onRemovePin()
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+
+                        // Buttons
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            DialogButton(
+                                text = confirmLabel,
+                                isPrimary = true,
+                                enabled = name.isNotBlank(),
+                                onClick = {
+                                    hideKeyboard()
+                                    onConfirm()
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(confirmButtonFocusRequester)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                DialogButton(
+                                    text = "Cancel",
+                                    isPrimary = false,
+                                    onClick = {
+                                        hideKeyboard()
+                                        onDismiss()
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (onDelete != null) {
+                                    DialogButton(
+                                        text = "Delete",
+                                        isPrimary = false,
+                                        isDestructive = true,
+                                        onClick = {
+                                            hideKeyboard()
+                                            onDelete()
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- Right column: avatar picker (4 themed rows) ----
+                    Column(
+                        modifier = Modifier.width(460.dp)
+                    ) {
+                        // Avatar picker - 4 horizontal scrolling rows by category
+                        AvatarRegistry.categories.forEachIndexed { rowIdx, (label, ids) ->
+                            Text(
+                                text = label,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color.White.copy(alpha = 0.5f),
+                                modifier = Modifier.padding(start = 8.dp, bottom = 6.dp)
+                            )
+
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                            ) {
+                                // "None" option only in first row
+                                if (rowIdx == 0) {
+                                    item {
+                                        AvatarGridItem(
+                                            avatarId = 0,
+                                            isSelected = selectedAvatarId == 0,
+                                            onClick = { onAvatarSelected(0) },
+                                            isNone = true
+                                        )
+                                    }
+                                }
+                                items(ids.size) { col ->
+                                    val id = ids[col]
+                                    AvatarGridItem(
+                                        avatarId = id,
+                                        isSelected = selectedAvatarId == id,
+                                        onClick = { onAvatarSelected(id) }
+                                    )
+                                }
+                            }
+
+                            if (rowIdx < AvatarRegistry.categories.size - 1) Spacer(modifier = Modifier.height(10.dp))
+                        }
                     }
                 }
             }
@@ -638,24 +899,21 @@ private fun DialogButton(
     if (isTouchDevice) {
         Box(
             modifier = modifier
-                .focusable()
                 .clip(RoundedCornerShape(6.dp))
-                .background(if (isFocused > 0) focusedContainerColor else containerColor)
+                .background(containerColor)
                 .then(
                     if (!isPrimary && !isDestructive) {
                         Modifier.border(
-                            width = if (isFocused > 0) 2.dp else 1.dp,
-                            color = if (isFocused > 0) Color.White else Color.White.copy(alpha = 0.3f),
+                            width = 1.dp,
+                            color = Color.White.copy(alpha = 0.3f),
                             shape = RoundedCornerShape(6.dp)
                         )
-                    } else if (isFocused > 0) {
-                        Modifier.border(2.dp, Color.White, RoundedCornerShape(6.dp))
                     } else {
                         Modifier
                     }
                 )
                 .clickable { if (enabled) onClick() }
-                .onFocusChanged { isFocused = if (it.isFocused) 1 else 0 }
+                .heightIn(min = 44.dp)
         ) {
             buttonContent()
         }

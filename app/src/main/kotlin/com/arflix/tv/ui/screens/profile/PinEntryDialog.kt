@@ -41,6 +41,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.PinUtil
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -253,32 +254,22 @@ fun PinEntryDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Surface(
+                    PinActionButton(
+                        label = "Cancel",
                         onClick = onDismiss,
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor = Color(0xFF2A2A2A)
-                        ),
+                        containerColor = Color(0xFF2A2A2A),
                         modifier = Modifier
                             .weight(1f)
                             .height(44.dp)
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            Text("Cancel", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
+                    )
 
-                    Surface(
+                    PinActionButton(
+                        label = "OK",
                         onClick = {
                             val current = if (isSetup && isConfirmingSetup) confirmPin else pinInput
                             if (!PinUtil.isValidPin(current)) {
                                 errorMessage = "PIN must be 4-5 digits"
-                                return@Surface
-                            }
-
-                            if (isSetup) {
+                            } else if (isSetup) {
                                 if (!isConfirmingSetup) {
                                     isConfirmingSetup = true
                                 } else {
@@ -294,23 +285,51 @@ fun PinEntryDialog(
                                 onPinConfirmed(current)
                             }
                         },
-                        enabled = true,
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor = Color(0xFF4CAF50)
-                        ),
+                        containerColor = Color(0xFF4CAF50),
                         modifier = Modifier
                             .weight(1f)
                             .height(44.dp)
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            Text("OK", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
+                    )
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PinActionButton(
+    label: String,
+    onClick: () -> Unit,
+    containerColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val isTouchDevice = LocalDeviceType.current.isTouchDevice()
+    val content: @Composable () -> Unit = {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Text(label, color = Color.White, fontWeight = FontWeight.SemiBold)
+        }
+    }
+
+    if (isTouchDevice) {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(containerColor)
+                .clickable { onClick() }
+        ) {
+            content()
+        }
+    } else {
+        Surface(
+            onClick = onClick,
+            colors = ClickableSurfaceDefaults.colors(containerColor = containerColor),
+            modifier = modifier
+        ) {
+            content()
         }
     }
 }
@@ -322,13 +341,8 @@ private fun PinKeyButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    Surface(
-        onClick = onClick,
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color(0xFF2A2A2A)
-        ),
-        modifier = modifier
-    ) {
+    val isTouchDevice = LocalDeviceType.current.isTouchDevice()
+    val content: @Composable () -> Unit = {
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier.fillMaxSize()
@@ -339,6 +353,26 @@ private fun PinKeyButton(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp
             )
+        }
+    }
+    if (isTouchDevice) {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF2A2A2A))
+                .clickable { onClick() }
+        ) {
+            content()
+        }
+    } else {
+        Surface(
+            onClick = onClick,
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Color(0xFF2A2A2A)
+            ),
+            modifier = modifier
+        ) {
+            content()
         }
     }
 }
