@@ -2131,20 +2131,16 @@ class TraktRepository @Inject constructor(
     }
 
     private suspend fun getWatchlistFromTrakt(auth: String): List<MediaItem> {
-        return try {
-            val watchlist = fetchAllWatchlistItems(auth)
-            val semaphore = Semaphore(6)
-            coroutineScope {
-                watchlist.map { item ->
-                    async {
-                        semaphore.withPermit {
-                            hydrateWatchlistItem(item)
-                        }
+        val watchlist = fetchAllWatchlistItems(auth)
+        val semaphore = Semaphore(6)
+        return coroutineScope {
+            watchlist.map { item ->
+                async {
+                    semaphore.withPermit {
+                        hydrateWatchlistItem(item)
                     }
-                }.awaitAll().filterNotNull()
-            }
-        } catch (_: Exception) {
-            emptyList()
+                }
+            }.awaitAll().filterNotNull()
         }
     }
 
@@ -2340,7 +2336,9 @@ class TraktRepository @Inject constructor(
             return runCatching { tmdbApi.getMovieDetails(searchMatch, Constants.TMDB_API_KEY) }.getOrNull()
         }
 
-        return exactIdMatches.firstOrNull() ?: if (normalizeWatchlistTitle(movie.title).isBlank()) {
+        return if (movie.year == null) {
+            exactIdMatches.firstOrNull()
+        } else if (normalizeWatchlistTitle(movie.title).isBlank()) {
             ids.firstNotNullOfOrNull { id ->
                 runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull()
             }
@@ -2383,7 +2381,9 @@ class TraktRepository @Inject constructor(
             return runCatching { tmdbApi.getTvDetails(searchMatch, Constants.TMDB_API_KEY) }.getOrNull()
         }
 
-        return exactIdMatches.firstOrNull() ?: if (normalizeWatchlistTitle(show.title).isBlank()) {
+        return if (show.year == null) {
+            exactIdMatches.firstOrNull()
+        } else if (normalizeWatchlistTitle(show.title).isBlank()) {
             ids.firstNotNullOfOrNull { id ->
                 runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull()
             }
