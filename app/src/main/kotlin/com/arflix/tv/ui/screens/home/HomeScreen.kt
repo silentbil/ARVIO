@@ -1469,17 +1469,25 @@ private fun TopRankRibbon(
         else -> R.drawable.rank_banner_10
     }
     val width = if (compact) 30.dp else 38.dp
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    // Decode only the pixels we'll actually draw — the source PNGs are 3334×3334 but
+    // the ribbon is displayed at 30–38dp. Full-size decode was ~44 MB per card × 10 cards.
+    val targetPx = remember(compact, density) {
+        with(density) { (if (compact) 60.dp else 76.dp).roundToPx() }
+    }
 
-    Image(
-        painter = painterResource(id = resId),
+    AsyncImage(
+        model = ImageRequest.Builder(context)
+            .data(resId)
+            .size(targetPx, targetPx)
+            .allowHardware(true)
+            .build(),
         contentDescription = "Rank #$clamped",
         contentScale = ContentScale.Fit,
         modifier = modifier
             .width(width)
-            .graphicsLayer {
-                shadowElevation = if (isFocused) 18f else 10f
-                alpha = if (isFocused) 1f else 0.97f
-            }
+            .alpha(if (isFocused) 1f else 0.97f)
     )
 }
 
@@ -2754,7 +2762,13 @@ private fun TvHomeRowsLayer(
             itemsIndexed(
                 items = renderedCategories,
                 key = { _, category -> category.id },
-                contentType = { _, _ -> "home_category_row" }
+                contentType = { _, category ->
+                    when {
+                        category.id.startsWith("collection_row_") -> "home_collection_row"
+                        category.title.contains("Top 10", ignoreCase = true) -> "home_ranked_row"
+                        else -> "home_category_row"
+                    }
+                }
             ) { index, category ->
                     val actualRowIndex = rowWindowStart + index
                     val rowIsFocused = !focusState.isSidebarFocused && actualRowIndex == focusState.currentRowIndex
@@ -3189,7 +3203,13 @@ private fun ContentRow(
                 key = { _, item ->
                     homeRowItemKey(item)
                 },
-                contentType = { _, item -> "${item.mediaType.name}_card" }
+                contentType = { index, item ->
+                    when {
+                        isCollectionRow -> "collection_tile"
+                        isRanked && index < 10 -> "${item.mediaType.name}_ranked_card"
+                        else -> "${item.mediaType.name}_card"
+                    }
+                }
             ) { index, item ->
                 val itemIsFocused = isCurrentRow && index == focusedItemIndex
                 if (isRanked && index < 10) {
