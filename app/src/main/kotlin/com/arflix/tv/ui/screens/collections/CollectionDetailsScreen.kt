@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +41,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -114,6 +121,12 @@ class CollectionDetailsViewModel @Inject constructor(
 
     fun load(catalogId: String) {
         viewModelScope.launch {
+            // Skip reload if this catalog is already loaded — the composable is re-entered
+            // after back navigation (Navigation Compose tears down composables on forward nav)
+            // and we want to preserve all paginated data so saved scroll positions stay valid.
+            val current = _uiState.value
+            if (current.catalog?.id == catalogId && !current.isLoadingMovies && !current.isLoadingSeries) return@launch
+
             _uiState.value = CollectionDetailsUiState(isLoadingMovies = true, isLoadingSeries = true)
             val catalog = catalogRepository.getCatalogs().firstOrNull { it.id == catalogId }
             if (catalog == null) {
@@ -370,11 +383,18 @@ fun CollectionDetailsScreen(
         uiState.supportsSeries -> CollectionTab.SERIES
         else -> CollectionTab.MOVIES
     }
-    var selectedTab by remember(uiState.catalog?.id) { mutableStateOf(initialTab) }
+    var selectedTab by rememberSaveable(uiState.catalog?.id) { mutableStateOf(initialTab) }
     val moviesGridState = rememberTvLazyGridState()
     val seriesGridState = rememberTvLazyGridState()
     val moviesTabFocusRequester = remember { FocusRequester() }
     val seriesTabFocusRequester = remember { FocusRequester() }
+    // True after the first focus has been delivered; subsequent ON_RESUME uses saved index.
+    var hasReceivedInitialFocus by rememberSaveable { mutableStateOf(false) }
+    // Index (within the items list) of the last card the user focused per tab.
+    var lastFocusedMovieIndex by rememberSaveable { mutableStateOf(-1) }
+    var lastFocusedSeriesIndex by rememberSaveable { mutableStateOf(-1) }
+    // Set on back-navigation to trigger focus on the specific card after scrolling to it.
+    var pendingFocusIndex by remember { mutableStateOf(-1) }
 
     LaunchedEffect(uiState.catalog?.id, uiState.supportsMovies, uiState.supportsSeries) {
         val resolvedTab = when {
@@ -389,13 +409,66 @@ fun CollectionDetailsScreen(
         }
     }
 
-    LaunchedEffect(uiState.catalog?.id, uiState.supportsMovies, uiState.supportsSeries, selectedTab) {
-        runCatching {
-            when (selectedTab) {
-                CollectionTab.MOVIES -> if (uiState.supportsMovies) moviesTabFocusRequester.requestFocus()
-                CollectionTab.SERIES -> if (uiState.supportsSeries) seriesTabFocusRequester.requestFocus()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
+    val currentTab by rememberUpdatedState(selectedTab)
+    val currentSupportsMovies by rememberUpdatedState(uiState.supportsMovies)
+    val currentSupportsSeries by rememberUpdatedState(uiState.supportsSeries)
+
+    fun requestTabFocus() {
+        coroutineScope.launch {
+            // 300ms clears the 250ms pop-enter animation before touching the focus tree
+            kotlinx.coroutines.delay(300)
+            if (!hasReceivedInitialFocus) {
+                // First entry: focus the tab chip so D-pad works from the start
+                runCatching {
+                    when (currentTab) {
+                        CollectionTab.MOVIES -> if (currentSupportsMovies) moviesTabFocusRequester.requestFocus()
+                        CollectionTab.SERIES -> if (currentSupportsSeries) seriesTabFocusRequester.requestFocus()
+                    }
+                }
+                hasReceivedInitialFocus = true
+            } else {
+                // Returning from back navigation: scroll back to the saved card index and
+                // set pendingFocusIndex so the card requests focus once it's in composition.
+                // focusRestorer() can't be used here because lazy grid recycles off-screen
+                // items, making saved focus nodes stale by the time we return.
+                val savedIndex = when (currentTab) {
+                    CollectionTab.MOVIES -> lastFocusedMovieIndex
+                    CollectionTab.SERIES -> lastFocusedSeriesIndex
+                }
+                if (savedIndex >= 0) {
+                    val currentGridState = when (currentTab) {
+                        CollectionTab.MOVIES -> moviesGridState
+                        CollectionTab.SERIES -> seriesGridState
+                    }
+                    // Grid has 2 header items (tab bar + spacer) before the media cards
+                    runCatching { currentGridState.scrollToItem(savedIndex + 2) }
+                    pendingFocusIndex = savedIndex
+                } else {
+                    runCatching {
+                        when (currentTab) {
+                            CollectionTab.MOVIES -> if (currentSupportsMovies) moviesTabFocusRequester.requestFocus()
+                            CollectionTab.SERIES -> if (currentSupportsSeries) seriesTabFocusRequester.requestFocus()
+                        }
+                    }
+                }
             }
         }
+    }
+
+    LaunchedEffect(selectedTab) { pendingFocusIndex = -1 }
+
+    // Fires on fresh composition (first entry or recreation after back navigation)
+    LaunchedEffect(Unit) { requestTabFocus() }
+
+    // Fires when the screen resumes from STARTED (back navigation without recreation)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) requestTabFocus()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Box(
@@ -441,6 +514,8 @@ fun CollectionDetailsScreen(
             cardWidth = cardWidth,
             usePosterCards = usePosterCards,
             gridState = gridState,
+            pendingFocusIndex = pendingFocusIndex,
+            onClearPendingFocus = { pendingFocusIndex = -1 },
             hasMovies = uiState.supportsMovies,
             hasSeries = uiState.supportsSeries,
             cardLogoUrls = cardLogoUrls,
@@ -449,7 +524,13 @@ fun CollectionDetailsScreen(
             seriesTabFocusRequester = seriesTabFocusRequester,
             onTabSelected = { selectedTab = it },
             onItemClick = { onNavigateToDetails(it.mediaType, it.id) },
-            onItemFocused = { viewModel.preloadLogos(listOf(it)) },
+            onItemFocused = { item, index ->
+                viewModel.preloadLogos(listOf(item))
+                when (activeTab) {
+                    CollectionTab.MOVIES -> lastFocusedMovieIndex = index
+                    CollectionTab.SERIES -> lastFocusedSeriesIndex = index
+                }
+            },
             onNearEnd = { viewModel.loadMoreIfNeeded(activeTab) },
             isLoading = isTabLoading,
             isLoadingMore = isTabLoadingMore,
@@ -616,6 +697,8 @@ private fun CollectionItemsGrid(
     cardWidth: androidx.compose.ui.unit.Dp,
     usePosterCards: Boolean,
     gridState: androidx.tv.foundation.lazy.grid.TvLazyGridState,
+    pendingFocusIndex: Int,
+    onClearPendingFocus: () -> Unit,
     hasMovies: Boolean,
     hasSeries: Boolean,
     cardLogoUrls: Map<String, String>,
@@ -624,7 +707,7 @@ private fun CollectionItemsGrid(
     seriesTabFocusRequester: FocusRequester,
     onTabSelected: (CollectionTab) -> Unit,
     onItemClick: (MediaItem) -> Unit,
-    onItemFocused: (MediaItem) -> Unit,
+    onItemFocused: (MediaItem, Int) -> Unit,
     onNearEnd: () -> Unit,
     isLoading: Boolean,
     isLoadingMore: Boolean,
@@ -702,6 +785,18 @@ private fun CollectionItemsGrid(
                 contentType = { _, _ -> cardContentType }
             ) { index, item ->
                 val cardLogoUrl = cardLogoUrls["${item.mediaType}_${item.id}"]
+                val itemFocusRequester = remember { FocusRequester() }
+
+                // Fires when scrollToItem brings this card into composition on back-navigation.
+                // pendingFocusIndex is set by requestTabFocus() after scrolling to this item.
+                LaunchedEffect(pendingFocusIndex) {
+                    if (pendingFocusIndex == index) {
+                        delay(50)
+                        runCatching { itemFocusRequester.requestFocus() }
+                        onClearPendingFocus()
+                    }
+                }
+
                 MediaCard(
                     item = item,
                     width = cardWidth,
@@ -710,11 +805,11 @@ private fun CollectionItemsGrid(
                     showTitle = true,
                     titleMaxLines = if (usePosterCards) 2 else 1,
                     onFocused = {
-                        onItemFocused(item)
+                        onItemFocused(item, index)
                         if (items.size > 10 && index >= items.size - 2) onNearEnd()
                     },
                     onClick = { onItemClick(item) },
-                    modifier = Modifier
+                    modifier = Modifier.focusRequester(itemFocusRequester)
                 )
             }
         }
