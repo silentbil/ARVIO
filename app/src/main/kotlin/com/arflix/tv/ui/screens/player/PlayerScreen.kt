@@ -288,7 +288,27 @@ fun PlayerScreen(
     var playerResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var subtitleMenuIndex by remember { mutableIntStateOf(0) }
     var subtitleMenuTab by remember { mutableIntStateOf(0) } // 0 = Subtitles, 1 = Audio
-
+    var subtitleLangIndex by remember { mutableIntStateOf(0) }
+    var subtitleTrackIndex by remember { mutableIntStateOf(0) }
+    var subtitlePanelFocus by remember { mutableIntStateOf(0) } // 0=lang panel, 1=track panel
+    val subtitleGroups = remember(uiState.subtitles, uiState.preferredSubtitleLang, uiState.secondarySubtitleLang) {
+        val primaryName = getFullLanguageName(uiState.preferredSubtitleLang)
+        val secondaryName = getFullLanguageName(uiState.secondarySubtitleLang)
+        uiState.subtitles.mapIndexed { idx, sub -> Pair(idx, sub) }
+            .groupBy { (_, sub) -> getFullLanguageName(sub.lang).ifBlank { sub.lang.ifBlank { "Unknown" } } }
+            .entries
+            .sortedWith(compareBy(
+                { (langName, _) ->
+                    when {
+                        langName.equals(primaryName, ignoreCase = true) -> 0
+                        langName.equals(secondaryName, ignoreCase = true) -> 1
+                        else -> 2
+                    }
+                },
+                { (langName, _) -> langName }
+            ))
+            .map { (langName, items) -> Pair(langName, items) }
+    }
     // Audio tracks from ExoPlayer
     var audioTracks by remember { mutableStateOf<List<AudioTrackInfo>>(emptyList()) }
     var selectedAudioIndex by remember { mutableIntStateOf(0) }
@@ -710,8 +730,12 @@ fun PlayerScreen(
                                 for (i in 0 until group.length) {
                                     val format = group.getTrackFormat(i)
                                     val formatTrackId = format.id?.trim().orEmpty()
+                                    // ExoPlayer prefixes external subtitle IDs with "{periodIndex}:"
+                                    // (e.g. "1:189618" for an external sub whose id we set to "189618").
+                                    // Fall back to matching by the bare id after the last colon.
                                     val matched = if (formatTrackId.isNotBlank()) {
                                         subtitleByTrackId[formatTrackId]
+                                            ?: subtitleByTrackId[formatTrackId.substringAfterLast(':')]
                                     } else {
                                         latestUiState.subtitles.firstOrNull { candidate ->
                                             !candidate.isEmbedded &&
@@ -1639,14 +1663,8 @@ fun PlayerScreen(
                         }
                     }
 
-                    // Handle subtitle/audio menu
+                    // Handle subtitle/audio menu — two-panel layout: lang panel | track panel | audio tab
                     if (showSubtitleMenu) {
-                        val maxIndex = if (subtitleMenuTab == 0) {
-                            uiState.subtitles.size + 1 // +1 for "Off"
-                        } else {
-                            audioTracks.size.coerceAtLeast(1)
-                        }
-
                         return@onKeyEvent when (event.key) {
                         Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
                             if (event.key == Key.MediaPause) {
@@ -1662,7 +1680,6 @@ fun PlayerScreen(
                         Key.Back, Key.Escape -> {
                                 showSubtitleMenu = false
                                 showControls = true
-                                // Restore focus to subtitle button
                                 coroutineScope.launch {
                                     delay(150)
                                     try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
@@ -1670,52 +1687,94 @@ fun PlayerScreen(
                                 true
                             }
                             Key.DirectionUp -> {
-                                if (subtitleMenuIndex > 0) subtitleMenuIndex--
+                                when {
+                                    subtitleMenuTab == 1 -> { if (subtitleMenuIndex > 0) subtitleMenuIndex-- }
+                                    subtitlePanelFocus == 0 -> { if (subtitleLangIndex > 0) subtitleLangIndex-- }
+                                    else -> { if (subtitleTrackIndex > 0) subtitleTrackIndex-- }
+                                }
                                 true
                             }
                             Key.DirectionDown -> {
-                                if (subtitleMenuIndex < maxIndex - 1) subtitleMenuIndex++
+                                when {
+                                    subtitleMenuTab == 1 -> {
+                                        if (subtitleMenuIndex < audioTracks.size.coerceAtLeast(1) - 1) subtitleMenuIndex++
+                                    }
+                                    subtitlePanelFocus == 0 -> {
+                                        if (subtitleLangIndex < subtitleGroups.size) subtitleLangIndex++
+                                    }
+                                    else -> {
+                                        val trackCount = subtitleGroups.getOrNull(subtitleLangIndex - 1)?.second?.size ?: 0
+                                        if (subtitleTrackIndex < trackCount - 1) subtitleTrackIndex++
+                                    }
+                                }
                                 true
                             }
                             Key.DirectionLeft -> {
-                                // Switch to Subtitles tab
-                                if (subtitleMenuTab != 0) {
-                                    subtitleMenuTab = 0
-                                    subtitleMenuIndex = 0
+                                when {
+                                    subtitleMenuTab == 1 -> {
+                                        subtitleMenuTab = 0
+                                        subtitlePanelFocus = 0
+                                    }
+                                    subtitlePanelFocus == 1 -> {
+                                        subtitlePanelFocus = 0
+                                    }
                                 }
                                 true
                             }
                             Key.DirectionRight -> {
-                                // Switch to Audio tab
-                                if (subtitleMenuTab != 1) {
-                                    subtitleMenuTab = 1
-                                    subtitleMenuIndex = 0
+                                when {
+                                    subtitleMenuTab == 0 && subtitlePanelFocus == 1 -> {
+                                        subtitleMenuTab = 1
+                                        subtitleMenuIndex = 0
+                                    }
+                                    subtitleMenuTab == 0 && subtitleLangIndex > 0 -> {
+                                        subtitlePanelFocus = 1
+                                        subtitleTrackIndex = 0
+                                    }
+                                    subtitleMenuTab == 0 && subtitleLangIndex == 0 -> {
+                                        subtitleMenuTab = 1
+                                        subtitleMenuIndex = 0
+                                    }
                                 }
                                 true
                             }
                             Key.Enter, Key.DirectionCenter -> {
-                                if (subtitleMenuTab == 0) {
-                                    // Subtitle selection
-                                    if (subtitleMenuIndex == 0) {
-                                        viewModel.disableSubtitles()
-                                    } else {
-                                        uiState.subtitles.getOrNull(subtitleMenuIndex - 1)?.let { viewModel.selectSubtitle(it) }
-                                    }
-                                } else {
-                                    // Audio selection
+                                if (subtitleMenuTab == 1) {
                                     audioTracks.getOrNull(subtitleMenuIndex)?.let { track ->
-                                        // Defensive track-selection — see applyAudioTrackSelection.
                                         applyAudioTrackSelection(exoPlayer, track, audioTracks)?.let {
                                             selectedAudioIndex = it
                                         }
                                     }
-                                }
-                                showSubtitleMenu = false
-                                showControls = true
-                                // Restore focus to subtitle button
-                                coroutineScope.launch {
-                                    delay(150)
-                                    try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                                    showSubtitleMenu = false
+                                    showControls = true
+                                    coroutineScope.launch {
+                                        delay(150)
+                                        try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                                    }
+                                } else if (subtitlePanelFocus == 0) {
+                                    if (subtitleLangIndex == 0) {
+                                        viewModel.disableSubtitles()
+                                        showSubtitleMenu = false
+                                        showControls = true
+                                        coroutineScope.launch {
+                                            delay(150)
+                                            try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                                        }
+                                    } else {
+                                        // Enter track panel for the selected language
+                                        subtitlePanelFocus = 1
+                                        subtitleTrackIndex = 0
+                                    }
+                                } else {
+                                    subtitleGroups.getOrNull(subtitleLangIndex - 1)
+                                        ?.second?.getOrNull(subtitleTrackIndex)?.second
+                                        ?.let { viewModel.selectSubtitle(it) }
+                                    showSubtitleMenu = false
+                                    showControls = true
+                                    coroutineScope.launch {
+                                        delay(150)
+                                        try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                                    }
                                 }
                                 true
                             }
@@ -2125,7 +2184,27 @@ fun PlayerScreen(
                         PlayerIconButton(icon = Icons.Default.ClosedCaption, contentDescription = "${stringResource(R.string.subtitles)} / ${stringResource(R.string.audio)}",
                             focusRequester = subtitleButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
                             onFocusChanged = { if (it) focusedButton = 1 },
-                            onClick = { showSubtitleMenu = true; subtitleMenuIndex = 0 },
+                            onClick = {
+                                subtitleMenuIndex = 0
+                                subtitlePanelFocus = 0
+                                val selected = latestUiState.selectedSubtitle
+                                if (selected == null) {
+                                    subtitleLangIndex = 0
+                                    subtitleTrackIndex = 0
+                                } else {
+                                    val langName = getFullLanguageName(selected.lang)
+                                    val idx = subtitleGroups.indexOfFirst { (name, _) -> name.equals(langName, ignoreCase = true) }
+                                    subtitleLangIndex = if (idx >= 0) idx + 1 else 0
+                                    subtitleTrackIndex = subtitleGroups.getOrNull(subtitleLangIndex - 1)?.second
+                                        ?.indexOfFirst { (_, sub) -> sub.id == selected.id }?.coerceAtLeast(0) ?: 0
+                                }
+                                showSubtitleMenu = true
+                                // Move focus to container so all D-pad keys go to the menu handler
+                                coroutineScope.launch {
+                                    delay(50)
+                                    try { containerFocusRequester.requestFocus() } catch (_: Exception) {}
+                                }
+                            },
                             onLeftKey = { if (mediaType == MediaType.TV) nextEpisodeButtonFocusRequester.requestFocus() else aspectButtonFocusRequester.requestFocus() },
                             onRightKey = { sourceButtonFocusRequester.requestFocus() },
                             onDownKey = { trackbarFocusRequester.requestFocus() })
@@ -2306,6 +2385,10 @@ fun PlayerScreen(
                 selectedAudioIndex = selectedAudioIndex,
                 activeTab = subtitleMenuTab,
                 focusedIndex = subtitleMenuIndex,
+                subtitleGroups = subtitleGroups,
+                subtitleLangIndex = subtitleLangIndex,
+                subtitleTrackIndex = subtitleTrackIndex,
+                subtitlePanelFocus = subtitlePanelFocus,
                 onTabChanged = { tab ->
                     subtitleMenuTab = tab
                     subtitleMenuIndex = 0
@@ -2318,22 +2401,17 @@ fun PlayerScreen(
                     }
                     showSubtitleMenu = false
                     showControls = true
-                    // Restore focus to subtitle button after closing menu
                     coroutineScope.launch {
                         delay(150)
                         try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
                     }
                 },
                 onSelectAudio = { track ->
-                    // Defensive track-selection — validates group + track bounds and
-                    // swallows IllegalArgumentException from stale indices after a
-                    // player re-prepare. Fixes crash reported in issue #89.
                     applyAudioTrackSelection(exoPlayer, track, audioTracks)?.let {
                         selectedAudioIndex = it
                     }
                     showSubtitleMenu = false
                     showControls = true
-                    // Restore focus to subtitle button after closing menu
                     coroutineScope.launch {
                         delay(150)
                         try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
@@ -2342,7 +2420,6 @@ fun PlayerScreen(
                 onClose = {
                     showSubtitleMenu = false
                     showControls = true
-                    // Restore focus to subtitle button after closing menu
                     coroutineScope.launch {
                         delay(150)
                         try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
@@ -3073,27 +3150,33 @@ private fun SubtitleMenu(
     selectedAudioIndex: Int,
     activeTab: Int,
     focusedIndex: Int,
+    subtitleGroups: List<Pair<String, List<Pair<Int, Subtitle>>>>,
+    subtitleLangIndex: Int,
+    subtitleTrackIndex: Int,
+    subtitlePanelFocus: Int,
     onTabChanged: (Int) -> Unit,
     onSelectSubtitle: (Int) -> Unit,
     onSelectAudio: (AudioTrackInfo) -> Unit,
     onClose: () -> Unit
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    val subtitleListState = rememberLazyListState()
+    val langListState = rememberLazyListState()
+    val trackListState = rememberLazyListState()
     val audioListState = rememberLazyListState()
 
     if (!isMobile) {
-        // ── TV layout (D-pad side panel) ──────────────────────────────────
-        // Scroll to focused item
+        // ── TV layout: two-panel (language list | track list) + Audio tab ─
+        LaunchedEffect(subtitleLangIndex) {
+            langListState.animateScrollToItem(subtitleLangIndex.coerceAtLeast(0))
+        }
+        LaunchedEffect(subtitleTrackIndex, subtitlePanelFocus) {
+            if (subtitlePanelFocus == 1 && subtitleTrackIndex >= 0) {
+                trackListState.animateScrollToItem(subtitleTrackIndex)
+            }
+        }
         LaunchedEffect(focusedIndex, activeTab) {
-            if (activeTab == 0) {
-                if (focusedIndex >= 0) {
-                    subtitleListState.animateScrollToItem(focusedIndex)
-                }
-            } else {
-                if (focusedIndex >= 0) {
-                    audioListState.animateScrollToItem(focusedIndex)
-                }
+            if (activeTab == 1 && focusedIndex >= 0) {
+                audioListState.animateScrollToItem(focusedIndex)
             }
         }
 
@@ -3106,7 +3189,7 @@ private fun SubtitleMenu(
         ) {
             Column(
                 modifier = Modifier
-                    .width(320.dp)
+                    .width(480.dp)
                     .padding(end = 32.dp)
                     .background(
                         Color.Black.copy(alpha = 0.85f),
@@ -3114,7 +3197,7 @@ private fun SubtitleMenu(
                     )
                     .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
                     .padding(16.dp)
-                    .clickable(enabled = false) {} // Prevent clicks from closing
+                    .clickable(enabled = false) {}
             ) {
                 Row(
                     modifier = Modifier
@@ -3134,41 +3217,90 @@ private fun SubtitleMenu(
                     )
                 }
 
-                // Content based on active tab
                 Box(modifier = Modifier.height(300.dp)) {
                     if (activeTab == 0) {
-                        // Subtitles tab
-                        LazyColumn(
-                            state = subtitleListState,
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            item {
-                                TrackMenuItem(
-                                    label = "Off",
-                                    subtitle = null,
-                                    isSelected = selectedSubtitle == null,
-                                    isFocused = focusedIndex == 0,
-                                    onClick = { onSelectSubtitle(0) }
-                                )
+                        // Two-panel layout: language list (left) | tracks for selected language (right)
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            // Left panel: language list
+                            LazyColumn(
+                                state = langListState,
+                                modifier = Modifier
+                                    .width(150.dp)
+                                    .fillMaxHeight(),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                item {
+                                    LangPanelItem(
+                                        name = "Off",
+                                        count = 0,
+                                        isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == 0,
+                                        isActivePanel = subtitleLangIndex == 0,
+                                        isSelected = selectedSubtitle == null
+                                    )
+                                }
+                                itemsIndexed(subtitleGroups) { idx, (langName, items) ->
+                                    LangPanelItem(
+                                        name = langName,
+                                        count = items.size,
+                                        isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == idx + 1,
+                                        isActivePanel = subtitleLangIndex == idx + 1,
+                                        isSelected = selectedSubtitle != null &&
+                                            items.any { (_, sub) -> sub.id == selectedSubtitle.id }
+                                    )
+                                }
                             }
 
-                            itemsIndexed(subtitles, key = { _, subtitle -> subtitle.id }) { index, subtitle ->
-                                // Use actual track label as main text, full language name as secondary
-                                val trackLabel = subtitle.label.ifBlank { subtitle.lang }
-                                val languageInfo = getFullLanguageName(subtitle.lang)
-                                // Only show language info if different from label
-                                val subtitleInfo = if (trackLabel.lowercase() != languageInfo.lowercase() &&
-                                                       !trackLabel.lowercase().contains(languageInfo.lowercase())) {
-                                    languageInfo
-                                } else null
-                                TrackMenuItem(
-                                    label = trackLabel,
-                                    subtitle = subtitleInfo,
-                                    isSelected = selectedSubtitle?.id == subtitle.id,
-                                    isFocused = focusedIndex == index + 1,
-                                    onClick = { onSelectSubtitle(index + 1) }
-                                )
+                            // Vertical divider
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .fillMaxHeight()
+                                    .padding(vertical = 4.dp)
+                                    .background(Color.White.copy(alpha = 0.1f))
+                            )
+
+                            // Right panel: tracks for selected language
+                            val selectedGroup = subtitleGroups.getOrNull(subtitleLangIndex - 1)
+                            if (selectedGroup == null) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "—",
+                                        style = ArflixTypography.caption,
+                                        color = TextSecondary.copy(alpha = 0.3f)
+                                    )
+                                }
+                            } else {
+                                LazyColumn(
+                                    state = trackListState,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .padding(start = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    itemsIndexed(selectedGroup.second) { idx, (_, subtitle) ->
+                                        val trackLabel = subtitle.label.ifBlank { subtitle.lang }
+                                        val langName = getFullLanguageName(subtitle.lang)
+                                        val trackInfo = when {
+                                            subtitle.isEmbedded && subtitle.url.isBlank() -> "Built-in"
+                                            trackLabel.lowercase() == langName.lowercase() -> null
+                                            trackLabel.lowercase().contains(langName.lowercase()) -> null
+                                            else -> langName.ifBlank { null }
+                                        }
+                                        TrackMenuItem(
+                                            label = trackLabel,
+                                            subtitle = trackInfo,
+                                            isSelected = selectedSubtitle?.id == subtitle.id,
+                                            isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == idx,
+                                            onClick = { /* D-pad only */ }
+                                        )
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -3189,10 +3321,8 @@ private fun SubtitleMenu(
                                 }
                             } else {
                                 itemsIndexed(audioTracks, key = { _, track -> audioTrackKey(track) }) { index, track ->
-                                    // Use track label if available, otherwise full language name
                                     val languageName = getFullLanguageName(track.language)
                                     val trackLabel = track.label?.takeIf { it.isNotBlank() } ?: languageName
-
                                     val codecInfo = detectAudioCodecLabel(track.codec, trackLabel)
                                     val channelInfo = when (track.channelCount) {
                                         1 -> "Mono"
@@ -3202,7 +3332,6 @@ private fun SubtitleMenu(
                                         else -> if (track.channelCount > 0) "${track.channelCount}ch" else null
                                     }
                                     val subtitleText = listOfNotNull(codecInfo, channelInfo).joinToString(" • ")
-
                                     TrackMenuItem(
                                         label = trackLabel,
                                         subtitle = subtitleText.ifEmpty { null },
@@ -3218,7 +3347,6 @@ private fun SubtitleMenu(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Navigation hint
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center,
@@ -3361,7 +3489,6 @@ private fun SubtitleMenu(
                                 isSelected = selectedSubtitle == null,
                                 onClick = { onSelectSubtitle(0) }
                             )
-                            // Divider
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3371,28 +3498,42 @@ private fun SubtitleMenu(
                             )
                         }
 
-                        itemsIndexed(subtitles, key = { _, sub -> sub.id }) { index, sub ->
-                            val trackLabel = sub.label.ifBlank { sub.lang }
-                            val languageInfo = getFullLanguageName(sub.lang)
-                            val description = if (trackLabel.lowercase() != languageInfo.lowercase() &&
-                                !trackLabel.lowercase().contains(languageInfo.lowercase())
-                            ) languageInfo else null
-
-                            MobileTrackItem(
-                                name = trackLabel,
-                                description = description,
-                                isSelected = selectedSubtitle?.id == sub.id,
-                                onClick = { onSelectSubtitle(index + 1) }
-                            )
-                            // Divider between items
-                            if (index < subtitles.lastIndex) {
-                                Box(
+                        // Grouped by language
+                        subtitleGroups.forEach { (langName, indexedSubs) ->
+                            item(key = "mobile_header_$langName") {
+                                Text(
+                                    text = langName.uppercase(),
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 10.sp,
+                                        letterSpacing = 1.sp
+                                    ),
+                                    color = TextSecondary.copy(alpha = 0.45f),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 8.dp)
-                                        .height(1.dp)
-                                        .background(Color.White.copy(alpha = 0.06f))
+                                        .padding(start = 16.dp, top = 8.dp, bottom = 2.dp)
                                 )
+                            }
+                            indexedSubs.forEach { (originalIndex, sub) ->
+                                item(key = "mobile_${sub.id}") {
+                                    val trackLabel = sub.label.ifBlank { sub.lang }
+                                    val languageInfo = getFullLanguageName(sub.lang)
+                                    val description = if (trackLabel.lowercase() != languageInfo.lowercase() &&
+                                        !trackLabel.lowercase().contains(languageInfo.lowercase())
+                                    ) languageInfo else null
+                                    MobileTrackItem(
+                                        name = trackLabel,
+                                        description = description,
+                                        isSelected = selectedSubtitle?.id == sub.id,
+                                        onClick = { onSelectSubtitle(originalIndex + 1) }
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp)
+                                            .height(1.dp)
+                                            .background(Color.White.copy(alpha = 0.06f))
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -3522,6 +3663,64 @@ private fun TrackMenuItem(
                 contentDescription = stringResource(R.string.selected),
                 tint = if (isFocused) Color.Black else Color.White,
                 modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LangPanelItem(
+    name: String,
+    count: Int,
+    isFocused: Boolean,
+    isActivePanel: Boolean,
+    isSelected: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                when {
+                    isFocused -> Color.White
+                    isActivePanel -> Color.White.copy(alpha = 0.12f)
+                    else -> Color.Transparent
+                },
+                RoundedCornerShape(8.dp)
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = name,
+            style = ArflixTypography.body.copy(fontSize = 13.sp),
+            color = if (isFocused) Color.Black else Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (count > 0) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Box(
+                modifier = Modifier
+                    .background(
+                        if (isFocused) Color.Black.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.15f),
+                        RoundedCornerShape(10.dp)
+                    )
+                    .padding(horizontal = 5.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    text = "$count",
+                    style = ArflixTypography.caption.copy(fontSize = 10.sp),
+                    color = if (isFocused) Color.Black else Color.White
+                )
+            }
+        } else if (isSelected) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                tint = if (isFocused) Color.Black else Color.White,
+                modifier = Modifier.size(14.dp)
             )
         }
     }

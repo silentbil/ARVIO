@@ -60,6 +60,8 @@
     <!-- Subtitles / audio -->
     <string name="subtitles">Subtitles</string>
     <string name="default_subtitle">Default Subtitle</string>
+    <string name="secondary_subtitle">Secondary Subtitle Language</string>
+    <string name="secondary_subtitle_desc">Fallback subtitle language when primary is unavailable</string>
     <string name="filter_subtitles">Filter Subtitles by Language</string>
     <string name="filter_subtitles_desc">Show only subtitles in your preferred language</string>
 

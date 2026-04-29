@@ -126,6 +126,8 @@
 
     <!-- Missing translations -->
     <string name="default_subtitle">כתוביות ברירת מחדל</string>
+    <string name="secondary_subtitle">שפת כתוביות משנית</string>
+    <string name="secondary_subtitle_desc">שפת כתוביות חלופית כאשר הראשונה אינה זמינה</string>
     <string name="filter_subtitles">סנן כתוביות לפי שפה</string>
     <string name="filter_subtitles_desc">הצג רק כתוביות בשפה המועדפת</string>
     <string name="auto_play_next">הפעלה אוטומטית של הבא</string>
