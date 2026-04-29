@@ -1040,6 +1040,8 @@ fun SettingsScreen(
                             onVolumeBoostClick = { viewModel.cycleVolumeBoost() },
                             onSubtitleSizeClick = { viewModel.cycleSubtitleSize() },
                             onSubtitleColorClick = { viewModel.cycleSubtitleColor() },
+                            filterSubtitlesByLanguage = uiState.filterSubtitlesByLanguage,
+                            onFilterSubtitlesByLanguageToggle = { viewModel.setFilterSubtitlesByLanguage(it) },
                             qualityFilterValue = uiState.qualityFilterPresetLabel,
                             onQualityFiltersClick = { showQualityFiltersModal = true }
                         )
@@ -3337,6 +3339,8 @@ private fun GeneralSettings(
     trailerAutoPlay: Boolean = false,
     onSubtitleSizeClick: () -> Unit = {},
     onSubtitleColorClick: () -> Unit = {},
+    filterSubtitlesByLanguage: Boolean = true,
+    onFilterSubtitlesByLanguageToggle: (Boolean) -> Unit = {},
     onTrailerAutoPlayToggle: (Boolean) -> Unit = {},
     qualityFilterValue: String = "OFF",
     onQualityFiltersClick: () -> Unit = {}
@@ -3398,6 +3402,15 @@ private fun GeneralSettings(
             isFocused = focusedIndex == 4,
             onClick = onSubtitleColorClick,
             modifier = Modifier.settingsFocusSlot(4)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsToggleRow(
+            title = stringResource(R.string.filter_subtitles),
+            subtitle = stringResource(R.string.filter_subtitles_desc),
+            isEnabled = filterSubtitlesByLanguage,
+            isFocused = focusedIndex == 5,
+            onToggle = onFilterSubtitlesByLanguageToggle,
+            modifier = Modifier.settingsFocusSlot(5)
         )
 
         // ── Playback ──

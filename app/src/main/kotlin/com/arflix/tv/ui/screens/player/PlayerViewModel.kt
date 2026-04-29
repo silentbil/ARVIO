@@ -139,6 +139,7 @@ class PlayerViewModel @Inject constructor(
     private fun defaultSubtitleKey() = profileManager.profileStringKey("default_subtitle")
     private fun defaultAudioLanguageKey() = profileManager.profileStringKey("default_audio_language")
     private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
+    private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun frameRateMatchingModeKey() = profileManager.profileStringKey("frame_rate_matching_mode")
     private fun autoPlayNextKey() = profileManager.profileBooleanKey("auto_play_next")
     private fun showLoadingStatsKey() = profileManager.profileBooleanKey("show_loading_stats")
@@ -290,9 +291,11 @@ class PlayerViewModel @Inject constructor(
                             )
                         }.getOrDefault(emptyList())
 
-                        val mergedSubs = (_uiState.value.subtitles + fetchedSubs)
-                            .filter { it.url.isNotBlank() }
-                            .distinctBy { "${it.id}|${it.url}" }
+                        val mergedSubs = filterSubsByPreferredLanguage(
+                            (_uiState.value.subtitles + fetchedSubs)
+                                .filter { it.url.isNotBlank() }
+                                .distinctBy { "${it.id}|${it.url}" }
+                        )
 
                         _uiState.value = _uiState.value.copy(
                             subtitles = mergedSubs,
@@ -512,9 +515,11 @@ class PlayerViewModel @Inject constructor(
                         )
                     }.getOrDefault(emptyList())
 
-                    val mergedSubs = (_uiState.value.subtitles + fetchedSubs)
-                        .filter { it.url.isNotBlank() }
-                        .distinctBy { "${it.id}|${it.url}" }
+                    val mergedSubs = filterSubsByPreferredLanguage(
+                        (_uiState.value.subtitles + fetchedSubs)
+                            .filter { it.url.isNotBlank() }
+                            .distinctBy { "${it.id}|${it.url}" }
+                    )
 
                     val preferredSub = getDefaultSubtitle()
                     _uiState.value = _uiState.value.copy(
@@ -668,6 +673,32 @@ class PlayerViewModel @Inject constructor(
         } catch (_: Exception) {
             "Off"
         }
+    }
+
+    // Returns subs filtered to the preferred language when the setting is enabled.
+    // Falls back to the full list if filtering would leave nothing (e.g. no subs in that language).
+    private suspend fun filterSubsByPreferredLanguage(subs: List<Subtitle>): List<Subtitle> {
+        val prefs = runCatching { context.settingsDataStore.data.first() }.getOrNull() ?: return subs
+        val enabled = prefs[filterSubtitlesByLanguageKey()] ?: true
+        if (!enabled) return subs
+        val preferred = prefs[defaultSubtitleKey()]?.trim().orEmpty()
+        if (isSubtitleDisabledPreference(preferred)) return subs
+        val normalizedPref = normalizeLanguage(preferred)
+        if (normalizedPref.isBlank()) return subs
+        val filtered = subs.filter { sub ->
+            val tokens = buildSet {
+                add(normalizeLanguage(sub.lang))
+                add(normalizeLanguage(sub.label))
+                Regex("[A-Za-z-]+").findAll("${sub.lang} ${sub.label}")
+                    .map { normalizeLanguage(it.value) }
+                    .filter { it.isNotBlank() }
+                    .forEach { add(it) }
+            }
+            tokens.contains(normalizedPref) ||
+                sub.lang.lowercase().contains(normalizedPref) ||
+                sub.label.lowercase().contains(normalizedPref)
+        }
+        return filtered.ifEmpty { subs }
     }
 
     private suspend fun resolveFrameRateMatchingMode(): String {
@@ -1200,9 +1231,11 @@ class PlayerViewModel @Inject constructor(
                     }
 
                     val existing = _uiState.value.subtitles
-                    val merged = existing + extraSubs.filter { newSub ->
-                        newSub.url.isNotBlank() && existing.none { it.id == newSub.id || it.url == newSub.url }
-                    }
+                    val merged = filterSubsByPreferredLanguage(
+                        existing + extraSubs.filter { newSub ->
+                            newSub.url.isNotBlank() && existing.none { it.id == newSub.id || it.url == newSub.url }
+                        }
+                    )
                     _uiState.value = _uiState.value.copy(subtitles = merged)
 
                     // If nothing is selected yet, try to apply the default preference against the merged list.

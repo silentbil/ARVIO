@@ -60,6 +60,8 @@
     <!-- Subtitles / audio -->
     <string name="subtitles">Subtitles</string>
     <string name="default_subtitle">Default Subtitle</string>
+    <string name="filter_subtitles">Filter Subtitles by Language</string>
+    <string name="filter_subtitles_desc">Show only subtitles in your preferred language</string>
 
     <!-- Playback -->
     <string name="auto_play_next">Auto-Play Next</string>

@@ -126,6 +126,8 @@
 
     <!-- Missing translations -->
     <string name="default_subtitle">כתוביות ברירת מחדל</string>
+    <string name="filter_subtitles">סנן כתוביות לפי שפה</string>
+    <string name="filter_subtitles_desc">הצג רק כתוביות בשפה המועדפת</string>
     <string name="auto_play_next">הפעלה אוטומטית של הבא</string>
     <string name="next_episode">הפרק הבא</string>
     <string name="continue_watching">המשך צפייה</string>
