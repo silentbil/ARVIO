@@ -40,6 +40,9 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import retrofit2.HttpException
 import java.text.Normalizer
 import java.text.SimpleDateFormat
@@ -69,6 +72,7 @@ class TraktRepository @Inject constructor(
     private val profileManager: ProfileManager
 ) {
     private val gson = Gson()
+    private val watchlistHttpClient by lazy { OkHttpClient() }
 
     // Lazy sync service to avoid circular dependency
     private val syncService: TraktSyncService by lazy { syncServiceProvider.get() }
@@ -2195,29 +2199,29 @@ class TraktRepository @Inject constructor(
         var page = 1
 
         while (true) {
-            val response = try {
-                traktApi.getWatchlistAddedPage(
+            val pageResult = try {
+                fetchWatchlistPageRaw(
                     auth = auth,
-                    clientId = clientId,
                     type = type,
                     page = page,
-                    limit = limit
+                    limit = limit,
+                    sort = "added"
                 )
             } catch (_: Exception) {
                 return WatchlistFetchResult(all, complete = false)
             }
 
-            if (!response.isSuccessful) {
+            if (!pageResult.complete) {
                 return WatchlistFetchResult(all, complete = false)
             }
 
-            val pageItems = response.body().orEmpty()
+            val pageItems = pageResult.items
             pageItems.forEach { item ->
                 val key = watchlistIdentity(item)
                 if (seen.add(key)) all.add(item)
             }
 
-            val totalPages = response.headers()["X-Pagination-Page-Count"]?.toIntOrNull()
+            val totalPages = pageResult.totalPages
             val hasMorePages = if (totalPages != null) {
                 page < totalPages
             } else {
@@ -2237,28 +2241,29 @@ class TraktRepository @Inject constructor(
         var page = 1
 
         while (true) {
-            val response = try {
-                traktApi.getWatchlistPage(
+            val pageResult = try {
+                fetchWatchlistPageRaw(
                     auth = auth,
-                    clientId = clientId,
+                    type = null,
                     page = page,
-                    limit = limit
+                    limit = limit,
+                    sort = null
                 )
             } catch (_: Exception) {
                 return WatchlistFetchResult(all, complete = false)
             }
 
-            if (!response.isSuccessful) {
+            if (!pageResult.complete) {
                 return WatchlistFetchResult(all, complete = false)
             }
 
-            val pageItems = response.body().orEmpty()
+            val pageItems = pageResult.items
             pageItems.forEach { item ->
                 val key = watchlistIdentity(item)
                 if (seen.add(key)) all.add(item)
             }
 
-            val totalPages = response.headers()["X-Pagination-Page-Count"]?.toIntOrNull()
+            val totalPages = pageResult.totalPages
             val hasMorePages = if (totalPages != null) {
                 page < totalPages
             } else {
@@ -2269,6 +2274,60 @@ class TraktRepository @Inject constructor(
         }
 
         return WatchlistFetchResult(all, complete = true)
+    }
+
+    private data class WatchlistPageResult(
+        val items: List<TraktWatchlistItem>,
+        val totalPages: Int?,
+        val complete: Boolean
+    )
+
+    private suspend fun fetchWatchlistPageRaw(
+        auth: String,
+        type: String?,
+        page: Int,
+        limit: Int,
+        sort: String?
+    ): WatchlistPageResult = withContext(Dispatchers.IO) {
+        val urlBuilder = Constants.TRAKT_API_URL.toHttpUrl().newBuilder()
+            .addPathSegment("users")
+            .addPathSegment("me")
+            .addPathSegment("watchlist")
+        if (!type.isNullOrBlank()) {
+            urlBuilder.addPathSegment(type)
+            if (!sort.isNullOrBlank()) {
+                urlBuilder.addPathSegment(sort)
+            }
+        }
+        val url = urlBuilder
+            .addQueryParameter("extended", "full")
+            .addQueryParameter("page", page.toString())
+            .addQueryParameter("limit", limit.toString())
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .addHeader("Authorization", auth)
+            .addHeader("trakt-api-key", clientId)
+            .addHeader("trakt-api-version", "2")
+            .build()
+
+        watchlistHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                return@withContext WatchlistPageResult(emptyList(), totalPages = null, complete = false)
+            }
+            val body = response.body?.string().orEmpty()
+            val listType = object : TypeToken<List<TraktWatchlistItem>>() {}.type
+            val items: List<TraktWatchlistItem> = runCatching {
+                gson.fromJson<List<TraktWatchlistItem>>(body, listType)
+            }.getOrNull().orEmpty()
+            WatchlistPageResult(
+                items = items,
+                totalPages = response.header("X-Pagination-Page-Count")?.toIntOrNull(),
+                complete = true
+            )
+        }
     }
 
     private suspend fun mapWatchlistItemFast(item: TraktWatchlistItem): MediaItem? {

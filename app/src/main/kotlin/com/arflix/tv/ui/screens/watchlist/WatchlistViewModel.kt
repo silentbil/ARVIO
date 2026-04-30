@@ -89,6 +89,9 @@ class WatchlistViewModel @Inject constructor(
 
     private fun loadWatchlistInstant() {
         viewModelScope.launch {
+            if (watchlistRepository.getCachedItems().isEmpty()) {
+                runCatching { cloudSyncRepository.pullFromCloud() }
+            }
             val traktConnected = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
             if (traktConnected) {
                 val cachedItems = (watchlistRepository.getCachedItems().ifEmpty {

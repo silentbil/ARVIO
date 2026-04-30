@@ -745,29 +745,14 @@ class CloudSyncRepository @Inject constructor(
         }
 
         // ── Watchlist ──
-        val traktWatchlistSourceProfiles = mutableSetOf<String>()
-        root.optJSONObject("traktTokens")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = object : TypeToken<Map<String, TraktRepository.CloudTraktToken>>() {}.type
-            val tokens: Map<String, TraktRepository.CloudTraktToken> = gson.fromJson(json, type) ?: emptyMap()
-            tokens.forEach { (profileId, token) ->
-                if (profileId.isNotBlank() && token.accessToken.isNotBlank()) {
-                    traktWatchlistSourceProfiles.add(profileId)
-                }
-            }
-        }
-        val activeProfileIdForWatchlist = profileRepository.getActiveProfileId()
-        val activeProfileHasTraktForWatchlist = runCatching {
-            traktRepository.isAuthenticated.first()
-        }.getOrDefault(false)
-
         root.optJSONObject("watchlistByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
             val type = object : TypeToken<Map<String, List<LocalWatchlistItem>>>() {}.type
             val map: Map<String, List<LocalWatchlistItem>> = gson.fromJson(json, type) ?: emptyMap()
             map.forEach { (profileId, items) ->
-                val profileUsesTraktWatchlist =
-                    profileId in traktWatchlistSourceProfiles ||
-                        (profileId == activeProfileIdForWatchlist && activeProfileHasTraktForWatchlist)
-                if (profileUsesTraktWatchlist) return@forEach
+                // Restore the cloud mirror for every profile, including Trakt profiles.
+                // Trakt remains the source of truth after a successful live sync, but
+                // skipping this cache made fresh installs show an empty watchlist while
+                // auth/network refresh was still settling or failed.
                 watchlistRepository.importWatchlistForProfile(profileId, items)
             }
         }

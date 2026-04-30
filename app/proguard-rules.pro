@@ -186,6 +186,11 @@
 -dontwarn javax.annotation.**
 -dontwarn kotlin.reflect.jvm.internal.**
 
+# Retrofit needs generic signatures on service methods such as
+# Response<List<TraktWatchlistItem>>. Keep these after all other attribute
+# rules so release minification cannot strip them and break live Trakt sync.
+-keepattributes Signature,*Annotation*,InnerClasses,EnclosingMethod,Exceptions,SourceFile,LineNumberTable
+
 # ============================================
 # App-specific keeps
 # ============================================
