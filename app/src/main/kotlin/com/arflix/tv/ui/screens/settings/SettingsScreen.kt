@@ -4576,18 +4576,17 @@ private fun CatalogDiscoveryResultRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = !isAdded, onClick = onAdd)
+                .onFocusChanged { isFocused = it.isFocused || it.hasFocus }
+                .clickable(onClick = { if (!isAdded) onAdd() })
                 .background(
                     if (isFocused) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.38f),
                     RoundedCornerShape(14.dp)
                 )
                 .border(
-                    width = if (isFocused) 2.dp else 1.dp,
-                    color = if (isFocused) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.08f),
+                    width = if (isFocused) 3.dp else 1.dp,
+                    color = if (isFocused) Color.White else Color.White.copy(alpha = 0.08f),
                     shape = RoundedCornerShape(14.dp)
                 )
-                .onFocusChanged { isFocused = it.isFocused || it.hasFocus }
-                .focusable()
                 .padding(12.dp)
         ) {
             Row(
@@ -4677,12 +4676,8 @@ private fun CatalogDiscoveryResultRow(
             }
 
             Spacer(modifier = Modifier.height(10.dp))
-            DiscoveryActionButton(
-                label = if (isAdded) "Added" else "Add",
-                onClick = onAdd,
-                icon = if (isAdded) Icons.Default.Check else null,
-                highlighted = true,
-                enabled = !isAdded,
+            CatalogDiscoveryAddPill(
+                isAdded = isAdded,
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -4693,18 +4688,17 @@ private fun CatalogDiscoveryResultRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .clickable(enabled = !isAdded, onClick = onAdd)
+            .onFocusChanged { isFocused = it.isFocused || it.hasFocus }
+            .clickable(onClick = { if (!isAdded) onAdd() })
             .background(
                 if (isFocused) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.38f),
                 RoundedCornerShape(14.dp)
             )
             .border(
-                width = if (isFocused) 2.dp else 1.dp,
-                color = if (isFocused) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.08f),
+                width = if (isFocused) 3.dp else 1.dp,
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.08f),
                 shape = RoundedCornerShape(14.dp)
             )
-            .onFocusChanged { isFocused = it.isFocused || it.hasFocus }
-            .focusable()
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -4826,13 +4820,49 @@ private fun CatalogDiscoveryResultRow(
         }
 
         Spacer(modifier = Modifier.width(18.dp))
-        DiscoveryActionButton(
-            label = if (isAdded) "Added" else "Add",
-            onClick = onAdd,
-            icon = if (isAdded) Icons.Default.Check else null,
-            enabled = !isAdded,
-            highlighted = true
-        )
+        CatalogDiscoveryAddPill(isAdded = isAdded)
+    }
+}
+
+@Composable
+private fun CatalogDiscoveryAddPill(
+    isAdded: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .widthIn(min = 112.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.46f), RoundedCornerShape(10.dp))
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = 0.74f),
+                shape = RoundedCornerShape(10.dp)
+            )
+            .padding(horizontal = 22.dp, vertical = 13.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (isAdded) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = TextPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+            }
+            Text(
+                text = if (isAdded) "Added" else "Add",
+                style = ArflixTypography.button,
+                color = TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 

@@ -2164,10 +2164,11 @@ class TraktRepository @Inject constructor(
     private suspend fun fetchAllWatchlistItems(auth: String): List<TraktWatchlistItem> {
         val movieItems = fetchWatchlistItemsByType(auth, "movies")
         val showItems = fetchWatchlistItemsByType(auth, "shows")
+        val typedItems = (movieItems.items + showItems.items)
+            .distinctBy { watchlistIdentity(it) }
+            .sortedByDescending { it.listedAt }
         if (movieItems.complete && showItems.complete) {
-            return (movieItems.items + showItems.items)
-                .distinctBy { watchlistIdentity(it) }
-                .sortedByDescending { it.listedAt }
+            if (typedItems.isNotEmpty()) return typedItems
         }
 
         val fallback = fetchWatchlistItemsFallback(auth)
@@ -2176,6 +2177,8 @@ class TraktRepository @Inject constructor(
                 .sortedByDescending { it.listedAt }
                 .distinctBy { watchlistIdentity(it) }
         }
+
+        if (typedItems.isNotEmpty()) return typedItems
 
         throw IllegalStateException("Incomplete Trakt watchlist fetch")
     }

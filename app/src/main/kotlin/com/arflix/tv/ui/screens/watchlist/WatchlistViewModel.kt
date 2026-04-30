@@ -90,9 +90,12 @@ class WatchlistViewModel @Inject constructor(
         viewModelScope.launch {
             val traktConnected = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
             if (traktConnected) {
-                // For Trakt profiles, Trakt is the source of truth. Showing the
-                // local mirror before a fresh pull can resurrect old bad matches.
-                _uiState.value = WatchlistUiState(isLoading = true)
+                val cachedItems = watchlistRepository.getCachedItems().watchlistDisplayOrder()
+                _uiState.value = WatchlistUiState(
+                    isLoading = cachedItems.isEmpty(),
+                    items = cachedItems
+                )
+                if (cachedItems.isNotEmpty()) fetchLogos(cachedItems)
             } else {
                 val cachedItems = watchlistRepository.getCachedItems()
                 if (cachedItems.isNotEmpty()) {
@@ -115,17 +118,11 @@ class WatchlistViewModel @Inject constructor(
                         items = items
                     )
                 } else if (!syncedFromTrakt) {
-                    _uiState.value = WatchlistUiState(
-                        isLoading = false,
-                        error = "Failed to load Trakt watchlist"
-                    )
+                    showLocalWatchlistOrError("Failed to load Trakt watchlist")
                 }
             } catch (e: Exception) {
                 if (traktConnected) {
-                    _uiState.value = WatchlistUiState(
-                        isLoading = false,
-                        error = e.message ?: "Failed to load Trakt watchlist"
-                    )
+                    showLocalWatchlistOrError(e.message ?: "Failed to load Trakt watchlist")
                 } else if (_uiState.value.items.isEmpty()) {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
@@ -151,10 +148,7 @@ class WatchlistViewModel @Inject constructor(
                         items = items
                     )
                 } else if (!syncedFromTrakt) {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = "Failed to load Trakt watchlist"
-                    )
+                    showLocalWatchlistOrError("Failed to load Trakt watchlist")
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -163,6 +157,16 @@ class WatchlistViewModel @Inject constructor(
                     toastType = ToastType.ERROR
                 )
             }
+        }
+    }
+
+    private suspend fun showLocalWatchlistOrError(message: String) {
+        val cachedItems = watchlistRepository.getWatchlistItems().watchlistDisplayOrder()
+        if (cachedItems.isNotEmpty()) {
+            _uiState.value = WatchlistUiState(isLoading = false, items = cachedItems)
+            fetchLogos(cachedItems)
+        } else {
+            _uiState.value = WatchlistUiState(isLoading = false, error = message)
         }
     }
 
@@ -208,6 +212,14 @@ class WatchlistViewModel @Inject constructor(
                 val traktItems = syncResult?.items.orEmpty()
                 val rawCount = syncResult?.rawCount ?: 0
                 if (traktItems.isNotEmpty() || rawCount == 0) {
+                    if (traktItems.isEmpty()) {
+                        val cachedItems = watchlistRepository.getCachedItems().watchlistDisplayOrder()
+                        if (cachedItems.isNotEmpty()) {
+                            _uiState.value = WatchlistUiState(isLoading = false, items = cachedItems)
+                            fetchLogos(cachedItems)
+                            return true
+                        }
+                    }
                     watchlistRepository.clearWatchlistCache()
                     val orderedTraktItems = traktItems.watchlistDisplayOrder()
                     _uiState.value = WatchlistUiState(isLoading = false, items = orderedTraktItems)
