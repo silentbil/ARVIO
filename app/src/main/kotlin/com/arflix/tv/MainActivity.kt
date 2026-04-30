@@ -120,6 +120,11 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
+private sealed interface ActiveProfileLoadState {
+    data object Loading : ActiveProfileLoadState
+    data class Loaded(val profile: com.arflix.tv.data.model.Profile?) : ActiveProfileLoadState
+}
+
 /**
  * Main Activity - Single activity architecture with Compose Navigation
  * Uses Android 12+ Splash Screen API for instant launch feedback
@@ -240,9 +245,6 @@ class MainActivity : ComponentActivity() {
             val skipProfileSelection by remember {
                 this@MainActivity.settingsDataStore.data.map { it[SKIP_PROFILE_SELECTION_KEY] ?: false }
             }.collectAsStateWithLifecycle(initialValue = null as Boolean?)
-            val activeProfileLoaded by remember {
-                profileRepository.get().activeProfileId.map { true }
-            }.collectAsStateWithLifecycle(initialValue = false)
             val activeProfileId by remember {
                 profileRepository.get().activeProfileId
             }.collectAsStateWithLifecycle(initialValue = null)
@@ -308,7 +310,6 @@ class MainActivity : ComponentActivity() {
                         iptvRepository = iptvRepository.get(),
                         launcherContinueWatchingRepository = launcherContinueWatchingRepository.get(),
                         skipProfileSelection = skipProfileSelection,
-                        activeProfileLoaded = activeProfileLoaded,
                         pendingLauncherRequest = pendingLauncherRequest,
                         onConsumeLauncherRequest = { pendingLauncherRequest = null },
                         preloadedCategories = startupState.categories,
@@ -479,7 +480,6 @@ fun ArflixApp(
     iptvRepository: com.arflix.tv.data.repository.IptvRepository,
     launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
     skipProfileSelection: Boolean? = null,
-    activeProfileLoaded: Boolean = false,
     pendingLauncherRequest: LauncherContinueWatchingRequest? = null,
     onConsumeLauncherRequest: () -> Unit = {},
     preloadedCategories: List<com.arflix.tv.data.model.Category> = emptyList(),
@@ -490,9 +490,14 @@ fun ArflixApp(
 ) {
     val context = LocalContext.current
     val authState by authRepository.authState.collectAsStateWithLifecycle()
-    val activeProfile by profileRepository.activeProfile.collectAsStateWithLifecycle(initialValue = null)
+    val activeProfileState by remember(profileRepository) {
+        profileRepository.activeProfile.map { profile ->
+            ActiveProfileLoadState.Loaded(profile) as ActiveProfileLoadState
+        }
+    }.collectAsStateWithLifecycle(initialValue = ActiveProfileLoadState.Loading)
+    val activeProfile = (activeProfileState as? ActiveProfileLoadState.Loaded)?.profile
     val startupReady = skipProfileSelection != null &&
-        activeProfileLoaded &&
+        activeProfileState is ActiveProfileLoadState.Loaded &&
         authState !is AuthState.Loading
 
     if (!startupReady) {
@@ -515,7 +520,6 @@ fun ArflixApp(
         }
     }
 
-    // Always show profile selection on startup - user must manually choose a profile
     val startDestination = if (skipProfileSelection == true && activeProfile != null) {
         Screen.Home.route
     } else {
