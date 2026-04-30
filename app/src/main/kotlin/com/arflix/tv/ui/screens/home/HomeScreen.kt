@@ -134,6 +134,7 @@ import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.ui.components.MediaContextMenu
 import com.arflix.tv.ui.components.rememberCardLayoutMode
+import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.ToastType as ComponentToastType
 import com.arflix.tv.ui.components.SidebarItem
@@ -2499,7 +2500,6 @@ private fun MobileHomeRowsLayer(
     onItemClick: (MediaItem) -> Unit,
     onItemLongClick: ((MediaItem, Boolean) -> Unit)? = null
 ) {
-    val mobileItemWidth = if (usePosterCards) 124.dp else 200.dp
     val mobileItemSpacing = 10.dp
 
     LazyColumn(
@@ -2524,21 +2524,29 @@ private fun MobileHomeRowsLayer(
             val isContinueWatching = category.id == "continue_watching"
             val isRanked = category.title.contains("Top 10", ignoreCase = true)
             val isCollectionRow = category.id.startsWith("collection_row_")
+            val rowKey = remember(category.id) { "home:${category.id}" }
+            val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
+            val rowMobileItemWidth = if (rowUsePosterCards) 124.dp else 200.dp
 
             Column(modifier = Modifier.padding(bottom = 8.dp)) {
                 // Section title
-                Text(
-                    text = localizedCategoryTitle(category),
-                    style = ArflixTypography.sectionTitle.copy(
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = Color.White,
+                Row(
                     modifier = Modifier.padding(
                         start = contentStartPadding,
                         bottom = 8.dp
+                    ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = localizedCategoryTitle(category),
+                        style = ArflixTypography.sectionTitle.copy(
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = Color.White
                     )
-                )
+                }
 
                 // Horizontal card row with touch scrolling
                 LazyRow(
@@ -2561,14 +2569,14 @@ private fun MobileHomeRowsLayer(
                     ) { index, item ->
                         if (isRanked && index < 10) {
                             Box(
-                                modifier = Modifier.width(mobileItemWidth)
+                                modifier = Modifier.width(rowMobileItemWidth)
                             ) {
                                 val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
                                 val collectionLandscape = item.collectionTileShape != CollectionTileShape.POSTER
                                 ArvioMediaCard(
                                     item = item,
-                                    width = mobileItemWidth,
-                                    isLandscape = if (isCollectionRow) collectionLandscape else !usePosterCards,
+                                    width = rowMobileItemWidth,
+                                    isLandscape = if (isCollectionRow) collectionLandscape else !rowUsePosterCards,
                                     logoImageUrl = cardLogoUrl,
                                     showProgress = false,
                                     showTitle = !item.collectionHideTitle,
@@ -2593,8 +2601,8 @@ private fun MobileHomeRowsLayer(
                             val collectionLandscape = item.collectionTileShape != CollectionTileShape.POSTER
                             ArvioMediaCard(
                                 item = item,
-                                width = mobileItemWidth,
-                                isLandscape = if (isCollectionRow) collectionLandscape else !usePosterCards,
+                                width = rowMobileItemWidth,
+                                isLandscape = if (isCollectionRow) collectionLandscape else !rowUsePosterCards,
                                 logoImageUrl = cardLogoUrl,
                                 showProgress = isContinueWatching,
                                 showTitle = !item.collectionHideTitle,
@@ -2773,7 +2781,9 @@ private fun TvHomeRowsLayer(
             ) { index, category ->
                     val actualRowIndex = rowWindowStart + index
                     val rowIsFocused = !focusState.isSidebarFocused && actualRowIndex == focusState.currentRowIndex
-                    val rowHeight = if (usePosterCards) 252.dp else 202.dp
+                    val rowKey = remember(category.id) { "home:${category.id}" }
+                    val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
+                    val rowHeight = if (rowUsePosterCards) 252.dp else 202.dp
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2785,7 +2795,7 @@ private fun TvHomeRowsLayer(
                             cardLogoUrls = cardLogoUrls,
                             isCurrentRow = rowIsFocused,
                             isRanked = category.title.contains("Top 10", ignoreCase = true),
-                            usePosterCards = usePosterCards,
+                            usePosterCards = rowUsePosterCards,
                             startPadding = contentStartPadding,
                             focusedItemIndex = if (rowIsFocused) focusState.currentItemIndex else -1,
                             isFastScrolling = isFastScrolling,
@@ -3173,12 +3183,17 @@ private fun ContentRow(
             .padding(bottom = 12.dp)
     ) {
         // Section title - clean white text, aligned with cards
-        Text(
-            text = localizedCategoryTitle(category),
-            style = ArflixTypography.sectionTitle.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold),
-            color = Color.White,
-            modifier = Modifier.padding(start = startPadding, bottom = 12.dp)
-        )
+        Row(
+            modifier = Modifier.padding(start = startPadding, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = localizedCategoryTitle(category),
+                style = ArflixTypography.sectionTitle.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                color = Color.White
+            )
+        }
 
         // Cards row - clipped to hide previous items when scrolling
         val clipModifier = if (isContinueWatching) Modifier else Modifier.clipToBounds()

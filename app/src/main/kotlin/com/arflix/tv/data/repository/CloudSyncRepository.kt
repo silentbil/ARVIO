@@ -7,7 +7,10 @@ import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.ContinueWatchingItem
 import com.arflix.tv.ui.components.CARD_LAYOUT_MODE_LANDSCAPE
+import com.arflix.tv.ui.components.catalogueRowLayoutKeyFromPreferenceName
+import com.arflix.tv.ui.components.catalogueRowLayoutPreferencePrefixFor
 import com.arflix.tv.ui.components.normalizeCardLayoutMode
+import com.arflix.tv.ui.components.profileCatalogueRowLayoutModeKey
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
 import com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY
 import com.arflix.tv.util.settingsDataStore
@@ -121,7 +124,8 @@ class CloudSyncRepository @Inject constructor(
         val iptvHiddenGroups: String = "",
         val iptvGroupOrder: String = "",
         val secondarySubtitle: String = "Off",
-        val filterSubtitlesByLanguage: Boolean = true
+        val filterSubtitlesByLanguage: Boolean = true,
+        val catalogueRowLayoutModes: Map<String, String> = emptyMap()
     )
 
     // ── DataStore key helpers ──
@@ -185,6 +189,21 @@ class CloudSyncRepository @Inject constructor(
     private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("include_specials")
 
+    private fun catalogueRowLayoutModesForProfile(
+        prefs: androidx.datastore.preferences.core.Preferences,
+        profileId: String
+    ): Map<String, String> {
+        val prefix = catalogueRowLayoutPreferencePrefixFor(profileId)
+        return prefs.asMap()
+            .mapNotNull { (key, value) ->
+                val rowKey = catalogueRowLayoutKeyFromPreferenceName(profileId, key.name)
+                    ?: return@mapNotNull null
+                val normalized = normalizeCardLayoutMode(value as? String)
+                if (key.name.startsWith(prefix)) rowKey to normalized else null
+            }
+            .toMap()
+    }
+
     // ── Normalize helpers ──
 
     private fun normalizeFrameRateMode(raw: String?): String {
@@ -242,6 +261,7 @@ class CloudSyncRepository @Inject constructor(
                         iptvGroupOrder = prefs[iptvGroupOrderKeyFor(profile.id)] ?: "",
                         secondarySubtitle = prefs[secondarySubtitleKeyFor(profile.id)] ?: "Off",
                         filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKeyFor(profile.id)] ?: true,
+                        catalogueRowLayoutModes = catalogueRowLayoutModesForProfile(prefs, profile.id),
                         cardLayoutMode = normalizeCardLayoutMode(
                             prefs[cardLayoutModeKeyFor(profile.id)] ?: CARD_LAYOUT_MODE_LANDSCAPE
                         ),
@@ -542,7 +562,11 @@ class CloudSyncRepository @Inject constructor(
                         if (state.iptvGroupOrder.isNotBlank()) prefs[iptvGroupOrderKeyFor(profileId)] = state.iptvGroupOrder
                         prefs[secondarySubtitleKeyFor(profileId)] = state.secondarySubtitle.ifBlank { "Off" }
                         prefs[filterSubtitlesByLanguageKeyFor(profileId)] = state.filterSubtitlesByLanguage
-                        prefs[cardLayoutModeKeyFor(profileId)] = normalizeCardLayoutMode(state.cardLayoutMode)
+                        val normalizedProfileLayout = normalizeCardLayoutMode(state.cardLayoutMode)
+                        prefs[cardLayoutModeKeyFor(profileId)] = normalizedProfileLayout
+                        state.catalogueRowLayoutModes.forEach { (rowKey, mode) ->
+                            prefs[profileCatalogueRowLayoutModeKey(profileId, rowKey)] = normalizeCardLayoutMode(mode)
+                        }
                         prefs[frameRateMatchingModeKeyFor(profileId)] = normalizeFrameRateMode(state.frameRateMatchingMode)
                         prefs[autoPlayNextKeyFor(profileId)] = state.autoPlayNext
                         prefs[autoPlaySingleSourceKeyFor(profileId)] = state.autoPlaySingleSource

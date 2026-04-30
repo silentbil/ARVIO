@@ -139,10 +139,12 @@ import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.CloudstreamRepositoryRecord
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
+import com.arflix.tv.ui.components.CatalogueRowLayoutToggleButton
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.tr
 import com.arflix.tv.util.trUpper
 import com.arflix.tv.ui.components.SidebarItem
+import com.arflix.tv.ui.components.toggleCatalogueRowLayoutMode
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
@@ -229,6 +231,8 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     // Auto-start cloud auth if requested (e.g. from profile selection page)
     LaunchedEffect(autoStartCloudAuth) {
@@ -253,7 +257,7 @@ fun SettingsScreen(
 
     // Sub-focus for addon rows: 0 = toggle, 1 = delete
     var addonActionIndex by remember { mutableIntStateOf(0) }
-    // Sub-focus for catalog rows: 0 = edit, 1 = up, 2 = down, 3 = delete
+    // Sub-focus for catalog rows: 0 = edit, 1 = up, 2 = down, 3 = layout, 4 = delete
     var catalogActionIndex by remember { mutableIntStateOf(0) }
     // Sub-focus for IPTV rows: 0 = enable, 1 = edit, 2 = up, 3 = down, 4 = delete
     var iptvActionIndex by remember { mutableIntStateOf(0) }
@@ -645,7 +649,7 @@ fun SettingsScreen(
                                         addonActionIndex = 1
                                     } else if (currentSection == "iptv" && contentFocusIndex in 1..uiState.iptvPlaylists.size && iptvActionIndex < 4) {
                                         iptvActionIndex++
-} else if (currentSection == "catalogs" && contentFocusIndex > 0 && catalogActionIndex < 3) {
+} else if (currentSection == "catalogs" && contentFocusIndex > 0 && catalogActionIndex < 4) {
                                         catalogActionIndex++
                                     }
                                 }
@@ -814,6 +818,9 @@ fun SettingsScreen(
                                                         }
                                                         1 -> viewModel.moveCatalogUp(catalog.id)
                                                         2 -> viewModel.moveCatalogDown(catalog.id)
+                                                        3 -> scope.launch {
+                                                            toggleCatalogueRowLayoutMode(context, catalogueLayoutRowKey(catalog))
+                                                        }
                                                         else -> viewModel.removeCatalog(catalog.id)
                                                     }
                                                 }
@@ -5095,6 +5102,8 @@ private fun CatalogsSettings(
             }
 
             val isSelected = selectedIds.contains(catalog.id)
+            val layoutToggleEnabled = catalog.kind != CatalogKind.COLLECTION_RAIL
+            val layoutRowKey = remember(catalog.id, catalog.kind) { catalogueLayoutRowKey(catalog) }
             Row(
                 modifier = Modifier
                     .settingsFocusSlot(rowFocusIndex)
@@ -5158,6 +5167,13 @@ private fun CatalogsSettings(
                 }
 
                 if (isMobile) {
+                    if (!selectionMode) {
+                        CatalogueRowLayoutToggleButton(
+                            rowKey = layoutRowKey,
+                            enabled = layoutToggleEnabled
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
                     if (selectionMode && selectedIds.size == 1 && isSelected) {
                         Icon(
                             imageVector = Icons.Default.DragHandle,
@@ -5204,9 +5220,15 @@ private fun CatalogsSettings(
                         onClick = { onMoveCatalogDown(catalog) }
                     )
                     Spacer(modifier = Modifier.width(6.dp))
+                    CatalogueRowLayoutToggleButton(
+                        rowKey = layoutRowKey,
+                        enabled = layoutToggleEnabled,
+                        forceFocused = isRowFocused && focusedActionIndex == 3
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     CatalogActionChip(
                         icon = Icons.Default.Delete,
-                        isFocused = isRowFocused && focusedActionIndex == 3,
+                        isFocused = isRowFocused && focusedActionIndex == 4,
                         isDestructive = true,
                         enabled = true,
                         onClick = { onDeleteCatalog(catalog) }
@@ -5215,6 +5237,14 @@ private fun CatalogsSettings(
             }
             Spacer(modifier = Modifier.height(10.dp))
         }
+    }
+}
+
+private fun catalogueLayoutRowKey(catalog: CatalogConfig): String {
+    return if (catalog.kind == CatalogKind.COLLECTION) {
+        "collection:${catalog.id}"
+    } else {
+        "home:${catalog.id}"
     }
 }
 

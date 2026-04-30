@@ -55,12 +55,14 @@ import androidx.tv.material3.Text
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
+import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.ui.components.LoadingIndicator
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.ToastType as ComponentToastType
+import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
@@ -91,7 +93,8 @@ fun WatchlistScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val logoUrls by viewModel.logoUrls.collectAsStateWithLifecycle()
-    val usePosterCards = com.arflix.tv.ui.components.rememberCardLayoutMode() == com.arflix.tv.ui.components.CardLayoutMode.POSTER
+    val rowKey = "watchlist"
+    val usePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
     val configuration = LocalConfiguration.current
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE

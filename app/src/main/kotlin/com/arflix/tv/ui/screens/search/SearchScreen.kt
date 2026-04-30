@@ -83,7 +83,7 @@ import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
-import com.arflix.tv.ui.components.rememberCardLayoutMode
+import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
@@ -111,7 +111,7 @@ fun SearchScreen(
     onBack: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val usePosterCards = rememberCardLayoutMode() == CardLayoutMode.POSTER
+    val aiUsePosterCards = rememberCatalogueRowLayoutMode("search:ai") == CardLayoutMode.POSTER
     val configuration = LocalConfiguration.current
     val isCompactHeight = configuration.screenHeightDp <= 780
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
@@ -357,7 +357,7 @@ fun SearchScreen(
                         Icon(Icons.Default.AutoAwesome, null, tint = AccentGreen, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
                         Text(uiState.aiInterpretation ?: "", style = ArflixTypography.body.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium), color = Color.White.copy(alpha = 0.85f))
                     }
-                    ContentGrid(items = uiState.aiResults, usePosterCards = usePosterCards, isLoading = false, isTouchDevice = isTouchDevice, onItemClick = { onNavigateToDetails(it.mediaType, it.id) }, onLoadMore = {})
+                    ContentGrid(items = uiState.aiResults, usePosterCards = aiUsePosterCards, isLoading = false, isTouchDevice = isTouchDevice, onItemClick = { onNavigateToDetails(it.mediaType, it.id) }, onLoadMore = {})
                 }
 
                 uiState.query.isNotEmpty() && !uiState.isAiSearch && !hasSearchResults -> {
@@ -376,7 +376,6 @@ fun SearchScreen(
                         lastNavEventTime = resultsLastNavEventTime,
                         fastScrollThresholdMs = fastScrollThresholdMs,
                         isFocused = focusZone == FocusZone.RESULTS,
-                        usePosterCards = usePosterCards,
                         isTouchDevice = isTouchDevice,
                         onItemClick = { onNavigateToDetails(it.mediaType, it.id) }
                     )
@@ -421,27 +420,14 @@ private fun RowsLayer(
     lastNavEventTime: Long,
     fastScrollThresholdMs: Long,
     isFocused: Boolean,
-    usePosterCards: Boolean, isTouchDevice: Boolean,
+    isTouchDevice: Boolean,
     onItemClick: (MediaItem) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val screenHeight = configuration.screenHeightDp
 
-    val itemWidth = if (isTouchDevice) {
-        if (usePosterCards) 110.dp else 170.dp
-    } else {
-        if (usePosterCards) 134.dp else 260.dp
-    }
-    val baseRowHeight = if (isTouchDevice) {
-        if (usePosterCards) 220.dp else 160.dp
-    } else if (usePosterCards) {
-        if (screenHeight <= 640) 245.dp else 320.dp
-    } else {
-        if (screenHeight <= 640) 200.dp else 260.dp
-    }
     val focusBleedPadding = if (isTouchDevice) 14.dp else 22.dp
-    val rowHeight = baseRowHeight + focusBleedPadding
 
     val listState = rememberLazyListState()
     var lastAppliedTargetIndex by remember { mutableIntStateOf(-1) }
@@ -481,6 +467,21 @@ private fun RowsLayer(
             items(categories.size, key = { categories[it].id }) { index ->
                 val category = categories[index]
                 val isCurrentRow = isFocused && index == currentRowIndex
+                val rowKey = remember(category.id) { "search:${category.id}" }
+                val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
+                val itemWidth = if (isTouchDevice) {
+                    if (rowUsePosterCards) 110.dp else 170.dp
+                } else {
+                    if (rowUsePosterCards) 134.dp else 260.dp
+                }
+                val baseRowHeight = if (isTouchDevice) {
+                    if (rowUsePosterCards) 220.dp else 160.dp
+                } else if (rowUsePosterCards) {
+                    if (screenHeight <= 640) 245.dp else 320.dp
+                } else {
+                    if (screenHeight <= 640) 200.dp else 260.dp
+                }
+                val rowHeight = baseRowHeight + focusBleedPadding
                 // Fade non-current rows
                 val rowAlpha by animateFloatAsState(
                     targetValue = if (!isFocused || index <= currentRowIndex) 1f else 0.3f,
@@ -489,12 +490,17 @@ private fun RowsLayer(
 
                 Box(modifier = Modifier.fillMaxWidth().height(rowHeight).graphicsLayer { alpha = rowAlpha }) {
                     Column {
-                        Text(
-                            category.title,
-                            style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp),
-                            color = Color.White.copy(alpha = if (isCurrentRow) 0.9f else 0.5f),
-                            modifier = Modifier.padding(start = focusBleedPadding, bottom = 8.dp, top = 4.dp)
-                        )
+                        Row(
+                            modifier = Modifier.padding(start = focusBleedPadding, bottom = 8.dp, top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                category.title,
+                                style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp),
+                                color = Color.White.copy(alpha = if (isCurrentRow) 0.9f else 0.5f)
+                            )
+                        }
 
                         val rowState = rememberLazyListState()
                         var lastScrollIndex by remember(category.id) { mutableIntStateOf(-1) }
@@ -559,7 +565,7 @@ private fun RowsLayer(
                                 MediaCard(
                                     item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
                                     width = itemWidth,
-                                    isLandscape = !usePosterCards,
+                                    isLandscape = !rowUsePosterCards,
                                     logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
                                     showProgress = false,
                                     titleMaxLines = 2,

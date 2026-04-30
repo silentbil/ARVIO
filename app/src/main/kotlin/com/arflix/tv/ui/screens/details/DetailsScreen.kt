@@ -131,7 +131,7 @@ import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.PersonModal
 import com.arflix.tv.ui.components.PosterCard
-import com.arflix.tv.ui.components.rememberCardLayoutMode
+import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.SkeletonDetailsPage
 import com.arflix.tv.ui.components.StreamSelector
@@ -190,7 +190,8 @@ fun DetailsScreen(
     onBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val usePosterCards = rememberCardLayoutMode() == CardLayoutMode.POSTER
+    val similarRowKey = remember(mediaType, mediaId) { "details:${mediaType.name}:$mediaId:similar" }
+    val usePosterCards = rememberCatalogueRowLayoutMode(similarRowKey) == CardLayoutMode.POSTER
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val isMobile = LocalDeviceType.current.isTouchDevice()

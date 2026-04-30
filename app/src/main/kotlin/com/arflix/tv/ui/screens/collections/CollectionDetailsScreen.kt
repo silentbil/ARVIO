@@ -63,7 +63,7 @@ import com.arflix.tv.data.repository.CatalogRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.MediaCard
-import com.arflix.tv.ui.components.rememberCardLayoutMode
+import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundDark
@@ -344,8 +344,9 @@ fun CollectionDetailsScreen(
     LaunchedEffect(catalogId) { viewModel.load(catalogId) }
     BackHandler(onBack = onBack)
 
+    val rowKey = remember(catalogId) { "collection:$catalogId" }
     val usePosterCards = uiState.catalog?.collectionGroup != CollectionGroupKind.GENRE &&
-        rememberCardLayoutMode() == CardLayoutMode.POSTER
+        rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
     val configuration = LocalConfiguration.current
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
