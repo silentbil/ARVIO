@@ -1430,11 +1430,17 @@ class HomeViewModel @Inject constructor(
         // Don't restart if already running
         if (cwFetchJob?.isActive == true) return
         cwFetchJob = viewModelScope.launch(Dispatchers.IO) {
+            val cached = runCatching { preloadStartupContinueWatchingItems() }
+                .getOrDefault(emptyList())
+            if (cached.isNotEmpty()) {
+                publishContinueWatching(cached)
+            }
+
             // FAST PATH — resolve from cached Trakt/local data and publish
             // immediately. Avoids the 30–60s cold-refresh wait that used to
             // leave the CW row empty for minutes (especially when the Trakt
             // progress endpoint throttles with HTTP 429).
-                val instant = runCatching { resolveContinueWatchingItemsStable(forceFresh = false) }
+            val instant = runCatching { resolveContinueWatchingItemsStable(forceFresh = false) }
                 .getOrDefault(emptyList())
             if (instant.isNotEmpty()) {
                 publishContinueWatching(instant)
@@ -1443,7 +1449,7 @@ class HomeViewModel @Inject constructor(
             // SLOW PATH — do a freshness refresh in the background. If it
             // returns something different, republish. Swallows transient
             // Trakt 429s so the visible row doesn't blink back to empty.
-                val fresh = runCatching { resolveContinueWatchingItemsStable(forceFresh = true) }
+            val fresh = runCatching { resolveContinueWatchingItemsStable(forceFresh = true) }
                 .getOrDefault(emptyList())
             if (fresh.isNotEmpty() && fresh != instant) {
                 publishContinueWatching(fresh)
