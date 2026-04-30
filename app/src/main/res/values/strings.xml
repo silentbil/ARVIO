@@ -162,7 +162,7 @@
     <string name="quality_filters_desc">Exclude quality tiers on this device</string>
     <string name="card_layout_desc">Landscape or poster cards</string>
     <string name="ui_mode_desc">Force TV, Tablet, or Phone</string>
-    <string name="skip_profile_desc">Auto-load last used profile</string>
+    <string name="skip_profile_desc">Auto-load last used profile after restart</string>
     <string name="clock_format_desc">Choose 12-hour or 24-hour time</string>
     <string name="show_budget_desc">Display the movie budget on the home hero banner</string>
     <string name="show_loading_stats_desc">Display stream resolution progress</string>
