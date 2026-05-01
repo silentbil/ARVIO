@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Movie
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -88,6 +90,9 @@ fun CategorySidebar(
     onSelect: (String) -> Unit,
     onOpenSearch: () -> Unit,
     onHideCategory: (String) -> Unit = {},
+    onUnhideCategory: (String) -> Unit = {},
+    onMoveCategoryUp: (String) -> Unit = {},
+    onMoveCategoryDown: (String) -> Unit = {},
     onFocusEnter: () -> Unit = {},
     onMoveRight: () -> Unit = {},
     onTopBoundaryFocusChanged: (Boolean) -> Unit = {},
@@ -210,6 +215,7 @@ fun CategorySidebar(
                         expanded = expanded,
                         showMenu = menuForGroup == cat.playlistGroupName,
                         canHide = cat.playlistGroupName != null,
+                        canMove = cat.playlistGroupName != null,
                         onFocused = { onTopBoundaryFocusChanged(false) },
                         onLongClick = {
                             menuForGroup = cat.playlistGroupName
@@ -219,6 +225,16 @@ fun CategorySidebar(
                             val groupName = cat.playlistGroupName ?: return@SidebarRow
                             menuForGroup = null
                             onHideCategory(groupName)
+                        },
+                        onMoveUp = {
+                            val groupName = cat.playlistGroupName ?: return@SidebarRow
+                            menuForGroup = null
+                            onMoveCategoryUp(groupName)
+                        },
+                        onMoveDown = {
+                            val groupName = cat.playlistGroupName ?: return@SidebarRow
+                            menuForGroup = null
+                            onMoveCategoryDown(groupName)
                         },
                         onClick = { onSelect(cat.id) },
                     )
@@ -278,6 +294,31 @@ fun CategorySidebar(
                         active = selectedId == cat.id,
                         expanded = expanded,
                         onFocused = { onTopBoundaryFocusChanged(false) },
+                        onClick = { onSelect(cat.id) },
+                    )
+                }
+            }
+            if (tree.hidden.categories.isNotEmpty()) {
+                item { SectionHeader(tree.hidden.label, expanded) }
+                items(tree.hidden.categories, key = { it.id }) { cat ->
+                    SidebarRow(
+                        label = cat.label,
+                        count = cat.count,
+                        icon = Icons.Filled.VisibilityOff,
+                        active = selectedId == cat.id,
+                        expanded = expanded,
+                        showMenu = menuForGroup == cat.playlistGroupName,
+                        canUnhide = cat.playlistGroupName != null,
+                        onFocused = { onTopBoundaryFocusChanged(false) },
+                        onLongClick = {
+                            menuForGroup = cat.playlistGroupName
+                        },
+                        onDismissMenu = { menuForGroup = null },
+                        onUnhide = {
+                            val groupName = cat.playlistGroupName ?: return@SidebarRow
+                            menuForGroup = null
+                            onUnhideCategory(groupName)
+                        },
                         onClick = { onSelect(cat.id) },
                     )
                 }
@@ -373,8 +414,13 @@ private fun SidebarRow(
     onLongClick: (() -> Unit)? = null,
     showMenu: Boolean = false,
     canHide: Boolean = false,
+    canUnhide: Boolean = false,
+    canMove: Boolean = false,
     onDismissMenu: () -> Unit = {},
     onHide: () -> Unit = {},
+    onUnhide: () -> Unit = {},
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
     flagEmoji: String? = null,
     leadingCode: String? = null,
     hasChildren: Boolean = false,
@@ -518,10 +564,16 @@ private fun SidebarRow(
                 }
             }
         }
-        if (showMenu && canHide) {
+        if (showMenu && (canHide || canUnhide || canMove)) {
             CategoryContextMenu(
                 onDismiss = onDismissMenu,
+                canHide = canHide,
+                canUnhide = canUnhide,
+                canMove = canMove,
                 onHide = onHide,
+                onUnhide = onUnhide,
+                onMoveUp = onMoveUp,
+                onMoveDown = onMoveDown,
             )
         }
     }
@@ -531,7 +583,13 @@ private fun SidebarRow(
 @Composable
 private fun CategoryContextMenu(
     onDismiss: () -> Unit,
+    canHide: Boolean,
+    canUnhide: Boolean,
+    canMove: Boolean,
     onHide: () -> Unit,
+    onUnhide: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
 ) {
     DropdownMenu(
         expanded = true,
@@ -540,28 +598,47 @@ private fun CategoryContextMenu(
             .background(LiveColors.PanelRaised)
             .border(1.dp, LiveColors.FocusRing.copy(alpha = 0.7f), RoundedCornerShape(8.dp)),
     ) {
-        DropdownMenuItem(
-            text = {
-                Text(
-                    text = "Hide category",
-                    style = LiveType.CatLabel.copy(
-                        color = LiveColors.Fg,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    ),
-                )
-            },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Filled.VisibilityOff,
-                    contentDescription = null,
-                    tint = LiveColors.FgDim,
-                    modifier = Modifier.size(16.dp),
-                )
-            },
-            onClick = onHide,
-        )
+        if (canMove) {
+            CategoryMenuItem("Move up", Icons.Filled.KeyboardArrowUp, onMoveUp)
+            CategoryMenuItem("Move down", Icons.Filled.KeyboardArrowDown, onMoveDown)
+        }
+        if (canHide) {
+            CategoryMenuItem("Hide category", Icons.Filled.VisibilityOff, onHide)
+        }
+        if (canUnhide) {
+            CategoryMenuItem("Unhide category", Icons.Filled.Visibility, onUnhide)
+        }
     }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun CategoryMenuItem(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = {
+            Text(
+                text = label,
+                style = LiveType.CatLabel.copy(
+                    color = LiveColors.Fg,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
+        },
+        leadingIcon = {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = LiveColors.FgDim,
+                modifier = Modifier.size(16.dp),
+            )
+        },
+        onClick = onClick,
+    )
 }
 
 private fun selectedCountryGroupId(

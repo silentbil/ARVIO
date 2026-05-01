@@ -279,8 +279,9 @@ data class LiveCategoryTree(
     val global: LiveSection,
     val countries: LiveSection,
     val adult: LiveSection,
+    val hidden: LiveSection = LiveSection("hidden", "HIDDEN", emptyList()),
 ) {
-    val allSections: List<LiveSection> = listOf(global, countries, adult)
+    val allSections: List<LiveSection> = listOf(global, countries, adult, hidden)
     fun byId(id: String): LiveCategory? {
         fun findIn(category: LiveCategory): LiveCategory? {
             if (category.id == id) return category
@@ -319,6 +320,7 @@ fun buildCategoryTree(
     favoritesCount: Int,
     recentCount: Int,
     hiddenGroups: Set<String> = emptySet(),
+    groupOrder: List<String> = emptyList(),
 ): LiveCategoryTree {
     data class CountryAccumulator(
         var total: Int = 0,
@@ -344,15 +346,15 @@ fun buildCategoryTree(
     var musicCount = 0
     val countryAccumulators = LinkedHashMap<String, CountryAccumulator>()
     val playlistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
+    val hiddenPlaylistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroups = hiddenGroups.mapTo(HashSet()) { playlistGroupLabel(it) }
 
     channels.forEach { channel ->
         val groupLabel = playlistGroupLabel(channel.source.group)
-        if (groupLabel !in hiddenPlaylistGroups) {
-            val groupId = playlistGroupCategoryId(channel.source.group)
-            val groupCount = playlistGroupCounts[groupId]?.second ?: 0
-            playlistGroupCounts[groupId] = groupLabel to (groupCount + 1)
-        }
+        val groupId = playlistGroupCategoryId(channel.source.group)
+        val targetCounts = if (groupLabel in hiddenPlaylistGroups) hiddenPlaylistGroupCounts else playlistGroupCounts
+        val groupCount = targetCounts[groupId]?.second ?: 0
+        targetCounts[groupId] = groupLabel to (groupCount + 1)
 
         if (channel.isAdult) {
             adultCount += 1
@@ -456,14 +458,18 @@ fun buildCategoryTree(
             children = autoGlobal + countryCategories + adultCategories,
         ),
     )
-    val playlistGroups = playlistGroupCounts.map { (id, value) ->
+    val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
         LiveCategory(id, value.first, value.second, CategoryIcon.Grid, playlistGroupName = value.first)
+    }
+    val hiddenPlaylistGroupsSection = orderPlaylistGroups(hiddenPlaylistGroupCounts, groupOrder).map { (id, value) ->
+        LiveCategory(id, value.first, value.second, CategoryIcon.Lock, playlistGroupName = value.first)
     }
     val global = LiveSection("playlist", "PLAYLIST", playlistGroups)
     val countries = LiveSection("matched", "MATCHED", emptyList())
     val adult = LiveSection("adult", "ADULT", emptyList())
+    val hidden = LiveSection("hidden", "HIDDEN", hiddenPlaylistGroupsSection)
 
-    return LiveCategoryTree(top = top, global = global, countries = countries, adult = adult)
+    return LiveCategoryTree(top = top, global = global, countries = countries, adult = adult, hidden = hidden)
 }
 
 fun buildCategoryTree(
@@ -471,6 +477,7 @@ fun buildCategoryTree(
     favorites: Set<String>,
     recents: Set<String>,
     hiddenGroups: Set<String> = emptySet(),
+    groupOrder: List<String> = emptyList(),
 ): LiveCategoryTree {
     data class RawCountryAccumulator(
         var total: Int = 0,
@@ -496,16 +503,16 @@ fun buildCategoryTree(
     var musicCount = 0
     val countryAccumulators = LinkedHashMap<String, RawCountryAccumulator>()
     val playlistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
+    val hiddenPlaylistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroups = hiddenGroups.mapTo(HashSet()) { playlistGroupLabel(it) }
 
     channels.forEach { channel ->
         val traits = channel.traits()
         val groupLabel = playlistGroupLabel(channel.group)
-        if (groupLabel !in hiddenPlaylistGroups) {
-            val groupId = playlistGroupCategoryId(channel.group)
-            val groupCount = playlistGroupCounts[groupId]?.second ?: 0
-            playlistGroupCounts[groupId] = groupLabel to (groupCount + 1)
-        }
+        val groupId = playlistGroupCategoryId(channel.group)
+        val targetCounts = if (groupLabel in hiddenPlaylistGroups) hiddenPlaylistGroupCounts else playlistGroupCounts
+        val groupCount = targetCounts[groupId]?.second ?: 0
+        targetCounts[groupId] = groupLabel to (groupCount + 1)
 
         if (traits.isAdult) {
             adultCount += 1
@@ -605,14 +612,34 @@ fun buildCategoryTree(
             children = autoGlobal + countryCategories + adultCategories,
         ),
     )
-    val playlistGroups = playlistGroupCounts.map { (id, value) ->
+    val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
         LiveCategory(id, value.first, value.second, CategoryIcon.Grid, playlistGroupName = value.first)
+    }
+    val hiddenPlaylistGroupsSection = orderPlaylistGroups(hiddenPlaylistGroupCounts, groupOrder).map { (id, value) ->
+        LiveCategory(id, value.first, value.second, CategoryIcon.Lock, playlistGroupName = value.first)
     }
     val global = LiveSection("playlist", "PLAYLIST", playlistGroups)
     val countries = LiveSection("matched", "MATCHED", emptyList())
     val adult = LiveSection("adult", "ADULT", emptyList())
+    val hidden = LiveSection("hidden", "HIDDEN", hiddenPlaylistGroupsSection)
 
-    return LiveCategoryTree(top = top, global = global, countries = countries, adult = adult)
+    return LiveCategoryTree(top = top, global = global, countries = countries, adult = adult, hidden = hidden)
+}
+
+private fun orderPlaylistGroups(
+    groups: LinkedHashMap<String, Pair<String, Int>>,
+    groupOrder: List<String>,
+): List<Map.Entry<String, Pair<String, Int>>> {
+    if (groups.isEmpty()) return emptyList()
+    if (groupOrder.isEmpty()) return groups.entries.toList()
+    val orderMap = groupOrder
+        .map(::playlistGroupLabel)
+        .withIndex()
+        .associate { (index, groupName) -> groupName to index }
+    return groups.entries.sortedWith(
+        compareBy<Map.Entry<String, Pair<String, Int>>> { entry -> orderMap[entry.value.first] ?: Int.MAX_VALUE }
+            .thenBy { entry -> groups.keys.indexOf(entry.key) }
+    )
 }
 
 private fun rawCategoryMatcher(
