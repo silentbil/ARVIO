@@ -808,7 +808,7 @@ class IptvRepository @Inject constructor(
                             val playlistChannels = fetchChannelsForPlaylistWithRetries(playlist, onProgress).map { channel ->
                                 channel.copy(
                                     id = "${playlist.id}:${channel.id}",
-                                    group = if (playlist.name.isNotBlank()) "${playlist.name} • ${channel.group}" else channel.group
+                                    group = channel.group
                                 )
                             }
                             if (playlistChannels.isNotEmpty()) {
@@ -1282,11 +1282,7 @@ class IptvRepository @Inject constructor(
                         .map { channel ->
                             channel.copy(
                                 id = "${playlist.id}:${channel.id}",
-                                group = if (playlist.name.isNotBlank()) {
-                                    "${playlist.name} • ${channel.group}"
-                                } else {
-                                    channel.group
-                                }
+                                group = channel.group
                             )
                         }
                 }
@@ -4553,6 +4549,7 @@ class IptvRepository @Inject constructor(
             ).joinToString("|")
         }
         val raw = listOf(
+            "playlist-group-prefix-v2",
             config.m3uUrl.trim(),
             config.epgUrl.trim(),
             config.stalkerPortalUrl.trim(),
