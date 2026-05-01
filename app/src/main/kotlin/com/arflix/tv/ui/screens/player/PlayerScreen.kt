@@ -1499,9 +1499,13 @@ fun PlayerScreen(
     }
 
     BackHandler(
-        enabled = showControls && !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && uiState.error == null
+        enabled = !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && uiState.error == null
     ) {
-        showControls = false
+        if (showControls) {
+            showControls = false
+        } else {
+            onBack()
+        }
     }
 
     val playerDeviceType = LocalDeviceType.current
@@ -1629,9 +1633,13 @@ fun PlayerScreen(
                     }
 
                     if ((event.key == Key.Back || event.key == Key.Escape) &&
-                        showControls && !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && uiState.error == null
+                        !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && uiState.error == null
                     ) {
-                        showControls = false
+                        if (showControls) {
+                            showControls = false
+                        } else {
+                            onBack()
+                        }
                         return@onKeyEvent true
                     }
 
