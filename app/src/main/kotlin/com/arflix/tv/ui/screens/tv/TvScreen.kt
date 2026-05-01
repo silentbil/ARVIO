@@ -127,7 +127,7 @@ import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.AccentGreen
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundCard
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
@@ -730,7 +730,7 @@ fun TvScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BackgroundDark)
+            .background(appBackgroundDark())
             .focusRequester(rootFocusRequester)
             .focusable()
             .onFocusChanged {
@@ -1033,7 +1033,7 @@ fun TvScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(0.36f)
-                            .background(BackgroundDark)
+                            .background(appBackgroundDark())
                     ) {
                         // Left: channel EPG info (current / next / after)
                         val epgSlice = playingChannel?.id?.let { uiState.snapshot.nowNext[it] }

@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.BackgroundElevated
 import com.arflix.tv.ui.theme.BackgroundGlass
 import com.arflix.tv.ui.theme.BackgroundOverlay
@@ -123,9 +123,9 @@ fun PlayerLoadingScreen(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            BackgroundDark.copy(alpha = 0.7f),
-                            BackgroundDark.copy(alpha = 0.85f),
-                            BackgroundDark.copy(alpha = 0.95f)
+                            appBackgroundDark().copy(alpha = 0.7f),
+                            appBackgroundDark().copy(alpha = 0.85f),
+                            appBackgroundDark().copy(alpha = 0.95f)
                         )
                     )
                 )
@@ -295,7 +295,7 @@ fun BufferingIndicator(
         modifier = modifier
             .size(60.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(BackgroundDark.copy(alpha = 0.8f)),
+            .background(appBackgroundDark().copy(alpha = 0.8f)),
         contentAlignment = Alignment.Center
     ) {
         // Rotating gradient ring

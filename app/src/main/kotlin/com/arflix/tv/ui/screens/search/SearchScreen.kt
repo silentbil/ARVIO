@@ -90,7 +90,7 @@ import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundCard
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.AccentGreen
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
@@ -290,7 +290,7 @@ fun SearchScreen(
         }
     } else Modifier
 
-    Box(modifier = Modifier.fillMaxSize().background(BackgroundDark).then(dpadModifier)) {
+    Box(modifier = Modifier.fillMaxSize().background(appBackgroundDark()).then(dpadModifier)) {
         if (!isTouchDevice) AppTopBar(selectedItem = SidebarItem.SEARCH, isFocused = focusZone == FocusZone.SIDEBAR, focusedIndex = sidebarFocusIndex, profile = currentProfile)
 
         Column(modifier = Modifier.fillMaxSize().padding(top = if (isTouchDevice) 16.dp else AppTopBarContentTopInset).padding(horizontal = if (isTouchDevice) 12.dp else if (isCompactHeight) 20.dp else 28.dp)) {

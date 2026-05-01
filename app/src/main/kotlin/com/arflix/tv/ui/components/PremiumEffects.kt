@@ -19,7 +19,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.BackgroundElevated
 import com.arflix.tv.ui.theme.BackgroundGlass
 import com.arflix.tv.ui.theme.BorderLight
@@ -72,7 +72,7 @@ fun AnimatedGradientBackground(
                 Brush.radialGradient(
                     colors = listOf(
                         Color(0xFF0D0812),  // Dark purple tinted
-                        BackgroundDark,
+                        appBackgroundDark(),
                         Color(0xFF0A0A0F)
                     ),
                     center = Offset(animatedOffset * 1000f, animatedOffset * 600f),

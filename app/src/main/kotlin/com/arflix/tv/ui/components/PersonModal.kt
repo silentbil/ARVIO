@@ -67,7 +67,6 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.PersonDetails
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
-import com.arflix.tv.ui.theme.BackgroundDark
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary

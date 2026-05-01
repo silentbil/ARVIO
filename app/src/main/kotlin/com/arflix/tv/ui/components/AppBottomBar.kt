@@ -47,7 +47,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.ui.theme.ArflixTypography
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 
@@ -83,7 +83,7 @@ fun AppBottomBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(BackgroundDark.copy(alpha = 0.95f))
+                .background(appBackgroundDark().copy(alpha = 0.95f))
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically

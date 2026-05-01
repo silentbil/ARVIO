@@ -164,6 +164,7 @@ data class SettingsUiState(
     val deviceModeOverride: String = "auto",
     // Skip profile selection
     val skipProfileSelection: Boolean = false,
+    val oledBlackBackground: Boolean = false,
     val clockFormat: String = "24h",
     val qualityFilters: List<QualityFilterConfig> = emptyList(),
     val qualityFilterPresetLabel: String = "OFF",
@@ -346,6 +347,7 @@ class SettingsViewModel @Inject constructor(
             val frameRateMode = normalizeFrameRateMode(prefs[frameRateMatchingModeKey()])
             val deviceModeOverride = prefs[com.arflix.tv.util.DEVICE_MODE_OVERRIDE_KEY] ?: "auto"
             val skipProfileSelection = prefs[com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY] ?: false
+            val oledBlackBackground = prefs[com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY] ?: false
             val contentLang = prefs[contentLanguageKey()] ?: "en-US"
             // Apply content language to MediaRepository immediately
             mediaRepository.contentLanguage = if (contentLang == "en-US") null else contentLang
@@ -432,6 +434,7 @@ class SettingsViewModel @Inject constructor(
                 contentLanguage = contentLang,
                 deviceModeOverride = deviceModeOverride,
                 skipProfileSelection = skipProfileSelection,
+                oledBlackBackground = oledBlackBackground,
                 clockFormat = clockFormat,
                 qualityFilters = qualityFilters,
                 qualityFilterPresetLabel = detectQualityFilterPreset(qualityFilters).label
@@ -883,6 +886,16 @@ class SettingsViewModel @Inject constructor(
                 prefs[com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY] = skip
             }
             _uiState.value = _uiState.value.copy(skipProfileSelection = skip)
+        }
+    }
+
+    fun setOledBlackBackground(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY] = enabled
+            }
+            _uiState.value = _uiState.value.copy(oledBlackBackground = enabled)
+            syncLocalStateToCloud(silent = true)
         }
     }
 

@@ -153,7 +153,7 @@ import com.arflix.tv.ui.skin.rememberArvioCardShape
 import com.arflix.tv.ui.theme.AnimationConstants
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundCard
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.Purple
 import com.arflix.tv.ui.theme.TextPrimary
@@ -617,7 +617,7 @@ fun DetailsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BackgroundDark)
+            .background(appBackgroundDark())
             .focusRequester(focusRequester)
             .focusable()
             .then(keyModifier)

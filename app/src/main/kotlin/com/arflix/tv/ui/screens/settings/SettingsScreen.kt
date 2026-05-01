@@ -149,7 +149,7 @@ import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.BackgroundElevated
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.SuccessGreen
@@ -319,7 +319,7 @@ fun SettingsScreen(
     }
     val sectionMaxIndex: (String) -> Int = { section ->
         when (section) {
-            "general" -> 20 // 21 rows
+            "general" -> 21 // 22 rows
             "iptv" -> 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
@@ -561,7 +561,7 @@ fun SettingsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BackgroundDark)
+            .background(appBackgroundDark())
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -748,11 +748,12 @@ fun SettingsScreen(
                                                 13 -> viewModel.toggleCardLayoutMode()
                                                 14 -> openUiModeWarningDialog()
                                                 15 -> viewModel.setSkipProfileSelection(!uiState.skipProfileSelection)
-                                                16 -> viewModel.cycleClockFormat()
-                                                17 -> viewModel.setShowBudget(!uiState.showBudget)
-                                                18 -> openDnsProviderPicker()
-                                                19 -> viewModel.setShowLoadingStats(!uiState.showLoadingStats)
-                                                20 -> viewModel.cycleVolumeBoost()
+                                                16 -> viewModel.setOledBlackBackground(!uiState.oledBlackBackground)
+                                                17 -> viewModel.cycleClockFormat()
+                                                18 -> viewModel.setShowBudget(!uiState.showBudget)
+                                                19 -> openDnsProviderPicker()
+                                                20 -> viewModel.setShowLoadingStats(!uiState.showLoadingStats)
+                                                21 -> viewModel.cycleVolumeBoost()
                                             }
                                         }
                                         "iptv" -> {
@@ -968,7 +969,7 @@ fun SettingsScreen(
                     modifier = Modifier
                         .width(280.dp)
                         .fillMaxSize()
-                        .background(BackgroundDark)
+                        .background(appBackgroundDark())
                         .padding(vertical = 32.dp, horizontal = 24.dp)
                 ) {
                     Text(
@@ -1054,6 +1055,7 @@ fun SettingsScreen(
                             subtitleColor = uiState.subtitleColor,
                             deviceModeOverride = uiState.deviceModeOverride,
                             skipProfileSelection = uiState.skipProfileSelection,
+                            oledBlackBackground = uiState.oledBlackBackground,
                             clockFormat = uiState.clockFormat,
                             showBudget = uiState.showBudget,
                             volumeBoostDb = uiState.volumeBoostDb,
@@ -1072,6 +1074,7 @@ fun SettingsScreen(
                             onDeviceModeClick = openUiModeWarningDialog,
                             onContentLanguageClick = openContentLanguagePicker,
                             onSkipProfileSelectionToggle = { viewModel.setSkipProfileSelection(it) },
+                            onOledBlackBackgroundToggle = { viewModel.setOledBlackBackground(it) },
                             onClockFormatClick = { viewModel.cycleClockFormat() },
                             onShowBudgetToggle = { viewModel.setShowBudget(it) },
                             showLoadingStats = uiState.showLoadingStats,
@@ -2291,7 +2294,7 @@ private fun CloudPairModal(
                     Box(
                         modifier = Modifier
                             .size(qrContainerSize)
-                            .background(BackgroundDark.copy(alpha = 0.92f), RoundedCornerShape(16.dp))
+                            .background(appBackgroundDark().copy(alpha = 0.92f), RoundedCornerShape(16.dp))
                             .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
                             .padding(12.dp),
                         contentAlignment = Alignment.Center
@@ -2636,7 +2639,7 @@ private fun MobileSettingsLayout(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BackgroundDark)
+            .background(appBackgroundDark())
     ) {
         if (page == "MAIN") {
             Row(
@@ -2992,6 +2995,14 @@ private fun MobileSettingsSubPage(
                         value = uiState.cardLayoutMode,
                         isFocused = false,
                         onClick = { viewModel.toggleCardLayoutMode() }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Palette,
+                        title = stringResource(R.string.oled_black_background),
+                        subtitle = stringResource(R.string.oled_black_background_desc),
+                        value = if (uiState.oledBlackBackground) "On" else "Off",
+                        isFocused = false,
+                        onClick = { viewModel.setOledBlackBackground(!uiState.oledBlackBackground) }
                     )
                     MobileSettingsRow(
                         icon = Icons.Default.Schedule,
@@ -3515,6 +3526,7 @@ private fun GeneralSettings(
     subtitleColor: String = "White",
     deviceModeOverride: String = "auto",
     skipProfileSelection: Boolean = false,
+    oledBlackBackground: Boolean = false,
     clockFormat: String = "24h",
     showBudget: Boolean = true,
     volumeBoostDb: Int = 0,
@@ -3531,6 +3543,7 @@ private fun GeneralSettings(
     onDeviceModeClick: () -> Unit = {},
     onContentLanguageClick: () -> Unit = {},
     onSkipProfileSelectionToggle: (Boolean) -> Unit = {},
+    onOledBlackBackgroundToggle: (Boolean) -> Unit = {},
     onClockFormatClick: () -> Unit = {},
     onShowBudgetToggle: (Boolean) -> Unit = {},
     showLoadingStats: Boolean = true,
@@ -3732,14 +3745,23 @@ private fun GeneralSettings(
             modifier = Modifier.settingsFocusSlot(15)
         )
         Spacer(modifier = Modifier.height(10.dp))
+        SettingsToggleRow(
+            title = stringResource(R.string.oled_black_background),
+            subtitle = stringResource(R.string.oled_black_background_desc),
+            isEnabled = oledBlackBackground,
+            isFocused = focusedIndex == 16,
+            onToggle = onOledBlackBackgroundToggle,
+            modifier = Modifier.settingsFocusSlot(16)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
         SettingsRow(
             icon = Icons.Default.Schedule,
             title = stringResource(R.string.clock_format),
             subtitle = stringResource(R.string.clock_format_desc),
             value = if (clockFormat == "12h") "12-hour" else "24-hour",
-            isFocused = focusedIndex == 16,
+            isFocused = focusedIndex == 17,
             onClick = onClockFormatClick,
-            modifier = Modifier.settingsFocusSlot(16)
+            modifier = Modifier.settingsFocusSlot(17)
         )
         Spacer(modifier = Modifier.height(10.dp))
         // Home hero controls — issue #72. The movie Budget line on the hero banner
@@ -3748,9 +3770,9 @@ private fun GeneralSettings(
             title = stringResource(R.string.show_budget),
             subtitle = stringResource(R.string.show_budget_desc),
             isEnabled = showBudget,
-            isFocused = focusedIndex == 17,
+            isFocused = focusedIndex == 18,
             onToggle = onShowBudgetToggle,
-            modifier = Modifier.settingsFocusSlot(17)
+            modifier = Modifier.settingsFocusSlot(18)
         )
 
         // ── Network ──
@@ -3767,18 +3789,18 @@ private fun GeneralSettings(
             title = stringResource(R.string.dns_provider),
             subtitle = stringResource(R.string.dns_desc),
             value = dnsProvider,
-            isFocused = focusedIndex == 18,
+            isFocused = focusedIndex == 19,
             onClick = onDnsProviderClick,
-            modifier = Modifier.settingsFocusSlot(18)
+            modifier = Modifier.settingsFocusSlot(19)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsToggleRow(
             title = stringResource(R.string.show_loading_stats),
             subtitle = stringResource(R.string.show_loading_stats_desc),
             isEnabled = showLoadingStats,
-            isFocused = focusedIndex == 19,
+            isFocused = focusedIndex == 20,
             onToggle = onShowLoadingStatsToggle,
-            modifier = Modifier.settingsFocusSlot(19)
+            modifier = Modifier.settingsFocusSlot(20)
         )
 
         // ── Audio ──
@@ -3798,9 +3820,9 @@ private fun GeneralSettings(
                 0 -> "Off"
                 else -> "+${volumeBoostDb} dB"
             },
-            isFocused = focusedIndex == 20,
+            isFocused = focusedIndex == 21,
             onClick = onVolumeBoostClick,
-            modifier = Modifier.settingsFocusSlot(20)
+            modifier = Modifier.settingsFocusSlot(21)
         )
     }
 }
@@ -6318,7 +6340,7 @@ private fun CloudstreamPluginPickerModal(
                                         if (isFocused) {
                                             Color.White.copy(alpha = 0.1f)
                                         } else {
-                                            BackgroundDark.copy(alpha = if (isSupported) 0.35f else 0.2f)
+                                            appBackgroundDark().copy(alpha = if (isSupported) 0.35f else 0.2f)
                                         },
                                         RoundedCornerShape(12.dp)
                                     )

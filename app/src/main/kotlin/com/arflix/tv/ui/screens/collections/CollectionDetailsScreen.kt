@@ -66,7 +66,7 @@ import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
@@ -475,7 +475,7 @@ fun CollectionDetailsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BackgroundDark)
+            .background(appBackgroundDark())
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown &&
                     (event.key == Key.Back || event.key == Key.Escape)
@@ -577,10 +577,10 @@ private fun CollectionBackdrop(catalog: CatalogConfig?) {
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            BackgroundDark.copy(alpha = 0.62f),
+                            appBackgroundDark().copy(alpha = 0.62f),
                             accent.copy(alpha = 0.12f),
-                            BackgroundDark.copy(alpha = 0.88f),
-                            BackgroundDark
+                            appBackgroundDark().copy(alpha = 0.88f),
+                            appBackgroundDark()
                         )
                     )
                 )
@@ -651,7 +651,7 @@ private fun CollectionTabChip(
         else -> Color.White.copy(alpha = 0.08f)
     }
     val fg = when {
-        isSelected -> BackgroundDark
+        isSelected -> appBackgroundDark()
         isFocused -> Color.White
         else -> TextPrimary.copy(alpha = 0.75f)
     }

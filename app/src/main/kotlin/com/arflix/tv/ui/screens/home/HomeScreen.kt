@@ -150,7 +150,7 @@ import com.arflix.tv.ui.skin.rememberArvioCardShape
 import com.arflix.tv.ui.theme.AnimationConstants
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundCard
-import com.arflix.tv.ui.theme.BackgroundDark
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.AccentRed
 import com.arflix.tv.ui.theme.PrimeBlue
 import com.arflix.tv.ui.theme.PrimeGreen
@@ -795,7 +795,7 @@ fun HomeScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BackgroundDark)
+            .background(appBackgroundDark())
       ) {
         val currentBackdrop = displayHeroItem?.let { item ->
             if (viewModel.isCollectionItem(item)) {
@@ -1003,7 +1003,7 @@ fun HomeScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(BackgroundDark),
+                    .background(appBackgroundDark()),
                 contentAlignment = Alignment.Center
             ) {
                 Column(

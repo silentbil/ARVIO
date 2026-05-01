@@ -65,6 +65,7 @@ import android.content.pm.ActivityInfo
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.DEVICE_MODE_OVERRIDE_KEY
 import com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY
+import com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.LocalHasTouchScreen
 import com.arflix.tv.util.LocalAppLanguage
@@ -107,10 +108,8 @@ import com.arflix.tv.navigation.Screen
 import com.arflix.tv.ui.screens.login.LoginScreen
 import com.arflix.tv.ui.startup.StartupViewModel
 import com.arflix.tv.ui.theme.ArflixTvTheme
-import com.arflix.tv.ui.theme.BackgroundGradientCenter
-import com.arflix.tv.ui.theme.BackgroundGradientEnd
-import com.arflix.tv.ui.theme.BackgroundGradientStart
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.worker.TraktSyncWorker
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.Lazy
@@ -248,6 +247,9 @@ class MainActivity : ComponentActivity() {
                 skipProfileSelection =
                     this@MainActivity.settingsDataStore.data.first()[SKIP_PROFILE_SELECTION_KEY] ?: false
             }
+            val oledBlackBackground by remember {
+                this@MainActivity.settingsDataStore.data.map { it[OLED_BLACK_BACKGROUND_KEY] ?: false }
+            }.collectAsStateWithLifecycle(initialValue = false)
             val activeProfileId by remember {
                 profileRepository.get().activeProfileId
             }.collectAsStateWithLifecycle(initialValue = null)
@@ -301,7 +303,7 @@ class MainActivity : ComponentActivity() {
                     if (isRtl) androidx.compose.ui.unit.LayoutDirection.Rtl
                     else androidx.compose.ui.unit.LayoutDirection.Ltr
             ) {
-                ArflixTvTheme {
+                ArflixTvTheme(oledBlackBackground = oledBlackBackground) {
                     val startupState by startupViewModel.state.collectAsStateWithLifecycle()
                     ArflixApp(
                         authRepository = authRepository.get(),
@@ -312,6 +314,7 @@ class MainActivity : ComponentActivity() {
                         watchlistRepository = watchlistRepository.get(),
                         iptvRepository = iptvRepository.get(),
                         launcherContinueWatchingRepository = launcherContinueWatchingRepository.get(),
+                        oledBlackBackground = oledBlackBackground,
                         skipProfileSelection = skipProfileSelection,
                         pendingLauncherRequest = pendingLauncherRequest,
                         onConsumeLauncherRequest = { pendingLauncherRequest = null },
@@ -482,6 +485,7 @@ fun ArflixApp(
     watchlistRepository: WatchlistRepository,
     iptvRepository: com.arflix.tv.data.repository.IptvRepository,
     launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
+    oledBlackBackground: Boolean = false,
     skipProfileSelection: Boolean? = null,
     pendingLauncherRequest: LauncherContinueWatchingRequest? = null,
     onConsumeLauncherRequest: () -> Unit = {},
@@ -552,15 +556,19 @@ fun ArflixApp(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            // Background fills edge-to-edge (including behind transparent bars)
+            // Background fills edge-to-edge (including behind transparent bars).
             .background(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        BackgroundGradientStart,
-                        BackgroundGradientCenter,
-                        BackgroundGradientEnd
+                brush = if (oledBlackBackground) {
+                    Brush.linearGradient(colors = listOf(Color.Black, Color.Black))
+                } else {
+                    Brush.linearGradient(
+                        colors = listOf(
+                            appBackgroundDark(),
+                            appBackgroundDark(),
+                            appBackgroundDark()
+                        )
                     )
-                )
+                }
             )
             // On mobile, push content between the status bar and navigation bar.
             // Applied AFTER background so the gradient fills behind the bars.

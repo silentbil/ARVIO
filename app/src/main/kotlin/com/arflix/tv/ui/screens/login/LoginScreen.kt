@@ -360,7 +360,7 @@ private fun PremiumTextField(
     isFocused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val backgroundColor = BackgroundDark.copy(alpha = 0.6f)
+    val backgroundColor = appBackgroundDark().copy(alpha = 0.6f)
 
     Box(
         modifier = modifier

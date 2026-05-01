@@ -32,6 +32,9 @@ val DEVICE_MODE_OVERRIDE_KEY = stringPreferencesKey("device_mode_override")
 /** Key for skipping profile selection on startup */
 val SKIP_PROFILE_SELECTION_KEY = booleanPreferencesKey("skip_profile_selection")
 
+/** Key for forcing pure-black (OLED) app background */
+val OLED_BLACK_BACKGROUND_KEY = booleanPreferencesKey("oled_black_background")
+
 /**
  * Fast-path cache for the device-mode override. Read before onCreate() during
  * cold start, where the DataStore IO would otherwise block the main thread for

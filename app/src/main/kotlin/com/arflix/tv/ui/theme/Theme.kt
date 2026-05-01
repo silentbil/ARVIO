@@ -3,6 +3,7 @@ package com.arflix.tv.ui.theme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
@@ -68,6 +69,12 @@ data class ArvioColors(
 )
 
 val LocalArvioColors = staticCompositionLocalOf { ArvioColors() }
+val LocalOledBlackBackground = staticCompositionLocalOf { false }
+
+@Composable
+fun appBackgroundDark(): Color {
+    return if (LocalOledBlackBackground.current) Color.Black else BackgroundDark
+}
 
 // Keep legacy aliases for compatibility
 val LocalArflixColors = LocalArvioColors
@@ -79,8 +86,10 @@ val LocalArflixColors = LocalArvioColors
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun ArvioTvTheme(
+    oledBlackBackground: Boolean = false,
     content: @Composable () -> Unit
 ) {
+    val backgroundDark = if (oledBlackBackground) Color.Black else BackgroundDark
     val colorScheme = darkColorScheme(
         primary = ArcticWhite,
         onPrimary = ArcticBlack,
@@ -94,7 +103,7 @@ fun ArvioTvTheme(
         onTertiary = ArcticBlack,
         tertiaryContainer = ArcticGray,
         onTertiaryContainer = ArcticWhite,
-        background = BackgroundDark,
+        background = backgroundDark,
         onBackground = TextPrimary,
         surface = BackgroundCard,
         onSurface = TextPrimary,
@@ -105,10 +114,11 @@ fun ArvioTvTheme(
         border = BorderLight
     )
 
-    val arvioColors = ArvioColors()
+    val arvioColors = ArvioColors(backgroundDark = backgroundDark)
 
     CompositionLocalProvider(
-        LocalArvioColors provides arvioColors
+        LocalArvioColors provides arvioColors,
+        LocalOledBlackBackground provides oledBlackBackground
     ) {
         ProvideArvioSkin {
             MaterialTheme(
@@ -123,8 +133,9 @@ fun ArvioTvTheme(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun ArflixTvTheme(
+    oledBlackBackground: Boolean = false,
     content: @Composable () -> Unit
-) = ArvioTvTheme(content)
+) = ArvioTvTheme(oledBlackBackground = oledBlackBackground, content = content)
 
 /**
  * Access custom ARVIO colors
@@ -144,4 +155,3 @@ object ArflixTheme {
 
 // Type alias for backward compatibility
 typealias ArflixColors = ArvioColors
-
