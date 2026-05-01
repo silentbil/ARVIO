@@ -50,11 +50,6 @@
 - Improved profile loading and profile creation behavior.
 - Improved profile and player focus fixes. Contributor: silentbil.
 
-## Contributors
-- EierkopZA: player source switching, loading clearlogo polish, regex filter TV focus, details metadata behavior, watchlist topbar/grid focus, IMDb-ID wait for faster Details source reliability, and submitted related watchlist/source-loading MRs.
-- Himanth Reddy: DNS persistence, player/back behavior, catalog layout controls, focus/rail stability, Crunchyroll assets, trailer/profile improvements.
-- silentbil: app language resources, subtitle filtering UI, catalog navigation restoration, Top 10 lag reduction, player focus fixes.
-
 ## Download
 - AFTVnews / Downloader code: `8252981`
 - Direct APK: `https://gitlab.com/arvio1/ARVIO/-/raw/main/releases/v1.9.91/ARVIO%20V1.9.91.apk?inline=false`
