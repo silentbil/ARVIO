@@ -653,7 +653,7 @@ fun PlayerScreen(
                                 // One-time full re-resolve of same source to refresh debrid URL/headers.
                                 if (!startupSameSourceRefreshAttempted) {
                                     startupSameSourceRefreshAttempted = true
-                                    latestUiState.selectedStream?.let { viewModel.selectStream(it) }
+                                    latestUiState.selectedStream?.let { viewModel.selectStream(it, this@apply.currentPosition) }
                                     return
                                 }
                             }
@@ -1257,7 +1257,7 @@ fun PlayerScreen(
                         // auto advanced to a fallback stream
                     } else if (!startupSameSourceRefreshAttempted) {
                         startupSameSourceRefreshAttempted = true
-                        uiState.selectedStream?.let { viewModel.selectStream(it) }
+                        uiState.selectedStream?.let { viewModel.selectStream(it, exoPlayer.currentPosition) }
                     } else {
                         startupHardFailureReported = true
                         playbackIssueReported = true
@@ -2450,7 +2450,7 @@ fun PlayerScreen(
                 startupUrlLock = null
                 rebufferRecoverAttempted = false
                 longRebufferCount = 0
-                viewModel.selectStream(stream)
+                viewModel.selectStream(stream, exoPlayer.currentPosition)
                 showSourceMenu = false
                 showControls = true
                 coroutineScope.launch {
