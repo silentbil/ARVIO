@@ -207,19 +207,20 @@ fun CatalogueRowLayoutToggleButton(
     val scope = rememberCoroutineScope()
     val normalizedRowKey = remember(rowKey) { normalizeCatalogueRowLayoutKey(rowKey) }
     val mode = rememberCatalogueRowLayoutMode(normalizedRowKey)
-    val shape = rememberArvioCardShape(6.dp)
+    val shape = rememberArvioCardShape(8.dp)
     val label = if (mode == CardLayoutMode.POSTER) "P" else "L"
 
     ArvioFocusableSurface(
         modifier = modifier
-            .size(28.dp)
+            .size(36.dp)
             .arvioDpadFocusGroup(enableFocusRestorer = false),
         shape = shape,
-        backgroundColor = Color.White.copy(alpha = if (enabled) 0.08f else 0.03f),
+        backgroundColor = Color.Transparent,
         outlineColor = ArvioSkin.colors.focusOutline,
         outlineWidth = 2.dp,
         focusedScale = 1.08f,
         pressedScale = 0.95f,
+        enabled = enabled,
         enableSystemFocus = enabled,
         onClick = {
             if (!enabled) return@ArvioFocusableSurface
@@ -229,26 +230,69 @@ fun CatalogueRowLayoutToggleButton(
         }
     ) { isFocused ->
         val visualFocused = isFocused || forceFocused
+        val bgColor = when {
+            !enabled -> Color.Black.copy(alpha = 0.4f)
+            visualFocused -> Color.White
+            else -> Color.White.copy(alpha = 0.08f)
+        }
+        val canvasColor = when {
+            !enabled -> Color.White.copy(alpha = 0.5f)
+            visualFocused -> Color.Black
+            else -> Color.White.copy(alpha = 0.7f)
+        }
+        
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    color = Color.White.copy(alpha = if (visualFocused) 0.14f else 0.04f),
-                    shape = RoundedCornerShape(6.dp)
-                )
+                .background(bgColor, RoundedCornerShape(8.dp))
                 .border(
-                    width = 1.dp,
-                    color = Color.White.copy(alpha = if (visualFocused) 0.32f else 0.14f),
-                    shape = RoundedCornerShape(6.dp)
+                    width = if (visualFocused) 1.5.dp else 1.dp,
+                    color = if (visualFocused) Color.White.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(8.dp)
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = label,
-                color = Color.White.copy(alpha = if (enabled) 0.92f else 0.42f),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
+            val isPoster = mode == CardLayoutMode.POSTER
+
+            androidx.compose.foundation.Canvas(modifier = Modifier.size(16.dp)) {
+                val path = androidx.compose.ui.graphics.Path()
+                val w = size.width
+                val h = size.height
+                
+                val rectW = if (isPoster) w * 0.60f else w
+                val rectH = if (isPoster) h else h * 0.60f
+                
+                val left = (w - rectW) / 2f
+                val top = (h - rectH) / 2f
+                val right = left + rectW
+                val bottom = top + rectH
+                
+                path.moveTo(left, top)
+                if (isPoster) {
+                    val curve = rectW * 0.20f
+                    path.lineTo(right, top)
+                    path.quadraticBezierTo(right - curve, top + rectH / 2f, right, bottom)
+                    path.lineTo(left, bottom)
+                    path.quadraticBezierTo(left + curve, top + rectH / 2f, left, top)
+                } else {
+                    val curve = rectH * 0.20f
+                    path.quadraticBezierTo(left + rectW / 2f, top + curve, right, top)
+                    path.lineTo(right, bottom)
+                    path.quadraticBezierTo(left + rectW / 2f, bottom - curve, left, bottom)
+                    path.lineTo(left, top)
+                }
+                path.close()
+                
+                drawPath(
+                    path = path,
+                    color = canvasColor,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 1.5.dp.toPx(),
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        join = androidx.compose.ui.graphics.StrokeJoin.Round
+                    )
+                )
+            }
         }
     }
 }

@@ -819,7 +819,9 @@ fun SettingsScreen(
                                                         1 -> viewModel.moveCatalogUp(catalog.id)
                                                         2 -> viewModel.moveCatalogDown(catalog.id)
                                                         3 -> scope.launch {
-                                                            toggleCatalogueRowLayoutMode(context, catalogueLayoutRowKey(catalog))
+                                                            if (catalog.kind != CatalogKind.COLLECTION_RAIL) {
+                                                                toggleCatalogueRowLayoutMode(context, catalogueLayoutRowKey(catalog))
+                                                            }
                                                         }
                                                         else -> viewModel.removeCatalog(catalog.id)
                                                     }
