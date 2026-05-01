@@ -2726,8 +2726,9 @@ private fun TvHomeRowsLayer(
         val targetIndex = localCurrentRowIndex.coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
         LaunchedEffect(targetIndex, focusState.lastNavEventTime) {
             val currentIndex = listState.firstVisibleItemIndex
+            val currentOffset = listState.firstVisibleItemScrollOffset
             val initialPlacement = lastAppliedTargetIndex < 0
-            if (currentIndex == targetIndex) {
+            if (currentIndex == targetIndex && currentOffset <= 2) {
                 lastAppliedTargetIndex = targetIndex
                 return@LaunchedEffect
             }
@@ -2738,7 +2739,6 @@ private fun TvHomeRowsLayer(
 
             val jumpDistance = kotlin.math.abs(targetIndex - currentIndex)
             if (!initialPlacement && jumpDistance <= 2) {
-                val currentOffset = listState.firstVisibleItemScrollOffset
                 val deltaPx = if (targetIndex > currentIndex) {
                     var dist = -currentOffset.toFloat()
                     for (i in currentIndex until targetIndex) {
