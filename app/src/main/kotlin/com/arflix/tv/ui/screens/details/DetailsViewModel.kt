@@ -1160,6 +1160,23 @@ class DetailsViewModel @Inject constructor(
                     currentMediaId == requestMediaId
             }
             if (!isCurrentRequest()) return@launch
+
+            // If the user clicked Play/Sources very fast (e.g. from Search), the background
+            // resolveExternalIds might still be running. Try to recover it from cache
+            // or wait for the UI state to be updated by the background fetch.
+            var currentImdbId = imdbId ?: _uiState.value.imdbId
+            if (currentImdbId.isNullOrBlank()) {
+                currentImdbId = mediaRepository.getCachedImdbId(requestMediaType, requestMediaId)
+            }
+            if (currentImdbId.isNullOrBlank()) {
+                withTimeoutOrNull(3500) {
+                    while (currentImdbId.isNullOrBlank() && isCurrentRequest()) {
+                        delay(200)
+                        currentImdbId = _uiState.value.imdbId
+                    }
+                }
+            }
+
             _uiState.value = _uiState.value.copy(
                 isLoadingStreams = true,
                 streams = emptyList(),
@@ -1170,7 +1187,7 @@ class DetailsViewModel @Inject constructor(
                 val title = _uiState.value.item?.title.orEmpty()
                 Log.d(
                     TAG,
-                    "[MovieSources] loadStreams start requestId=$requestId mediaId=$requestMediaId imdbId=${imdbId ?: "null"} title=$title"
+                    "[MovieSources] loadStreams start requestId=$requestId mediaId=$requestMediaId imdbId=${currentImdbId ?: "null"} title=$title"
                 )
             }
 
@@ -1186,7 +1203,7 @@ class DetailsViewModel @Inject constructor(
                     // On rare true cold starts, catalog download can take 15-30s for large providers.
                     val vodTimeout = if (currentMediaType == MediaType.MOVIE) 30_000L else 45_000L
                     appendVodSourceInBackground(
-                        imdbId = imdbId,
+                        imdbId = currentImdbId,
                         season = season,
                         episode = episode,
                         timeoutMs = vodTimeout,
@@ -1233,7 +1250,7 @@ class DetailsViewModel @Inject constructor(
                         )
                     }
 
-                    if (imdbId.isNullOrBlank()) {
+                    if (currentImdbId.isNullOrBlank()) {
                         Log.w(
                             TAG,
                             "[MovieSources] loadStreams skipped (missing imdbId) requestId=$requestId mediaId=$requestMediaId"
@@ -1248,7 +1265,7 @@ class DetailsViewModel @Inject constructor(
                         return@launch
                     }
                     streamRepository.resolveMovieStreamsProgressive(
-                        imdbId = imdbId,
+                        imdbId = currentImdbId,
                         title = item?.title.orEmpty(),
                         year = item?.year?.toIntOrNull()
                     ).collect { progressive ->
@@ -1281,7 +1298,7 @@ class DetailsViewModel @Inject constructor(
                     }
                     return@launch
                 } else {
-                    if (imdbId.isNullOrBlank()) {
+                    if (currentImdbId.isNullOrBlank()) {
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = false,
                             streams = emptyList(),
@@ -1297,7 +1314,7 @@ class DetailsViewModel @Inject constructor(
                         ?.airDate?.takeIf { it.isNotBlank() }
 
                     streamRepository.resolveEpisodeStreamsProgressive(
-                        imdbId = imdbId,
+                        imdbId = currentImdbId,
                         season = season ?: 1,
                         episode = episode ?: 1,
                         tmdbId = currentMediaId,
