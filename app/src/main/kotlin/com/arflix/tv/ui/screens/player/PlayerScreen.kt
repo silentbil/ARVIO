@@ -17,6 +17,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween as animTween
 import androidx.compose.animation.fadeIn
@@ -2800,11 +2801,24 @@ private fun PulsingLogo(
     progress: Float? = null,
     phaseLabel: String? = null
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val infiniteTransition = rememberInfiniteTransition(label = "heartbeat")
     val scale by infiniteTransition.animateFloat(
-        initialValue = 0.92f, targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(animation = animTween(1200, easing = FastOutSlowInEasing), repeatMode = RepeatMode.Reverse),
-        label = "pulseScale"
+        initialValue = 1.0f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1500
+                // Two quick beats followed by a short rest (heartbeat).
+                1.0f at 0
+                1.08f at 160 using FastOutSlowInEasing
+                1.02f at 280 using FastOutSlowInEasing
+                1.12f at 420 using FastOutSlowInEasing
+                1.0f at 620 using FastOutSlowInEasing
+                1.0f at 1500
+            },
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "heartbeatScale"
     )
 
     // Smoothly interpolate discrete progress jumps from the ViewModel so the
@@ -2820,7 +2834,7 @@ private fun PulsingLogo(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.size(180.dp),
+            modifier = Modifier.size(196.dp),
             contentAlignment = Alignment.Center
         ) {
             if (progress != null) {
@@ -2863,7 +2877,7 @@ private fun PulsingLogo(
                 if (!logoUrl.isNullOrBlank()) {
                     AsyncImage(
                         model = logoUrl, contentDescription = title, contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth(0.7f).height(140.dp)
+                        modifier = Modifier.fillMaxWidth(0.76f).height(152.dp)
                     )
                 } else {
                     Text(
