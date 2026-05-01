@@ -105,6 +105,7 @@ fun StreamSelector(
     title: String = "",
     subtitle: String = "",
     hasStreamingAddons: Boolean = true,
+    onFocusedStream: (StreamSource) -> Unit = {},
     onSelect: (StreamSource) -> Unit = {},
     onClose: () -> Unit = {}
 ) {
@@ -197,6 +198,12 @@ fun StreamSelector(
     LaunchedEffect(focusedIndex) {
         if (flatStreams.isNotEmpty() && focusedIndex < flatStreams.size) {
             listState.animateScrollToItem(focusedIndex)
+        }
+    }
+
+    LaunchedEffect(isVisible, focusZone, focusedIndex, flatStreams) {
+        if (isVisible && focusZone == "streams") {
+            flatStreams.getOrNull(focusedIndex)?.let(onFocusedStream)
         }
     }
 

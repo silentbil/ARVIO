@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Auto frame rate matching utility.
@@ -27,13 +28,32 @@ object FrameRateUtils {
     private const val MAX_VALID_FPS = 120f
     private const val POLL_INTERVAL_MS = 60L
     private const val STABLE_POLLS_REQUIRED = 2
+    private const val DETECTION_CACHE_TTL_MS = 15 * 60_000L
 
     private var originalModeId: Int? = null
+    private val detectionCache = ConcurrentHashMap<String, CachedDetection>()
 
     data class FrameRateDetection(
         val raw: Float,
         val snapped: Float
     )
+
+    private data class CachedDetection(
+        val detection: FrameRateDetection,
+        val createdAtMs: Long
+    )
+
+    private fun detectionCacheKey(sourceUrl: String): String {
+        val uri = runCatching { Uri.parse(sourceUrl) }.getOrNull() ?: return sourceUrl.substringBefore('?')
+        val scheme = uri.scheme.orEmpty()
+        val host = uri.host.orEmpty()
+        val path = uri.path.orEmpty()
+        return if (scheme.isNotBlank() && host.isNotBlank()) {
+            "$scheme://$host$path"
+        } else {
+            sourceUrl.substringBefore('?')
+        }
+    }
 
     fun snapToStandardRate(fps: Float): Float {
         if (fps <= 0f) return fps
@@ -141,6 +161,20 @@ object FrameRateUtils {
             null
         } finally {
             runCatching { extractor.release() }
+        }
+    }
+
+    fun detectFrameRateCached(sourceUrl: String, headers: Map<String, String> = emptyMap()): FrameRateDetection? {
+        val key = detectionCacheKey(sourceUrl)
+        val now = System.currentTimeMillis()
+        detectionCache[key]?.let { cached ->
+            if (now - cached.createdAtMs <= DETECTION_CACHE_TTL_MS) {
+                return cached.detection
+            }
+            detectionCache.remove(key)
+        }
+        return detectFrameRate(sourceUrl, headers)?.also { detection ->
+            detectionCache[key] = CachedDetection(detection, now)
         }
     }
 

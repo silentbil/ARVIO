@@ -184,6 +184,8 @@ class PlayerViewModel @Inject constructor(
         lastWatchHistorySaveTime = 0
         subtitleRefreshJob?.cancel()
         vodAppendJob?.cancel()
+        streamPrewarmJob?.cancel()
+        focusedStreamPrewarmJob?.cancel()
         skipIntervalsJob?.cancel()
         currentImdbId = providedImdbId
         skipIntervals = emptyList()
@@ -233,7 +235,22 @@ class PlayerViewModel @Inject constructor(
                     navigationStartPositionMs = startPositionMs
                 )
                 val isMagnet = providedStreamUrl.startsWith("magnet:", ignoreCase = true)
-                val resolvedProvidedUrl = if (isMagnet) null else providedStreamUrl
+                val providedStream = if (isMagnet) {
+                    null
+                } else {
+                    StreamSource(
+                        source = currentPreferredSourceName ?: "Selected source",
+                        addonName = currentPreferredAddonId ?: "",
+                        addonId = currentPreferredAddonId.orEmpty(),
+                        quality = "",
+                        size = "",
+                        url = providedStreamUrl
+                    )
+                }
+                val resolvedProvidedStream = providedStream?.let { stream ->
+                    runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrNull() ?: stream
+                }
+                val resolvedProvidedUrl = resolvedProvidedStream?.url ?: if (isMagnet) null else providedStreamUrl
 
                 if (resolvedProvidedUrl.isNullOrBlank()) {
                     _uiState.value = _uiState.value.copy(
@@ -251,6 +268,7 @@ class PlayerViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isLoadingStreams = false,
+                    selectedStream = resolvedProvidedStream,
                     selectedStreamUrl = resolvedProvidedUrl,
                     savedPosition = resumeData.positionMs
                 )
@@ -482,6 +500,7 @@ class PlayerViewModel @Inject constructor(
                         streamProgress = if (progressive.isFinal) null else progressFraction,
                         streamLoadPhase = phaseLabel
                     )
+                    prewarmTopStreams(mergedStreams, preferredLanguage)
 
                     val cacheHit = isFirstEmission && progressive.isFinal && mergedStreams.isNotEmpty()
                     isFirstEmission = false
@@ -982,6 +1001,30 @@ class PlayerViewModel @Inject constructor(
                 .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
                 .thenByDescending { streamRepository.getAddonHealthBias(it.addonId) }
         )
+    }
+
+    fun prewarmStream(stream: StreamSource) {
+        focusedStreamPrewarmJob?.cancel()
+        focusedStreamPrewarmJob = viewModelScope.launch {
+            runCatching {
+                streamRepository.prewarmStreamForPlayback(stream, allowNetworkWarmup = true)
+            }
+        }
+    }
+
+    private fun prewarmTopStreams(streams: List<StreamSource>, preferredLanguage: String) {
+        if (streams.isEmpty()) return
+        streamPrewarmJob?.cancel()
+        streamPrewarmJob = viewModelScope.launch {
+            val topStreams = sortStreamsByQualityAndSize(streams, preferredLanguage).take(3)
+            runCatching {
+                streamRepository.prewarmStreamsForPlayback(
+                    streams = topStreams,
+                    limit = topStreams.size,
+                    allowNetworkWarmup = false
+                )
+            }
+        }
     }
 
     // Robust size string parser - identical to StreamSelector's parseSizeString()
@@ -1796,6 +1839,8 @@ class PlayerViewModel @Inject constructor(
     private var progressSaveJob: Job? = null
     private var subtitleRefreshJob: Job? = null
     private var vodAppendJob: Job? = null
+    private var streamPrewarmJob: Job? = null
+    private var focusedStreamPrewarmJob: Job? = null
 
     private suspend fun appendVodSourceInBackground(
         mediaType: MediaType,
@@ -1837,6 +1882,7 @@ class PlayerViewModel @Inject constructor(
             streams = updated,
             isLoadingStreams = false
         )
+        prewarmTopStreams(updated, _uiState.value.preferredAudioLanguage.ifBlank { "en" })
     }
 
     private suspend fun populateStreamsForProvidedUrl(

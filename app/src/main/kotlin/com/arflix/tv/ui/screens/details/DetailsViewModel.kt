@@ -179,6 +179,8 @@ class DetailsViewModel @Inject constructor(
     private var vodAppendJob: kotlinx.coroutines.Job? = null
     private var loadStreamsJob: kotlinx.coroutines.Job? = null
     private var loadStreamsRequestId: Long = 0L
+    private var focusedStreamPrewarmJob: kotlinx.coroutines.Job? = null
+    private var streamListPrewarmJob: kotlinx.coroutines.Job? = null
     /** Set to true after loadDetails() child coroutines finish populating episodes/seasons. */
     @Volatile private var initialLoadComplete = false
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
@@ -1117,8 +1119,33 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
+    fun prewarmStream(stream: StreamSource) {
+        focusedStreamPrewarmJob?.cancel()
+        focusedStreamPrewarmJob = viewModelScope.launch {
+            runCatching {
+                streamRepository.prewarmStreamForPlayback(stream, allowNetworkWarmup = true)
+            }
+        }
+    }
+
+    private fun prewarmVisibleStreams(streams: List<StreamSource>) {
+        if (streams.isEmpty()) return
+        streamListPrewarmJob?.cancel()
+        streamListPrewarmJob = viewModelScope.launch {
+            runCatching {
+                streamRepository.prewarmStreamsForPlayback(
+                    streams = streams.take(3),
+                    limit = 3,
+                    allowNetworkWarmup = false
+                )
+            }
+        }
+    }
+
     fun loadStreams(imdbId: String?, season: Int? = null, episode: Int? = null) {
         loadStreamsJob?.cancel()
+        focusedStreamPrewarmJob?.cancel()
+        streamListPrewarmJob?.cancel()
         val requestId = ++loadStreamsRequestId
         val requestMediaType = currentMediaType
         val requestMediaId = currentMediaId
@@ -1241,6 +1268,7 @@ class DetailsViewModel @Inject constructor(
                             subtitles = progressive.subtitles,
                             hasStreamingAddons = addonCount > 0
                         )
+                        prewarmVisibleStreams(mergedStreams)
                         if (progressive.isFinal) {
                             Log.d(
                                 TAG,
@@ -1290,6 +1318,7 @@ class DetailsViewModel @Inject constructor(
                             subtitles = progressive.subtitles,
                             hasStreamingAddons = addonCount > 0
                         )
+                        prewarmVisibleStreams(mergedStreams)
                     }
                     return@launch
                 }
@@ -1877,5 +1906,6 @@ class DetailsViewModel @Inject constructor(
             streams = mergedStreams,
             isLoadingStreams = false
         )
+        prewarmVisibleStreams(mergedStreams)
     }
 }

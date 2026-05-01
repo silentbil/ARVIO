@@ -890,7 +890,7 @@ fun PlayerScreen(
                         .filterKeys { it.isNotBlank() }
                     val detection = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         kotlinx.coroutines.withTimeoutOrNull(2000L) {
-                            com.arflix.tv.util.FrameRateUtils.detectFrameRate(
+                            com.arflix.tv.util.FrameRateUtils.detectFrameRateCached(
                                 sourceUrl = url,
                                 headers = baseRequestHeaders + streamHeaders
                             )
@@ -2439,6 +2439,9 @@ fun PlayerScreen(
                 "S$seasonNumber E$episodeNumber"
             } else {
                 ""
+            },
+            onFocusedStream = { stream ->
+                viewModel.prewarmStream(stream)
             },
             onSelect = { stream: StreamSource ->
                 userSelectedSourceManually = true

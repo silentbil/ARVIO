@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -162,6 +165,31 @@ private fun VideoCard(
                 modifier = Modifier.fillMaxSize(),
             )
             LiveBug(modifier = Modifier.align(Alignment.TopEnd).padding(10.dp))
+        }
+
+        if (onFullscreenClick != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { onFullscreenClick.invoke() },
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(10.dp)
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.62f))
+                    .clickable { onFullscreenClick.invoke() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FitScreen,
+                    contentDescription = "Fullscreen",
+                    tint = Color.White,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
         }
     }
 }
