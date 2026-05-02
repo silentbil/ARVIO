@@ -113,6 +113,7 @@
     <string name="default_audio">Default Audio</string>
     <string name="subtitle_size">Subtitle Size</string>
     <string name="subtitle_color">Subtitle Color</string>
+    <string name="subtitle_offset">Subtitle Position</string>
     <string name="auto_play_next_title">Auto-Play Next</string>
     <string name="autoplay">Autoplay</string>
     <string name="auto_play_min_quality">Auto-Play Min Quality</string>
@@ -156,10 +157,13 @@
     <string name="audio_desc">Preferred audio track</string>
     <string name="subtitle_size_desc">Text size for subtitles</string>
     <string name="subtitle_color_desc">Text color for subtitles</string>
+    <string name="subtitle_offset_desc">Vertical position for subtitles</string>
     <string name="auto_play_desc">Start next episode automatically</string>
     <string name="autoplay_desc">Off opens the source picker on Play</string>
     <string name="auto_play_quality_desc">Min quality for auto-play</string>
     <string name="trailer_desc">Play trailers in hero banner</string>
+    <string name="trailer_sound">Trailer Sound</string>
+    <string name="trailer_sound_desc">Play trailer audio in hero banner</string>
     <string name="frame_rate_desc">Off, Seamless, or Always</string>
     <string name="quality_filters_desc">Exclude quality tiers on this device</string>
     <string name="card_layout_desc">Landscape or poster cards</string>

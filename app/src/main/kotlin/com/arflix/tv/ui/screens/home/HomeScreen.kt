@@ -855,11 +855,11 @@ fun HomeScreen(
                     )
                 }
 
-                // YouTube trailer auto-play (muted, no controls)
+                // YouTube trailer auto-play (sound controlled by trailerSoundEnabled setting)
                 if (heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null) {
                     TrailerPlayer(
                         youtubeKey = uiState.heroTrailerKey!!,
-                        volume = 0f,
+                        volume = if (uiState.trailerSoundEnabled) 1f else 0f,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
