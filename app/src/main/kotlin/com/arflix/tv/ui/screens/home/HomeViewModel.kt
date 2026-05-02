@@ -3033,19 +3033,27 @@ class HomeViewModel @Inject constructor(
         heroDetailsJob?.cancel()
         heroDetailsJob = viewModelScope.launch(networkDispatcher) {
             try {
-                val details = runCatching {
-                    if (item.mediaType == MediaType.MOVIE) {
-                        mediaRepository.getMovieDetails(item.id)
-                    } else {
-                        mediaRepository.getTvDetails(item.id)
-                    }
-                }.getOrNull()
+                // Fetch details and network logo concurrently to avoid ~1s delay
+                // on the clearlogo appearing after all other metadata.
+                val detailsDeferred = async {
+                    runCatching {
+                        if (item.mediaType == MediaType.MOVIE) {
+                            mediaRepository.getMovieDetails(item.id)
+                        } else {
+                            mediaRepository.getTvDetails(item.id)
+                        }
+                    }.getOrNull()
+                }
+                val logoDeferred = async {
+                    resolvePrimaryNetworkLogo(item.mediaType, item.id)
+                }
+                val details = detailsDeferred.await()
+                val primaryNetworkLogo = logoDeferred.await()
                 val resolvedOverview = resolveBestOverview(
                     item = item,
                     candidateOverview = details?.overview?.ifBlank { item.overview } ?: item.overview
                 )
                 val detailsKey = "${item.mediaType}_${item.id}"
-                val primaryNetworkLogo = resolvePrimaryNetworkLogo(item.mediaType, item.id)
                 heroDetailsCache[detailsKey] = HeroDetailsSnapshot(
                     duration = details?.duration.orEmpty(),
                     releaseDate = details?.releaseDate,

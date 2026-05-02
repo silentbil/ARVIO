@@ -291,6 +291,8 @@ class DetailsViewModel @Inject constructor(
                 // Fetch real IMDB ID and TVDB ID from TMDB external_ids endpoint
                 val externalIdsDeferred = async { resolveExternalIds(mediaType, mediaId) }
                 val resumeDeferred = async { fetchResumeInfo(mediaId, mediaType, initialSeason, initialEpisode) }
+                // Fetch logo URL concurrently with details to avoid ~1s delay
+                val logoDeferred = async { mediaRepository.getLogoUrl(mediaType, mediaId) }
 
                 // For TV shows, also load episodes
                 val episodesDeferred = if (mediaType == MediaType.TV) {
@@ -410,9 +412,9 @@ class DetailsViewModel @Inject constructor(
                     }
                 }
 
+                // Logo URL was fetched concurrently with details via logoDeferred
                 launch {
-                    delay(120L)
-                    val logoUrl = runCatching { mediaRepository.getLogoUrl(mediaType, mediaId) }.getOrNull()
+                    val logoUrl = runCatching { logoDeferred.await() }.getOrNull()
                     if (logoUrl != null && logoUrl != _uiState.value.logoUrl) {
                         updateState { state -> state.copy(logoUrl = logoUrl) }
                     }
