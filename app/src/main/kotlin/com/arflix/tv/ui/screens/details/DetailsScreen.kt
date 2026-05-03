@@ -2045,14 +2045,14 @@ private fun DetailsTvRows(
     var idx = 0
     val seasonsIdx = if (hasSeasons) idx.also { idx++ } else -1
     val episodesIdx = if (hasEpisodes) idx.also { idx++ } else -1
-    if (hasCast) idx++
+    if (hasCast) idx++  // spacer
     val castIdx = if (hasCast) idx.also { idx++ } else -1
-    if (hasReviews) idx++
+    if (hasReviews) idx++  // spacer
     val reviewsIdx = if (hasReviews) idx.also { idx++ } else -1
-    if (hasSimilar) idx++
-    val similarIdx = if (hasSimilar) idx.also { idx++ } else -1
-    if (hasCollection) idx++
+    if (hasCollection) idx++  // spacer
     val collectionIdx = if (hasCollection) idx.also { idx++ } else -1
+    if (hasSimilar) idx++  // spacer
+    val similarIdx = if (hasSimilar) idx.also { idx++ } else -1
 
     LaunchedEffect(item.mediaType, item.id, currentSeason, hasEpisodes, hasSeasons) {
         contentScrollState.scrollToItem(0, 0)
@@ -2177,22 +2177,6 @@ private fun DetailsTvRows(
             }
         }
 
-        if (similar.isNotEmpty()) {
-            item { Spacer(modifier = Modifier.height(80.dp)) }
-            item {
-                DetailsSimilarRail(
-                    similar = similar,
-                    similarLogoUrls = similarLogoUrls,
-                    similarIndex = similarIndex,
-                    focusSectionForUi = focusSectionForUi,
-                    usePosterCards = usePosterCards,
-                    contentStartPadding = contentStartPadding,
-                    contentOuterStartPadding = contentOuterStartPadding,
-                    onSimilarClick = onSimilarClick
-                )
-            }
-        }
-
         // Collection items row — shown when this movie belongs to a TMDB collection
         if (collectionItems.isNotEmpty()) {
             item { Spacer(modifier = Modifier.height(80.dp)) }
@@ -2206,6 +2190,22 @@ private fun DetailsTvRows(
                     contentStartPadding = contentStartPadding,
                     contentOuterStartPadding = contentOuterStartPadding,
                     onCollectionClick = onCollectionClick
+                )
+            }
+        }
+
+        if (similar.isNotEmpty()) {
+            item { Spacer(modifier = Modifier.height(80.dp)) }
+            item {
+                DetailsSimilarRail(
+                    similar = similar,
+                    similarLogoUrls = similarLogoUrls,
+                    similarIndex = similarIndex,
+                    focusSectionForUi = focusSectionForUi,
+                    usePosterCards = usePosterCards,
+                    contentStartPadding = contentStartPadding,
+                    contentOuterStartPadding = contentOuterStartPadding,
+                    onSimilarClick = onSimilarClick
                 )
             }
         }
