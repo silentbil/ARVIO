@@ -67,7 +67,7 @@ class CatalogRepository @Inject constructor(
     private val legacyDefaultKey = stringPreferencesKey("profile_default_catalogs_v1")
     private val legacyGlobalKey = stringPreferencesKey("catalogs_v1")
     private val listType = object : TypeToken<List<CatalogConfig>>() {}.type
-    private val hiddenListType = object : TypeToken<List<String>>() {}.type
+    private val hiddenListType = TypeToken.getParameterized(List::class.java, String::class.java).type
 
     private fun decodeHiddenPreinstalled(profileId: String, prefs: Preferences): Set<String> {
         val raw = prefs[hiddenPreinstalledKey(profileId)]
@@ -912,7 +912,7 @@ class CatalogRepository @Inject constructor(
                     val jsonValue = gson.toJson(row["requiredAddonUrls"])
                     gson.fromJson<List<String>>(
                         jsonValue,
-                        object : TypeToken<List<String>>() {}.type
+                        TypeToken.getParameterized(List::class.java, String::class.java).type
                     )?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
                 }.getOrDefault(emptyList())
                 val sourceTypeRaw = (row["sourceType"] as? String)?.trim().orEmpty()

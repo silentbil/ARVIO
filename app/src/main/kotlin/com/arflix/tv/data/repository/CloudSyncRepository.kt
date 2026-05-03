@@ -707,7 +707,7 @@ class CloudSyncRepository @Inject constructor(
                 val hidden = if (json.isBlank()) {
                     emptyList()
                 } else {
-                    val type = object : TypeToken<List<String>>() {}.type
+                    val type = TypeToken.getParameterized(List::class.java, String::class.java).type
                     gson.fromJson<List<String>>(json, type) ?: emptyList()
                 }
                 catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(activeProfileId, hidden)
@@ -743,13 +743,13 @@ class CloudSyncRepository @Inject constructor(
         val epg = root.optString("iptvEpgUrl")
         val favorites = root.optJSONArray("iptvFavoriteGroups")?.toString().orEmpty().let { j ->
             if (j.isBlank()) emptyList() else {
-                val type = object : TypeToken<List<String>>() {}.type
+                val type = TypeToken.getParameterized(List::class.java, String::class.java).type
                 gson.fromJson<List<String>>(j, type) ?: emptyList()
             }
         }
         val favoriteChannels = root.optJSONArray("iptvFavoriteChannels")?.toString().orEmpty().let { j ->
             if (j.isBlank()) emptyList() else {
-                val type = object : TypeToken<List<String>>() {}.type
+                val type = TypeToken.getParameterized(List::class.java, String::class.java).type
                 gson.fromJson<List<String>>(j, type) ?: emptyList()
             }
         }

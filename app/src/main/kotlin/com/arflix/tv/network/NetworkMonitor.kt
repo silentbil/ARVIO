@@ -111,8 +111,7 @@ class NetworkMonitor @Inject constructor(
      * Returns true if device has validated internet connectivity.
      */
     private fun checkNetworkConnectivity(): Boolean {
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork) ?: return false
 
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                 capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
@@ -122,8 +121,7 @@ class NetworkMonitor @Inject constructor(
      * Returns the type of network currently connected (for logging/analytics).
      */
     fun getNetworkType(): NetworkType {
-        val network = connectivityManager.activeNetwork ?: return NetworkType.NONE
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return NetworkType.NONE
+        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork) ?: return NetworkType.NONE
 
         return when {
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkType.WIFI

@@ -24,48 +24,28 @@ class SoundManager @Inject constructor(
      * Uses system navigation sound
      */
     fun playMove(view: View?) {
-        if (!isEnabled) return
-        try {
-            view?.playSoundEffect(SoundEffectConstants.NAVIGATION_DOWN)
-        } catch (_: Exception) {
-            // Silently handle errors
-        }
+        playSoundSafely(view, SoundEffectConstants.NAVIGATION_DOWN)
     }
 
     /**
      * Play navigation up sound
      */
     fun playMoveUp(view: View?) {
-        if (!isEnabled) return
-        try {
-            view?.playSoundEffect(SoundEffectConstants.NAVIGATION_UP)
-        } catch (_: Exception) {
-            // Silently handle errors
-        }
+        playSoundSafely(view, SoundEffectConstants.NAVIGATION_UP)
     }
 
     /**
      * Play navigation left sound
      */
     fun playMoveLeft(view: View?) {
-        if (!isEnabled) return
-        try {
-            view?.playSoundEffect(SoundEffectConstants.NAVIGATION_LEFT)
-        } catch (_: Exception) {
-            // Silently handle errors
-        }
+        playSoundSafely(view, SoundEffectConstants.NAVIGATION_LEFT)
     }
 
     /**
      * Play navigation right sound
      */
     fun playMoveRight(view: View?) {
-        if (!isEnabled) return
-        try {
-            view?.playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT)
-        } catch (_: Exception) {
-            // Silently handle errors
-        }
+        playSoundSafely(view, SoundEffectConstants.NAVIGATION_RIGHT)
     }
 
     /**
@@ -73,21 +53,22 @@ class SoundManager @Inject constructor(
      * Uses system click sound
      */
     fun playSelect(view: View?) {
-        if (!isEnabled) return
-        try {
-            view?.playSoundEffect(SoundEffectConstants.CLICK)
-        } catch (_: Exception) {
-            // Silently handle errors
-        }
+        playSoundSafely(view, SoundEffectConstants.CLICK)
     }
 
     /**
      * Play back sound (back button)
      */
     fun playBack(view: View?) {
+        playSoundSafely(view, SoundEffectConstants.NAVIGATION_UP)
+    }
+
+    private fun playSoundSafely(view: View?, effectType: Int) {
         if (!isEnabled) return
         try {
-            view?.playSoundEffect(SoundEffectConstants.NAVIGATION_UP)
+            if (view?.isEnabled == true) {
+                view.playSoundEffect(effectType)
+            }
         } catch (_: Exception) {
             // Silently handle errors
         }

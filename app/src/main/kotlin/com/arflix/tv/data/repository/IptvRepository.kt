@@ -37,7 +37,6 @@ import kotlinx.coroutines.Deferred
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.xmlpull.v1.XmlPullParser
-import org.xmlpull.v1.XmlPullParserFactory
 import org.xml.sax.Attributes
 import org.xml.sax.helpers.DefaultHandler
 import java.io.BufferedInputStream
@@ -191,17 +190,6 @@ class IptvRepository @Inject constructor(
     @Volatile
     private var xtreamSeriesEpisodeInFlight: Map<Int, Deferred<List<XtreamSeriesEpisode>>> = emptyMap()
     private val seriesResolver by lazy { IptvSeriesResolverService() }
-    private val bracketContentRegex = Regex("""\[[^\]]*]""")
-    private val parenContentRegex = Regex("""\([^\)]*\)""")
-    private val yearParenRegex = Regex("""\((19|20)\d{2}\)""")
-    private val seasonTokenRegex = Regex("""\b(s|season)\s*\d{1,2}\b""", RegexOption.IGNORE_CASE)
-    private val episodeTokenRegex = Regex("""\b(e|ep|episode)\s*\d{1,3}\b""", RegexOption.IGNORE_CASE)
-    private val releaseTagRegex = Regex(
-        """\b(2160p|1080p|720p|480p|4k|uhd|fhd|hdr|dv|dovi|hevc|x265|x264|h264|remux|bluray|bdrip|webrip|web[- ]?dl|proper|repack|multi|dubbed|dual[- ]?audio)\b""",
-        RegexOption.IGNORE_CASE
-    )
-    private val nonAlphaNumRegex = Regex("[^a-z0-9]+")
-    private val multiSpaceRegex = Regex("\\s+")
 
     private val staleAfterMs = 24 * 60 * 60_000L
     private val playlistCacheMs = staleAfterMs
@@ -415,7 +403,7 @@ class IptvRepository @Inject constructor(
 
         // Space-separated: host user pass.
         val partsBySpace = trimmed
-            .split(Regex("\\s+"))
+            .split(MULTI_SPACE_REGEX)
             .map { it.trim() }
             .filter { it.isNotBlank() }
         if (partsBySpace.size >= 3) {
@@ -483,7 +471,7 @@ class IptvRepository @Inject constructor(
         }
 
         val partsBySpace = trimmed
-            .split(Regex("\\s+"))
+            .split(MULTI_SPACE_REGEX)
             .map { it.trim() }
             .filter { it.isNotBlank() }
         if (partsBySpace.size >= 3) {
@@ -518,7 +506,7 @@ class IptvRepository @Inject constructor(
 
         // Space-separated: host user pass.
         val partsBySpace = raw
-            .split(Regex("\\s+"))
+            .split(MULTI_SPACE_REGEX)
             .map { it.trim() }
             .filter { it.isNotBlank() }
         if (partsBySpace.size >= 3) {
@@ -1384,7 +1372,7 @@ class IptvRepository @Inject constructor(
         val raw = prefs[favoriteGroupsKey()].orEmpty()
         if (raw.isBlank()) return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
+            val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)
                 ?.map { it.trim() }
                 ?.filter { it.isNotBlank() }
@@ -1396,7 +1384,7 @@ class IptvRepository @Inject constructor(
     private fun decodePlaylists(raw: String): List<IptvPlaylistEntry> {
         if (raw.isBlank()) return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<IptvPlaylistEntry>>() {}.type
+            val type = TypeToken.getParameterized(List::class.java, IptvPlaylistEntry::class.java).type
             gson.fromJson<List<IptvPlaylistEntry>>(raw, type)
                 ?.filter { it.m3uUrl.isNotBlank() }
                 ?: emptyList()
@@ -1419,7 +1407,7 @@ class IptvRepository @Inject constructor(
         val raw = prefs[hiddenGroupsKey()].orEmpty()
         if (raw.isBlank()) return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
+            val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
         }.getOrDefault(emptyList())
     }
@@ -1428,7 +1416,7 @@ class IptvRepository @Inject constructor(
         val raw = prefs[groupOrderKey()].orEmpty()
         if (raw.isBlank()) return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
+            val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
         }.getOrDefault(emptyList())
     }
@@ -1437,7 +1425,7 @@ class IptvRepository @Inject constructor(
         val raw = prefs[favoriteChannelsKey()].orEmpty()
         if (raw.isBlank()) return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
+            val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)
                 ?.map { it.trim() }
                 ?.filter { it.isNotBlank() }
@@ -1465,7 +1453,7 @@ class IptvRepository @Inject constructor(
     private fun decodeFavoriteGroups(raw: String): List<String> {
         if (raw.isBlank()) return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
+            val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)
                 ?.map { it.trim() }
                 ?.filter { it.isNotBlank() }
@@ -1477,7 +1465,7 @@ class IptvRepository @Inject constructor(
     private fun decodeFavoriteChannels(raw: String): List<String> {
         if (raw.isBlank()) return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
+            val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)
                 ?.map { it.trim() }
                 ?.filter { it.isNotBlank() }
@@ -1500,19 +1488,19 @@ class IptvRepository @Inject constructor(
             favoriteChannels = decodeFavoriteChannels(prefs[favoriteChannelsKeyFor(safeProfileId)].orEmpty()),
             hiddenGroups = if (hiddenRaw.isNotBlank()) {
                 runCatching {
-                    val type = object : TypeToken<List<String>>() {}.type
+                    val type = TypeToken.getParameterized(List::class.java, String::class.java).type
                     gson.fromJson<List<String>>(hiddenRaw, type) ?: emptyList()
                 }.getOrDefault(emptyList())
             } else emptyList(),
             groupOrder = if (orderRaw.isNotBlank()) {
                 runCatching {
-                    val type = object : TypeToken<List<String>>() {}.type
+                    val type = TypeToken.getParameterized(List::class.java, String::class.java).type
                     gson.fromJson<List<String>>(orderRaw, type) ?: emptyList()
                 }.getOrDefault(emptyList())
             } else emptyList(),
             playlists = if (playlistsRaw.isNotBlank()) {
                 runCatching {
-                    val type = object : TypeToken<List<IptvPlaylistEntry>>() {}.type
+                    val type = TypeToken.getParameterized(List::class.java, IptvPlaylistEntry::class.java).type
                     gson.fromJson<List<IptvPlaylistEntry>>(playlistsRaw, type) ?: emptyList()
                 }.getOrDefault(emptyList())
             } else emptyList(),
@@ -2803,10 +2791,10 @@ class IptvRepository @Inject constructor(
     }
 
     private val vodDiskCacheType: Type by lazy {
-        object : TypeToken<XtreamDiskCache<XtreamVodStream>>() {}.type
+        TypeToken.getParameterized(XtreamDiskCache::class.java, XtreamVodStream::class.java).type
     }
     private val seriesDiskCacheType: Type by lazy {
-        object : TypeToken<XtreamDiskCache<XtreamSeriesItem>>() {}.type
+        TypeToken.getParameterized(XtreamDiskCache::class.java, XtreamSeriesItem::class.java).type
     }
 
     // ── Restructured load methods: disk cache + non-blocking network ─────
@@ -2840,7 +2828,7 @@ class IptvRepository @Inject constructor(
             val vod: List<XtreamVodStream> =
                 requestJson(
                     url,
-                    object : TypeToken<List<XtreamVodStream>>() {}.type,
+                    TypeToken.getParameterized(List::class.java, XtreamVodStream::class.java).type,
                     client = if (fast) xtreamLookupHttpClient else iptvHttpClient
                 ) ?: emptyList()
             val elapsed = System.currentTimeMillis() - downloadStart
@@ -2917,7 +2905,7 @@ class IptvRepository @Inject constructor(
             val series: List<XtreamSeriesItem> =
                 requestJson(
                     url,
-                    object : TypeToken<List<XtreamSeriesItem>>() {}.type,
+                    TypeToken.getParameterized(List::class.java, XtreamSeriesItem::class.java).type,
                     client = if (fast) xtreamLookupHttpClient else iptvHttpClient
                 ) ?: emptyList()
             val elapsed = System.currentTimeMillis() - downloadStart
@@ -3047,7 +3035,7 @@ class IptvRepository @Inject constructor(
 
     private fun parseSeasonKey(raw: String): Int? {
         if (raw.isBlank()) return null
-        val parsed = raw.toIntOrNull() ?: Regex("""\d{1,2}""").find(raw)?.value?.toIntOrNull()
+        val parsed = raw.toIntOrNull() ?: SEASON_KEY_REGEX.find(raw)?.value?.toIntOrNull()
         return parsed?.takeIf { it in 0..99 }
     }
 
@@ -3180,7 +3168,7 @@ class IptvRepository @Inject constructor(
                     val raw = element.asString.trim()
                     raw.toIntOrNull()
                         ?: raw.toDoubleOrNull()?.toInt()
-                        ?: Regex("""\d{1,4}""").find(raw)?.value?.toIntOrNull()
+                        ?: FLEXIBLE_INT_REGEX.find(raw)?.value?.toIntOrNull()
                 }
                 else -> null
             }
@@ -3190,16 +3178,16 @@ class IptvRepository @Inject constructor(
     private fun normalizeLookupText(value: String): String {
         if (value.isBlank()) return ""
         return value
-            .replace(bracketContentRegex, " ")
-            .replace(parenContentRegex, " ")
-            .replace(yearParenRegex, " ")
-            .replace(seasonTokenRegex, " ")
-            .replace(episodeTokenRegex, " ")
-            .replace(releaseTagRegex, " ")
+            .replace(BRACKET_CONTENT_REGEX, " ")
+            .replace(PAREN_CONTENT_REGEX, " ")
+            .replace(YEAR_PAREN_REGEX, " ")
+            .replace(SEASON_TOKEN_REGEX, " ")
+            .replace(EPISODE_TOKEN_REGEX, " ")
+            .replace(RELEASE_TAG_REGEX, " ")
             .lowercase(Locale.US)
-            .replace(nonAlphaNumRegex, " ")
+            .replace(NON_ALPHA_NUM_REGEX, " ")
             .trim()
-            .replace(multiSpaceRegex, " ")
+            .replace(MULTI_SPACE_REGEX, " ")
     }
 
     private val titleTokenNoise = setOf(
@@ -3239,13 +3227,13 @@ class IptvRepository @Inject constructor(
     private fun normalizeImdbId(value: String?): String? {
         if (value.isNullOrBlank()) return null
         val cleaned = value.trim().lowercase(Locale.US)
-        val match = Regex("tt\\d{5,10}").find(cleaned)?.value
+        val match = IMDB_ID_REGEX.find(cleaned)?.value
         return match ?: cleaned.takeIf { it.startsWith("tt") && it.length >= 7 }
     }
 
     private fun normalizeTmdbId(value: String?): String? {
         if (value.isNullOrBlank()) return null
-        val digits = Regex("\\d{1,10}").find(value.trim())?.value
+        val digits = TMDB_ID_REGEX.find(value.trim())?.value
         return digits?.trimStart('0')?.ifBlank { "0" }
     }
 
@@ -3255,7 +3243,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun parseYear(value: String): Int? {
-        return Regex("(19|20)\\d{2}")
+        return YEAR_REGEX
             .find(value)
             ?.value
             ?.toIntOrNull()
@@ -3263,15 +3251,7 @@ class IptvRepository @Inject constructor(
 
     private fun extractSeasonEpisodeFromName(value: String): Pair<Int, Int>? {
         val normalized = value.lowercase(Locale.US)
-        val patterns = listOf(
-            Regex("""\bs(\d{1,2})\s*[\.\-_ ]*\s*e(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""\b(\d{1,2})x(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""\bseason\s*(\d{1,2}).*episode\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""\bseason\s*(\d{1,2}).*ep(?:isode)?\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""\b(\d{1,2})\.(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""\b(\d)(\d{2})\b""", RegexOption.IGNORE_CASE)
-        )
-        patterns.forEach { regex ->
+        SEASON_EPISODE_PATTERNS.forEach { regex ->
             val match = regex.find(normalized) ?: return@forEach
             val season = match.groupValues.getOrNull(1)?.toIntOrNull() ?: return@forEach
             val episode = match.groupValues.getOrNull(2)?.toIntOrNull() ?: return@forEach
@@ -3282,14 +3262,7 @@ class IptvRepository @Inject constructor(
 
     private fun extractEpisodeOnlyFromName(value: String): Int? {
         val normalized = value.lowercase(Locale.US)
-        val patterns = listOf(
-            Regex("""\bepisode\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""\bep\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""\be(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""\bpart\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
-            Regex("""[\[\(\- ](\d{1,3})[\]\) ]?$""", RegexOption.IGNORE_CASE)
-        )
-        patterns.forEach { regex ->
+        EPISODE_ONLY_PATTERNS.forEach { regex ->
             val match = regex.find(normalized) ?: return@forEach
             val episode = match.groupValues.getOrNull(1)?.toIntOrNull() ?: return@forEach
             if (episode > 0) return episode
@@ -3473,7 +3446,7 @@ class IptvRepository @Inject constructor(
         val categories: List<XtreamLiveCategory> =
             requestJson(
                 categoriesUrl,
-                object : TypeToken<List<XtreamLiveCategory>>() {}.type,
+                TypeToken.getParameterized(List::class.java, XtreamLiveCategory::class.java).type,
                 client = iptvCatalogHttpClient
             ) ?: emptyList()
         val categoryMap = categories
@@ -3483,7 +3456,7 @@ class IptvRepository @Inject constructor(
         val streams: List<XtreamLiveStream> =
             requestJson(
                 streamsUrl,
-                object : TypeToken<List<XtreamLiveStream>>() {}.type,
+                TypeToken.getParameterized(List::class.java, XtreamLiveStream::class.java).type,
                 client = iptvCatalogHttpClient
             ) ?: emptyList()
         if (streams.isEmpty()) return emptyList()
@@ -3584,11 +3557,11 @@ class IptvRepository @Inject constructor(
                 val rawPreview = response.peekBody(512).string().replace('\n', ' ').trim()
                 // Strip HTML tags and CSS to produce a clean error message
                 val cleanPreview = rawPreview
-                    .replace(Regex("<style[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE), "")
-                    .replace(Regex("<script[^>]*>[\\s\\S]*?</script>", RegexOption.IGNORE_CASE), "")
-                    .replace(Regex("<[^>]+>"), " ")
-                    .replace(Regex("\\{[^}]*\\}"), "")
-                    .replace(Regex("\\s+"), " ")
+                    .replace(HTML_STYLE_REGEX, "")
+                    .replace(HTML_SCRIPT_REGEX, "")
+                    .replace(HTML_TAG_REGEX, " ")
+                    .replace(CSS_BRACE_REGEX, "")
+                    .replace(MULTI_SPACE_REGEX, " ")
                     .trim()
                     .take(150)
                 val detail = when {
@@ -4536,7 +4509,7 @@ class IptvRepository @Inject constructor(
     private fun normalizeChannelKey(value: String): String = value.trim().lowercase(Locale.US)
 
     private fun normalizeLooseKey(value: String): String {
-        return normalizeChannelKey(value).replace(Regex("[^a-z0-9]"), "")
+        return normalizeChannelKey(value).replace(NON_ALPHA_NUM_REGEX_INLINE, "")
     }
 
     private fun buildChannelKeyLookup(channels: List<IptvChannel>): Map<String, IptvChannel> {
@@ -4589,8 +4562,8 @@ class IptvRepository @Inject constructor(
     private fun stripQualitySuffixes(value: String): String {
         return value
             .lowercase(Locale.US)
-            .replace(Regex("\\b(hd|fhd|uhd|sd|4k|hevc|x265|x264|h264|h265)\\b"), "")
-            .replace(Regex("\\s+"), " ")
+            .replace(QUALITY_SUFFIX_REGEX, "")
+            .replace(MULTI_SPACE_REGEX, " ")
             .trim()
     }
 
@@ -4898,6 +4871,44 @@ class IptvRepository @Inject constructor(
         const val CONFIG_KEY_ALIAS = "arvio_iptv_config_v1"
         const val MAX_IPTV_CACHE_BYTES = 25L * 1024L * 1024L
 
+        val BRACKET_CONTENT_REGEX = Regex("""\[[^\]]*]""")
+        val PAREN_CONTENT_REGEX = Regex("""\([^\)]*\)""")
+        val YEAR_PAREN_REGEX = Regex("""\((19|20)\d{2}\)""")
+        val SEASON_TOKEN_REGEX = Regex("""\b(s|season)\s*\d{1,2}\b""", RegexOption.IGNORE_CASE)
+        val EPISODE_TOKEN_REGEX = Regex("""\b(e|ep|episode)\s*\d{1,3}\b""", RegexOption.IGNORE_CASE)
+        val RELEASE_TAG_REGEX = Regex(
+            """\b(2160p|1080p|720p|480p|4k|uhd|fhd|hdr|dv|dovi|hevc|x265|x264|h264|remux|bluray|bdrip|webrip|web[- ]?dl|proper|repack|multi|dubbed|dual[- ]?audio)\b""",
+            RegexOption.IGNORE_CASE
+        )
+        val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
+        val MULTI_SPACE_REGEX = Regex("\\s+")
+        val SEASON_KEY_REGEX = Regex("""\d{1,2}""")
+        val FLEXIBLE_INT_REGEX = Regex("""\d{1,4}""")
+        val IMDB_ID_REGEX = Regex("tt\\d{5,10}")
+        val TMDB_ID_REGEX = Regex("\\d{1,10}")
+        val YEAR_REGEX = Regex("(19|20)\\d{2}")
+        val SEASON_EPISODE_PATTERNS = listOf(
+            Regex("""\bs(\d{1,2})\s*[\.\-_ ]*\s*e(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d{1,2})x(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""\bseason\s*(\d{1,2}).*episode\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""\bseason\s*(\d{1,2}).*ep(?:isode)?\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d{1,2})\.(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d)(\d{2})\b""", RegexOption.IGNORE_CASE)
+        )
+        val EPISODE_ONLY_PATTERNS = listOf(
+            Regex("""\bepisode\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""\bep\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""\be(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""\bpart\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+            Regex("""[\[\(\- ](\d{1,3})[\]\) ]?$""", RegexOption.IGNORE_CASE)
+        )
+        val HTML_STYLE_REGEX = Regex("<style[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE)
+        val HTML_SCRIPT_REGEX = Regex("<script[^>]*>[\\s\\S]*?</script>", RegexOption.IGNORE_CASE)
+        val HTML_TAG_REGEX = Regex("<[^>]+>")
+        val CSS_BRACE_REGEX = Regex("\\{[^}]*\\}")
+        val NON_ALPHA_NUM_REGEX_INLINE = Regex("[^a-z0-9]")
+        val QUALITY_SUFFIX_REGEX = Regex("\\b(hd|fhd|uhd|sd|4k|hevc|x265|x264|h264|h265)\\b")
+
         val XMLTV_LOCAL_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
 
         val XMLTV_OFFSET_FORMATTER: DateTimeFormatter = DateTimeFormatterBuilder()
@@ -4907,5 +4918,6 @@ class IptvRepository @Inject constructor(
             .appendPattern("XX")
             .optionalEnd()
             .toFormatter(Locale.US)
+
     }
 }

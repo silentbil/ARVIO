@@ -41,10 +41,7 @@ class ApiProxyInterceptor : Interceptor {
 
         // Extract the path and remove /3 prefix (proxy adds it)
         // e.g., /3/trending/movie/day -> /trending/movie/day
-        var path = originalUrl.encodedPath
-        if (path.startsWith("/3/")) {
-            path = path.removePrefix("/3")
-        }
+        val path = originalUrl.encodedPath.let { if (it.startsWith("/3/")) it.removePrefix("/3") else it }
 
         // Build proxy URL with path parameter
         val proxyUrlBuilder = Constants.TMDB_PROXY_URL.toHttpUrl().newBuilder()
@@ -54,8 +51,7 @@ class ApiProxyInterceptor : Interceptor {
         for (i in 0 until originalUrl.querySize) {
             val name = originalUrl.queryParameterName(i)
             if (name != "api_key") {
-                val value = originalUrl.queryParameterValue(i)
-                if (value != null) {
+                originalUrl.queryParameterValue(i)?.let { value ->
                     proxyUrlBuilder.addQueryParameter(name, value)
                 }
             }
@@ -82,8 +78,7 @@ class ApiProxyInterceptor : Interceptor {
         // Forward all original query parameters
         for (i in 0 until originalUrl.querySize) {
             val name = originalUrl.queryParameterName(i)
-            val value = originalUrl.queryParameterValue(i)
-            if (value != null) {
+            originalUrl.queryParameterValue(i)?.let { value ->
                 proxyUrlBuilder.addQueryParameter(name, value)
             }
         }
@@ -98,7 +93,7 @@ class ApiProxyInterceptor : Interceptor {
             .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
 
         // Forward user token in custom header
-        if (userToken != null && userToken.isNotEmpty()) {
+        if (!userToken.isNullOrEmpty()) {
             requestBuilder.header("x-user-token", userToken)
         }
 

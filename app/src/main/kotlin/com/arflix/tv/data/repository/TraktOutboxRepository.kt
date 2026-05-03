@@ -64,7 +64,7 @@ class TraktOutboxRepository @Inject constructor(
         if (ids.isEmpty()) return
         context.traktOutboxDataStore.edit { prefs ->
             val current = decode(prefs[outboxKey()])
-            val updated = current.filterNot { ids.contains(it.id) }
+            val updated = current.filterNot { it.id in ids }
             prefs[outboxKey()] = gson.toJson(updated)
         }
     }
@@ -74,7 +74,7 @@ class TraktOutboxRepository @Inject constructor(
         context.traktOutboxDataStore.edit { prefs ->
             val current = decode(prefs[outboxKey()])
             val updated = current.map { item ->
-                if (ids.contains(item.id)) item.copy(attempts = item.attempts + 1) else item
+                if (item.id in ids) item.copy(attempts = item.attempts + 1) else item
             }
             prefs[outboxKey()] = gson.toJson(updated)
         }

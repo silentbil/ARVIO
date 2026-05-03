@@ -257,7 +257,7 @@ class StreamRepository @Inject constructor(
         val raw = prefs[hiddenBuiltInAddonsKey()].orEmpty()
         if (raw.isBlank()) return emptySet()
         return runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
+            val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             val items: List<String> = gson.fromJson(raw, type) ?: emptyList()
             items.map { it.trim() }.filter { it.isNotBlank() }.toSet()
         }.getOrDefault(emptySet())

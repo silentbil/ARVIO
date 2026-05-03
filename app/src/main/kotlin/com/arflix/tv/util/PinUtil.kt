@@ -1,8 +1,8 @@
 package com.arflix.tv.util
 
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Base64
-import kotlin.random.Random
 
 /**
  * PIN validation and hashing utility for profile locking (4-5 digits)
@@ -28,10 +28,8 @@ object PinUtil {
     fun hashPin(pin: String): String {
         if (!isValidPin(pin)) throw IllegalArgumentException("Invalid PIN")
 
-        val salt = ByteArray(SALT_LENGTH).also { Random.nextBytes(it) }
-        val saltedPin = salt + pin.toByteArray(Charsets.UTF_8)
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(saltedPin)
+        val salt = ByteArray(SALT_LENGTH).also { SecureRandom().nextBytes(it) }
+        val hash = computeHash(salt, pin)
 
         val saltB64 = Base64.getEncoder().encodeToString(salt)
         val hashB64 = Base64.getEncoder().encodeToString(hash)
@@ -51,13 +49,17 @@ object PinUtil {
             val salt = Base64.getDecoder().decode(parts[0])
             val storedHash = Base64.getDecoder().decode(parts[1])
 
-            val saltedPin = salt + inputPin.toByteArray(Charsets.UTF_8)
-            val digest = MessageDigest.getInstance("SHA-256")
-            val inputHash = digest.digest(saltedPin)
-
+            val inputHash = computeHash(salt, inputPin)
             inputHash.contentEquals(storedHash)
-        } catch (e: Exception) {
+        } catch (e: IllegalArgumentException) {
+            // decode/format errors are intentionally treated as non-matches
             false
         }
+    }
+
+    private fun computeHash(salt: ByteArray, pin: String): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(salt)
+        return digest.digest(pin.toByteArray(Charsets.UTF_8))
     }
 }

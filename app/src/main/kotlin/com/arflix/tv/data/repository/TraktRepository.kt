@@ -1308,8 +1308,7 @@ class TraktRepository @Inject constructor(
                 System.err.println("TraktRepo:getCW: watched progress failed: ${e.message}")
             }
 
-            // 3. Hydrate with TMDB Details (Parallel)
-            // Only hydrate the top items we will actually display
+            // Filter out dismissed items
             val dismissed = loadDismissedContinueWatching()
             val filteredCandidates = if (dismissed.isNotEmpty()) {
                 val updatedDismissed = dismissed.toMutableMap()
@@ -1351,49 +1350,8 @@ class TraktRepository @Inject constructor(
                 return@coroutineScope emptyList()
             }
 
-            val hydrationTasks = topCandidates.map { candidate ->
-                async {
-                    try {
-                        val item = candidate.item
-                        if (item.mediaType == MediaType.MOVIE) {
-                            val details = tmdbApi.getMovieDetails(item.id, Constants.TMDB_API_KEY)
-                            item.copy(
-                                backdropPath = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
-                                posterPath = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" },
-                                overview = details.overview ?: "",
-                                imdbRating = String.format("%.1f", details.voteAverage),
-                                duration = details.runtime?.let { formatRuntime(it) } ?: ""
-                            )
-                        } else {
-                            val details = tmdbApi.getTvDetails(item.id, Constants.TMDB_API_KEY)
-                            // Allow items where Trakt says there's a next episode even if
-                            // TMDB hasn't updated its season count yet. Trakt's progress
-                            // API is authoritative for "what to watch next" — TMDB often
-                            // lags by hours or days when a new season premieres. Only drop
-                            // items where the season is wildly beyond TMDB's count (likely
-                            // a Trakt data error, e.g., a specials season numbered 99).
-                            val validatedItem = if (item.season != null && item.season > details.numberOfSeasons + 1) {
-                                null
-                            } else {
-                                item
-                            }
-                            validatedItem?.copy(
-                                backdropPath = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
-                                posterPath = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" },
-                                overview = details.overview ?: "",
-                                imdbRating = String.format("%.1f", details.voteAverage),
-                                duration = details.episodeRunTime?.firstOrNull()?.let { "${it}m" } ?: ""
-                            )
-                        }
-                    } catch (e: Exception) {
-                        // Keep local/cached item if TMDB hydration fails - don't lose user's continue watching entry
-                        System.err.println("TraktRepo:getCW: TMDB hydration failed for ${candidate.item.title}: ${e.message}")
-                        candidate.item
-                    }
-                }
-            }
-
-            val hydratedItems = hydrationTasks.awaitAll().filterNotNull()
+            // 3. Hydrate with TMDB Details (Parallel)
+            val hydratedItems = hydrateTopCandidates(topCandidates)
             // Ensure we never lose items due to TMDB validation failures - prioritize local status
             // If hydration returned empty despite having candidates, fall back to local data
             if (hydratedItems.isEmpty() && topCandidates.isNotEmpty()) {
@@ -1430,6 +1388,52 @@ class TraktRepository @Inject constructor(
             continueWatchingFetching = false
             continueWatchingFetchingProfileId = null
         }
+    }
+
+    private suspend fun hydrateTopCandidates(topCandidates: List<ContinueWatchingCandidate>): List<ContinueWatchingItem> = coroutineScope {
+        val hydrationTasks = topCandidates.map { candidate ->
+            async {
+                try {
+                    val item = candidate.item
+                    if (item.mediaType == MediaType.MOVIE) {
+                        val details = tmdbApi.getMovieDetails(item.id, Constants.TMDB_API_KEY)
+                        item.copy(
+                            backdropPath = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
+                            posterPath = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" },
+                            overview = details.overview ?: "",
+                            imdbRating = String.format("%.1f", details.voteAverage),
+                            duration = details.runtime?.let { formatRuntime(it) } ?: ""
+                        )
+                    } else {
+                        val details = tmdbApi.getTvDetails(item.id, Constants.TMDB_API_KEY)
+                        // Allow items where Trakt says there's a next episode even if
+                        // TMDB hasn't updated its season count yet. Trakt's progress
+                        // API is authoritative for "what to watch next" — TMDB often
+                        // lags by hours or days when a new season premieres. Only drop
+                        // items where the season is wildly beyond TMDB's count (likely
+                        // a Trakt data error, e.g., a specials season numbered 99).
+                        val validatedItem = if (item.season != null && item.season > details.numberOfSeasons + 1) {
+                            null
+                        } else {
+                            item
+                        }
+                        validatedItem?.copy(
+                            backdropPath = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
+                            posterPath = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" },
+                            overview = details.overview ?: "",
+                            imdbRating = String.format("%.1f", details.voteAverage),
+                            duration = details.episodeRunTime?.firstOrNull()?.let { "${it}m" } ?: ""
+                        )
+                    }
+                } catch (e: Exception) {
+                    // Keep local/cached item if TMDB hydration fails - don't lose user's continue watching entry
+                    System.err.println("TraktRepo:getCW: TMDB hydration failed for ${candidate.item.title}: ${e.message}")
+                    candidate.item
+                }
+            }
+        }
+
+        hydrationTasks.awaitAll().filterNotNull()
     }
 
     fun getCachedContinueWatching(): List<ContinueWatchingItem> {
@@ -1512,9 +1516,7 @@ class TraktRepository @Inject constructor(
             val cacheKey = stringPreferencesKey("profile_${profileId}_trakt_continue_watching_cache_v1")
             val json = prefs[cacheKey] ?: return
 
-            val type = com.google.gson.reflect.TypeToken
-                .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
-                .type
+            val type = TypeToken.getParameterized(MutableList::class.java, ContinueWatchingItem::class.java).type
             val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type)
             val filtered = filterDismissedContinueWatchingItems(parsed, profileId)
             preloadedProfileCache[profileId] = filtered
@@ -2115,9 +2117,7 @@ class TraktRepository @Inject constructor(
         val prefs = context.traktDataStore.data.first()
         val json = prefs[continueWatchingCacheKey()] ?: return emptyList()
         return try {
-            val type = com.google.gson.reflect.TypeToken
-                .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
-                .type
+            val type = TypeToken.getParameterized(MutableList::class.java, ContinueWatchingItem::class.java).type
             val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type)
             parsed
         } catch (_: Exception) {

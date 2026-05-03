@@ -363,39 +363,9 @@ class WatchlistRepository @Inject constructor(
         val apiKey = Constants.TMDB_API_KEY
         return try {
             if (item.mediaType == "tv") {
-                val details = tmdbApi.getTvDetails(item.tmdbId, apiKey)
-                MediaItem(
-                    id = item.tmdbId,
-                    title = details.name,
-                    subtitle = "TV Series",
-                    overview = details.overview ?: "",
-                    year = details.firstAirDate?.take(4) ?: "",
-                    releaseDate = details.firstAirDate ?: "",
-                    imdbRating = details.voteAverage?.let { String.format("%.1f", it) } ?: "",
-                    duration = details.episodeRunTime?.firstOrNull()?.let { "${it}m" } ?: "",
-                    mediaType = MediaType.TV,
-                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" } ?: "",
-                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
-                    addedAt = item.addedAt,
-                    sourceOrder = item.sourceOrder
-                )
+                enrichTvShow(item.tmdbId, apiKey, item.addedAt, item.sourceOrder)
             } else {
-                val details = tmdbApi.getMovieDetails(item.tmdbId, apiKey)
-                MediaItem(
-                    id = item.tmdbId,
-                    title = details.title,
-                    subtitle = "Movie",
-                    overview = details.overview ?: "",
-                    year = details.releaseDate?.take(4) ?: "",
-                    releaseDate = details.releaseDate ?: "",
-                    imdbRating = details.voteAverage?.let { String.format("%.1f", it) } ?: "",
-                    duration = details.runtime?.let { formatRuntime(it) } ?: "",
-                    mediaType = MediaType.MOVIE,
-                    image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" } ?: "",
-                    backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
-                    addedAt = item.addedAt,
-                    sourceOrder = item.sourceOrder
-                )
+                enrichMovie(item.tmdbId, apiKey, item.addedAt, item.sourceOrder)
             }
         } catch (_: Exception) {
             // Fallback to basic item from stored data
@@ -412,6 +382,44 @@ class WatchlistRepository @Inject constructor(
                 sourceOrder = item.sourceOrder
             )
         }
+    }
+
+    private suspend fun enrichTvShow(tmdbId: Int, apiKey: String, addedAt: Long, sourceOrder: Int): MediaItem {
+        val details = tmdbApi.getTvDetails(tmdbId, apiKey)
+        return MediaItem(
+            id = tmdbId,
+            title = details.name,
+            subtitle = "TV Series",
+            overview = details.overview ?: "",
+            year = details.firstAirDate?.take(4) ?: "",
+            releaseDate = details.firstAirDate ?: "",
+            imdbRating = details.voteAverage?.let { String.format("%.1f", it) } ?: "",
+            duration = details.episodeRunTime?.firstOrNull()?.let { "${it}m" } ?: "",
+            mediaType = MediaType.TV,
+            image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" } ?: "",
+            backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
+            addedAt = addedAt,
+            sourceOrder = sourceOrder
+        )
+    }
+
+    private suspend fun enrichMovie(tmdbId: Int, apiKey: String, addedAt: Long, sourceOrder: Int): MediaItem {
+        val details = tmdbApi.getMovieDetails(tmdbId, apiKey)
+        return MediaItem(
+            id = tmdbId,
+            title = details.title,
+            subtitle = "Movie",
+            overview = details.overview ?: "",
+            year = details.releaseDate?.take(4) ?: "",
+            releaseDate = details.releaseDate ?: "",
+            imdbRating = details.voteAverage?.let { String.format("%.1f", it) } ?: "",
+            duration = details.runtime?.let { formatRuntime(it) } ?: "",
+            mediaType = MediaType.MOVIE,
+            image = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" } ?: "",
+            backdrop = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
+            addedAt = addedAt,
+            sourceOrder = sourceOrder
+        )
     }
 
     private fun formatRuntime(runtime: Int): String {
