@@ -127,6 +127,7 @@ class PlayerViewModel @Inject constructor(
     private var lastWatchHistorySaveTime: Long = 0
     private var lastIsPlaying: Boolean = false
     private var hasMarkedWatched: Boolean = false
+    private var hasManualSubtitleSelection: Boolean = false
 
     // Skip intro
     private var skipIntervals: List<SkipInterval> = emptyList()
@@ -189,10 +190,12 @@ class PlayerViewModel @Inject constructor(
         lastScrobbleTime = 0
         lastWatchHistorySaveTime = 0
         subtitleRefreshJob?.cancel()
+        subtitleSelectionJob?.cancel()
         vodAppendJob?.cancel()
         streamPrewarmJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
         streamSelectionJob?.cancel()
+        hasManualSubtitleSelection = false
         lastTopPrewarmKey = ""
         skipIntervalsJob?.cancel()
         currentImdbId = providedImdbId
@@ -811,6 +814,12 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun scheduleSubtitleSelection(fallbackLanguage: String?) {
+        if (hasManualSubtitleSelection) {
+            if (BuildConfig.DEBUG) {
+                Log.d("SubSel", "scheduleSubtitleSelection: skipped - manual selection is locked")
+            }
+            return
+        }
         val currentSel = _uiState.value.selectedSubtitle
         if (BuildConfig.DEBUG) {
             Log.d("SubSel", "scheduleSubtitleSelection: currentSel=${currentSel?.label}|embedded=${currentSel?.isEmbedded}")
@@ -834,6 +843,12 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun applyPreferredSubtitle(preference: String, subtitles: List<Subtitle>, fallbackLanguage: String?) {
+        if (hasManualSubtitleSelection) {
+            if (BuildConfig.DEBUG) {
+                Log.d("SubSel", "applyPreferredSubtitle: skipped - manual selection is locked")
+            }
+            return
+        }
         if (isSubtitleDisabledPreference(preference)) {
             _uiState.value = _uiState.value.copy(selectedSubtitle = null)
             return
@@ -1623,6 +1638,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun selectSubtitle(subtitle: Subtitle) {
+        hasManualSubtitleSelection = true
+        subtitleSelectionJob?.cancel()
         _uiState.value = _uiState.value.copy(
             selectedSubtitle = subtitle,
             subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
@@ -1631,6 +1648,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun disableSubtitles() {
+        hasManualSubtitleSelection = true
+        subtitleSelectionJob?.cancel()
         _uiState.value = _uiState.value.copy(
             selectedSubtitle = null,
             subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
