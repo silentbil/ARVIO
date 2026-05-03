@@ -1859,397 +1859,553 @@ private fun DetailsContent(
             }
         }
 
-        // Scrollable content area at the bottom
-        val contentScrollState = rememberTvLazyListState()
+        DetailsTvRows(
+            modifier = Modifier.align(Alignment.BottomStart),
+            item = item,
+            episodes = episodes,
+            totalSeasons = totalSeasons,
+            currentSeason = currentSeason,
+            cast = cast,
+            reviews = reviews,
+            similar = similar,
+            similarLogoUrls = similarLogoUrls,
+            focusedSection = focusedSection,
+            focusSectionForUi = focusSectionForUi,
+            episodeIndex = episodeIndex,
+            seasonIndex = seasonIndex,
+            castIndex = castIndex,
+            reviewIndex = reviewIndex,
+            similarIndex = similarIndex,
+            seasonProgress = seasonProgress,
+            usePosterCards = usePosterCards,
+            spoilerBlurEnabled = spoilerBlurEnabled,
+            contentRowHeight = contentRowHeight,
+            contentRowBottomPadding = contentRowBottomPadding,
+            configuration = configuration,
+            contentHasFocus = contentHasFocus,
+            onSeasonClick = onSeasonClick,
+            onEpisodeClick = onEpisodeClick,
+            onCastClick = onCastClick,
+            onSimilarClick = onSimilarClick
+        )
+    }
+}
 
-        // Calculate section indices dynamically
-        val isTV = item.mediaType == MediaType.TV
-        val hasEpisodes = isTV && episodes.isNotEmpty()
-        val hasSeasons = isTV && totalSeasons > 1
-        val hasCast = cast.isNotEmpty()
-        val hasReviews = reviews.isNotEmpty()
-        val hasSimilar = similar.isNotEmpty()
+@Composable
+private fun DetailsTvRows(
+    modifier: Modifier,
+    item: MediaItem,
+    episodes: List<Episode>,
+    totalSeasons: Int,
+    currentSeason: Int,
+    cast: List<CastMember>,
+    reviews: List<Review>,
+    similar: List<MediaItem>,
+    similarLogoUrls: Map<String, String>,
+    focusedSection: FocusSection,
+    focusSectionForUi: FocusSection?,
+    episodeIndex: Int,
+    seasonIndex: Int,
+    castIndex: Int,
+    reviewIndex: Int,
+    similarIndex: Int,
+    seasonProgress: Map<Int, Pair<Int, Int>>,
+    usePosterCards: Boolean,
+    spoilerBlurEnabled: Boolean,
+    contentRowHeight: Dp,
+    contentRowBottomPadding: Dp,
+    configuration: android.content.res.Configuration,
+    contentHasFocus: Boolean,
+    onSeasonClick: (Int) -> Unit,
+    onEpisodeClick: (Int) -> Unit,
+    onCastClick: (Int) -> Unit,
+    onSimilarClick: (Int) -> Unit
+) {
+    val contentScrollState = rememberTvLazyListState()
+    val isTV = item.mediaType == MediaType.TV
+    val hasEpisodes = isTV && episodes.isNotEmpty()
+    val hasSeasons = isTV && totalSeasons > 1
+    val hasCast = cast.isNotEmpty()
+    val hasReviews = reviews.isNotEmpty()
+    val hasSimilar = similar.isNotEmpty()
 
-        // Build index map for each section (accounting for spacer items)
-        var idx = 0
-        val seasonsIdx = if (hasSeasons) idx.also { idx++ } else -1
-        // Episodes follows seasons directly (no spacer)
-        val episodesIdx = if (hasEpisodes) idx.also { idx++ } else -1
-        // Cast has a spacer before it
-        if (hasCast) idx++  // spacer
-        val castIdx = if (hasCast) idx.also { idx++ } else -1
-        // Reviews has a spacer before it
-        if (hasReviews) idx++  // spacer
-        val reviewsIdx = if (hasReviews) idx.also { idx++ } else -1
-        // Similar has a spacer before it
-        if (hasSimilar) idx++  // spacer
-        val similarIdx = if (hasSimilar) idx.also { idx++ } else -1
-        LaunchedEffect(item.mediaType, item.id, currentSeason, hasEpisodes, hasSeasons) {
-            contentScrollState.scrollToItem(0, 0)
+    var idx = 0
+    val seasonsIdx = if (hasSeasons) idx.also { idx++ } else -1
+    val episodesIdx = if (hasEpisodes) idx.also { idx++ } else -1
+    if (hasCast) idx++
+    val castIdx = if (hasCast) idx.also { idx++ } else -1
+    if (hasReviews) idx++
+    val reviewsIdx = if (hasReviews) idx.also { idx++ } else -1
+    if (hasSimilar) idx++
+    val similarIdx = if (hasSimilar) idx.also { idx++ } else -1
+
+    LaunchedEffect(item.mediaType, item.id, currentSeason, hasEpisodes, hasSeasons) {
+        contentScrollState.scrollToItem(0, 0)
+    }
+
+    LaunchedEffect(focusedSection, contentHasFocus) {
+        if (!contentHasFocus) return@LaunchedEffect
+
+        val targetIndex = when (focusedSection) {
+            FocusSection.BUTTONS, FocusSection.EPISODES, FocusSection.SEASONS -> 0
+            FocusSection.CAST -> castIdx
+            FocusSection.REVIEWS -> reviewsIdx
+            FocusSection.SIMILAR -> similarIdx
         }
-        // Smart vertical section scroll:
-        // keep top cluster (buttons/episodes/seasons) stable and only scroll when moving to lower sections.
-        LaunchedEffect(focusedSection, contentHasFocus) {
-            if (!contentHasFocus) return@LaunchedEffect
+        if (targetIndex < 0) return@LaunchedEffect
 
-            val targetIndex = when (focusedSection) {
-                FocusSection.BUTTONS, FocusSection.EPISODES, FocusSection.SEASONS -> 0
-                FocusSection.CAST -> castIdx
-                FocusSection.REVIEWS -> reviewsIdx
-                FocusSection.SIMILAR -> similarIdx
-            }
-
-            if (targetIndex < 0) return@LaunchedEffect
-
-            val firstVisible = contentScrollState.firstVisibleItemIndex
-            val topClusterMaxIndex = maxOf(episodesIdx, seasonsIdx, 0)
-
-            // Avoid jitter while moving inside the top area.
-            if (focusSectionForUi == FocusSection.BUTTONS ||
-                focusSectionForUi == FocusSection.EPISODES ||
-                focusSectionForUi == FocusSection.SEASONS
-            ) {
-                if (firstVisible > topClusterMaxIndex || contentScrollState.firstVisibleItemScrollOffset != 0) {
-                    contentScrollState.scrollToItem(0, 0)
-                }
-                return@LaunchedEffect
-            }
-
-            if (firstVisible != targetIndex) {
-                contentScrollState.animateScrollToItem(targetIndex)
-            }
-        }
-
-        // Content padding for consistent alignment (12dp to match play button at 68dp total)
-        val contentStartPadding = 12.dp
-        val contentOuterStartPadding = 24.dp
-
-        TvLazyColumn(
-            state = contentScrollState,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .height(contentRowHeight)
-                .padding(start = 24.dp, bottom = contentRowBottomPadding)
-                .arvioManualBringIntoViewBoundary()
-                .arvioDpadFocusGroup(enableFocusRestorer = false)
-                .clipToBounds(),  // Clip content to prevent overlay on hero
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            contentPadding = PaddingValues(top = 6.dp)
+        val firstVisible = contentScrollState.firstVisibleItemIndex
+        val topClusterMaxIndex = maxOf(episodesIdx, seasonsIdx, 0)
+        if (
+            focusSectionForUi == FocusSection.BUTTONS ||
+            focusSectionForUi == FocusSection.EPISODES ||
+            focusSectionForUi == FocusSection.SEASONS
         ) {
-            // TV rows: Seasons first, then Episodes
-            if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
-                // Season buttons row
-                if (totalSeasons > 1) {
-                    item {
-                        val seasonRowState = rememberTvLazyListState()
-                        val seasonItems = remember(totalSeasons) { (1..totalSeasons).toList() }
-                        HomeStyleRowAutoScroll(
-                            rowState = seasonRowState,
-                            isCurrentRow = focusSectionForUi == FocusSection.SEASONS,
-                            focusedItemIndex = seasonIndex,
-                            totalItems = totalSeasons,
-                            itemWidth = 128.dp,
-                            itemSpacing = 8.dp
-                        )
+            if (firstVisible > topClusterMaxIndex || contentScrollState.firstVisibleItemScrollOffset != 0) {
+                contentScrollState.scrollToItem(0, 0)
+            }
+            return@LaunchedEffect
+        }
 
-                        val seasonFocusIndex by remember(focusSectionForUi, seasonIndex) {
-                            derivedStateOf {
-                                if (focusSectionForUi == FocusSection.SEASONS) seasonIndex else -1
-                            }
-                        }
+        if (firstVisible != targetIndex) {
+            contentScrollState.scrollToItem(targetIndex)
+        }
+    }
 
-                        TvLazyRow(
-                            state = seasonRowState,
-                            modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
-                            contentPadding = PaddingValues(
-                                start = contentStartPadding,
-                                end = lockedDetailsRailEndPadding(
-                                    itemWidth = 128.dp,
-                                    startPadding = contentStartPadding,
-                                    outerStartPadding = contentOuterStartPadding,
-                                    minimum = 150.dp
-                                ),
-                                top = 6.dp,
-                                bottom = 6.dp,
-                            ),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            itemsIndexed(seasonItems, key = { _, s -> s }) { index, season ->
-                                val progress = seasonProgress[season]
-                                val currentSeasonProgress = if (season == currentSeason && episodes.isNotEmpty()) {
-                                    Pair(episodes.count { it.isWatched }, episodes.size)
-                                } else null
-                                SeasonButton(
-                                    season = season,
-                                    isSelected = season == currentSeason,
-                                    isFocused = focusSectionForUi == FocusSection.SEASONS && index == seasonFocusIndex,
-                                    watchedCount = currentSeasonProgress?.first ?: progress?.first ?: 0,
-                                    totalCount = currentSeasonProgress?.second ?: progress?.second ?: 0,
-                                    onClick = { onSeasonClick(index) }
-                                )
-                            }
-                        }
-                    }
-                }
+    val contentStartPadding = 12.dp
+    val contentOuterStartPadding = 24.dp
 
+    TvLazyColumn(
+        state = contentScrollState,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(contentRowHeight)
+            .padding(start = 24.dp, bottom = contentRowBottomPadding)
+            .arvioManualBringIntoViewBoundary()
+            .arvioDpadFocusGroup(enableFocusRestorer = false)
+            .clipToBounds(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        contentPadding = PaddingValues(top = 6.dp)
+    ) {
+        if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
+            if (totalSeasons > 1) {
                 item {
-                    val episodeCardWidth = if (configuration.screenWidthDp < 1400) 292.dp else 300.dp
-                    val episodeRowState = rememberTvLazyListState()
-                    val episodeFixedFocus = focusSectionForUi == FocusSection.EPISODES &&
-                        detailsRailUsesFixedFirstSlotFocus(
-                            totalItems = episodes.size,
-                            focusedItemIndex = episodeIndex
-                        )
-                    HomeStyleRowAutoScroll(
-                        rowState = episodeRowState,
-                        isCurrentRow = focusSectionForUi == FocusSection.EPISODES,
-                        focusedItemIndex = episodeIndex,
-                        totalItems = episodes.size,
-                        itemWidth = episodeCardWidth,
-                        itemSpacing = 16.dp
+                    DetailsSeasonRail(
+                        totalSeasons = totalSeasons,
+                        currentSeason = currentSeason,
+                        episodes = episodes,
+                        seasonProgress = seasonProgress,
+                        focusSectionForUi = focusSectionForUi,
+                        seasonIndex = seasonIndex,
+                        contentStartPadding = contentStartPadding,
+                        contentOuterStartPadding = contentOuterStartPadding,
+                        onSeasonClick = onSeasonClick
                     )
-
-                    val currentFocusedSection by rememberUpdatedState(focusSectionForUi)
-                    val currentEpisodeIndex by rememberUpdatedState(episodeIndex)
-
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        TvLazyRow(
-                            state = episodeRowState,
-                            modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
-                            contentPadding = PaddingValues(
-                                start = contentStartPadding,
-                                end = lockedDetailsRailEndPadding(
-                                    itemWidth = episodeCardWidth,
-                                    startPadding = contentStartPadding,
-                                    outerStartPadding = contentOuterStartPadding,
-                                    minimum = 520.dp
-                                ),
-                                top = 6.dp,
-                                bottom = 6.dp,
-                            ),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            itemsIndexed(
-                                episodes,
-                                key = { index, ep -> "${ep.seasonNumber}_${ep.episodeNumber}_$index" }
-                            ) { index, episode ->
-                                val isFocused = currentFocusedSection == FocusSection.EPISODES && index == currentEpisodeIndex
-                                EpisodeCard(
-                                    episode = episode,
-                                    cardWidth = episodeCardWidth,
-                                    isFocused = isFocused && !episodeFixedFocus,
-                                    spoilerBlurEnabled = spoilerBlurEnabled,
-                                    onClick = { onEpisodeClick(index) }
-                                )
-                            }
-                        }
-                        if (episodeFixedFocus) {
-                            FixedDetailsRailFocusOverlay(
-                                startPadding = contentStartPadding,
-                                topPadding = 6.dp,
-                                width = episodeCardWidth,
-                                aspectRatio = 16f / 9f
-                            )
-                        }
-                    }
                 }
             }
 
-            // Cast section
-            if (cast.isNotEmpty()) {
-                item {
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
-                item {
-                    val castRowState = rememberTvLazyListState()
-                    HomeStyleRowAutoScroll(
-                        rowState = castRowState,
-                        isCurrentRow = focusSectionForUi == FocusSection.CAST,
-                        focusedItemIndex = castIndex,
-                        totalItems = cast.size,
-                        itemWidth = 90.dp,
-                        itemSpacing = 16.dp
-                    )
-
-                    Column {
-                        Text(
-                            text = stringResource(R.string.cast),
-                            style = ArvioSkin.typography.sectionTitle.copy(
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.padding(start = contentStartPadding, bottom = 10.dp)
-                        )
-
-                        TvLazyRow(
-                            state = castRowState,
-                            modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
-                            contentPadding = PaddingValues(
-                                start = contentStartPadding,
-                                end = lockedDetailsRailEndPadding(
-                                    itemWidth = 90.dp,
-                                    startPadding = contentStartPadding,
-                                    outerStartPadding = contentOuterStartPadding,
-                                    minimum = 120.dp
-                                ),
-                                top = 10.dp,
-                                bottom = 10.dp,
-                            ),  // 90dp card + focus margin
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            itemsIndexed(
-                                cast,
-                                key = { index, c -> "${c.id}_${c.character}_$index" }
-                            ) { index, castMember ->
-                            CircularCastCard(
-                                    castMember = castMember,
-                                    isFocused = focusSectionForUi == FocusSection.CAST && index == castIndex,
-                                    onClick = { onCastClick(index) }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Reviews section - larger gap from cast
-            if (reviews.isNotEmpty()) {
-                item {
-                    Spacer(modifier = Modifier.height(64.dp))
-                }
-                item {
-                    val reviewRowState = rememberTvLazyListState()
-                    HomeStyleRowAutoScroll(
-                        rowState = reviewRowState,
-                        isCurrentRow = focusSectionForUi == FocusSection.REVIEWS,
-                        focusedItemIndex = reviewIndex,
-                        totalItems = reviews.size,
-                        itemWidth = 320.dp,
-                        itemSpacing = 16.dp
-                    )
-
-                    Column {
-                        Text(
-                            text = stringResource(R.string.reviews),
-                            style = ArvioSkin.typography.sectionTitle.copy(
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.padding(start = contentStartPadding, bottom = 10.dp)
-                        )
-
-                        TvLazyRow(
-                            state = reviewRowState,
-                            modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
-                            contentPadding = PaddingValues(
-                                start = contentStartPadding,
-                                end = lockedDetailsRailEndPadding(
-                                    itemWidth = 320.dp,
-                                    startPadding = contentStartPadding,
-                                    outerStartPadding = contentOuterStartPadding,
-                                    minimum = 350.dp
-                                ),
-                                top = 14.dp,
-                                bottom = 14.dp,
-                            ),  // 320dp card + focus margin
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            itemsIndexed(
-                                reviews,
-                                key = { index, r -> "${r.id}_$index" }
-                            ) { index, review ->
-                                ReviewCard(
-                                    review = review,
-                                    isFocused = focusSectionForUi == FocusSection.REVIEWS && index == reviewIndex
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // More Like This section - large gap to hide reviews when scrolled
-            if (similar.isNotEmpty()) {
-                item {
-                    Spacer(modifier = Modifier.height(80.dp))
-                }
-                item {
-                    val similarRowState = rememberTvLazyListState()
-                    val similarCardWidth = if (usePosterCards) 126.dp else 210.dp
-                    val similarFixedFocus = focusSectionForUi == FocusSection.SIMILAR &&
-                        detailsRailUsesFixedFirstSlotFocus(
-                            totalItems = similar.size,
-                            focusedItemIndex = similarIndex
-                        )
-                    HomeStyleRowAutoScroll(
-                        rowState = similarRowState,
-                        isCurrentRow = focusSectionForUi == FocusSection.SIMILAR,
-                        focusedItemIndex = similarIndex,
-                        totalItems = similar.size,
-                        itemWidth = similarCardWidth,
-                        itemSpacing = 14.dp
-                    )
-
-                    Column {
-                        Text(
-                            text = stringResource(R.string.more_like_this),
-                            style = ArvioSkin.typography.sectionTitle.copy(
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.padding(start = contentStartPadding, bottom = 10.dp)
-                        )
-
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            TvLazyRow(
-                                state = similarRowState,
-                                modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
-                                contentPadding = PaddingValues(
-                                    start = contentStartPadding,
-                                    end = lockedDetailsRailEndPadding(
-                                        itemWidth = similarCardWidth,
-                                        startPadding = contentStartPadding,
-                                        outerStartPadding = contentOuterStartPadding,
-                                        minimum = if (usePosterCards) 140.dp else 210.dp
-                                    ),
-                                    top = 14.dp,
-                                    bottom = 14.dp,
-                                ),
-                                horizontalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                itemsIndexed(
-                                    similar,
-                                    key = { index, m -> "${m.mediaType.name}_${m.id}_$index" }
-                                ) { index, mediaItem ->
-                                    SimilarMediaCard(
-                                        item = mediaItem,
-                                        logoImageUrl = similarLogoUrls["${mediaItem.mediaType}_${mediaItem.id}"],
-                                        usePosterCards = usePosterCards,
-                                        isFocused = focusSectionForUi == FocusSection.SIMILAR && index == similarIndex && !similarFixedFocus,
-                                        onClick = { onSimilarClick(index) }
-                                    )
-                                }
-                            }
-                            if (similarFixedFocus) {
-                                FixedDetailsRailFocusOverlay(
-                                    startPadding = contentStartPadding,
-                                    topPadding = 14.dp,
-                                    width = similarCardWidth,
-                                    aspectRatio = if (usePosterCards) 2f / 3f else 16f / 9f
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Bottom spacing
             item {
-                Spacer(modifier = Modifier.height(20.dp))
+                DetailsEpisodeRail(
+                    episodes = episodes,
+                    episodeIndex = episodeIndex,
+                    focusSectionForUi = focusSectionForUi,
+                    configuration = configuration,
+                    contentStartPadding = contentStartPadding,
+                    contentOuterStartPadding = contentOuterStartPadding,
+                    spoilerBlurEnabled = spoilerBlurEnabled,
+                    onEpisodeClick = onEpisodeClick
+                )
+            }
+        }
+
+        if (cast.isNotEmpty()) {
+            item { Spacer(modifier = Modifier.height(4.dp)) }
+            item {
+                DetailsCastRail(
+                    cast = cast,
+                    castIndex = castIndex,
+                    focusSectionForUi = focusSectionForUi,
+                    contentStartPadding = contentStartPadding,
+                    contentOuterStartPadding = contentOuterStartPadding,
+                    onCastClick = onCastClick
+                )
+            }
+        }
+
+        if (reviews.isNotEmpty()) {
+            item { Spacer(modifier = Modifier.height(64.dp)) }
+            item {
+                DetailsReviewRail(
+                    reviews = reviews,
+                    reviewIndex = reviewIndex,
+                    focusSectionForUi = focusSectionForUi,
+                    contentStartPadding = contentStartPadding,
+                    contentOuterStartPadding = contentOuterStartPadding
+                )
+            }
+        }
+
+        if (similar.isNotEmpty()) {
+            item { Spacer(modifier = Modifier.height(80.dp)) }
+            item {
+                DetailsSimilarRail(
+                    similar = similar,
+                    similarLogoUrls = similarLogoUrls,
+                    similarIndex = similarIndex,
+                    focusSectionForUi = focusSectionForUi,
+                    usePosterCards = usePosterCards,
+                    contentStartPadding = contentStartPadding,
+                    contentOuterStartPadding = contentOuterStartPadding,
+                    onSimilarClick = onSimilarClick
+                )
+            }
+        }
+
+        item { Spacer(modifier = Modifier.height(20.dp)) }
+    }
+}
+
+@Composable
+private fun DetailsSeasonRail(
+    totalSeasons: Int,
+    currentSeason: Int,
+    episodes: List<Episode>,
+    seasonProgress: Map<Int, Pair<Int, Int>>,
+    focusSectionForUi: FocusSection?,
+    seasonIndex: Int,
+    contentStartPadding: Dp,
+    contentOuterStartPadding: Dp,
+    onSeasonClick: (Int) -> Unit
+) {
+    val seasonRowState = rememberTvLazyListState()
+    val seasonItems = remember(totalSeasons) { (1..totalSeasons).toList() }
+    HomeStyleRowAutoScroll(
+        rowState = seasonRowState,
+        isCurrentRow = focusSectionForUi == FocusSection.SEASONS,
+        focusedItemIndex = seasonIndex,
+        totalItems = totalSeasons,
+        itemWidth = 128.dp,
+        itemSpacing = 8.dp
+    )
+
+    val seasonFocusIndex by remember(focusSectionForUi, seasonIndex) {
+        derivedStateOf {
+            if (focusSectionForUi == FocusSection.SEASONS) seasonIndex else -1
+        }
+    }
+
+    TvLazyRow(
+        state = seasonRowState,
+        modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
+        contentPadding = PaddingValues(
+            start = contentStartPadding,
+            end = lockedDetailsRailEndPadding(
+                itemWidth = 128.dp,
+                startPadding = contentStartPadding,
+                outerStartPadding = contentOuterStartPadding,
+                minimum = 150.dp
+            ),
+            top = 6.dp,
+            bottom = 6.dp,
+        ),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        itemsIndexed(seasonItems, key = { _, s -> s }) { index, season ->
+            val progress = seasonProgress[season]
+            val currentSeasonProgress = if (season == currentSeason && episodes.isNotEmpty()) {
+                Pair(episodes.count { it.isWatched }, episodes.size)
+            } else {
+                null
+            }
+            val onClickForSeason = remember(index, onSeasonClick) {
+                { onSeasonClick(index) }
+            }
+            SeasonButton(
+                season = season,
+                isSelected = season == currentSeason,
+                isFocused = focusSectionForUi == FocusSection.SEASONS && index == seasonFocusIndex,
+                watchedCount = currentSeasonProgress?.first ?: progress?.first ?: 0,
+                totalCount = currentSeasonProgress?.second ?: progress?.second ?: 0,
+                onClick = onClickForSeason
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailsEpisodeRail(
+    episodes: List<Episode>,
+    episodeIndex: Int,
+    focusSectionForUi: FocusSection?,
+    configuration: android.content.res.Configuration,
+    contentStartPadding: Dp,
+    contentOuterStartPadding: Dp,
+    spoilerBlurEnabled: Boolean,
+    onEpisodeClick: (Int) -> Unit
+) {
+    val episodeCardWidth = if (configuration.screenWidthDp < 1400) 292.dp else 300.dp
+    val episodeRowState = rememberTvLazyListState()
+    val episodeFixedFocus = focusSectionForUi == FocusSection.EPISODES &&
+        detailsRailUsesFixedFirstSlotFocus(
+            totalItems = episodes.size,
+            focusedItemIndex = episodeIndex
+        )
+    HomeStyleRowAutoScroll(
+        rowState = episodeRowState,
+        isCurrentRow = focusSectionForUi == FocusSection.EPISODES,
+        focusedItemIndex = episodeIndex,
+        totalItems = episodes.size,
+        itemWidth = episodeCardWidth,
+        itemSpacing = 16.dp
+    )
+
+    val currentFocusedSection by rememberUpdatedState(focusSectionForUi)
+    val currentEpisodeIndex by rememberUpdatedState(episodeIndex)
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        TvLazyRow(
+            state = episodeRowState,
+            modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
+            contentPadding = PaddingValues(
+                start = contentStartPadding,
+                end = lockedDetailsRailEndPadding(
+                    itemWidth = episodeCardWidth,
+                    startPadding = contentStartPadding,
+                    outerStartPadding = contentOuterStartPadding,
+                    minimum = 520.dp
+                ),
+                top = 6.dp,
+                bottom = 6.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            itemsIndexed(
+                episodes,
+                key = { index, ep -> "${ep.seasonNumber}_${ep.episodeNumber}_$index" }
+            ) { index, episode ->
+                val isFocused = currentFocusedSection == FocusSection.EPISODES && index == currentEpisodeIndex
+                val onClickForEpisode = remember(index, onEpisodeClick) {
+                    { onEpisodeClick(index) }
+                }
+                EpisodeCard(
+                    episode = episode,
+                    cardWidth = episodeCardWidth,
+                    isFocused = isFocused && !episodeFixedFocus,
+                    spoilerBlurEnabled = spoilerBlurEnabled,
+                    onClick = onClickForEpisode
+                )
+            }
+        }
+        if (episodeFixedFocus) {
+            FixedDetailsRailFocusOverlay(
+                startPadding = contentStartPadding,
+                topPadding = 6.dp,
+                width = episodeCardWidth,
+                aspectRatio = 16f / 9f
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailsCastRail(
+    cast: List<CastMember>,
+    castIndex: Int,
+    focusSectionForUi: FocusSection?,
+    contentStartPadding: Dp,
+    contentOuterStartPadding: Dp,
+    onCastClick: (Int) -> Unit
+) {
+    val castRowState = rememberTvLazyListState()
+    HomeStyleRowAutoScroll(
+        rowState = castRowState,
+        isCurrentRow = focusSectionForUi == FocusSection.CAST,
+        focusedItemIndex = castIndex,
+        totalItems = cast.size,
+        itemWidth = 90.dp,
+        itemSpacing = 16.dp
+    )
+
+    Column {
+        Text(
+            text = stringResource(R.string.cast),
+            style = ArvioSkin.typography.sectionTitle.copy(
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.padding(start = contentStartPadding, bottom = 10.dp)
+        )
+
+        TvLazyRow(
+            state = castRowState,
+            modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
+            contentPadding = PaddingValues(
+                start = contentStartPadding,
+                end = lockedDetailsRailEndPadding(
+                    itemWidth = 90.dp,
+                    startPadding = contentStartPadding,
+                    outerStartPadding = contentOuterStartPadding,
+                    minimum = 120.dp
+                ),
+                top = 10.dp,
+                bottom = 10.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            itemsIndexed(
+                cast,
+                key = { index, c -> "${c.id}_${c.character}_$index" }
+            ) { index, castMember ->
+                val onClickForCast = remember(index, onCastClick) {
+                    { onCastClick(index) }
+                }
+                CircularCastCard(
+                    castMember = castMember,
+                    isFocused = focusSectionForUi == FocusSection.CAST && index == castIndex,
+                    onClick = onClickForCast
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailsReviewRail(
+    reviews: List<Review>,
+    reviewIndex: Int,
+    focusSectionForUi: FocusSection?,
+    contentStartPadding: Dp,
+    contentOuterStartPadding: Dp
+) {
+    val reviewRowState = rememberTvLazyListState()
+    HomeStyleRowAutoScroll(
+        rowState = reviewRowState,
+        isCurrentRow = focusSectionForUi == FocusSection.REVIEWS,
+        focusedItemIndex = reviewIndex,
+        totalItems = reviews.size,
+        itemWidth = 320.dp,
+        itemSpacing = 16.dp
+    )
+
+    Column {
+        Text(
+            text = stringResource(R.string.reviews),
+            style = ArvioSkin.typography.sectionTitle.copy(
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.padding(start = contentStartPadding, bottom = 10.dp)
+        )
+
+        TvLazyRow(
+            state = reviewRowState,
+            modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
+            contentPadding = PaddingValues(
+                start = contentStartPadding,
+                end = lockedDetailsRailEndPadding(
+                    itemWidth = 320.dp,
+                    startPadding = contentStartPadding,
+                    outerStartPadding = contentOuterStartPadding,
+                    minimum = 350.dp
+                ),
+                top = 14.dp,
+                bottom = 14.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            itemsIndexed(
+                reviews,
+                key = { index, r -> "${r.id}_$index" }
+            ) { index, review ->
+                ReviewCard(
+                    review = review,
+                    isFocused = focusSectionForUi == FocusSection.REVIEWS && index == reviewIndex
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailsSimilarRail(
+    similar: List<MediaItem>,
+    similarLogoUrls: Map<String, String>,
+    similarIndex: Int,
+    focusSectionForUi: FocusSection?,
+    usePosterCards: Boolean,
+    contentStartPadding: Dp,
+    contentOuterStartPadding: Dp,
+    onSimilarClick: (Int) -> Unit
+) {
+    val similarRowState = rememberTvLazyListState()
+    val similarCardWidth = if (usePosterCards) 126.dp else 210.dp
+    val similarFixedFocus = focusSectionForUi == FocusSection.SIMILAR &&
+        detailsRailUsesFixedFirstSlotFocus(
+            totalItems = similar.size,
+            focusedItemIndex = similarIndex
+        )
+    HomeStyleRowAutoScroll(
+        rowState = similarRowState,
+        isCurrentRow = focusSectionForUi == FocusSection.SIMILAR,
+        focusedItemIndex = similarIndex,
+        totalItems = similar.size,
+        itemWidth = similarCardWidth,
+        itemSpacing = 14.dp
+    )
+
+    Column {
+        Text(
+            text = stringResource(R.string.more_like_this),
+            style = ArvioSkin.typography.sectionTitle.copy(
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.padding(start = contentStartPadding, bottom = 10.dp)
+        )
+
+        Box(modifier = Modifier.fillMaxWidth()) {
+            TvLazyRow(
+                state = similarRowState,
+                modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
+                contentPadding = PaddingValues(
+                    start = contentStartPadding,
+                    end = lockedDetailsRailEndPadding(
+                        itemWidth = similarCardWidth,
+                        startPadding = contentStartPadding,
+                        outerStartPadding = contentOuterStartPadding,
+                        minimum = if (usePosterCards) 140.dp else 210.dp
+                    ),
+                    top = 14.dp,
+                    bottom = 14.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                itemsIndexed(
+                    similar,
+                    key = { index, m -> "${m.mediaType.name}_${m.id}_$index" }
+                ) { index, mediaItem ->
+                    val onClickForSimilar = remember(index, onSimilarClick) {
+                        { onSimilarClick(index) }
+                    }
+                    SimilarMediaCard(
+                        item = mediaItem,
+                        logoImageUrl = similarLogoUrls["${mediaItem.mediaType}_${mediaItem.id}"],
+                        usePosterCards = usePosterCards,
+                        isFocused = focusSectionForUi == FocusSection.SIMILAR && index == similarIndex && !similarFixedFocus,
+                        onClick = onClickForSimilar
+                    )
+                }
+            }
+            if (similarFixedFocus) {
+                FixedDetailsRailFocusOverlay(
+                    startPadding = contentStartPadding,
+                    topPadding = 14.dp,
+                    width = similarCardWidth,
+                    aspectRatio = if (usePosterCards) 2f / 3f else 16f / 9f
+                )
             }
         }
     }
@@ -2400,17 +2556,7 @@ private fun HomeStyleRowAutoScroll(
         if (abs(delta) > 6) {
             rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         } else if (delta != 0 || targetOutsideViewport || lastScrollOffset != extraOffset) {
-            val deltaPx = (delta * itemSpanPx) + (extraOffset - currentOffset)
-            rowState.animateDetailsScrollDelta(
-                deltaPx = deltaPx,
-                durationMillis = if (abs(delta) >= 3) 180 else 150
-            )
-            if (
-                rowState.firstVisibleItemIndex != scrollTargetIndex ||
-                abs(rowState.firstVisibleItemScrollOffset - extraOffset) > 8
-            ) {
-                rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-            }
+            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         }
         lastScrollIndex = scrollTargetIndex
         lastScrollOffset = extraOffset

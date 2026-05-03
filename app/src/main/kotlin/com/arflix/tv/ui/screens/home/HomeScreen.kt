@@ -650,7 +650,7 @@ fun HomeScreen(
                 val now = SystemClock.elapsedRealtime()
                 val isFastScrolling = now - focusState.lastNavEventTime < fastScrollThresholdMs
                 if (isFastScrolling) {
-                    delay(190L)
+                    delay(360L)
                     if (
                         focusState.currentRowIndex != rowIndex ||
                         focusState.currentItemIndex != itemIndex ||
@@ -804,12 +804,34 @@ fun HomeScreen(
                 item.backdrop ?: item.image
             }
         }
+        var settledBackdrop by remember { mutableStateOf<String?>(null) }
+        val latestCurrentBackdrop by rememberUpdatedState(currentBackdrop)
+        LaunchedEffect(currentBackdrop, focusState.lastNavEventTime, isMobile) {
+            if (isMobile) {
+                settledBackdrop = currentBackdrop
+                return@LaunchedEffect
+            }
+            if (currentBackdrop.isNullOrBlank() || settledBackdrop == null) {
+                settledBackdrop = currentBackdrop
+                return@LaunchedEffect
+            }
+            if (currentBackdrop == settledBackdrop) return@LaunchedEffect
+
+            val elapsedSinceNav = SystemClock.elapsedRealtime() - focusState.lastNavEventTime
+            val settleDelayMs = (420L - elapsedSinceNav).coerceAtLeast(0L)
+            if (settleDelayMs > 0L) {
+                delay(settleDelayMs)
+            }
+            if (latestCurrentBackdrop == currentBackdrop) {
+                settledBackdrop = currentBackdrop
+            }
+        }
         // On mobile, the hero backdrop is rendered inline inside MobileHomeRowsLayer — skip the fixed backdrop.
         // On TV, fill the entire screen with the backdrop.
         if (!isMobile) {
             val backdropModifier = Modifier.fillMaxSize()
             Box(modifier = backdropModifier) {
-                if (!showCinematicHomeLayer || currentBackdrop == null) {
+                if (!showCinematicHomeLayer || settledBackdrop == null) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -819,9 +841,9 @@ fun HomeScreen(
                     )
                 }
 
-                if (showCinematicHomeLayer && currentBackdrop != null) {
+                if (showCinematicHomeLayer && settledBackdrop != null) {
                     HomeBackdropCrossfade(
-                        backdropUrl = currentBackdrop,
+                        backdropUrl = settledBackdrop,
                         backdropSize = backdropSize,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -2738,7 +2760,7 @@ private fun TvHomeRowsLayer(
             if (!initialPlacement && !recentUserNav) return@LaunchedEffect
 
             val jumpDistance = kotlin.math.abs(targetIndex - currentIndex)
-            if (!initialPlacement && jumpDistance <= 2) {
+        if (!initialPlacement && jumpDistance <= 2) {
                 val deltaPx = if (targetIndex > currentIndex) {
                     var dist = -currentOffset.toFloat()
                     for (i in currentIndex until targetIndex) {
@@ -2755,10 +2777,7 @@ private fun TvHomeRowsLayer(
                     -currentOffset.toFloat()
                 }
                 
-                listState.animateHomeScrollDelta(
-                    deltaPx = deltaPx,
-                    durationMillis = if (jumpDistance == 1) 150 else 180
-                )
+                listState.scrollToItem(index = targetIndex, scrollOffset = 0)
                 if (!recentUserNav && (
                     listState.firstVisibleItemIndex != targetIndex ||
                         listState.firstVisibleItemScrollOffset != 0
@@ -2820,7 +2839,7 @@ private fun TvHomeRowsLayer(
                             usePosterCards = rowUsePosterCards,
                             startPadding = contentStartPadding,
                             focusedItemIndex = if (rowIsFocused) focusState.currentItemIndex else -1,
-                            isFastScrolling = isFastScrolling,
+                            isFastScrolling = rowIsFocused && isFastScrolling,
                             useViewportFocusOverlay = rowIsFocused && homeViewportFocusOverlayActive(
                                 category = category,
                                 focusedItemIndex = focusState.currentItemIndex,
@@ -3139,6 +3158,11 @@ private fun ContentRow(
     val railFocusOverlayActive = !useViewportFocusOverlay &&
         isCurrentRow && isScrollable && focusedItemIndex >= 0 && totalItems > 0 &&
         focusedItemIndex <= maxFirstIndex
+    val focusedCardIndex = if (railFocusOverlayActive || useViewportFocusOverlay) {
+        -1
+    } else {
+        focusedItemIndex
+    }
     val railFocusShape = rememberArvioCardShape(ArvioSkin.radius.md)
     val railEndPadding = lockedHomeRailEndPadding(
         itemWidth = itemWidth,
@@ -3191,23 +3215,7 @@ private fun ContentRow(
             targetOutsideViewport ||
             offsetDelta > 1
         ) {
-            val deltaPx = ((scrollTargetIndex - currentFirstIndex) * itemSpanPx) + (extraOffset - currentFirstOffset)
-            rowState.animateHomeScrollDelta(
-                deltaPx = deltaPx,
-                durationMillis = when {
-                    isFastScrolling -> 115
-                    jumpDistance >= 3 -> 180
-                    else -> 150
-                }
-            )
-            if (
-                !isFastScrolling && (
-                    rowState.firstVisibleItemIndex != scrollTargetIndex ||
-                        kotlin.math.abs(rowState.firstVisibleItemScrollOffset - extraOffset) > 6
-                    )
-            ) {
-                rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-            }
+            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         } else {
             rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         }
@@ -3264,7 +3272,7 @@ private fun ContentRow(
                     }
                 }
             ) { index, item ->
-                val itemIsFocused = isCurrentRow && index == focusedItemIndex
+                val itemIsFocused = isCurrentRow && index == focusedCardIndex
                 if (isRanked && index < 10) {
                     // Top 10 rows should use the SAME card sizing as every other row.
                     // The previous layout used giant background numerals and a smaller

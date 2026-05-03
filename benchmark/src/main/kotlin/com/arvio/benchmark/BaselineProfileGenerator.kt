@@ -32,13 +32,38 @@ class BaselineProfileGenerator {
                 device.pressDPadCenter()
                 device.waitForIdle(1_000)
             }
-            repeat(3) {
-                device.pressDPadDown()
-                device.waitForIdle(250)
+
+            // Home: cover the hot TV rail paths. Most user-visible jank happens
+            // while moving within large rows and crossing heavy catalog sections.
+            device.pressDPadDown()
+            device.waitForIdle(500)
+            repeat(12) {
+                device.pressDPadRight()
+                device.waitForIdle(120)
             }
-            repeat(3) {
+            repeat(8) {
+                device.pressDPadLeft()
+                device.waitForIdle(120)
+            }
+            repeat(7) {
+                device.pressDPadDown()
+                device.waitForIdle(180)
+            }
+            repeat(5) {
                 device.pressDPadUp()
-                device.waitForIdle(250)
+                device.waitForIdle(180)
+            }
+
+            // Details: open the focused item and cover the lower TV/detail rows.
+            device.pressDPadCenter()
+            device.waitForIdle(2_000)
+            repeat(8) {
+                device.pressDPadDown()
+                device.waitForIdle(180)
+            }
+            repeat(6) {
+                device.pressDPadUp()
+                device.waitForIdle(180)
             }
         }
     }
