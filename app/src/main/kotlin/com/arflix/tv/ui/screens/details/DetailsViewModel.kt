@@ -181,6 +181,7 @@ class DetailsViewModel @Inject constructor(
     private var loadStreamsRequestId: Long = 0L
     private var focusedStreamPrewarmJob: kotlinx.coroutines.Job? = null
     private var streamListPrewarmJob: kotlinx.coroutines.Job? = null
+    private var lastStreamListPrewarmKey: String = ""
     /** Set to true after loadDetails() child coroutines finish populating episodes/seasons. */
     @Volatile private var initialLoadComplete = false
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
@@ -232,6 +233,9 @@ class DetailsViewModel @Inject constructor(
         currentMediaId = mediaId
         initialLoadComplete = false
         vodAppendJob?.cancel()
+        streamListPrewarmJob?.cancel()
+        focusedStreamPrewarmJob?.cancel()
+        lastStreamListPrewarmKey = ""
 
         viewModelScope.launch {
             try {
@@ -1097,16 +1101,24 @@ class DetailsViewModel @Inject constructor(
         prefetchJob = viewModelScope.launch {
             runCatching {
                 if (currentMediaType == MediaType.MOVIE) {
-                    streamRepository.resolveMovieStreams(
+                    streamRepository.resolveMovieStreamsProgressive(
                         imdbId = imdbId,
                         title = _uiState.value.item?.title.orEmpty(),
                         year = _uiState.value.item?.year?.toIntOrNull()
-                    )
+                    ).collect { progressive ->
+                        prewarmVisibleStreams(
+                            sortPlayableStreamsFirst(
+                                progressive.streams
+                                    .filter { !it.url.isNullOrBlank() && !it.url.orEmpty().startsWith("magnet:", ignoreCase = true) }
+                                    .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                            )
+                        )
+                    }
                 } else if (season != null && episode != null) {
                     val prefetchAirDate = _uiState.value.episodes
                         .firstOrNull { it.seasonNumber == season && it.episodeNumber == episode }
                         ?.airDate?.takeIf { it.isNotBlank() }
-                    streamRepository.resolveEpisodeStreams(
+                    streamRepository.resolveEpisodeStreamsProgressive(
                         imdbId = imdbId,
                         season = season,
                         episode = episode,
@@ -1116,7 +1128,15 @@ class DetailsViewModel @Inject constructor(
                         originalLanguage = _uiState.value.item?.originalLanguage,
                         title = _uiState.value.item?.title ?: "",
                         airDate = prefetchAirDate
-                    )
+                    ).collect { progressive ->
+                        prewarmVisibleStreams(
+                            sortPlayableStreamsFirst(
+                                progressive.streams
+                                    .filter { !it.url.isNullOrBlank() && !it.url.orEmpty().startsWith("magnet:", ignoreCase = true) }
+                                    .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                            )
+                        )
+                    }
                 } else {
                     null
                 }
@@ -1133,15 +1153,39 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
+    fun prewarmStreamsAround(stream: StreamSource, streams: List<StreamSource>) {
+        if (streams.isEmpty()) return
+        focusedStreamPrewarmJob?.cancel()
+        focusedStreamPrewarmJob = viewModelScope.launch {
+            val index = streams.indexOf(stream).takeIf { it >= 0 } ?: 0
+            val candidates = listOf(index, index + 1, index + 2)
+                .mapNotNull { streams.getOrNull(it) }
+                .distinctBy { "${it.addonId}:${it.source}:${it.url?.substringBefore('|')?.substringBefore('#')}" }
+            runCatching {
+                streamRepository.prewarmStreamsForPlayback(
+                    streams = candidates,
+                    limit = candidates.size,
+                    allowNetworkWarmup = true
+                )
+            }
+        }
+    }
+
     private fun prewarmVisibleStreams(streams: List<StreamSource>) {
         if (streams.isEmpty()) return
+        val topStreams = streams.take(3)
+        val prewarmKey = topStreams.joinToString("|") { stream ->
+            "${stream.addonId}:${stream.source}:${stream.url?.substringBefore('|')?.substringBefore('#')}"
+        }
+        if (prewarmKey == lastStreamListPrewarmKey) return
+        lastStreamListPrewarmKey = prewarmKey
         streamListPrewarmJob?.cancel()
         streamListPrewarmJob = viewModelScope.launch {
             runCatching {
                 streamRepository.prewarmStreamsForPlayback(
-                    streams = streams.take(3),
-                    limit = 3,
-                    allowNetworkWarmup = false
+                    streams = topStreams,
+                    limit = topStreams.size,
+                    allowNetworkWarmup = true
                 )
             }
         }

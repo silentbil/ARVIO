@@ -76,9 +76,13 @@ object OkHttpProvider {
     private val clientLock = Any()
 
     private val appConnectionPool = ConnectionPool(32, 5, TimeUnit.MINUTES)
+    private val playbackConnectionPool = ConnectionPool(16, 5, TimeUnit.MINUTES)
 
     @Volatile
     private var appClient: OkHttpClient? = null
+
+    @Volatile
+    private var playbackSharedClient: OkHttpClient? = null
 
     @Volatile
     private var appHttpCache: Cache? = null
@@ -122,7 +126,22 @@ object OkHttpProvider {
 
     val dns: Dns = object : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
-            return selectedDns(selectedDnsProvider).lookup(hostname)
+            val provider = selectedDnsProvider
+            return try {
+                selectedDns(provider).lookup(hostname)
+            } catch (selectedFailure: UnknownHostException) {
+                if (provider == AppDnsProvider.SYSTEM) {
+                    throw selectedFailure
+                }
+
+                try {
+                    val fallback = systemDns.lookup(hostname)
+                    Log.w(TAG, "DNS provider=$provider failed for $hostname, using system DNS fallback")
+                    fallback
+                } catch (_: UnknownHostException) {
+                    throw selectedFailure
+                }
+            }
         }
     }
 
@@ -147,6 +166,11 @@ object OkHttpProvider {
     val client: OkHttpClient
         get() = appClient ?: synchronized(clientLock) {
             appClient ?: buildAppClient().also { appClient = it }
+        }
+
+    val playbackClient: OkHttpClient
+        get() = playbackSharedClient ?: synchronized(clientLock) {
+            playbackSharedClient ?: buildPlaybackClient().also { playbackSharedClient = it }
         }
 
     private fun buildAppClient(): OkHttpClient {
@@ -178,6 +202,20 @@ object OkHttpProvider {
         }
 
         return builder.build()
+    }
+
+    private fun buildPlaybackClient(): OkHttpClient {
+        return OkHttpClient.Builder()
+            .connectionPool(playbackConnectionPool)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
+            .dns(dns)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .cache(null)
+            .build()
     }
 
     private fun getOrCreateHttpCache(context: Context): Cache {
@@ -222,6 +260,7 @@ object OkHttpProvider {
         Log.i(TAG, "Using DNS provider=$provider")
         dnsScope.launch {
             appConnectionPool.evictAll()
+            playbackConnectionPool.evictAll()
             Log.i(TAG, "Evicted pooled app connections after DNS change")
         }
     }

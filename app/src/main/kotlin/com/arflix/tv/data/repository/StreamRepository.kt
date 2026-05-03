@@ -25,6 +25,7 @@ import com.arflix.tv.data.model.ProxyHeaders as ModelProxyHeaders
 import com.arflix.tv.data.model.StreamBehaviorHints as ModelStreamBehaviorHints
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
+import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.util.AnimeMapper
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.settingsDataStore
@@ -35,6 +36,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.Flow
@@ -114,6 +117,11 @@ class StreamRepository @Inject constructor(
         val stream: StreamSource,
         val createdAtMs: Long
     )
+    data class LastGoodPlaybackPreference(
+        val addonId: String = "",
+        val source: String = "",
+        val bingeGroup: String? = null
+    )
     private val streamResultCache = mutableMapOf<String, CachedStreamResult>()
     private val resolvedStreamCache = ConcurrentHashMap<String, CachedResolvedStream>()
     private val stremioAddonRuntime = StremioAddonRuntime(
@@ -156,6 +164,12 @@ class StreamRepository @Inject constructor(
         var consecutiveFailures: Int = 0
     )
     private val addonRuntimeHealth = mutableMapOf<String, AddonRuntimeHealth>()
+    private data class PlaybackHostHealth(
+        var failures: Int = 0,
+        var successes: Int = 0,
+        var lastFailureAtMs: Long = 0L
+    )
+    private val playbackHostHealth = ConcurrentHashMap<String, PlaybackHostHealth>()
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var addonHealthLoadedProfileId: String? = null
 
@@ -177,6 +191,14 @@ class StreamRepository @Inject constructor(
     private fun pendingAddonsKey() = profileManager.profileStringKey("pending_addons")
     private fun pendingAddonsKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "pending_addons")
     private fun hiddenBuiltInAddonsKey() = profileManager.profileStringKey("hidden_builtin_addons_v1")
+    private fun lastGoodPlaybackKey(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int?,
+        episode: Int?
+    ) = profileManager.profileStringKey(
+        "last_good_playback_${mediaType.name.lowercase(Locale.US)}_${tmdbId}_${season ?: 0}_${episode ?: 0}"
+    )
     private fun torrServerBaseUrlKey() = profileManager.profileStringKey("torrserver_base_url_v1")
     private fun addonHealthKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "addon_health_v1")
     private val qualityFiltersKey = stringPreferencesKey("quality_filters")
@@ -2483,6 +2505,51 @@ class StreamRepository @Inject constructor(
     private val STREAM_PREWARM_TTL_MS = 90_000L
     private val STREAM_PREWARM_EPHEMERAL_TTL_MS = 25_000L
     private val STREAM_PREWARM_NETWORK_TIMEOUT_MS = 700L
+    private val STREAM_REDIRECT_RESOLUTION_TIMEOUT_MS = 1_800L
+    private val PLAYBACK_HOST_BAD_TTL_MS = 5 * 60_000L
+
+    private fun playbackHostKey(url: String?): String {
+        val host = runCatching { java.net.URI(url?.trim().orEmpty()).host?.lowercase(Locale.US) }
+            .getOrNull()
+            .orEmpty()
+            .removePrefix("www.")
+        return host
+    }
+
+    fun isPlaybackHostTemporarilyBad(stream: StreamSource): Boolean {
+        val host = playbackHostKey(stream.url)
+        if (host.isBlank()) return false
+        val health = playbackHostHealth[host] ?: return false
+        val ageMs = System.currentTimeMillis() - health.lastFailureAtMs
+        if (ageMs > PLAYBACK_HOST_BAD_TTL_MS) {
+            playbackHostHealth.remove(host)
+            return false
+        }
+        return health.failures >= 2 && health.failures > health.successes
+    }
+
+    fun getPlaybackHostHealthPenalty(stream: StreamSource): Int {
+        return if (isPlaybackHostTemporarilyBad(stream)) 1 else 0
+    }
+
+    fun notePlaybackHostFailure(stream: StreamSource?, reason: String = "") {
+        val host = playbackHostKey(stream?.url)
+        if (host.isBlank()) return
+        val health = playbackHostHealth.getOrPut(host) { PlaybackHostHealth() }
+        health.failures += 1
+        health.lastFailureAtMs = System.currentTimeMillis()
+        Log.w(TAG, "Playback host failure host=$host failures=${health.failures} reason=$reason")
+    }
+
+    fun notePlaybackHostSuccess(stream: StreamSource?) {
+        val host = playbackHostKey(stream?.url)
+        if (host.isBlank()) return
+        val health = playbackHostHealth.getOrPut(host) { PlaybackHostHealth() }
+        health.successes += 1
+        if (health.successes >= health.failures) {
+            playbackHostHealth.remove(host)
+        }
+    }
 
     private fun resolvedStreamCacheKey(stream: StreamSource): String {
         val infoHash = stream.infoHash?.trim()?.lowercase(Locale.US).orEmpty()
@@ -2534,17 +2601,57 @@ class StreamRepository @Inject constructor(
         if (isLikelyEphemeralPlaybackUrl(url, stream)) return true
         val host = runCatching { java.net.URI(url).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
         if (host.isBlank()) return true
-        val debridDomains = listOf(
-            "real-debrid.com",
-            "real-debrid.cloud",
-            "alldebrid.com",
-            "debrid-link.com",
-            "easydebrid.com",
-            "premiumize.me",
-            "torbox.app",
-            "put.io"
-        )
-        return debridDomains.any { domain -> host == domain || host.endsWith(".$domain") }
+        return false
+    }
+
+    private fun shouldResolveRedirectBeforePlayback(url: String, stream: StreamSource): Boolean {
+        val host = runCatching { java.net.URI(url).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
+        if (host.isBlank()) return false
+        if (!stream.behaviorHints?.proxyHeaders?.request.isNullOrEmpty()) return false
+        if (url.contains(".m3u8", ignoreCase = true) || url.contains(".mpd", ignoreCase = true)) return false
+
+        return host.contains("torrentio", ignoreCase = true) ||
+            host.contains("strem", ignoreCase = true) ||
+            host.contains("comet", ignoreCase = true) ||
+            host.contains("mediafusion", ignoreCase = true) ||
+            host.contains("stremthru", ignoreCase = true) ||
+            host.contains("jackettio", ignoreCase = true)
+    }
+
+    private suspend fun resolveRedirectedPlaybackUrl(
+        url: String,
+        headers: Map<String, String>
+    ): String = withContext(Dispatchers.IO) {
+        runCatching {
+            withTimeout(STREAM_REDIRECT_RESOLUTION_TIMEOUT_MS) {
+                val requestHeaders = headers.toMutableMap()
+                if (requestHeaders.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+                    requestHeaders["User-Agent"] =
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                if (requestHeaders.keys.none { it.equals("Accept", ignoreCase = true) }) {
+                    requestHeaders["Accept"] = "*/*"
+                }
+                if (requestHeaders.keys.none { it.equals("Range", ignoreCase = true) }) {
+                    requestHeaders["Range"] = "bytes=0-1"
+                }
+
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .apply { requestHeaders.forEach { (key, value) -> addHeader(key, value) } }
+                    .build()
+
+                OkHttpProvider.playbackClient.newCall(request).execute().use { response ->
+                    response.request.url.toString().takeIf { finalUrl ->
+                        finalUrl.isNotBlank() && !finalUrl.equals(url, ignoreCase = true)
+                    } ?: url
+                }
+            }
+        }.getOrElse { error ->
+            notePlaybackHostFailure(StreamSource("", "", "", "", "", url = url), error::class.java.simpleName)
+            url
+        }
     }
 
     private suspend fun warmHttpConnection(stream: StreamSource) {
@@ -2578,8 +2685,53 @@ class StreamRepository @Inject constructor(
                     .get()
                     .apply { headers.forEach { (key, value) -> addHeader(key, value) } }
                     .build()
-                okHttpClient.newCall(request).execute().close()
+                OkHttpProvider.playbackClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful || response.code == 206 || response.code == 416) {
+                        notePlaybackHostSuccess(stream)
+                    } else {
+                        notePlaybackHostFailure(stream, "prewarm_http_${response.code}")
+                    }
+                }
             }
+        }.onFailure { error ->
+            notePlaybackHostFailure(stream, error::class.java.simpleName)
+        }
+    }
+
+    suspend fun saveLastGoodPlaybackPreference(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int?,
+        episode: Int?,
+        stream: StreamSource
+    ) = withContext(Dispatchers.IO) {
+        val addonId = stream.addonId.trim()
+        val source = stream.source.trim()
+        val bingeGroup = stream.behaviorHints?.bingeGroup?.trim()?.takeIf { it.isNotBlank() }
+        if (addonId.isBlank() && source.isBlank() && bingeGroup.isNullOrBlank()) return@withContext
+        val preference = LastGoodPlaybackPreference(
+            addonId = addonId,
+            source = source,
+            bingeGroup = bingeGroup
+        )
+        context.streamDataStore.edit { prefs ->
+            prefs[lastGoodPlaybackKey(mediaType, tmdbId, season, episode)] = gson.toJson(preference)
+        }
+    }
+
+    suspend fun getLastGoodPlaybackPreference(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int?,
+        episode: Int?
+    ): LastGoodPlaybackPreference? = withContext(Dispatchers.IO) {
+        val prefs = context.streamDataStore.data.first()
+        val raw = prefs[lastGoodPlaybackKey(mediaType, tmdbId, season, episode)].orEmpty()
+        if (raw.isBlank()) return@withContext null
+        runCatching {
+            gson.fromJson(raw, LastGoodPlaybackPreference::class.java)
+        }.getOrNull()?.takeIf { preference ->
+            preference.addonId.isNotBlank() || preference.source.isNotBlank() || !preference.bingeGroup.isNullOrBlank()
         }
     }
 
@@ -2623,11 +2775,15 @@ class StreamRepository @Inject constructor(
         streams.asSequence()
             .filter { !it.url.isNullOrBlank() }
             .take(limit.coerceAtLeast(0))
-            .forEach { stream ->
-                runCatching {
-                    prewarmStreamForPlayback(stream, allowNetworkWarmup)
+            .map { stream ->
+                async {
+                    runCatching {
+                        prewarmStreamForPlayback(stream, allowNetworkWarmup)
+                    }
                 }
             }
+            .toList()
+            .awaitAll()
     }
 
     /**
@@ -2675,8 +2831,13 @@ class StreamRepository @Inject constructor(
                 }
                 else -> stream.behaviorHints
             }
+            val playbackUrl = if (shouldResolveRedirectBeforePlayback(resolvedUrl, stream)) {
+                resolveRedirectedPlaybackUrl(resolvedUrl, mergedHeaders)
+            } else {
+                resolvedUrl
+            }
             return stream.copy(
-                url = resolvedUrl,
+                url = playbackUrl,
                 behaviorHints = mergedBehaviorHints
             )
         } else {
@@ -2727,20 +2888,29 @@ class StreamRepository @Inject constructor(
 
             return@withContext try {
                 withTimeout(timeoutMs.coerceIn(500L, 15_000L)) {
-                    okHttpClient.newCall(request).execute().use { response ->
+                    OkHttpProvider.playbackClient.newCall(request).execute().use { response ->
                         val code = response.code
-                        if (code == 416) return@use true
-                        if (!response.isSuccessful) return@use false
+                        if (code == 416) {
+                            notePlaybackHostSuccess(resolved)
+                            return@use true
+                        }
+                        if (!response.isSuccessful) {
+                            notePlaybackHostFailure(resolved, "reachable_http_$code")
+                            return@use false
+                        }
 
                         val contentType = response.header("Content-Type").orEmpty().lowercase(Locale.US)
                         // HTTP addon sources should not resolve to plain HTML pages.
                         if (contentType.contains("text/html")) {
+                            notePlaybackHostFailure(resolved, "reachable_html")
                             return@use false
                         }
+                        notePlaybackHostSuccess(resolved)
                         true
                     }
                 }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                notePlaybackHostFailure(resolved, error::class.java.simpleName)
                 false
             }
         }

@@ -825,7 +825,7 @@ fun DetailsScreen(
             isLoading = uiState.isLoadingStreams,
             hasStreamingAddons = uiState.hasStreamingAddons,
             onFocusedStream = { stream ->
-                viewModel.prewarmStream(stream)
+                viewModel.prewarmStreamsAround(stream, uiState.streams)
             },
             onSelect = { stream ->
                 if (isPendingDebridStream(stream)) {

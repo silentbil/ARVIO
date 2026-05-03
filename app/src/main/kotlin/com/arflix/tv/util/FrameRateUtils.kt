@@ -178,6 +178,53 @@ object FrameRateUtils {
         }
     }
 
+    fun getCachedFrameRate(sourceUrl: String): FrameRateDetection? {
+        val key = detectionCacheKey(sourceUrl)
+        val now = System.currentTimeMillis()
+        return detectionCache[key]?.let { cached ->
+            if (now - cached.createdAtMs <= DETECTION_CACHE_TTL_MS) {
+                cached.detection
+            } else {
+                detectionCache.remove(key)
+                null
+            }
+        }
+    }
+
+    /**
+     * Apply the best display mode immediately without waiting for the switch to settle.
+     * Used on the playback hot path so frame-rate matching never blocks first frame.
+     */
+    fun applyFrameRateMode(activity: Activity, frameRate: Float): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        if (frameRate <= 0f) return false
+
+        return try {
+            val window = activity.window ?: return false
+            val display = window.decorView.display ?: return false
+            val activeMode = display.mode
+            val sameSizeModes = display.supportedModes.filter {
+                it.physicalWidth == activeMode.physicalWidth &&
+                    it.physicalHeight == activeMode.physicalHeight
+            }
+            if (sameSizeModes.size <= 1) return false
+
+            val best = chooseBestMode(activeMode, sameSizeModes, frameRate)
+            if (best.modeId == activeMode.modeId) return false
+
+            if (originalModeId == null) {
+                originalModeId = activeMode.modeId
+            }
+
+            val params = window.attributes
+            params.preferredDisplayModeId = best.modeId
+            window.attributes = params
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /**
      * Switch the display to the best mode for the given frame rate.
      * Blocks until the switch stabilizes or times out.

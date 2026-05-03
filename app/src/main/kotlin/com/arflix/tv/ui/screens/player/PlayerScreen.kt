@@ -156,8 +156,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
-import okhttp3.ConnectionPool
-import okhttp3.OkHttpClient
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -401,17 +399,20 @@ fun PlayerScreen(
 
     // Track current stream index for auto-advancement on error
     var currentStreamIndex by remember { mutableIntStateOf(0) }
-    val tryAdvanceToNextStream: () -> Boolean = {
+    fun tryAdvanceToNextStream(skipAddonId: String? = null): Boolean {
         val streams = uiState.streams
-        if (streams.size <= 1) {
+        return if (streams.size <= 1) {
             viewModel.onFailoverAttempt(success = false)
             false
         } else {
             val nextIndex = (1 until streams.size)
                 .map { offset -> (currentStreamIndex + offset) % streams.size }
                 .firstOrNull { idx ->
-                    streams[idx].url?.isNotBlank() == true &&
-                        idx !in triedStreamIndexes
+                    val candidate = streams[idx]
+                    candidate.url?.isNotBlank() == true &&
+                        idx !in triedStreamIndexes &&
+                        (skipAddonId.isNullOrBlank() || candidate.addonId != skipAddonId) &&
+                        !viewModel.isPlaybackHostTemporarilyBad(candidate)
                 } ?: -1
 
             if (nextIndex < 0) {
@@ -439,6 +440,24 @@ fun PlayerScreen(
         }
     }
 
+    fun markPlaybackStarted(reason: String) {
+        if (hasPlaybackStarted) return
+        hasPlaybackStarted = true
+        midPlaybackRecoveryAttempts = 0
+        val startupMs = streamSelectedTime?.let { startedAt ->
+            (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+        } ?: 0L
+        android.util.Log.i(
+            "PlaybackStartup",
+            "started reason=$reason startupMs=$startupMs retries=$startupSameSourceRetryCount refresh=$startupSameSourceRefreshAttempted failovers=$autoAdvanceAttempts"
+        )
+        viewModel.onPlaybackStarted(
+            startupMs = startupMs,
+            startupRetries = startupSameSourceRetryCount + if (startupSameSourceRefreshAttempted) 1 else 0,
+            autoFailovers = autoAdvanceAttempts
+        )
+    }
+
     val baseRequestHeaders = remember {
         mapOf(
             "Accept" to "*/*",
@@ -448,16 +467,8 @@ fun PlayerScreen(
     }
     val playbackCookieJar = remember { PlaybackCookieJar() }
     val playbackHttpClient = remember(playbackCookieJar) {
-        OkHttpClient.Builder()
+        OkHttpProvider.playbackClient.newBuilder()
             .cookieJar(playbackCookieJar)
-            .connectionPool(ConnectionPool(4, 5, TimeUnit.MINUTES))
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .retryOnConnectionFailure(true)
-            .dns(OkHttpProvider.dns)
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(180, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
             .build()
     }
     val httpDataSourceFactory = remember(playbackHttpClient) {
@@ -479,14 +490,11 @@ fun PlayerScreen(
 
     // Protocol-specific media source factories for faster startup
     val hlsFactory = remember(httpDataSourceFactory) {
-        HlsMediaSource.Factory(cacheDataSourceFactory)
+        HlsMediaSource.Factory(httpDataSourceFactory)
             .setAllowChunklessPreparation(true)
     }
     val dashFactory = remember(httpDataSourceFactory) {
-        DashMediaSource.Factory(cacheDataSourceFactory)
-    }
-    val progressiveFactory = remember(httpDataSourceFactory) {
-        ProgressiveMediaSource.Factory(cacheDataSourceFactory)
+        DashMediaSource.Factory(httpDataSourceFactory)
     }
     val mediaSourceFactory = remember(httpDataSourceFactory) {
         DefaultMediaSourceFactory(context)
@@ -506,8 +514,8 @@ fun PlayerScreen(
             .setBufferDurationsMs(
                 12_000,    // minBufferMs
                 45_000,    // maxBufferMs
-                500,       // bufferForPlaybackMs
-                2_000      // bufferForPlaybackAfterRebufferMs
+                150,       // bufferForPlaybackMs
+                1_500      // bufferForPlaybackAfterRebufferMs
             )
             .setTargetBufferBytes(targetBufferBytes)
             .setPrioritizeTimeOverSizeThresholds(false) // byte cap is authoritative
@@ -576,6 +584,11 @@ fun PlayerScreen(
                     override fun onIsPlayingChanged(playing: Boolean) {
                         if (BuildConfig.DEBUG) {
                         }
+                    }
+
+                    override fun onRenderedFirstFrame() {
+                        if (playerReleasedAtomic.get()) return
+                        markPlaybackStarted("first_frame")
                     }
 
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -689,10 +702,14 @@ fun PlayerScreen(
                                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
                                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NO_PERMISSION ||
                                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
+                            val isDnsFailure = "unknownhost" in timeoutMessage ||
+                                "unable to resolve host" in timeoutMessage ||
+                                "no address associated with hostname" in timeoutMessage
+                            val deadAddonId = if (isDnsFailure) latestUiState.selectedStream?.addonId else null
                             if (!hasPlaybackStarted &&
                                 allowStartupSourceFallback &&
                                 (!userSelectedSourceManually || isUnrecoverableSource) &&
-                                tryAdvanceToNextStream()
+                                tryAdvanceToNextStream(deadAddonId)
                             ) {
                                 return
                             }
@@ -892,6 +909,7 @@ fun PlayerScreen(
         if (url != null) {
             // Track when stream was selected (before any blocking probes)
             streamSelectedTime = System.currentTimeMillis()
+            val prepareStartMs = streamSelectedTime ?: System.currentTimeMillis()
             bufferingStartTime = null
             hasPlaybackStarted = false  // Reset for new stream
             playbackIssueReported = false
@@ -899,29 +917,30 @@ fun PlayerScreen(
             longRebufferCount = 0
             ArflixApplication.trimImageMemory()
 
-            // Match frame rate before touching playback so any display mode switch
-            // happens up-front instead of mid-playback.
+            val streamHeaders = uiState.selectedStream
+                ?.behaviorHints
+                ?.proxyHeaders
+                ?.request
+                .orEmpty()
+                .filterKeys { it.isNotBlank() }
+
+            // Never block first frame on MediaExtractor probing. Use a cached
+            // frame-rate if available and prewarm the cache in the background.
             frameRateActivity?.let { activity ->
                 val mode = uiState.frameRateMatchingMode
                 if (mode == "Off" || mode.isBlank()) {
                     com.arflix.tv.util.FrameRateUtils.restoreOriginalMode(activity)
                 } else {
-                    val streamHeaders = uiState.selectedStream
-                        ?.behaviorHints
-                        ?.proxyHeaders
-                        ?.request
-                        .orEmpty()
-                        .filterKeys { it.isNotBlank() }
-                    val detection = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        kotlinx.coroutines.withTimeoutOrNull(2000L) {
+                    val cachedDetection = com.arflix.tv.util.FrameRateUtils.getCachedFrameRate(url)
+                    if (cachedDetection != null) {
+                        com.arflix.tv.util.FrameRateUtils.applyFrameRateMode(activity, cachedDetection.snapped)
+                    } else {
+                        launch(kotlinx.coroutines.Dispatchers.IO) {
                             com.arflix.tv.util.FrameRateUtils.detectFrameRateCached(
                                 sourceUrl = url,
                                 headers = baseRequestHeaders + streamHeaders
                             )
                         }
-                    }
-                    if (detection != null) {
-                        com.arflix.tv.util.FrameRateUtils.matchFrameRateAndWait(activity, detection.snapped)
                     }
                 }
             }
@@ -937,12 +956,6 @@ fun PlayerScreen(
                 blackVideoRecoveryStage = 0
                 blackVideoReadySinceMs = null
             }
-            val streamHeaders = uiState.selectedStream
-                ?.behaviorHints
-                ?.proxyHeaders
-                ?.request
-                .orEmpty()
-                .filterKeys { it.isNotBlank() }
             httpDataSourceFactory.setDefaultRequestProperties(baseRequestHeaders + streamHeaders)
 
             // Track when stream was selected
@@ -950,16 +963,7 @@ fun PlayerScreen(
 
             // Only add the selected subtitle to ExoPlayer (not all 30+).
             // Loading all external subs slows down preparation and causes non-UTF8 subs to fail.
-            val selectedSub = uiState.selectedSubtitle
-            val subtitleConfigs = if (selectedSub != null && !selectedSub.isEmbedded) {
-                buildExternalSubtitleConfigurations(listOf(selectedSub))
-            } else {
-                emptyList()
-            }
             val mediaItemBuilder = MediaItem.Builder().setUri(Uri.parse(url))
-            if (subtitleConfigs.isNotEmpty()) {
-                mediaItemBuilder.setSubtitleConfigurations(subtitleConfigs)
-            }
             val mediaItem = mediaItemBuilder.build()
 
             // Use protocol-specific media source for faster startup:
@@ -967,12 +971,13 @@ fun PlayerScreen(
             // - DASH/Progressive: dedicated factories for optimal handling
             val urlLower = url.lowercase()
             val isHeavy = isLikelyHeavyStream(latestUiState.selectedStream)
+            val isRemoteHttp = urlLower.startsWith("http://") || urlLower.startsWith("https://")
             val mediaSource: MediaSource = when {
                 urlLower.contains(".m3u8") || urlLower.contains("/hls") || urlLower.contains("format=hls") ->
                     hlsFactory.createMediaSource(mediaItem)
                 urlLower.contains(".mpd") || urlLower.contains("/dash") || urlLower.contains("format=dash") ->
                     dashFactory.createMediaSource(mediaItem)
-                isHeavy ->
+                isHeavy || isRemoteHttp ->
                     // Bypass disk cache for large/debrid progressive streams to avoid I/O bottleneck
                     directProgressiveFactory.createMediaSource(mediaItem)
                 else -> mediaSourceFactory.createMediaSource(mediaItem)
@@ -991,10 +996,14 @@ fun PlayerScreen(
             } else {
                 exoPlayer.setMediaSource(mediaSource)
             }
-            // Let ExoPlayer's LoadControl handle buffering (bufferForPlaybackMs = 500ms).
+            // Let ExoPlayer's LoadControl handle buffering (bufferForPlaybackMs = 150ms).
             // No manual startup gate — trust the CDN/debrid to deliver fast enough.
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
+            android.util.Log.i(
+                "PlaybackStartup",
+                "prepare issued setupMs=${System.currentTimeMillis() - prepareStartMs} source=${uiState.selectedStream?.addonId}/${uiState.selectedStream?.quality}/${uiState.selectedStream?.size} host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}"
+            )
 
             // Prefer currently selected subtitle language (if any), otherwise keep text disabled.
             val subtitle = uiState.selectedSubtitle
@@ -1035,7 +1044,7 @@ fun PlayerScreen(
 
     // When subtitle selection changes, rebuild MediaItem with just the selected subtitle.
     // This avoids loading all 30+ subtitle files and fixes non-English encoding issues.
-    LaunchedEffect(uiState.selectedSubtitle, uiState.subtitleSelectionNonce) {
+    LaunchedEffect(uiState.selectedSubtitle, uiState.subtitleSelectionNonce, hasPlaybackStarted) {
         if (playerReleased) return@LaunchedEffect
         val subtitle = uiState.selectedSubtitle
         val url = uiState.selectedStreamUrl ?: return@LaunchedEffect
@@ -1047,6 +1056,10 @@ fun PlayerScreen(
                 .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                 .build()
+            return@LaunchedEffect
+        }
+
+        if (!hasPlaybackStarted) {
             return@LaunchedEffect
         }
 
@@ -1348,16 +1361,7 @@ fun PlayerScreen(
                 exoPlayer.playbackState == Player.STATE_READY &&
                 exoPlayer.isPlaying
             ) {
-                hasPlaybackStarted = true
-                midPlaybackRecoveryAttempts = 0
-                val startupMs = streamSelectedTime?.let { startedAt ->
-                    (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
-                } ?: 0L
-                viewModel.onPlaybackStarted(
-                    startupMs = startupMs,
-                    startupRetries = startupSameSourceRetryCount + if (startupSameSourceRefreshAttempted) 1 else 0,
-                    autoFailovers = autoAdvanceAttempts
-                )
+                markPlaybackStarted("ready_playing_poll")
             }
 
             if (currentPosition > 0 && duration > 0) {
@@ -2492,7 +2496,7 @@ fun PlayerScreen(
                 ""
             },
             onFocusedStream = { stream ->
-                viewModel.prewarmStream(stream)
+                viewModel.prewarmStreamsAround(stream, uiState.streams)
             },
             onSelect = { stream: StreamSource ->
                 userSelectedSourceManually = true
@@ -4010,7 +4014,7 @@ private fun estimateInitialStartupTimeoutMs(
     stream: StreamSource?,
     isManualSelection: Boolean
 ): Long {
-    var timeoutMs = if (isManualSelection) 25_000L else 10_000L
+    var timeoutMs = if (isManualSelection) 12_000L else 6_000L
     if (stream == null) return timeoutMs
 
     val haystack = buildString {
@@ -4028,22 +4032,22 @@ private fun estimateInitialStartupTimeoutMs(
     val sizeBytes = parseSizeToBytes(stream.size)
 
     if (haystack.contains("4k") || haystack.contains("2160")) {
-        timeoutMs = timeoutMs.coerceAtLeast(18_000L)
+        timeoutMs = timeoutMs.coerceAtLeast(if (isManualSelection) 14_000L else 7_500L)
     }
     if (haystack.contains("remux") || haystack.contains("dolby vision") || haystack.contains(" dovi")) {
-        timeoutMs = timeoutMs.coerceAtLeast(22_000L)
+        timeoutMs = timeoutMs.coerceAtLeast(if (isManualSelection) 16_000L else 9_000L)
     }
 
     timeoutMs = when {
-        sizeBytes >= 60L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(30_000L)
-        sizeBytes >= 40L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(25_000L)
-        sizeBytes >= 30L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(22_000L)
-        sizeBytes >= 20L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(18_000L)
-        sizeBytes >= 10L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(14_000L)
+        sizeBytes >= 60L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(if (isManualSelection) 22_000L else 12_000L)
+        sizeBytes >= 40L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(if (isManualSelection) 20_000L else 11_000L)
+        sizeBytes >= 30L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(if (isManualSelection) 18_000L else 10_000L)
+        sizeBytes >= 20L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(if (isManualSelection) 16_000L else 8_500L)
+        sizeBytes >= 10L * 1024 * 1024 * 1024 -> timeoutMs.coerceAtLeast(if (isManualSelection) 14_000L else 7_500L)
         else -> timeoutMs
     }
 
-    return timeoutMs.coerceAtMost(if (isManualSelection) 35_000L else 30_000L)
+    return timeoutMs.coerceAtMost(if (isManualSelection) 24_000L else 12_000L)
 }
 
 private fun playbackErrorMessageFor(
