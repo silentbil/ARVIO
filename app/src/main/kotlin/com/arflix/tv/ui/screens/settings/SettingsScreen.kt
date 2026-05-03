@@ -1872,6 +1872,22 @@ private fun QualityFilterEditorModal(
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
+    // Focus order: 0 device name, 1 regex, 2 cancel, 3 save
+    var focusedIndex by remember { mutableIntStateOf(0) }
+    val totalItems = 4
+    val modalFocusRequester = remember { FocusRequester() }
+    val deviceNameRequester = remember { FocusRequester() }
+    val regexPatternRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) { modalFocusRequester.requestFocus() }
+    LaunchedEffect(focusedIndex) {
+        when (focusedIndex) {
+            0 -> deviceNameRequester.requestFocus()
+            1 -> regexPatternRequester.requestFocus()
+            else -> modalFocusRequester.requestFocus()
+        }
+    }
+
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(
@@ -1887,6 +1903,44 @@ private fun QualityFilterEditorModal(
                     .widthIn(max = 760.dp)
                     .background(BackgroundElevated, RoundedCornerShape(16.dp))
                     .padding(if (LocalDeviceType.current.isTouchDevice()) 20.dp else 24.dp)
+                    .focusRequester(modalFocusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            when (event.key) {
+                                Key.Back, Key.Escape -> {
+                                    onDismiss()
+                                    true
+                                }
+                                Key.DirectionUp -> {
+                                    if (focusedIndex > 0) focusedIndex--
+                                    true
+                                }
+                                Key.DirectionDown -> {
+                                    if (focusedIndex < totalItems - 1) focusedIndex++
+                                    true
+                                }
+                                Key.DirectionLeft -> {
+                                    if (focusedIndex == 3) focusedIndex = 2
+                                    true
+                                }
+                                Key.DirectionRight -> {
+                                    if (focusedIndex == 2) focusedIndex = 3
+                                    true
+                                }
+                                Key.Enter, Key.DirectionCenter -> {
+                                    when (focusedIndex) {
+                                        0 -> deviceNameRequester.requestFocus()
+                                        1 -> regexPatternRequester.requestFocus()
+                                        2 -> onDismiss()
+                                        3 -> if (regexPattern.trim().isNotBlank()) onSave()
+                                    }
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else false
+                    }
             ) {
                 Text(
                     text = title,
@@ -1899,7 +1953,12 @@ private fun QualityFilterEditorModal(
                     onValueChange = onDeviceNameChange,
                     singleLine = true,
                     label = { Text("Device / Preset Name") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(deviceNameRequester)
+                        .onFocusChanged {
+                            if (it.hasFocus) focusedIndex = 0
+                        }
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 androidx.compose.material3.TextField(
@@ -1908,7 +1967,12 @@ private fun QualityFilterEditorModal(
                     singleLine = false,
                     minLines = 3,
                     label = { Text("Regex Pattern") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(regexPatternRequester)
+                        .onFocusChanged {
+                            if (it.hasFocus) focusedIndex = 1
+                        }
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(
@@ -1919,12 +1983,14 @@ private fun QualityFilterEditorModal(
                         label = "Cancel",
                         enabled = true,
                         onClick = onDismiss,
+                        isFocused = focusedIndex == 2,
                         modifier = Modifier.weight(1f)
                     )
                     SettingsChip(
                         label = "Save",
                         enabled = regexPattern.trim().isNotBlank(),
                         onClick = onSave,
+                        isFocused = focusedIndex == 3,
                         modifier = Modifier.weight(1f)
                     )
                 }
