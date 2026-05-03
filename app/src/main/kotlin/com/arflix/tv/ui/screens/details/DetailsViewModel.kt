@@ -1442,13 +1442,7 @@ class DetailsViewModel @Inject constructor(
                     return@launch
                 }
 
-                seasonEpisodes.forEach { ep ->
-                    runCatching {
-                        traktRepository.markEpisodeWatched(currentMediaId, season, ep.episodeNumber)
-                        watchHistoryRepository.removeFromHistory(currentMediaId, season, ep.episodeNumber)
-                    }
-                }
-
+                // OPTIMISTIC UPDATE: Update local state immediately so the UI responds instantly
                 val updatedEpisodes = if (_uiState.value.currentSeason == season) {
                     _uiState.value.episodes.map { ep ->
                         if (ep.seasonNumber == season) ep.copy(isWatched = true) else ep
@@ -1456,10 +1450,38 @@ class DetailsViewModel @Inject constructor(
                 } else {
                     _uiState.value.episodes
                 }
-
                 val optimisticProgress = _uiState.value.seasonProgress.toMutableMap().apply {
                     this[season] = Pair(seasonEpisodes.size, seasonEpisodes.size)
                 }
+                _uiState.value = _uiState.value.copy(
+                    episodes = updatedEpisodes,
+                    seasonProgress = optimisticProgress
+                )
+
+                // BATCH: Use single Trakt API call for all episodes, then concurrent Supabase writes.
+                // Previously this looped sequentially calling markEpisodeWatched() per episode,
+                // each making its own Supabase + Trakt network call — taking ~5-12s for a full season.
+                val episodeNumbers = seasonEpisodes.map { it.episodeNumber }
+
+                // 1. Single batch Trakt API call (all episodes in one request)
+                runCatching {
+                    traktRepository.markSeasonWatched(currentMediaId, season, episodeNumbers)
+                }
+
+                // 2. Remove from watch history concurrently (all episodes at once)
+                runCatching {
+                    watchHistoryRepository.removeFromHistory(currentMediaId, season, null)
+                }
+
+                // 3. Concurrent Supabase writes for each episode (faster than sequential)
+                episodeNumbers.map { epNum ->
+                    async {
+                        runCatching {
+                            traktRepository.markEpisodeWatchedWithoutTraktSync(currentMediaId, season, epNum)
+                        }
+                    }
+                }.forEach { it.await() }
+
                 val refreshedProgress = runCatching { fetchSeasonProgress(currentMediaId) }.getOrNull()
                 val nextUnwatched = refreshedProgress?.nextUnwatched
 

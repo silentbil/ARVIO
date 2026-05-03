@@ -503,6 +503,22 @@ class TraktRepository @Inject constructor(
     }
 
     /**
+     * Mark episode watched in local caches and Supabase without sending another Trakt request.
+     */
+    suspend fun markEpisodeWatchedWithoutTraktSync(showTmdbId: Int, season: Int, episode: Int) {
+        ensureProfileCacheScope()
+        updateWatchedCache(showTmdbId, season, episode, true)
+        updateShowWatchedCache(showTmdbId, season, episode, true)
+        persistLocalWatchedSnapshotForCurrentProfile()
+        removeFromContinueWatchingCache(showTmdbId, season, episode)
+
+        try {
+            val traktShowId = tmdbToTraktIdCache[showTmdbId]
+            syncService.markEpisodeWatchedInSupabaseOnly(showTmdbId, season, episode, traktShowId)
+        } catch (_: Exception) {}
+    }
+
+    /**
      * Mark episode as unwatched - updates local cache immediately (optimistic), then syncs to backend
      */
     suspend fun markEpisodeUnwatched(showTmdbId: Int, season: Int, episode: Int) {
