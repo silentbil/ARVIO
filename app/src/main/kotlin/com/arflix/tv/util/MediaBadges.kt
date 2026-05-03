@@ -11,14 +11,12 @@ private val releaseDateFormatter = DateTimeFormatter.ISO_LOCAL_DATE
 fun isInCinema(item: MediaItem, now: LocalDate = LocalDate.now()): Boolean {
     if (item.mediaType != MediaType.MOVIE) return false
     val releaseDate = item.releaseDate?.takeIf { it.isNotBlank() } ?: return false
-    val parsedDate = try {
+    val parsedDate = kotlin.runCatching {
         LocalDate.parse(releaseDate, releaseDateFormatter)
-    } catch (_: Exception) {
-        return false
-    }
+    }.getOrNull() ?: return false
+
     if (parsedDate.isAfter(now)) return false
-    val daysSinceRelease = ChronoUnit.DAYS.between(parsedDate, now)
-    return daysSinceRelease <= 60
+    return ChronoUnit.DAYS.between(parsedDate, now) < 60
 }
 
 fun parseRatingValue(raw: String): Float {
