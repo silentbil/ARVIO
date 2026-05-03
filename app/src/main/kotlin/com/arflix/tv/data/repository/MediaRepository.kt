@@ -2394,7 +2394,33 @@ class MediaRepository @Inject constructor(
         detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
         return item
     }
-    
+
+    /**
+     * Get the TMDB collection (franchise) reference for a movie.
+     * Calls /movie/{id} directly to access the `belongs_to_collection` field,
+     * which is discarded by getMovieDetails() → toMediaItem().
+     * The response is cached by OkHttp, making the redundant call negligible.
+     */
+    suspend fun getMovieCollectionRef(movieId: Int): com.arflix.tv.data.api.TmdbCollectionRef? {
+        return runCatching {
+            tmdbApi.getMovieDetails(movieId, apiKey, language = contentLanguage).belongsToCollection
+        }.getOrNull()
+    }
+
+    /**
+     * Fetch all movies in a TMDB collection (franchise).
+     * Calls TMDB /collection/{id} and maps the parts array to Movie MediaItems.
+     * Used by the Details page to show franchise rows (e.g. "Cars Collection").
+     */
+    suspend fun getTmdbCollectionItems(collectionId: Int): List<MediaItem> {
+        val response = runCatching {
+            tmdbApi.getTmdbCollection(collectionId, apiKey, language = contentLanguage)
+        }.getOrNull() ?: return emptyList()
+        return response.parts
+            .sortedBy { it.releaseDate.orEmpty() }
+            .map { it.toMediaItem(MediaType.MOVIE) }
+    }
+
     /**
      * Get season episodes with Trakt watched status
      */

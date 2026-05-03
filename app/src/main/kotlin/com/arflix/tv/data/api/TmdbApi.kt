@@ -253,7 +253,16 @@ data class TmdbMovieDetails(
     val budget: Long = 0,
     val genres: List<TmdbGenre> = emptyList(),
     val status: String? = null,
-    val adult: Boolean = false
+    val adult: Boolean = false,
+    @SerializedName("belongs_to_collection") val belongsToCollection: TmdbCollectionRef? = null
+)
+
+/** Reference to a TMDB collection (franchise) returned inside movie/TV details. */
+data class TmdbCollectionRef(
+    val id: Int = 0,
+    val name: String? = null,
+    @SerializedName("poster_path") val posterPath: String? = null,
+    @SerializedName("backdrop_path") val backdropPath: String? = null
 )
 
 data class TmdbTvDetails(
