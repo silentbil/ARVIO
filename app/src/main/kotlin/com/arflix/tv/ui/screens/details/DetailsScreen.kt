@@ -676,6 +676,7 @@ fun DetailsScreen(
                     contentHasFocus = !isSidebarFocused,
                     usePosterCards = usePosterCards,
                     isMobile = isMobile,
+                    spoilerBlurEnabled = spoilerBlurEnabled,
                     onBack = onBack,
                     onButtonClick = { idx ->
                         when (idx) {
