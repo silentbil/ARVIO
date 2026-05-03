@@ -89,9 +89,11 @@ data class SettingsUiState(
     val dnsProviderOptions: List<String> = listOf("System DNS", "Cloudflare", "Google", "AdGuard"),
     val subtitleSize: String = "Medium",
     val subtitleColor: String = "White",
+    val subtitleOffset: String = "Low",
     val filterSubtitlesByLanguage: Boolean = true,
     val secondarySubtitle: String = "Off",
     val trailerAutoPlay: Boolean = false,
+    val trailerSoundEnabled: Boolean = false,
     val showBudget: Boolean = true,
     // Volume boost in decibels (0 = off, up to 15 dB). Applied via system LoudnessEnhancer
     // attached to the ExoPlayer audio session. Issue #88.
@@ -227,6 +229,7 @@ class SettingsViewModel @Inject constructor(
     private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
     private fun autoPlayMinQualityKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "auto_play_min_quality")
     private fun trailerAutoPlayKey() = profileManager.profileBooleanKey("trailer_auto_play")
+    private fun trailerSoundEnabledKey() = profileManager.profileBooleanKey("trailer_sound_enabled")
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
     private fun clockFormatKey() = profileManager.profileStringKey("clock_format")
     // Stored as a string because ProfileManager has no int helper and we only persist
@@ -236,6 +239,7 @@ class SettingsViewModel @Inject constructor(
 
     private fun subtitleSizeKey() = profileManager.profileStringKey("subtitle_size")
     private fun subtitleColorKey() = profileManager.profileStringKey("subtitle_color")
+    private fun subtitleOffsetKey() = profileManager.profileStringKey("subtitle_offset")
     private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun secondarySubtitleKey() = profileManager.profileStringKey("secondary_subtitle")
     private val dnsProviderKey = stringPreferencesKey(OkHttpProvider.DNS_PROVIDER_PREF_KEY)
@@ -363,6 +367,7 @@ class SettingsViewModel @Inject constructor(
             }
             val autoPlayMinQuality = normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()])
             val trailerAutoPlay = prefs[trailerAutoPlayKey()] ?: false
+            val trailerSoundEnabled = prefs[trailerSoundEnabledKey()] ?: false
             val showBudget = prefs[showBudgetKey()] ?: true
             val clockFormat = prefs[clockFormatKey()] ?: "24h"
             val volumeBoostDb = prefs[volumeBoostDbKey()]?.toIntOrNull()?.coerceIn(0, 15) ?: 0
@@ -370,6 +375,7 @@ class SettingsViewModel @Inject constructor(
 
             val subtitleSize = prefs[subtitleSizeKey()] ?: "Medium"
             val subtitleColor = prefs[subtitleColorKey()] ?: "White"
+            val subtitleOffset = prefs[subtitleOffsetKey()] ?: "Low"
             val filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKey()] ?: true
             val secondarySubtitle = prefs[secondarySubtitleKey()]?.trim()?.takeIf { it.isNotBlank() } ?: "Off"
             val dnsProviderValue = normalizeDnsProviderValue(prefs[dnsProviderKey])
@@ -416,12 +422,14 @@ class SettingsViewModel @Inject constructor(
                 autoPlaySingleSource = autoPlaySingleSource,
                 autoPlayMinQuality = autoPlayMinQuality,
                 trailerAutoPlay = trailerAutoPlay,
+                trailerSoundEnabled = trailerSoundEnabled,
                 showBudget = showBudget,
                 volumeBoostDb = volumeBoostDb,
                 showLoadingStats = showLoadingStats,
 
                 subtitleSize = subtitleSize,
                 subtitleColor = subtitleColor,
+                subtitleOffset = subtitleOffset,
                 filterSubtitlesByLanguage = filterSubtitlesByLanguage,
                 secondarySubtitle = secondarySubtitle,
                 dnsProvider = dnsProviderLabel(dnsProviderValue),
@@ -943,6 +951,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { context.settingsDataStore.edit { it[trailerAutoPlayKey()] = enabled }; _uiState.value = _uiState.value.copy(trailerAutoPlay = enabled); syncLocalStateToCloud(silent = true) }
     }
 
+    fun setTrailerSoundEnabled(enabled: Boolean) {
+        viewModelScope.launch { context.settingsDataStore.edit { it[trailerSoundEnabledKey()] = enabled }; _uiState.value = _uiState.value.copy(trailerSoundEnabled = enabled); syncLocalStateToCloud(silent = true) }
+    }
+
     fun setShowBudget(enabled: Boolean) {
         viewModelScope.launch {
             context.settingsDataStore.edit { it[showBudgetKey()] = enabled }
@@ -999,6 +1011,11 @@ class SettingsViewModel @Inject constructor(
     fun cycleSubtitleColor() {
         val next = when (_uiState.value.subtitleColor) { "White" -> "Yellow"; "Yellow" -> "Green"; "Green" -> "Cyan"; else -> "White" }
         viewModelScope.launch { context.settingsDataStore.edit { it[subtitleColorKey()] = next }; _uiState.value = _uiState.value.copy(subtitleColor = next); syncLocalStateToCloud(silent = true) }
+    }
+
+    fun cycleSubtitleOffset() {
+        val next = when (_uiState.value.subtitleOffset) { "Bottom" -> "Low"; "Low" -> "Medium"; "Medium" -> "High"; else -> "Bottom" }
+        viewModelScope.launch { context.settingsDataStore.edit { it[subtitleOffsetKey()] = next }; _uiState.value = _uiState.value.copy(subtitleOffset = next); syncLocalStateToCloud(silent = true) }
     }
 
     private fun normalizeDnsProviderValue(raw: String?): String {

@@ -75,6 +75,7 @@ data class HomeUiState(
     val heroLogoUrl: String? = null,
     val heroTrailerKey: String? = null,
     val trailerAutoPlay: Boolean = false,
+    val trailerSoundEnabled: Boolean = false,
     // Home hero metadata visibility toggles (issue #72)
     val showBudget: Boolean = true,
     val heroOverviewOverride: String? = null,
@@ -1028,8 +1029,12 @@ class HomeViewModel @Inject constructor(
                 val clockFormat = prefs.asMap().entries
                     .firstOrNull { (key, _) -> key.name.endsWith("_clock_format") }
                     ?.value as? String ?: "24h"
+                val trailerSoundEnabled = prefs.asMap().entries
+                    .firstOrNull { (key, _) -> key.name.endsWith("_trailer_sound_enabled") }
+                    ?.value as? Boolean ?: false
                 _uiState.value = _uiState.value.copy(
                     trailerAutoPlay = trailerEnabled,
+                    trailerSoundEnabled = trailerSoundEnabled,
                     showBudget = showBudget,
                     clockFormat = clockFormat
                 )

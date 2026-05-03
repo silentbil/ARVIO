@@ -91,10 +91,14 @@ fun TrailerPlayer(
     ) {
         val player = remember(youtubeKey) {
             ExoPlayer.Builder(context).build().apply {
-                this.volume = volume.coerceIn(0f, 1f)
                 repeatMode = Player.REPEAT_MODE_ONE
                 playWhenReady = true
             }
+        }
+
+        // Reactively update volume when the setting changes (trailer sound toggle)
+        LaunchedEffect(volume) {
+            player.volume = volume.coerceIn(0f, 1f)
         }
 
         LaunchedEffect(videoUrl, audioUrl, youtubeKey) {
