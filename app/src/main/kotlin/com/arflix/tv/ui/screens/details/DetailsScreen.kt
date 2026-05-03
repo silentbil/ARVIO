@@ -428,6 +428,7 @@ fun DetailsScreen(
                                 val hasCast = uiState.cast.isNotEmpty()
                                 val hasReviews = uiState.reviews.isNotEmpty()
                                 val hasSimilar = uiState.similar.isNotEmpty()
+                                val hasCollection = uiState.collectionItems.isNotEmpty()
                                 focusedSection = when (focusedSection) {
                                     FocusSection.BUTTONS -> {
                                         isSidebarFocused = true
