@@ -1475,7 +1475,7 @@ class DetailsViewModel @Inject constructor(
                 episodeNumbers.map { epNum ->
                     async {
                         runCatching {
-                            traktRepository.markEpisodeWatched(currentMediaId, season, epNum)
+                            traktRepository.markEpisodeWatchedWithoutTraktSync(currentMediaId, season, epNum)
                         }
                     }
                 }.forEach { it.await() }
