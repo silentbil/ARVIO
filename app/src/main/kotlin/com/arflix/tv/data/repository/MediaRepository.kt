@@ -2448,12 +2448,22 @@ class MediaRepository @Inject constructor(
 
         val type = if (mediaType == MediaType.TV) "tv" else "movie"
         val credits = tmdbApi.getCredits(type, mediaId, apiKey, language = contentLanguage)
-        val cast = credits.cast
+
+        // Find the director from crew and prepend as the first cast member
+        val director = credits.crew.firstOrNull { it.job == "Director" }
+
+        val castMembers = credits.cast
             .distinctBy { it.id } // TMDB can occasionally return duplicate cast IDs.
             .take(15)
             .map { it.toCastMember() }
-        castCache[cacheKey] = CacheEntry(cast, System.currentTimeMillis())
-        return cast
+
+        val result = if (director != null) {
+            listOf(director.toDirectorCastMember()) + castMembers
+        } else {
+            castMembers
+        }
+        castCache[cacheKey] = CacheEntry(result, System.currentTimeMillis())
+        return result
     }
 
     /**
@@ -3164,6 +3174,15 @@ private fun TmdbCastMember.toCastMember(): CastMember {
         id = id,
         name = name,
         character = character ?: "",
+        profilePath = profilePath?.let { "${Constants.IMAGE_BASE}$it" }
+    )
+}
+
+private fun TmdbCrewMember.toDirectorCastMember(): CastMember {
+    return CastMember(
+        id = id,
+        name = name,
+        character = "Director",
         profilePath = profilePath?.let { "${Constants.IMAGE_BASE}$it" }
     )
 }
