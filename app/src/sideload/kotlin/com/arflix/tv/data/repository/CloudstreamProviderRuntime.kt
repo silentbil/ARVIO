@@ -27,9 +27,7 @@ import java.io.File
 import java.util.zip.ZipFile
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -70,7 +68,6 @@ class CloudstreamProviderRuntime @Inject constructor(
 
     private val loadMutex = Mutex()
     private val pluginCache = mutableMapOf<String, LoadedPlugin>()
-    private val timeoutScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * Search every installed plugin for the title, pick the best match per
@@ -273,16 +270,6 @@ class CloudstreamProviderRuntime @Inject constructor(
         val candidate = normalizeMatchTitle(result.name)
         if (target.isBlank() || candidate.isBlank()) return 0
 
-        val targetTokens = target.split(' ').filter { it.isNotBlank() }
-        val candidateTokens = candidate.split(' ').filter { it.isNotBlank() }
-        val hasExactTokenWindow = candidateTokens
-            .windowed(targetTokens.size.takeIf { it > 0 } ?: 1)
-            .any { it == targetTokens }
-        val extraTokenCount = (candidateTokens.size - targetTokens.size).coerceAtLeast(0)
-        val rawContainsTargetYear = targetYear?.let { year ->
-            Regex("\\b$year\\b").containsMatchIn(result.name)
-        } == true
-
         var score = maxOf(
             me.xdrop.fuzzywuzzy.FuzzySearch.ratio(target, candidate),
             me.xdrop.fuzzywuzzy.FuzzySearch.partialRatio(target, candidate) - 6
@@ -301,25 +288,6 @@ class CloudstreamProviderRuntime @Inject constructor(
                 diff <= 2 && candidate == target -> 2
                 else -> -38
             }
-        } else if (targetYear != null && resultYear == null && candidate != target) {
-            if (rawContainsTargetYear) {
-                score += 18
-            } else {
-                score -= if (extraTokenCount >= 3) 45 else 8
-            }
-        }
-
-        if (
-            candidate != target &&
-            targetTokens.size <= 2 &&
-            hasExactTokenWindow &&
-            extraTokenCount > 2 &&
-            !(rawContainsTargetYear && candidate.startsWith("$target "))
-        ) {
-            score -= (extraTokenCount * 10).coerceAtMost(50)
-        }
-        if (candidate != target && !targetTokens.all { token -> token in candidateTokens }) {
-            score -= 25
         }
         return score
     }
@@ -355,17 +323,12 @@ class CloudstreamProviderRuntime @Inject constructor(
             this == TvType.AnimeMovie ||
             this == TvType.Torrent ||
             this == TvType.Documentary ||
-            this == TvType.Live ||
-            this == TvType.Others ||
-            this == TvType.CustomMedia
+            this == TvType.Live
         RequestKind.SERIES -> this == TvType.TvSeries ||
             this == TvType.Anime ||
             this == TvType.Cartoon ||
             this == TvType.OVA ||
-            this == TvType.AsianDrama ||
-            this == TvType.Torrent ||
-            this == TvType.Others ||
-            this == TvType.CustomMedia
+            this == TvType.AsianDrama
     }
 
     private fun loadResponseToDataUrl(response: LoadResponse): String? = when (response) {
@@ -484,24 +447,11 @@ class CloudstreamProviderRuntime @Inject constructor(
         timeoutMs: Long,
         label: String,
         block: suspend () -> T
-    ): T? {
-        val task = timeoutScope.async {
-            block()
-        }
-        val result = runCatching {
-            withTimeoutOrNull(timeoutMs) {
-                task.await()
-            }
-        }.onFailure {
-            Log.w(TAG, "$label failed", it)
-        }.getOrNull()
-
-        if (result == null && task.isActive) {
-            task.cancel()
-            Log.w(TAG, "$label timed out after ${timeoutMs}ms")
-        }
-        return result
-    }
+    ): T? = runCatching {
+        withTimeoutOrNull(timeoutMs) { block() }
+    }.onFailure {
+        Log.w(TAG, "$label failed", it)
+    }.getOrNull()
 
     companion object {
         private const val SEARCH_TIMEOUT_MS = 8_000L

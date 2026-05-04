@@ -1,7 +1,14 @@
 package com.arflix.tv.cloudstream
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.arflix.tv.MainActivity
 import com.arflix.tv.di.RepositoryAccessEntryPoint
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.model.Addon
@@ -22,12 +29,16 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.Locale
 
 @RunWith(AndroidJUnit4::class)
 class CloudstreamPlaybackE2ETest {
+
+    @get:Rule
+    val composeRule = createAndroidComposeRule<MainActivity>()
 
     private data class MovieProbe(
         val query: String,
@@ -42,12 +53,11 @@ class CloudstreamPlaybackE2ETest {
         val imdbId: String,
         val addonId: String,
         val addonName: String,
-        val streamTitle: String,
-        val stream: StreamSource
+        val streamTitle: String
     )
 
     @Test
-    fun phisherMovieSourceResolvesForPlayback() {
+    fun cloudstreamMovieSourceAppearsAndStartsPlayback() {
         val deps = entryPoint()
         val candidate = runBlocking {
             val profile = ensureFreshProfile(deps)
@@ -61,20 +71,26 @@ class CloudstreamPlaybackE2ETest {
             resolved!!
         }
 
-        val playbackReady = runBlocking {
-            deps.streamRepository().resolveStreamForPlayback(candidate.stream)
-                ?: candidate.stream
-        }
-        val playbackUrl = playbackReady.url?.trim().orEmpty()
-        assertTrue(
-            "Expected resolved CloudStream source to expose a HTTP playback URL",
-            playbackUrl.startsWith("http://", ignoreCase = true) ||
-                playbackUrl.startsWith("https://", ignoreCase = true)
+        launchContinueIntent(
+            Uri.parse("arvio://continue/movie/${candidate.mediaId}")
         )
 
+        waitForText("Sources", timeoutMs = 60_000)
+        composeRule.onNodeWithText("Sources").performClick()
+
+        waitForText(candidate.addonName, timeoutMs = 90_000)
+        waitForText(candidate.streamTitle, timeoutMs = 90_000, substring = true)
+        composeRule.onAllNodesWithText(candidate.streamTitle, substring = true)
+            .get(0)
+            .performClick()
+
+        composeRule.waitUntil(timeoutMillis = 120_000) {
+            entryPoint().streamRepository().getAddonHealthBias(candidate.addonId) > 0
+        }
+
         println(
-            "Verified CloudStream source is playback-ready addon=${candidate.addonName} " +
-                "title=${candidate.title} stream=${candidate.streamTitle} url=${playbackUrl.take(80)}"
+            "Verified CloudStream playback addon=${candidate.addonName} " +
+                "title=${candidate.title} stream=${candidate.streamTitle}"
         )
     }
 
@@ -159,8 +175,7 @@ class CloudstreamPlaybackE2ETest {
                 addonId = stream.addonId,
                 addonName = stream.addonName.split(" - ").firstOrNull()?.trim().orEmpty()
                     .ifBlank { stream.addonName },
-                streamTitle = displayTitle.take(80),
-                stream = stream
+                streamTitle = displayTitle.take(80)
             )
         }
 
@@ -189,6 +204,28 @@ class CloudstreamPlaybackE2ETest {
         }
     }
 
+    private fun launchContinueIntent(uri: Uri) {
+        val context = composeRule.activity
+        val intent = Intent(Intent.ACTION_VIEW, uri, context, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        composeRule.runOnUiThread {
+            context.startActivity(intent)
+        }
+    }
+
+    private fun waitForText(
+        text: String,
+        timeoutMs: Long,
+        substring: Boolean = false
+    ) {
+        composeRule.waitUntil(timeoutMs) {
+            composeRule.onAllNodesWithText(text, substring = substring)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+    }
+
     private fun streamDisplayTitle(stream: StreamSource): String {
         return stream.behaviorHints?.filename
             ?.takeIf { it.isNotBlank() }
@@ -203,14 +240,12 @@ class CloudstreamPlaybackE2ETest {
 
     companion object {
         private const val CLOUDSTREAM_REPO_URL =
-            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json"
+            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json"
 
         private val PRIORITY_PLUGIN_NAMES = listOf(
-            "HDhub4u",
-            "FourKHDHub",
-            "UHDmoviesProvider",
-            "AllMovieLandProvider",
-            "AllWish"
+            "CineStream",
+            "NetflixMirrorProvider",
+            "Bollyflix"
         )
 
         private val MOVIE_PROBES = listOf(
