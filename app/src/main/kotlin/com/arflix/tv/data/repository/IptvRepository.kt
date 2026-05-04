@@ -2526,11 +2526,7 @@ class IptvRepository @Inject constructor(
                     url = streamUrl
                 )
             }
-            if (seriesSources.isNotEmpty()) {
-                return@withContext sortVodSources(seriesSources)
-            }
-
-            findEpisodeVodFromVodCatalogFallbackSources(
+            val fallbackSources = findEpisodeVodFromVodCatalogFallbackSources(
                 creds = creds,
                 title = title,
                 season = season,
@@ -2539,6 +2535,7 @@ class IptvRepository @Inject constructor(
                 normalizedTmdb = normalizedTmdb,
                 allowNetwork = allowNetwork
             )
+            sortVodSources(seriesSources + fallbackSources)
         }
     }
 
