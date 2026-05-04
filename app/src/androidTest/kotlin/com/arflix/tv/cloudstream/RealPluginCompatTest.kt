@@ -179,6 +179,44 @@ class RealPluginCompatTest {
         )
     }
 
+    @Test
+    fun phisherYflixReturnsPlayableEpisodeSource() = runBlocking {
+        val runtime = CloudstreamProviderRuntime(context)
+        val artifact = downloadPlugin(
+            url = "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/Yflix.cs3",
+            internalName = "phisher_yflix_episode_required"
+        )
+        val addon = Addon(
+            id = "phisher_yflix_episode_required",
+            name = "Yflix (phisher)",
+            version = "1",
+            description = "",
+            isInstalled = true,
+            isEnabled = true,
+            type = AddonType.CUSTOM,
+            runtimeKind = RuntimeKind.CLOUDSTREAM,
+            installSource = AddonInstallSource.CLOUDSTREAM_REPOSITORY,
+            installedArtifactPath = artifact.absolutePath
+        )
+
+        val streams = runtime.resolveEpisodeStreams(
+            addons = listOf(addon),
+            title = "The Pitt",
+            year = 2025,
+            season = 1,
+            episode = 4,
+            airDate = "2025-01-23"
+        )
+        assertTrue(
+            "Expected Phisher Yflix to resolve at least one playable The Pitt episode source",
+            streams.any { stream ->
+                val url = stream.url?.trim().orEmpty()
+                url.startsWith("http://", ignoreCase = true) ||
+                    url.startsWith("https://", ignoreCase = true)
+            }
+        )
+    }
+
     private data class SurveyResult(val pass: Boolean, val line: String)
 
     private suspend fun runOne(

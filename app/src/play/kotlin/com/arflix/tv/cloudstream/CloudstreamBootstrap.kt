@@ -1,5 +1,6 @@
 package com.arflix.tv.cloudstream
 
+import android.content.Context
 import okhttp3.OkHttpClient
 
 /**
@@ -9,4 +10,4 @@ import okhttp3.OkHttpClient
  * is an empty body.
  */
 @Suppress("UNUSED_PARAMETER")
-fun initCloudstream(client: OkHttpClient) = Unit
+fun initCloudstream(client: OkHttpClient, context: Context? = null) = Unit

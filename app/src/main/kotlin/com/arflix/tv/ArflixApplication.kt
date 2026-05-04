@@ -97,7 +97,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             OkHttpProvider.setDnsProvider(provider)
 
             runCatching {
-                com.arflix.tv.cloudstream.initCloudstream(OkHttpProvider.client)
+                com.arflix.tv.cloudstream.initCloudstream(OkHttpProvider.client, this@ArflixApplication)
             }
             runCatching { OkHttpProvider.dns.lookup("image.tmdb.org") }
         }
