@@ -1317,11 +1317,9 @@ class DetailsViewModel @Inject constructor(
                         year = item?.year?.toIntOrNull()
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
-                        val currentStreams = _uiState.value.streams
-                        val existingVod = currentStreams.filter { it.addonId == "iptv_xtream_vod" }
-                        val existingNonVod = currentStreams.filter { it.addonId != "iptv_xtream_vod" }
+                        val existingVod = _uiState.value.streams.filter { it.addonId == "iptv_xtream_vod" }
                         val mergedStreams = sortPlayableStreamsFirst(
-                            (existingNonVod + progressive.streams + existingVod)
+                            (progressive.streams + existingVod)
                                 .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
                         )
                         Log.d(
@@ -1374,11 +1372,9 @@ class DetailsViewModel @Inject constructor(
                         airDate = episodeAirDate
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
-                        val currentStreams = _uiState.value.streams
-                        val existingVod = currentStreams.filter { it.addonId == "iptv_xtream_vod" }
-                        val existingNonVod = currentStreams.filter { it.addonId != "iptv_xtream_vod" }
+                        val existingVod = _uiState.value.streams.filter { it.addonId == "iptv_xtream_vod" }
                         val mergedStreams = sortPlayableStreamsFirst(
-                            (existingNonVod + progressive.streams + existingVod)
+                            (progressive.streams + existingVod)
                                 .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
                         )
                         val addonCount = streamRepository.installedAddons.first()
