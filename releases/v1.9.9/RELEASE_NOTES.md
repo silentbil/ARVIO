@@ -64,6 +64,3 @@ Thank you to everyone who helped with this release, including:
 - Playback/addons: IPTV M3U/Xtream/Stalker sources, Stremio-compatible addons, CloudStream/community HTTP sources.
 - Smoothness references: Android TV device traces and public Android TV performance research.
 
-## Download
-- AFTVnews / Downloader code: `9383706`
-- Direct APK: `https://gitlab.com/arvio1/ARVIO/-/raw/main/releases/v1.9.9/ARVIO%20V1.9.9.apk?inline=false`

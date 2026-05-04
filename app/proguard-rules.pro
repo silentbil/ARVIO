@@ -188,10 +188,22 @@
 -keep interface com.lagradost.cloudstream3.** { *; }
 -keep class com.lagradost.nicehttp.** { *; }
 -keep interface com.lagradost.nicehttp.** { *; }
+-keep class kotlin.** { *; }
+-keep interface kotlin.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-keep interface kotlinx.coroutines.** { *; }
+-keep class okhttp3.** { *; }
+-keep interface okhttp3.** { *; }
+-keep class okio.** { *; }
+-keep interface okio.** { *; }
 -keep class org.jsoup.** { *; }
 -keep interface org.jsoup.** { *; }
 -dontwarn com.lagradost.cloudstream3.**
 -dontwarn com.lagradost.nicehttp.**
+-dontwarn kotlin.**
+-dontwarn kotlinx.coroutines.**
+-dontwarn okhttp3.**
+-dontwarn okio.**
 -dontwarn org.jsoup.**
 
 # ============================================
