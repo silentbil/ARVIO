@@ -144,3 +144,5 @@ This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) fo
 
 This application was developed with significant AI assistance. Contributions should still be reviewed, tested, and treated as normal source code changes.
 
+If you have concerns about using AI-generated software, please do not use this application.
+
