@@ -185,6 +185,21 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.res.stringResource
 
+private val overviewHtmlTagRegex = Regex("<[^>]*>")
+private val overviewNonBreakingSpaceRegex = Regex("[\\u00A0\\u2007\\u202F]")
+private val overviewUnicodeSpaceRegex = Regex("\\p{Z}+")
+private val overviewWhitespaceRegex = Regex("\\s+")
+
+private fun cleanOverviewText(value: String): String {
+    return value
+        .replace(overviewHtmlTagRegex, " ")
+        .replace(overviewNonBreakingSpaceRegex, " ")
+        .replace(overviewUnicodeSpaceRegex, " ")
+        .replace(overviewWhitespaceRegex, " ")
+        .trim()
+        .ifBlank { "No description available." }
+}
+
 // Genre ID to name mapping (TMDB standard)
 private val movieGenres = mapOf(
     28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy",
@@ -1437,13 +1452,9 @@ private fun HeroSection(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 // Overview text (EPG data for IPTV, synopsis for movies/shows)
-                val displayOverview = (overviewOverride ?: currentItem.overview)
-                    .replace(Regex("<[^>]*>"), " ")
-                    .replace(Regex("[\\u00A0\\u2007\\u202F]"), " ")
-                    .replace(Regex("\\p{Z}+"), " ")
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-                    .ifBlank { "No description available." }
+                val displayOverview = remember(overviewOverride, currentItem.overview) {
+                    cleanOverviewText(overviewOverride ?: currentItem.overview)
+                }
 
                 val overviewMaxHeight = 72.dp
                 Box(
@@ -1613,13 +1624,9 @@ private fun MobileHeroOverlay(
     val ratingValue = parseRatingValue(rating)
     val hasMetadata = genreText.isNotEmpty() || year.isNotEmpty() || ratingValue > 0f
 
-    val displayOverview = (overviewOverride ?: item.overview)
-        .replace(Regex("<[^>]*>"), " ")
-        .replace(Regex("[\\u00A0\\u2007\\u202F]"), " ")
-        .replace(Regex("\\p{Z}+"), " ")
-        .replace(Regex("\\s+"), " ")
-        .trim()
-        .ifBlank { "No description available." }
+    val displayOverview = remember(overviewOverride, item.overview) {
+        cleanOverviewText(overviewOverride ?: item.overview)
+    }
 
     Box(
         modifier = Modifier
@@ -1901,13 +1908,7 @@ private fun MobileHeroCarousel(
                 val ratingValue = parseRatingValue(rating)
 
                 val displayOverview = remember(item.id, item.overview) {
-                    item.overview
-                        .replace(Regex("<[^>]*>"), " ")
-                        .replace(Regex("[\\u00A0\\u2007\\u202F]"), " ")
-                        .replace(Regex("\\p{Z}+"), " ")
-                        .replace(Regex("\\s+"), " ")
-                        .trim()
-                        .ifBlank { "No description available." }
+                    cleanOverviewText(item.overview)
                 }
 
                 Box(

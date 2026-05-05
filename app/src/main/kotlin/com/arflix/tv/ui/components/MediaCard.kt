@@ -151,7 +151,7 @@ fun MediaCard(
             .data(rawImageUrl)
             .size(widthPx, heightPx)
             .precision(Precision.INEXACT)
-            .allowHardware(false)
+            .allowHardware(true)
             .crossfade(false)
             .build()
     }
@@ -167,7 +167,7 @@ fun MediaCard(
                 .data(effectiveLogoImageUrl)
                 .size(logoWidthPx, logoHeightPx)
                 .precision(Precision.INEXACT)
-                .allowHardware(false)
+                .allowHardware(true)
                 .crossfade(false)
                 .build()
         }
@@ -485,7 +485,7 @@ fun PosterCard(
             .data(posterUrl)
             .size(widthPx, heightPx)
             .precision(Precision.INEXACT)
-            .allowHardware(false)
+            .allowHardware(true)
             .crossfade(false)
             .build()
     }
