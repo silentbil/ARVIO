@@ -345,7 +345,10 @@ fun DetailsScreen(
     }
 
     // D-pad key handler — only used on TV (skipped on mobile/touch devices)
-    val dpadRepeatGate = rememberArvioDpadRepeatGate(minRepeatIntervalMs = 78L)
+    val dpadRepeatGate = rememberArvioDpadRepeatGate(
+        horizontalMinRepeatIntervalMs = 80L,
+        verticalMinRepeatIntervalMs = 112L
+    )
     val keyModifier = if (isMobile) Modifier else Modifier.onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
                     dpadRepeatGate.reset()

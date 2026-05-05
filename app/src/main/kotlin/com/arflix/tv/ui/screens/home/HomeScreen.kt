@@ -2128,7 +2128,10 @@ private fun HomeInputLayer(
     var rootHasFocus by remember { mutableStateOf(false) }
     val focusRecoveryDelayMs = 180L
     var preferredCategoryId by rememberSaveable { mutableStateOf<String?>(null) }
-    val dpadRepeatGate = rememberArvioDpadRepeatGate(minRepeatIntervalMs = 78L)
+    val dpadRepeatGate = rememberArvioDpadRepeatGate(
+        horizontalMinRepeatIntervalMs = 80L,
+        verticalMinRepeatIntervalMs = 112L
+    )
     // Profile avatar is always shown when a profile exists (clickable, opens
     // profile switcher). Focus navigation includes it as the first focusable item.
     val hasProfile = currentProfile != null
