@@ -59,10 +59,6 @@ All notable changes to this project are documented in this file.
 - Improved profile loading and profile creation behavior.
 - Improved profile and player focus fixes. Contributor: silentbil.
 
-### Download
-- AFTVnews / Downloader code: `8252981`
-- Direct APK: `https://gitlab.com/arvio1/ARVIO/-/raw/main/releases/v1.9.91/ARVIO%20V1.9.91.apk?inline=false`
-
 ## [1.9.9] - 2026-04-28
 
 ### Android TV / IPTV overhaul
@@ -128,10 +124,6 @@ Thank you to everyone who helped with this release, including:
 - Playback/addons: IPTV M3U/Xtream/Stalker sources, Stremio-compatible addons, CloudStream/community HTTP sources.
 - Smoothness references: Android TV device traces and public Android TV performance research.
 
-### Download
-- AFTVnews / Downloader code: `8252981`
-- Direct APK: `https://gitlab.com/arvio1/ARVIO/-/raw/main/releases/v1.9.9/ARVIO%20V1.9.9.apk?inline=false`
-
 ## [1.9.8] - 2026-04-10
 
 ### Added
@@ -171,10 +163,6 @@ Thank you to everyone who helped with this release, including:
 - Top 10 badges now stay visible when cards are focused.
 - Normal login flow now performs full cloud restore (not just addons), so catalogs, IPTV favorites, and other cloud-backed state restore after login.
 - `main` pushed to GitLab and GitLab repo prepared as the active remote while GitHub remains suspended.
-
-### Download
-- AFTVnews / Downloader code: `9287794`
-- Direct APK: `https://gitlab.com/arvio1/ARVIO/-/raw/main/releases/v1.9.8/ARVIO-v1.9.8.apk?inline=false`
 
 ## [1.9.74] - 2026-04-03
 

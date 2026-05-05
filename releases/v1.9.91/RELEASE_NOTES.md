@@ -49,7 +49,3 @@
 - Fixed cloud login/startup language restore.
 - Improved profile loading and profile creation behavior.
 - Improved profile and player focus fixes. Contributor: silentbil.
-
-## Download
-- AFTVnews / Downloader code: `8252981`
-- Direct APK: `https://gitlab.com/arvio1/ARVIO/-/raw/main/releases/v1.9.91/ARVIO%20V1.9.91.apk?inline=false`

@@ -402,24 +402,35 @@ class CloudstreamProviderRuntime @Inject constructor(
             //     KMP master library)
             // Detect by probing declared methods on the concrete class so
             // either override dispatches correctly.
-            runCatching {
-                val loadNoArg = runCatching {
-                    pluginClass.getMethod("load")
-                }.getOrNull()
-                val loadWithCtx = runCatching {
-                    pluginClass.getMethod("load", Context::class.java)
-                }.getOrNull()
-                when {
-                    loadNoArg != null -> loadNoArg.invoke(instance)
-                    loadWithCtx != null -> loadWithCtx.invoke(instance, context)
-                    else -> error("$pluginClassName has no load() / load(Context) method")
+            val loadNoArg = runCatching {
+                pluginClass.getMethod("load")
+            }.getOrNull()
+            val loadWithCtx = runCatching {
+                pluginClass.getMethod("load", Context::class.java)
+            }.getOrNull()
+            if (loadNoArg == null && loadWithCtx == null) {
+                Log.e(TAG, "$pluginClassName has no load() / load(Context) method")
+            }
+            loadNoArg?.let { method ->
+                runCatching {
+                    method.invoke(instance)
+                }.onFailure {
+                    Log.e(TAG, "$pluginClassName.load() threw", it)
                 }
-            }.onFailure { Log.e(TAG, "$pluginClassName.load() threw", it) }
+            }
+            loadWithCtx?.let { method ->
+                runCatching {
+                    method.invoke(instance, context)
+                }.onFailure {
+                    Log.e(TAG, "$pluginClassName.load(Context) threw", it)
+                }
+            }
 
             val apisAfter = synchronized(APIHolder.allProviders) {
                 APIHolder.allProviders.toList()
             }
-            val registered = (apisAfter - apisBefore.toSet()).toList()
+            val registered = (apisAfter - apisBefore.toSet())
+                .distinctBy { "${it.name}|${it.mainUrl}|${it.javaClass.name}" }
 
             Log.i(
                 TAG,
