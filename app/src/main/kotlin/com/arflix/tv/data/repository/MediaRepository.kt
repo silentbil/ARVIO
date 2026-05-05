@@ -3182,7 +3182,7 @@ private fun TmdbCrewMember.toDirectorCastMember(): CastMember {
     return CastMember(
         id = id,
         name = name,
-        character = "Director",
+        character = job ?: "",
         profilePath = profilePath?.let { "${Constants.IMAGE_BASE}$it" }
     )
 }
