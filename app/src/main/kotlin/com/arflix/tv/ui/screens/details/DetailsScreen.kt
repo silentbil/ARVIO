@@ -1555,7 +1555,7 @@ private fun DetailsContent(
                         Spacer(modifier = Modifier.height(24.dp))
                         val displayName = collectionName ?: stringResource(R.string.more_like_this)
                         Text(
-                            text = "$displayName Collection",
+                            text = displayName,
                             style = ArvioSkin.typography.sectionTitle.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold),
                             color = Color.White.copy(alpha = 0.9f)
                         )
