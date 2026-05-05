@@ -313,6 +313,9 @@ class CollectionDetailsViewModel @Inject constructor(
     private fun sourceMatchesTab(source: com.arflix.tv.data.model.CollectionSourceConfig, tab: CollectionTab): Boolean {
         val mediaType = source.mediaType?.trim()?.lowercase()
         if (mediaType != null) {
+            if (mediaType == "all" || mediaType == "any" || mediaType == "both" || mediaType == "mixed") {
+                return true
+            }
             return when (tab) {
                 CollectionTab.MOVIES -> mediaType == "movie" || mediaType == "film"
                 CollectionTab.SERIES -> mediaType == "series" || mediaType == "tv" || mediaType == "show" || mediaType == "anime"

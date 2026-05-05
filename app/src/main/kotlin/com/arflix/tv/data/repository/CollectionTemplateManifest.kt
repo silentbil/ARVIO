@@ -768,21 +768,25 @@ internal object CollectionTemplateManifest {
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
-                source(addonId = "aio-metadata", type = "all", catalogId = "mdblist.101434")
+                source(addonId = "aio-metadata", type = "all", catalogId = "mdblist.101434"),
+                tmdbCollectionSource(8091),
+                tmdbCollectionSource(399),
+                tmdbCollectionSource(115762)
             ),
             listMetadata = listOf(
                 metadata(sourceCatalogId = "mdblist.101434", sourceAddonId = "aio-metadata", sourceName = "Alien vs Predator Collection", sourceLabel = "MDBLIST", mediaType = "all", itemCount = 17, author = "exoduso", url = "https://mdblist.com/lists/exoduso/predator-franchise")
             )
         ),
         entry(
-            title = "Pirates of the Carribbean",
+            title = "Pirates of the Caribbean",
             group = CollectionGroupKind.FRANCHISE,
             coverImageUrl = "${TEMPLATE_IMAGE_BASE}pirates.jpg",
             tileShape = CollectionTileShape.LANDSCAPE,
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
-                source(addonId = "aio-metadata", type = "movie", catalogId = "mdblist.82145")
+                source(addonId = "aio-metadata", type = "movie", catalogId = "mdblist.82145"),
+                tmdbCollectionSource(295)
             ),
             listMetadata = listOf(
                 metadata(sourceCatalogId = "mdblist.82145", sourceAddonId = "aio-metadata", sourceName = "Pirates of the Caribbean Collection", sourceLabel = "MDBLIST", mediaType = "movie", itemCount = 5, author = "aaron713", url = "https://mdblist.com/lists/aaron713/pirates-of-the-caribbean-collection")
@@ -796,7 +800,8 @@ internal object CollectionTemplateManifest {
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
-                source(addonId = "aio-metadata", type = "all", catalogId = "mdblist.125458")
+                source(addonId = "aio-metadata", type = "all", catalogId = "mdblist.125458"),
+                tmdbCollectionSource(528)
             ),
             listMetadata = listOf(
                 metadata(sourceCatalogId = "mdblist.125458", sourceAddonId = "aio-metadata", sourceName = "The Terminator Collection", sourceLabel = "MDBLIST", mediaType = "all", itemCount = 9, author = "andyhawks", url = "https://mdblist.com/lists/andyhawks/universe-the-terminator")
@@ -838,7 +843,8 @@ internal object CollectionTemplateManifest {
             hideTitle = true,
             heroVideoUrl = null,
             sources = listOf(
-                source(addonId = "aio-metadata", type = "movie", catalogId = "mdblist.125142")
+                source(addonId = "aio-metadata", type = "movie", catalogId = "mdblist.125142"),
+                tmdbCollectionSource(2344)
             ),
             listMetadata = listOf(
                 metadata(sourceCatalogId = "mdblist.125142", sourceAddonId = "aio-metadata", sourceName = "The Matrix Collection", sourceLabel = "MDBLIST", mediaType = "movie", itemCount = 5, author = "andyhawks", url = "https://mdblist.com/lists/andyhawks/universe-the-matrix")
@@ -857,16 +863,6 @@ internal object CollectionTemplateManifest {
             listMetadata = listOf(
                 metadata(sourceCatalogId = "mdblist.94304", sourceAddonId = "aio-metadata", sourceName = "Lord of the Rings and Hobbit Collection", sourceLabel = "MDBLIST", mediaType = "movie", itemCount = 6, author = "spudhead15", url = "https://mdblist.com/lists/spudhead15/lord-of-the-rings-and-hobbit-collection")
             )
-        ),
-        entry(
-            title = "MCU Universe",
-            group = CollectionGroupKind.FRANCHISE,
-            coverImageUrl = "${UPLOADED_COVER_BASE}937640d2-3147-4c7c-af39-01888f2eea9f.jpg",
-            tileShape = CollectionTileShape.LANDSCAPE,
-            hideTitle = true,
-            heroVideoUrl = null,
-            sources = emptyList(),
-            listMetadata = emptyList()
         ),
         entry(
             title = "X-Men",
@@ -1056,6 +1052,11 @@ internal object CollectionTemplateManifest {
         addonId = addonId,
         addonCatalogType = type,
         addonCatalogId = catalogId
+    )
+
+    private fun tmdbCollectionSource(collectionId: Int) = CollectionSourceConfig(
+        kind = CollectionSourceKind.TMDB_COLLECTION,
+        tmdbCollectionId = collectionId
     )
 
     private fun tmdbGenreSource(type: String, genreId: Int) = CollectionSourceConfig(
