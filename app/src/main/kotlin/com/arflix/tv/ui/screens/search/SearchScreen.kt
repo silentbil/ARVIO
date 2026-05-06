@@ -564,7 +564,12 @@ private fun RowsLayer(
                             itemsIndexed(category.items, key = { _, item -> "${item.mediaType}_${item.id}" }) { itemIdx, item ->
                                 val itemIsFocused = isCurrentRow && itemIdx == currentItemIndex
                                 MediaCard(
-                                    item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
+                                    item = item.copy(
+                                        title = buildCardTitle(item),
+                                        subtitle = buildCardSubtitle(item),
+                                        releaseDate = null,
+                                        year = ""
+                                    ),
                                     width = itemWidth,
                                     isLandscape = !rowUsePosterCards,
                                     logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
@@ -601,7 +606,12 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
         horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(26.dp), modifier = Modifier.fillMaxSize().arvioDpadFocusGroup()) {
         items(items.size, key = { "${items[it].mediaType}_${items[it].id}" }) { idx ->
             val item = items[idx]
-            MediaCard(item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
+            MediaCard(item = item.copy(
+                title = buildCardTitle(item),
+                subtitle = buildCardSubtitle(item),
+                releaseDate = null,
+                year = ""
+            ),
                 width = itemWidth, isLandscape = !usePosterCards, showProgress = false, titleMaxLines = 2, subtitleMaxLines = 1,
                 isFocusedOverride = false, enableSystemFocus = true, onFocused = {}, onClick = { onItemClick(item) },
                 modifier = if (isTouchDevice) Modifier.clickable { onItemClick(item) } else Modifier)
