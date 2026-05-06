@@ -3,6 +3,7 @@ package com.arflix.tv.data.repository
 import com.arflix.tv.R
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.api.TmdbCastMember
+import com.arflix.tv.data.api.TmdbCrewMember
 import com.arflix.tv.data.api.TmdbEpisode
 import com.arflix.tv.data.api.TmdbImage
 import com.arflix.tv.data.api.TmdbListResponse
@@ -3182,7 +3183,7 @@ private fun TmdbCrewMember.toDirectorCastMember(): CastMember {
     return CastMember(
         id = id,
         name = name,
-        character = job ?: "",
+        character = job,
         profilePath = profilePath?.let { "${Constants.IMAGE_BASE}$it" }
     )
 }
