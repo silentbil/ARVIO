@@ -3561,6 +3561,7 @@ data class ContinueWatchingItem(
 ) {
     fun toMediaItem(): MediaItem {
         val effectiveDurationSeconds = durationSeconds.takeIf { it > 0L } ?: parseRuntimeLabelSeconds(duration)
+        val showPlaybackProgress = !isUpNext && progress in 1..94
         val resumeSeconds = when {
             resumePositionSeconds > 0L -> resumePositionSeconds
             // Only derive resume position from progress if we have a meaningful duration
@@ -3599,7 +3600,11 @@ data class ContinueWatchingItem(
                 (effectiveDurationSeconds * (100L - progress) / 100L).coerceAtLeast(0L)
             else -> 0L
         }
-        val timeRemainingLabel = formatTimeRemainingCompact(timeRemainingSeconds)
+        val timeRemainingLabel = if (showPlaybackProgress) {
+            formatTimeRemainingCompact(timeRemainingSeconds)
+        } else {
+            null
+        }
 
         val totalEpisodeCount = totalEpisodes.takeIf { mediaType == MediaType.TV && it > 0 }
         val watchedEpisodeCount = watchedEpisodes
@@ -3624,7 +3629,8 @@ data class ContinueWatchingItem(
             nextEpisode = nextEp,
             totalEpisodes = totalEpisodeCount,
             watchedEpisodes = watchedEpisodeCount,
-            timeRemainingLabel = timeRemainingLabel
+            timeRemainingLabel = timeRemainingLabel,
+            showPlaybackProgress = showPlaybackProgress
         )
     }
 }

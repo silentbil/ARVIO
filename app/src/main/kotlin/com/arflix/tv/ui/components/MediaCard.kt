@@ -341,16 +341,16 @@ fun MediaCard(
                 }
                 }
 
-                // Subtle progress bar for Continue Watching
-                if (showProgress && !item.isWatched && item.progress in 1..94) {
+                // Subtle playback progress bar for Continue Watching.
+                if (showProgress && item.showPlaybackProgress && !item.isWatched && item.progress in 1..94) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 6.dp)
-                            .height(4.dp)
+                            .height(5.dp)
                             .clip(RoundedCornerShape(999.dp))
-                            .background(Color.White.copy(alpha = 0.26f))
+                            .background(Color.Black.copy(alpha = 0.48f))
                     ) {
                         Box(
                             modifier = Modifier
