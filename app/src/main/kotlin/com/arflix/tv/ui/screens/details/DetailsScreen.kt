@@ -2178,7 +2178,7 @@ private fun DetailsTvRows(
         }
 
         if (reviews.isNotEmpty()) {
-            item { Spacer(modifier = Modifier.height(64.dp)) }
+            item { Spacer(modifier = Modifier.height(4.dp)) }
             item {
                 DetailsReviewRail(
                     reviews = reviews,
