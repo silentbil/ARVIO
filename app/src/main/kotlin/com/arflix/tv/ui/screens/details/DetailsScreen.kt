@@ -366,6 +366,13 @@ fun DetailsScreen(
                 ) {
                     return@onPreviewKeyEvent true
                 }
+                if (
+                    event.type == KeyEventType.KeyDown &&
+                    (event.key == Key.DirectionUp || event.key == Key.DirectionDown) &&
+                    event.nativeKeyEvent.repeatCount > 0
+                ) {
+                    return@onPreviewKeyEvent true
+                }
                 if (event.type == KeyEventType.KeyDown) {
                     // Check if any modal is showing
                     if (showStreamSelector || showEpisodeContextMenu || showSeasonContextMenu || uiState.showPersonModal) {
