@@ -593,6 +593,7 @@ private fun CategoryContextMenu(
     if (actions.isEmpty()) return
 
     var focusedIndex by remember(actions.size) { mutableStateOf(0) }
+    var ignoreSelectUntilRelease by remember(actions.size) { mutableStateOf(true) }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -611,7 +612,13 @@ private fun CategoryContextMenu(
                 .focusRequester(focusRequester)
                 .focusable()
                 .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) {
+                    val isSelect = event.key == Key.DirectionCenter || event.key == Key.Enter
+                    if (ignoreSelectUntilRelease && isSelect) {
+                        if (event.type == KeyEventType.KeyUp) {
+                            ignoreSelectUntilRelease = false
+                        }
+                        true
+                    } else if (event.type != KeyEventType.KeyDown) {
                         false
                     } else {
                         when (event.key) {

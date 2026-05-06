@@ -2103,6 +2103,18 @@ private fun DetailsTvRows(
             return@LaunchedEffect
         }
 
+        val layoutInfo = contentScrollState.layoutInfo
+        val targetVisible = layoutInfo.visibleItemsInfo.any { itemInfo ->
+            itemInfo.index == targetIndex &&
+                itemInfo.offset >= layoutInfo.viewportStartOffset &&
+                itemInfo.offset + itemInfo.size <= layoutInfo.viewportEndOffset
+        }
+        if (targetVisible) {
+            detailsStackOffsetPx.stop()
+            detailsStackOffsetPx.snapTo(0f)
+            return@LaunchedEffect
+        }
+
         if (firstVisible != targetIndex) {
             val direction = if (targetIndex > firstVisible) 1f else -1f
             val travelPx = with(density) { 96.dp.toPx() }
