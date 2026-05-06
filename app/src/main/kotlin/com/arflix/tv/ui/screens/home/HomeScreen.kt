@@ -425,15 +425,19 @@ private fun HomeBackdropCrossfade(
     }
 
     fun buildBackdropRequest(url: String): ImageRequest =
+        "$url|${backdropWidthPx}x$backdropHeightPx".let { cacheKey ->
         ImageRequest.Builder(context)
             .data(url)
             .size(backdropWidthPx, backdropHeightPx)
             .precision(Precision.INEXACT)
             .allowHardware(true)
+            .memoryCacheKey(cacheKey)
+            .placeholderMemoryCacheKey(cacheKey)
             .crossfade(false)
             .build()
+        }
 
-    Box(modifier = modifier) {
+    Box(modifier = modifier.graphicsLayer { }) {
         displayedBackdropUrl?.let { stableBackdropUrl ->
             val request = remember(stableBackdropUrl, backdropWidthPx, backdropHeightPx) {
                 buildBackdropRequest(stableBackdropUrl)
@@ -911,6 +915,7 @@ fun HomeScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer { }
                         .drawWithCache {
                             val width = size.width
                             val height = size.height
@@ -1561,6 +1566,7 @@ private fun HomeHeroLayer(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = AppTopBarContentTopInset)
+                .graphicsLayer { }
                 .zIndex(3f)
         ) {
             heroItem?.let { item ->
@@ -2711,18 +2717,6 @@ private fun TvHomeRowsLayer(
     val localCurrentRowIndex = (currentRowIndex - rowWindowStart)
         .coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
 
-    val density = LocalDensity.current
-    val rowHeightsPx = remember(renderedCategories.size) { FloatArray(renderedCategories.size) }
-    renderedCategories.forEachIndexed { index, category ->
-        androidx.compose.runtime.key(category.id) {
-            val rowKey = remember(category.id) { "home:${category.id}" }
-            val mode = rememberCatalogueRowLayoutMode(rowKey)
-            val isPoster = mode == CardLayoutMode.POSTER
-            val dp = if (isPoster) 252.dp else 202.dp
-            rowHeightsPx[index] = with(density) { dp.toPx() }
-        }
-    }
-
     var isFastScrolling by remember { mutableStateOf(false) }
     LaunchedEffect(focusState.lastNavEventTime) {
         val anchor = focusState.lastNavEventTime
@@ -2739,11 +2733,7 @@ private fun TvHomeRowsLayer(
             .padding(top = 24.dp)
     ) {
         val rowsViewportHeight = (maxHeight * 0.31f).coerceIn(260.dp, 340.dp)
-        val estimatedRowPitchPx = with(LocalDensity.current) {
-            (if (usePosterCards) 240.dp else 190.dp).toPx().coerceAtLeast(1f)
-        }
         val listState = rememberLazyListState()
-        val rowStackOffsetPx = remember { Animatable(0f) }
         var lastAppliedTargetIndex by remember { mutableIntStateOf(-1) }
         // Only scroll the LazyColumn in response to actual user D-pad navigation,
         // NOT when categories change during loading. The previous implementation
@@ -2771,38 +2761,10 @@ private fun TvHomeRowsLayer(
             if (!initialPlacement && !recentUserNav) return@LaunchedEffect
 
             val jumpDistance = kotlin.math.abs(targetIndex - currentIndex)
-            if (!initialPlacement && jumpDistance <= 2) {
-                val travelPx = if (targetIndex > currentIndex) {
-                    var dist = 0f
-                    for (i in currentIndex until targetIndex) {
-                        dist += rowHeightsPx.getOrElse(i) { estimatedRowPitchPx }
-                    }
-                    dist
-                } else if (targetIndex < currentIndex) {
-                    var dist = 0f
-                    for (i in targetIndex until currentIndex) {
-                        dist += rowHeightsPx.getOrElse(i) { estimatedRowPitchPx }
-                    }
-                    dist
-                } else {
-                    currentOffset.toFloat()
-                }.coerceIn(0f, with(density) { rowsViewportHeight.toPx() })
-
-                val direction = when {
-                    targetIndex > currentIndex -> 1f
-                    targetIndex < currentIndex -> -1f
-                    else -> 0f
-                }
-                rowStackOffsetPx.stop()
-                rowStackOffsetPx.snapTo(direction * travelPx)
+            if (initialPlacement || jumpDistance > 7) {
                 listState.scrollToItem(index = targetIndex, scrollOffset = 0)
-                rowStackOffsetPx.animateTo(
-                    targetValue = 0f,
-                    animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
-                )
             } else {
-                rowStackOffsetPx.snapTo(0f)
-                listState.scrollToItem(index = targetIndex, scrollOffset = 0)
+                listState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
             }
             lastAppliedTargetIndex = targetIndex
         }
@@ -2821,13 +2783,6 @@ private fun TvHomeRowsLayer(
                 contentPadding = PaddingValues(bottom = rowsViewportHeight),
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(
-                        if (kotlin.math.abs(rowStackOffsetPx.value) > 0.01f) {
-                            Modifier.graphicsLayer { translationY = rowStackOffsetPx.value }
-                        } else {
-                            Modifier
-                        }
-                    )
                     .arvioDpadFocusGroup(enableFocusRestorer = false)
                     .clipToBounds(),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
