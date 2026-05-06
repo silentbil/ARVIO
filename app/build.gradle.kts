@@ -59,7 +59,7 @@ android {
         create("sideload") {
             dimension = "distribution"
             buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "true")
-            buildConfigField("Boolean", "CLOUDSTREAM_ENABLED", "true")
+            buildConfigField("Boolean", "CLOUDSTREAM_ENABLED", "false")
         }
     }
 

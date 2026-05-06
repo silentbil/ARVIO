@@ -148,6 +148,8 @@ fun SearchScreen(
     // Manual row/item focus tracking (like HomeScreen)
     var currentRowIndex by remember { mutableIntStateOf(0) }
     var currentItemIndex by remember { mutableIntStateOf(0) }
+    var focusedFilterRow by remember { mutableIntStateOf(0) }
+    var focusedFilterIndex by remember { mutableIntStateOf(0) }
     var resultsLastNavEventTime by remember { mutableLongStateOf(0L) }
 
     val searchFocusRequester = remember { FocusRequester() }
@@ -205,14 +207,25 @@ fun SearchScreen(
                             currentItemIndex = 0
                             true
                         }
-                        else if (showFilters) { focusZone = FocusZone.FILTERS; try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}; true }
+                        else if (showFilters) {
+                            focusZone = FocusZone.FILTERS
+                            focusedFilterRow = 0
+                            focusedFilterIndex = 0
+                            try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
+                            true
+                        }
                         else { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     }
                 }
                 Key.DirectionDown -> when (focusZone) {
                     FocusZone.SIDEBAR -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.SEARCH_INPUT -> {
-                        if (showFilters) { focusZone = FocusZone.FILTERS; try { filtersFocusRequester.requestFocus() } catch (_: Exception) {} }
+                        if (showFilters) {
+                            focusZone = FocusZone.FILTERS
+                            focusedFilterRow = 0
+                            focusedFilterIndex = 0
+                            try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
+                        }
                         else if (activeCategories.isNotEmpty() || hasAiResults) {
                             resultsLastNavEventTime = SystemClock.elapsedRealtime()
                             focusZone = FocusZone.RESULTS
@@ -320,7 +333,6 @@ fun SearchScreen(
             // ── Filter Chips (discover mode) - focusable with D-pad ──
             if (showFilters) {
                 Column(modifier = Modifier
-                    .focusRequester(filtersFocusRequester)
                     .onFocusChanged { state ->
                         if (state.hasFocus) focusZone = FocusZone.FILTERS
                         else if (focusZone == FocusZone.FILTERS && !state.hasFocus) {
@@ -334,16 +346,78 @@ fun SearchScreen(
                     }
                 ) {
                     LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        items(DiscoverType.entries.size, key = { DiscoverType.entries[it].name }) { i -> val t = DiscoverType.entries[i]; GlowChip(t.label, uiState.selectedType == t) { viewModel.selectType(t) } }
+                        items(DiscoverType.entries.size, key = { DiscoverType.entries[it].name }) { i ->
+                            val t = DiscoverType.entries[i]
+                            GlowChip(
+                                label = t.label,
+                                isSelected = uiState.selectedType == t,
+                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 0 && focusedFilterIndex == i,
+                                modifier = if (i == 0) Modifier.focusRequester(filtersFocusRequester) else Modifier,
+                                onFocused = {
+                                    focusZone = FocusZone.FILTERS
+                                    focusedFilterRow = 0
+                                    focusedFilterIndex = i
+                                },
+                                onSelect = { viewModel.selectType(t) }
+                            )
+                        }
                     }
                     LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                         val genres = viewModel.getGenresForType()
-                        item(key = "all_g") { GlowChip(stringResource(R.string.all_genres), uiState.selectedGenre == null) { viewModel.selectGenre(null) } }
-                        items(genres.size, key = { "g_${genres[it].id}" }) { i -> GlowChip(genres[i].name, uiState.selectedGenre == genres[i]) { viewModel.selectGenre(genres[i]) } }
+                        item(key = "all_g") {
+                            GlowChip(
+                                label = stringResource(R.string.all_genres),
+                                isSelected = uiState.selectedGenre == null,
+                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 1 && focusedFilterIndex == 0,
+                                onFocused = {
+                                    focusZone = FocusZone.FILTERS
+                                    focusedFilterRow = 1
+                                    focusedFilterIndex = 0
+                                },
+                                onSelect = { viewModel.selectGenre(null) }
+                            )
+                        }
+                        items(genres.size, key = { "g_${genres[it].id}" }) { i ->
+                            GlowChip(
+                                label = genres[i].name,
+                                isSelected = uiState.selectedGenre == genres[i],
+                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 1 && focusedFilterIndex == i + 1,
+                                onFocused = {
+                                    focusZone = FocusZone.FILTERS
+                                    focusedFilterRow = 1
+                                    focusedFilterIndex = i + 1
+                                },
+                                onSelect = { viewModel.selectGenre(genres[i]) }
+                            )
+                        }
                     }
                     LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        item(key = "any_l") { GlowChip(stringResource(R.string.any_language), uiState.selectedCountry == null) { viewModel.selectCountry(null) } }
-                        items(COUNTRIES.size, key = { "c_${COUNTRIES[it].code}" }) { i -> GlowChip(COUNTRIES[i].name, uiState.selectedCountry == COUNTRIES[i]) { viewModel.selectCountry(COUNTRIES[i]) } }
+                        item(key = "any_l") {
+                            GlowChip(
+                                label = stringResource(R.string.any_language),
+                                isSelected = uiState.selectedCountry == null,
+                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 2 && focusedFilterIndex == 0,
+                                onFocused = {
+                                    focusZone = FocusZone.FILTERS
+                                    focusedFilterRow = 2
+                                    focusedFilterIndex = 0
+                                },
+                                onSelect = { viewModel.selectCountry(null) }
+                            )
+                        }
+                        items(COUNTRIES.size, key = { "c_${COUNTRIES[it].code}" }) { i ->
+                            GlowChip(
+                                label = COUNTRIES[i].name,
+                                isSelected = uiState.selectedCountry == COUNTRIES[i],
+                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 2 && focusedFilterIndex == i + 1,
+                                onFocused = {
+                                    focusZone = FocusZone.FILTERS
+                                    focusedFilterRow = 2
+                                    focusedFilterIndex = i + 1
+                                },
+                                onSelect = { viewModel.selectCountry(COUNTRIES[i]) }
+                            )
+                        }
                     }
                 }
             }
@@ -390,10 +464,17 @@ fun SearchScreen(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun GlowChip(label: String, isSelected: Boolean, onSelect: () -> Unit) {
+private fun GlowChip(
+    label: String,
+    isSelected: Boolean,
+    isVisuallyFocused: Boolean = false,
+    modifier: Modifier = Modifier,
+    onFocused: () -> Unit = {},
+    onSelect: () -> Unit
+) {
     val chipShape = rememberArvioCardShape(6.dp)
     ArvioFocusableSurface(
-        modifier = Modifier.padding(vertical = 1.dp),
+        modifier = modifier.padding(vertical = 1.dp),
         shape = chipShape,
         backgroundColor = if (isSelected) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.03f),
         outlineColor = ArvioSkin.colors.focusOutline,
@@ -401,7 +482,9 @@ private fun GlowChip(label: String, isSelected: Boolean, onSelect: () -> Unit) {
         focusedScale = 1.05f,
         pressedScale = 0.97f,
         enableSystemFocus = true,
+        isFocusedOverride = isVisuallyFocused,
         onClick = onSelect,
+        onFocusChanged = { if (it) onFocused() },
     ) { isFocused ->
         Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)) {
             Text(label, style = ArflixTypography.caption.copy(fontSize = 12.sp, fontWeight = if (isSelected || isFocused) FontWeight.SemiBold else FontWeight.Normal),
@@ -475,11 +558,12 @@ private fun RowsLayer(
                     if (rowUsePosterCards) 134.dp else 260.dp
                 }
                 val baseRowHeight = if (isTouchDevice) {
-                    if (rowUsePosterCards) 220.dp else 160.dp
+                    if (rowUsePosterCards) 260.dp else 190.dp
                 } else if (rowUsePosterCards) {
-                    if (screenHeight <= 640) 245.dp else 320.dp
+                    // Poster cards (2:3) need extra vertical room for title + date below the image
+                    if (screenHeight <= 640) 300.dp else 340.dp
                 } else {
-                    if (screenHeight <= 640) 200.dp else 260.dp
+                    if (screenHeight <= 640) 215.dp else 270.dp
                 }
                 val rowHeight = baseRowHeight + focusBleedPadding
                 // Fade non-current rows
@@ -563,7 +647,12 @@ private fun RowsLayer(
                             itemsIndexed(category.items, key = { _, item -> "${item.mediaType}_${item.id}" }) { itemIdx, item ->
                                 val itemIsFocused = isCurrentRow && itemIdx == currentItemIndex
                                 MediaCard(
-                                    item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
+                                    item = item.copy(
+                                        title = buildCardTitle(item),
+                                        subtitle = buildCardSubtitle(item),
+                                        releaseDate = null,
+                                        year = ""
+                                    ),
                                     width = itemWidth,
                                     isLandscape = !rowUsePosterCards,
                                     logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
@@ -600,7 +689,12 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
         horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(26.dp), modifier = Modifier.fillMaxSize().arvioDpadFocusGroup()) {
         items(items.size, key = { "${items[it].mediaType}_${items[it].id}" }) { idx ->
             val item = items[idx]
-            MediaCard(item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
+            MediaCard(item = item.copy(
+                title = buildCardTitle(item),
+                subtitle = buildCardSubtitle(item),
+                releaseDate = null,
+                year = ""
+            ),
                 width = itemWidth, isLandscape = !usePosterCards, showProgress = false, titleMaxLines = 2, subtitleMaxLines = 1,
                 isFocusedOverride = false, enableSystemFocus = true, onFocused = {}, onClick = { onItemClick(item) },
                 modifier = if (isTouchDevice) Modifier.clickable { onItemClick(item) } else Modifier)
@@ -610,13 +704,18 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
 }
 
 private fun buildCardTitle(item: MediaItem): String {
-    val year = item.year.takeIf { it.isNotBlank() }
-    return if (year != null) "${item.title} ($year)" else item.title
+    // Return the clean title — year is shown separately in the subtitle
+    return item.title
 }
 
 @Composable
 private fun buildCardSubtitle(item: MediaItem): String {
-    return when (item.mediaType) { MediaType.TV -> stringResource(R.string.series); MediaType.MOVIE -> stringResource(R.string.movie) }
+    val mediaLabel = when (item.mediaType) {
+        MediaType.TV -> stringResource(R.string.series)
+        MediaType.MOVIE -> stringResource(R.string.movie)
+    }
+    val year = item.year.takeIf { it.isNotBlank() }
+    return if (year != null) "$mediaLabel · $year" else mediaLabel
 }
 
 private enum class FocusZone { SIDEBAR, SEARCH_INPUT, FILTERS, RESULTS }

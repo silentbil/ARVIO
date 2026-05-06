@@ -313,6 +313,9 @@ class CollectionDetailsViewModel @Inject constructor(
     private fun sourceMatchesTab(source: com.arflix.tv.data.model.CollectionSourceConfig, tab: CollectionTab): Boolean {
         val mediaType = source.mediaType?.trim()?.lowercase()
         if (mediaType != null) {
+            if (mediaType == "all" || mediaType == "any" || mediaType == "both" || mediaType == "mixed") {
+                return true
+            }
             return when (tab) {
                 CollectionTab.MOVIES -> mediaType == "movie" || mediaType == "film"
                 CollectionTab.SERIES -> mediaType == "series" || mediaType == "tv" || mediaType == "show" || mediaType == "anime"
@@ -537,7 +540,7 @@ fun CollectionDetailsScreen(
             isLoading = isTabLoading,
             isLoadingMore = isTabLoadingMore,
             emptyMessage = uiState.error ?: "Nothing to show here yet.",
-            topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 14.dp else 10.dp
+            topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 22.dp else 10.dp
         )
     }
 }
@@ -717,6 +720,7 @@ private fun CollectionItemsGrid(
     topContentPadding: androidx.compose.ui.unit.Dp
 ) {
     val cardContentType = if (usePosterCards) "poster_card" else "landscape_card"
+    val focusBleedPadding = if (usePosterCards) 10.dp else 6.dp
     // Collect scroll position without restarting on page-load-size changes —
     // items.size used to live in the key, which relaunched the snapshotFlow on
     // every page append and caused a stutter frame during scroll.
@@ -738,7 +742,7 @@ private fun CollectionItemsGrid(
             start = 42.dp,
             top = topContentPadding,
             end = 42.dp,
-            bottom = 48.dp
+            bottom = 48.dp + focusBleedPadding
         ),
         verticalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp),
         horizontalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp)

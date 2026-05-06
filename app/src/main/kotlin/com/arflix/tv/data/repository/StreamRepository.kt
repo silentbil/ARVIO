@@ -1751,7 +1751,11 @@ class StreamRepository @Inject constructor(
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
         val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
-        val cloudstreamAddons = allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
+        val cloudstreamAddons = if (BuildConfig.CLOUDSTREAM_ENABLED) {
+            allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
+        } else {
+            emptyList()
+        }
         val cacheKey = streamCacheKey(
             profileId = profileManager.getProfileIdSync(),
             type = "movie",
@@ -1795,7 +1799,11 @@ class StreamRepository @Inject constructor(
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
-            val cloudstreamAddons = allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
+            val cloudstreamAddons = if (BuildConfig.CLOUDSTREAM_ENABLED) {
+                allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
+            } else {
+                emptyList()
+            }
             val cacheKey = streamCacheKey(
                 profileId = profileManager.getProfileIdSync(),
                 type = "movie",
@@ -2095,7 +2103,11 @@ class StreamRepository @Inject constructor(
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
         val streamAddons = getStreamAddons(allAddons, "series", imdbId)
-        val cloudstreamAddons = allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
+        val cloudstreamAddons = if (BuildConfig.CLOUDSTREAM_ENABLED) {
+            allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
+        } else {
+            emptyList()
+        }
         val cacheKey = streamCacheKey(
             profileId = profileManager.getProfileIdSync(),
             type = EPISODE_STREAM_CACHE_TYPE,
@@ -2157,7 +2169,11 @@ class StreamRepository @Inject constructor(
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val streamAddons = getStreamAddons(allAddons, "series", imdbId)
-            val cloudstreamAddons = allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
+            val cloudstreamAddons = if (BuildConfig.CLOUDSTREAM_ENABLED) {
+                allAddons.filter { it.isInstalled && it.isEnabled && it.runtimeKind == RuntimeKind.CLOUDSTREAM }
+            } else {
+                emptyList()
+            }
             val cacheKey = streamCacheKey(
                 profileId = profileManager.getProfileIdSync(),
                 type = EPISODE_STREAM_CACHE_TYPE,

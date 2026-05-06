@@ -41,8 +41,8 @@ fun Modifier.arvioFocusable(
     focusedScale: Float,
     pressedScale: Float,
     outlineWidth: Dp,
-    @Suppress("UNUSED_PARAMETER") glowWidth: Dp,
-    @Suppress("UNUSED_PARAMETER") glowAlpha: Float,
+    glowWidth: Dp,
+    glowAlpha: Float,
     outlineColor: Color,
     focusedTransformOriginX: Float = 0.5f,
     useGradientBorder: Boolean = false,  // Arctic Fuse 2: SOLID border, not gradient
@@ -145,23 +145,27 @@ fun Modifier.arvioFocusable(
         Modifier
     }
 
-    val borderModifier = Modifier.drawWithCache {
-        if (highlightAlpha > 0.01f) {
+    val borderModifier = if (highlightAlpha > 0.01f) {
+        Modifier.drawWithCache {
             val outline = shape.createOutline(size, layoutDirection, this)
             val borderWidth = outlineWidth.toPx()
             val ringColor = resolvedOutlineColor.copy(alpha = highlightAlpha)
-            val glowColor = resolvedOutlineColor.copy(alpha = highlightAlpha * 0.4f)
+            val glowStrokeWidth = glowWidth.toPx()
+            val drawGlow = glowStrokeWidth > 0.01f && glowAlpha > 0.01f
+            val glowColor = resolvedOutlineColor.copy(alpha = highlightAlpha * glowAlpha)
 
             onDrawWithContent {
                 drawContent()
                 when (outline) {
                     is Outline.Rounded -> {
                         val radius = outline.roundRect.topLeftCornerRadius
-                        drawRoundRect(
-                            color = glowColor,
-                            cornerRadius = radius,
-                            style = Stroke(width = borderWidth + 2.dp.toPx())
-                        )
+                        if (drawGlow) {
+                            drawRoundRect(
+                                color = glowColor,
+                                cornerRadius = radius,
+                                style = Stroke(width = borderWidth + glowStrokeWidth)
+                            )
+                        }
                         drawRoundRect(
                             color = ringColor,
                             cornerRadius = radius,
@@ -169,20 +173,22 @@ fun Modifier.arvioFocusable(
                         )
                     }
                     is Outline.Rectangle -> {
-                        drawRect(color = glowColor, style = Stroke(width = borderWidth + 2.dp.toPx()))
+                        if (drawGlow) {
+                            drawRect(color = glowColor, style = Stroke(width = borderWidth + glowStrokeWidth))
+                        }
                         drawRect(color = ringColor, style = Stroke(width = borderWidth))
                     }
                     is Outline.Generic -> {
-                        drawPath(path = outline.path, color = glowColor, style = Stroke(width = borderWidth + 2.dp.toPx()))
+                        if (drawGlow) {
+                            drawPath(path = outline.path, color = glowColor, style = Stroke(width = borderWidth + glowStrokeWidth))
+                        }
                         drawPath(path = outline.path, color = ringColor, style = Stroke(width = borderWidth))
                     }
                 }
             }
-        } else {
-            onDrawWithContent {
-                drawContent()
-            }
         }
+    } else {
+        Modifier
     }
 
     this
@@ -245,10 +251,15 @@ fun ArvioFocusableSurface(
                     onFocusChanged(it)
                 },
             )
-            .clip(shape)
-            .background(backgroundColor),
     ) {
-        content(visualFocused)
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(shape)
+                .background(backgroundColor)
+        ) {
+            content(visualFocused)
+        }
     }
 }
 

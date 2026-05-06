@@ -2503,40 +2503,102 @@ class IptvRepository @Inject constructor(
             val activeProfileId = runCatching { profileManager.activeProfileId.first() }.getOrDefault("default")
             val providerKey = "$activeProfileId|${xtreamCacheKey(creds)}"
 
-            val seriesSources = seriesResolver.resolveEpisodeVariants(
-                providerKey = providerKey,
-                creds = creds,
-                showTitle = title,
-                season = season,
-                episode = episode,
-                tmdbId = tmdbId,
-                imdbId = imdbId,
-                year = parseYear(title),
-                allowNetwork = allowNetwork
-            ).map { resolved ->
-                val resolvedTitle = resolved.title?.trim().orEmpty()
-                val ext = resolved.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
-                val streamUrl = "${creds.baseUrl}/series/${creds.username}/${creds.password}/${resolved.streamId}.$ext"
-                StreamSource(
-                    source = resolvedTitle.ifBlank { "$title S${season}E${episode}" },
-                    addonName = "IPTV Series VOD",
-                    addonId = "iptv_xtream_vod",
-                    quality = inferQuality(resolvedTitle.ifBlank { "$title S${season}E${episode}" }),
-                    size = "",
-                    url = streamUrl
-                )
-            }
-            val fallbackSources = findEpisodeVodFromVodCatalogFallbackSources(
+            val cachedVodCatalogSources = findEpisodeVodFromVodCatalogFallbackSources(
                 creds = creds,
                 title = title,
                 season = season,
                 episode = episode,
                 normalizedImdb = normalizedImdb,
                 normalizedTmdb = normalizedTmdb,
-                allowNetwork = allowNetwork
+                allowNetwork = false
             )
-            sortVodSources(seriesSources + fallbackSources)
+            if (cachedVodCatalogSources.isNotEmpty()) {
+                return@withContext cachedVodCatalogSources
+            }
+
+            fun List<ResolverCachedResolvedEpisode>.toSeriesVodSources(): List<StreamSource> {
+                return map { resolved ->
+                    val resolvedTitle = resolved.title?.trim().orEmpty()
+                    val ext = resolved.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
+                    val streamUrl = "${creds.baseUrl}/series/${creds.username}/${creds.password}/${resolved.streamId}.$ext"
+                    StreamSource(
+                        source = resolvedTitle.ifBlank { "$title S${season}E${episode}" },
+                        addonName = "IPTV Series VOD",
+                        addonId = "iptv_xtream_vod",
+                        quality = inferQuality(resolvedTitle.ifBlank { "$title S${season}E${episode}" }),
+                        size = "",
+                        url = streamUrl
+                    )
+                }
+            }
+
+            if (!allowNetwork) {
+                val seriesSources = seriesResolver.resolveEpisodeVariants(
+                    providerKey = providerKey,
+                    creds = creds,
+                    showTitle = title,
+                    season = season,
+                    episode = episode,
+                    tmdbId = tmdbId,
+                    imdbId = imdbId,
+                    year = parseYear(title),
+                    allowNetwork = false
+                ).toSeriesVodSources()
+                return@withContext sortVodSources(seriesSources)
+            }
+
+            coroutineScope {
+                val vodCatalogDeferred = async {
+                    findEpisodeVodFromVodCatalogFallbackSources(
+                        creds = creds,
+                        title = title,
+                        season = season,
+                        episode = episode,
+                        normalizedImdb = normalizedImdb,
+                        normalizedTmdb = normalizedTmdb,
+                        allowNetwork = true
+                    )
+                }
+                val seriesDeferred = async {
+                    seriesResolver.resolveEpisodeVariants(
+                        providerKey = providerKey,
+                        creds = creds,
+                        showTitle = title,
+                        season = season,
+                        episode = episode,
+                        tmdbId = tmdbId,
+                        imdbId = imdbId,
+                        year = parseYear(title),
+                        allowNetwork = true
+                    ).toSeriesVodSources()
+                }
+
+                val quickVodCatalogSources = vodCatalogDeferred.awaitWithin(3_500L).orEmpty()
+                if (quickVodCatalogSources.isNotEmpty()) {
+                    seriesDeferred.cancel()
+                    return@coroutineScope quickVodCatalogSources
+                }
+
+                val quickSeriesSources = seriesDeferred.awaitWithin(4_500L).orEmpty()
+                val finalVodCatalogSources = if (vodCatalogDeferred.isCompleted) {
+                    vodCatalogDeferred.awaitSafely().orEmpty()
+                } else {
+                    vodCatalogDeferred.awaitWithin(2_000L).orEmpty()
+                }
+                sortVodSources(finalVodCatalogSources + quickSeriesSources)
+            }
         }
+    }
+
+    private suspend fun <T> Deferred<T>.awaitWithin(timeoutMs: Long): T? {
+        return withTimeoutOrNull(timeoutMs) {
+            join()
+            awaitSafely()
+        }
+    }
+
+    private suspend fun <T> Deferred<T>.awaitSafely(): T? {
+        return runCatching { await() }.getOrNull()
     }
 
     private suspend fun findEpisodeVodFromVodCatalogFallback(
@@ -2596,7 +2658,7 @@ class IptvRepository @Inject constructor(
             .sortedByDescending { it.third }
             .toList()
         val bestScore = scored.firstOrNull()?.third ?: return emptyList()
-        val minScore = maxOf(65, bestScore - 8)
+        val minScore = maxOf(45, bestScore - 120)
         return sortVodSources(
             scored
                 .asSequence()
