@@ -1356,7 +1356,9 @@ class TraktRepository @Inject constructor(
                                     episode = nextEpisode.number,
                                     episodeTitle = nextEpisode.title,
                                     year = show.year?.toString() ?: "",
-                                    isUpNext = true
+                                    isUpNext = true,
+                                    totalEpisodes = progress.aired.coerceAtLeast(0),
+                                    watchedEpisodes = progress.completed.coerceIn(0, progress.aired.coerceAtLeast(0))
                                 ),
                                 lastActivityAt = progress.lastWatchedAt ?: watched.lastWatchedAt ?: watched.lastUpdatedAt ?: ""
                             )
@@ -1495,12 +1497,8 @@ class TraktRepository @Inject constructor(
                             imdbRating = String.format("%.1f", details.voteAverage),
                             duration = details.episodeRunTime.firstOrNull()?.let { "${it}m" } ?: item.duration,
                             durationSeconds = maxOf(item.durationSeconds, runtimeMinutesToSeconds(details.episodeRunTime.firstOrNull())),
-                            totalEpisodes = details.numberOfEpisodes,
-                            watchedEpisodes = estimateWatchedEpisodesBeforeCurrent(
-                                seasons = details.seasons,
-                                currentSeason = item.season,
-                                currentEpisode = item.episode
-                            )?.coerceAtMost(details.numberOfEpisodes) ?: item.watchedEpisodes
+                            totalEpisodes = item.totalEpisodes,
+                            watchedEpisodes = item.watchedEpisodes
                         )
                     }
                 } catch (e: Exception) {
@@ -1973,8 +1971,8 @@ class TraktRepository @Inject constructor(
                     tmdbApi.getTvDetails(item.id, apiKey)
                 } catch (_: Exception) { null }
 
-                // Get episode info for episode title only (not for backdrop/overview)
-                val episodeInfo = if (item.season != null && item.episode != null && item.episodeTitle.isNullOrEmpty()) {
+                // Get current season info for episode title and aired-episode counts.
+                val seasonDetails = if (item.season != null && item.episode != null && (item.episodeTitle.isNullOrEmpty() || needsEpisodeCounts)) {
                     try {
                         val cacheKey = Pair(item.id, item.season)
                         val newDeferred = CompletableDeferred<com.arflix.tv.data.api.TmdbSeasonDetails?>()
@@ -1994,20 +1992,32 @@ class TraktRepository @Inject constructor(
                             existingDeferred
                         }
 
-                        val seasonDetails = deferredSeason.await()
-                        seasonDetails?.episodes?.find { it.episodeNumber == item.episode }
+                        deferredSeason.await()
                     } catch (_: Exception) { null }
                 } else null
+                val episodeInfo = seasonDetails?.episodes?.find { it.episodeNumber == item.episode }
 
                 // Use SHOW's backdrop and overview (like Trakt does), not episode's
                 val backdropUrl = details?.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
                 val posterUrl = details?.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
-                val totalEpisodeCount = details?.numberOfEpisodes ?: item.totalEpisodes
-                val watchedEpisodeCount = estimateWatchedEpisodesBeforeCurrent(
-                    seasons = details?.seasons.orEmpty(),
-                    currentSeason = item.season,
-                    currentEpisode = item.episode
-                )?.coerceAtMost(totalEpisodeCount.takeIf { it > 0 } ?: Int.MAX_VALUE)
+                val totalEpisodeCount = if (item.totalEpisodes > 0) {
+                    item.totalEpisodes
+                } else {
+                    estimateAiredEpisodeCount(
+                        seasons = details?.seasons.orEmpty(),
+                        currentSeason = item.season,
+                        currentSeasonEpisodes = seasonDetails?.episodes
+                    ) ?: 0
+                }
+                val watchedEpisodeCount = if (item.watchedEpisodes > 0) {
+                    item.watchedEpisodes
+                } else {
+                    estimateWatchedEpisodesBeforeCurrent(
+                        seasons = details?.seasons.orEmpty(),
+                        currentSeason = item.season,
+                        currentEpisode = item.episode
+                    )?.coerceAtMost(totalEpisodeCount.takeIf { it > 0 } ?: Int.MAX_VALUE)
+                }
                 val runtimeMinutes = episodeInfo?.runtime ?: details?.episodeRunTime?.firstOrNull()
 
                 item.copy(
@@ -3630,6 +3640,47 @@ private fun estimateWatchedEpisodesBeforeCurrent(
         .filter { it.seasonNumber > 0 && it.seasonNumber < currentSeason }
         .sumOf { it.episodeCount.coerceAtLeast(0) }
     return previousSeasonCount + (currentEpisode - 1).coerceAtLeast(0)
+}
+
+private fun estimateAiredEpisodeCount(
+    seasons: List<com.arflix.tv.data.api.TmdbTvSeason>,
+    currentSeason: Int?,
+    currentSeasonEpisodes: List<com.arflix.tv.data.api.TmdbEpisode>?
+): Int? {
+    if (currentSeason == null) return null
+
+    val previousSeasonCount = seasons
+        .asSequence()
+        .filter { season ->
+            season.seasonNumber > 0 &&
+                season.seasonNumber < currentSeason &&
+                isAlreadyAiredDate(season.airDate)
+        }
+        .sumOf { it.episodeCount.coerceAtLeast(0) }
+
+    val currentSeasonCount = currentSeasonEpisodes
+        ?.count { episode -> isAlreadyAiredDate(episode.airDate) }
+        ?: seasons
+            .firstOrNull { it.seasonNumber == currentSeason }
+            ?.takeIf { isAlreadyAiredDate(it.airDate) }
+            ?.episodeCount
+            ?.coerceAtLeast(0)
+        ?: 0
+
+    return (previousSeasonCount + currentSeasonCount).takeIf { it > 0 }
+}
+
+private fun isAlreadyAiredDate(rawDate: String?): Boolean {
+    val value = rawDate?.trim().orEmpty()
+    if (value.isEmpty()) return false
+    return try {
+        val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        parser.isLenient = false
+        val parsed = parser.parse(value) ?: return false
+        parsed.time <= System.currentTimeMillis()
+    } catch (_: Exception) {
+        false
+    }
 }
 
 private fun formatResumeClock(totalSeconds: Long): String {

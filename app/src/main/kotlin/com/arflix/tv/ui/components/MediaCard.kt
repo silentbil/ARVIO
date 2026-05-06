@@ -395,7 +395,7 @@ fun MediaCard(
                                     .align(Alignment.TopStart)
                                     .padding(ArvioSkin.spacing.x2)
                                     .background(
-                                        color = ArvioSkin.colors.surfaceRaised.copy(alpha = 0.85f),
+                                        color = ArvioSkin.colors.surfaceRaised.copy(alpha = 0.62f),
                                         shape = rememberArvioCardShape(ArvioSkin.radius.sm),
                                     )
                                     .padding(horizontal = ArvioSkin.spacing.x2, vertical = ArvioSkin.spacing.x1),
