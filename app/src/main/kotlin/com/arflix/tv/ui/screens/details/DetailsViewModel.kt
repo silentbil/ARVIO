@@ -84,7 +84,12 @@ data class DetailsUiState(
     val playLabel: String? = null,
     val playPositionMs: Long? = null,
     val autoPlaySingleSource: Boolean = true,
-    val autoPlayMinQuality: String = "Any"
+    val autoPlayMinQuality: String = "Any",
+    // TMDB collection (franchise) info — populated for movies that belong to a collection
+    val collectionId: Int? = null,
+    val collectionName: String? = null,
+    val collectionItems: List<MediaItem> = emptyList(),
+    val collectionPosterPath: String? = null
 )
 
 data class StreamingServiceUi(
@@ -467,6 +472,34 @@ class DetailsViewModel @Inject constructor(
                     val reviews = runCatching { mediaRepository.getReviews(mediaType, mediaId) }.getOrNull()
                     if (!reviews.isNullOrEmpty()) {
                         updateState { state -> state.copy(reviews = reviews) }
+                    }
+                }
+
+                // TMDB collection (franchise) — only for movies
+                launch {
+                    if (mediaType != MediaType.MOVIE) return@launch
+                    val collectionRef = runCatching {
+                        mediaRepository.getMovieCollectionRef(mediaId)
+                    }.getOrNull()
+                    if (collectionRef != null) {
+                        updateState { state ->
+                            state.copy(
+                                collectionId = collectionRef.id,
+                                collectionName = collectionRef.name,
+                                collectionPosterPath = collectionRef.posterPath
+                            )
+                        }
+                        // Fetch collection items in background
+                        launch {
+                            val items = runCatching {
+                                mediaRepository.getTmdbCollectionItems(collectionRef.id)
+                            }.getOrNull() ?: emptyList()
+                            updateState { state ->
+                                if (state.collectionId == collectionRef.id) {
+                                    state.copy(collectionItems = items)
+                                } else state
+                            }
+                        }
                     }
                 }
 

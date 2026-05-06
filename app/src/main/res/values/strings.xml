@@ -209,4 +209,5 @@
     <string name="set_profile_pin">Set Profile PIN</string>
     <string name="done">Done</string>
     <string name="connect_to_cloud">Connect to ARVIO Cloud</string>
+    <string name="view_collection">View Collection</string>
 </resources>

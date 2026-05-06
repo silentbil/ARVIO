@@ -385,6 +385,9 @@ fun AppNavigation(
                 onNavigateToDetails = { type, id ->
                     navController.navigate(Screen.Details.createRoute(type, id))
                 },
+                onNavigateToCollection = { catalogId ->
+                    navController.navigate(Screen.CollectionDetails.createRoute(catalogId))
+                },
                 onNavigateToHome = {
                     navigateHome()
                 },
