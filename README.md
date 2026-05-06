@@ -33,7 +33,6 @@ It is not intended as an advertising page, download landing page, or content dis
 ARVIO is available on Google Play:
 
 [<img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="160">](https://play.google.com/store/apps/details?id=com.arvio.tv)
-
 ## Screenshots
 
 | Home | Details |
@@ -132,6 +131,16 @@ Before publishing a build, run:
 
 Smoke-test startup, profile switching, playback, stream fallback, subtitle/audio switching, IPTV/EPG loading, addon add/remove, search, settings navigation, background sync, and repeated player open/close on the supported device classes.
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=ProdigyV21%2FARVIO&type=date&legend=top-left">
+ <picture>
+	 <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ProdigyV21/ARVIO&type=date&theme=dark&legend=top-left" />
+	 <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ProdigyV21/ARVIO&type=date&legend=top-left" />
+	 <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=ProdigyV21/ARVIO&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## Privacy
 
 See [PRIVACY.md](PRIVACY.md) for the privacy policy.
@@ -145,4 +154,3 @@ This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) fo
 This application was developed with significant AI assistance. Contributions should still be reviewed, tested, and treated as normal source code changes.
 
 If you have concerns about using AI-generated software, please do not use this application.
-

@@ -345,7 +345,10 @@ fun DetailsScreen(
     }
 
     // D-pad key handler — only used on TV (skipped on mobile/touch devices)
-    val dpadRepeatGate = rememberArvioDpadRepeatGate(minRepeatIntervalMs = 78L)
+    val dpadRepeatGate = rememberArvioDpadRepeatGate(
+        horizontalMinRepeatIntervalMs = 80L,
+        verticalMinRepeatIntervalMs = 112L
+    )
     val keyModifier = if (isMobile) Modifier else Modifier.onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
                     dpadRepeatGate.reset()
@@ -889,6 +892,9 @@ fun DetailsScreen(
             seasonNumber = contextMenuSeason,
             onMarkSeasonWatched = {
                 viewModel.markSeasonWatched(contextMenuSeason)
+            },
+            onMarkSeasonUnwatched = {
+                viewModel.markSeasonUnwatched(contextMenuSeason)
             },
             onDismiss = {
                 showSeasonContextMenu = false
@@ -1935,11 +1941,11 @@ private fun DetailsTvRows(
     var idx = 0
     val seasonsIdx = if (hasSeasons) idx.also { idx++ } else -1
     val episodesIdx = if (hasEpisodes) idx.also { idx++ } else -1
-    if (hasCast) idx++
+    val castSpacerIdx = if (hasCast) idx.also { idx++ } else -1
     val castIdx = if (hasCast) idx.also { idx++ } else -1
-    if (hasReviews) idx++
+    val reviewsSpacerIdx = if (hasReviews) idx.also { idx++ } else -1
     val reviewsIdx = if (hasReviews) idx.also { idx++ } else -1
-    if (hasSimilar) idx++
+    val similarSpacerIdx = if (hasSimilar) idx.also { idx++ } else -1
     val similarIdx = if (hasSimilar) idx.also { idx++ } else -1
 
     LaunchedEffect(item.mediaType, item.id, currentSeason, hasEpisodes, hasSeasons) {
@@ -1951,9 +1957,9 @@ private fun DetailsTvRows(
 
         val targetIndex = when (focusedSection) {
             FocusSection.BUTTONS, FocusSection.EPISODES, FocusSection.SEASONS -> 0
-            FocusSection.CAST -> castIdx
-            FocusSection.REVIEWS -> reviewsIdx
-            FocusSection.SIMILAR -> similarIdx
+            FocusSection.CAST -> castSpacerIdx.takeIf { it >= 0 } ?: castIdx
+            FocusSection.REVIEWS -> reviewsSpacerIdx.takeIf { it >= 0 } ?: reviewsIdx
+            FocusSection.SIMILAR -> similarSpacerIdx.takeIf { it >= 0 } ?: similarIdx
         }
         if (targetIndex < 0) return@LaunchedEffect
 
@@ -2360,6 +2366,7 @@ private fun DetailsSimilarRail(
 ) {
     val similarRowState = rememberTvLazyListState()
     val similarCardWidth = if (usePosterCards) 126.dp else 210.dp
+    val similarFocusBleed = if (usePosterCards) 18.dp else 14.dp
     val similarFixedFocus = focusSectionForUi == FocusSection.SIMILAR &&
         detailsRailUsesFixedFirstSlotFocus(
             totalItems = similar.size,
@@ -2397,8 +2404,8 @@ private fun DetailsSimilarRail(
                         outerStartPadding = contentOuterStartPadding,
                         minimum = if (usePosterCards) 140.dp else 210.dp
                     ),
-                    top = 14.dp,
-                    bottom = 14.dp,
+                    top = similarFocusBleed,
+                    bottom = similarFocusBleed,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
@@ -2421,7 +2428,7 @@ private fun DetailsSimilarRail(
             if (similarFixedFocus) {
                 FixedDetailsRailFocusOverlay(
                     startPadding = contentStartPadding,
-                    topPadding = 14.dp,
+                    topPadding = similarFocusBleed,
                     width = similarCardWidth,
                     aspectRatio = if (usePosterCards) 2f / 3f else 16f / 9f
                 )

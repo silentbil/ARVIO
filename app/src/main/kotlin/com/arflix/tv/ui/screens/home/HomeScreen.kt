@@ -185,6 +185,21 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.res.stringResource
 
+private val overviewHtmlTagRegex = Regex("<[^>]*>")
+private val overviewNonBreakingSpaceRegex = Regex("[\\u00A0\\u2007\\u202F]")
+private val overviewUnicodeSpaceRegex = Regex("\\p{Z}+")
+private val overviewWhitespaceRegex = Regex("\\s+")
+
+private fun cleanOverviewText(value: String): String {
+    return value
+        .replace(overviewHtmlTagRegex, " ")
+        .replace(overviewNonBreakingSpaceRegex, " ")
+        .replace(overviewUnicodeSpaceRegex, " ")
+        .replace(overviewWhitespaceRegex, " ")
+        .trim()
+        .ifBlank { "No description available." }
+}
+
 // Genre ID to name mapping (TMDB standard)
 private val movieGenres = mapOf(
     28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy",
@@ -410,15 +425,19 @@ private fun HomeBackdropCrossfade(
     }
 
     fun buildBackdropRequest(url: String): ImageRequest =
+        "$url|${backdropWidthPx}x$backdropHeightPx".let { cacheKey ->
         ImageRequest.Builder(context)
             .data(url)
             .size(backdropWidthPx, backdropHeightPx)
             .precision(Precision.INEXACT)
             .allowHardware(true)
+            .memoryCacheKey(cacheKey)
+            .placeholderMemoryCacheKey(cacheKey)
             .crossfade(false)
             .build()
+        }
 
-    Box(modifier = modifier) {
+    Box(modifier = modifier.graphicsLayer { }) {
         displayedBackdropUrl?.let { stableBackdropUrl ->
             val request = remember(stableBackdropUrl, backdropWidthPx, backdropHeightPx) {
                 buildBackdropRequest(stableBackdropUrl)
@@ -630,22 +649,28 @@ fun HomeScreen(
     LaunchedEffect(allowHomeBackgroundWork) {
         if (!allowHomeBackgroundWork) return@LaunchedEffect
         snapshotFlow {
+            val focusedItem = latestDisplayCategories
+                .getOrNull(focusState.currentRowIndex)
+                ?.items
+                ?.getOrNull(focusState.currentItemIndex)
             Triple(
                 focusState.currentRowIndex,
                 focusState.currentItemIndex,
-                // Include first item ID so the flow re-emits when categories load or CW changes,
-                // preventing distinctUntilChanged from swallowing the initial (0,0) emission.
-                latestDisplayCategories.firstOrNull()?.items?.firstOrNull()?.id ?: -1
+                // Include the exact focused item key so async row updates, especially
+                // Continue Watching reloads, cannot leave the hero bound to an old
+                // first-row fallback while the visual focus is on another card.
+                focusedItem?.let { homeRowItemKey(it) }.orEmpty()
             )
         }
             .distinctUntilChanged()
             .collectLatest { (rowIndex, itemIndex, _) ->
                 val categoriesSnapshot = latestDisplayCategories
                 if (categoriesSnapshot.isEmpty() || focusState.isSidebarFocused) return@collectLatest
-                val row = categoriesSnapshot.getOrNull(rowIndex)
-                val newHeroItem = row?.items?.getOrNull(itemIndex)
-                    ?: row?.items?.firstOrNull()
-                    ?: categoriesSnapshot.firstOrNull()?.items?.firstOrNull()
+                val newHeroItem = categoriesSnapshot
+                    .getOrNull(rowIndex)
+                    ?.items
+                    ?.getOrNull(itemIndex)
+                    ?: return@collectLatest
 
                 val now = SystemClock.elapsedRealtime()
                 val isFastScrolling = now - focusState.lastNavEventTime < fastScrollThresholdMs
@@ -890,6 +915,7 @@ fun HomeScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer { }
                         .drawWithCache {
                             val width = size.width
                             val height = size.height
@@ -1431,13 +1457,9 @@ private fun HeroSection(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 // Overview text (EPG data for IPTV, synopsis for movies/shows)
-                val displayOverview = (overviewOverride ?: currentItem.overview)
-                    .replace(Regex("<[^>]*>"), " ")
-                    .replace(Regex("[\\u00A0\\u2007\\u202F]"), " ")
-                    .replace(Regex("\\p{Z}+"), " ")
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-                    .ifBlank { "No description available." }
+                val displayOverview = remember(overviewOverride, currentItem.overview) {
+                    cleanOverviewText(overviewOverride ?: currentItem.overview)
+                }
 
                 val overviewMaxHeight = 72.dp
                 Box(
@@ -1544,6 +1566,7 @@ private fun HomeHeroLayer(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = AppTopBarContentTopInset)
+                .graphicsLayer { }
                 .zIndex(3f)
         ) {
             heroItem?.let { item ->
@@ -1607,13 +1630,9 @@ private fun MobileHeroOverlay(
     val ratingValue = parseRatingValue(rating)
     val hasMetadata = genreText.isNotEmpty() || year.isNotEmpty() || ratingValue > 0f
 
-    val displayOverview = (overviewOverride ?: item.overview)
-        .replace(Regex("<[^>]*>"), " ")
-        .replace(Regex("[\\u00A0\\u2007\\u202F]"), " ")
-        .replace(Regex("\\p{Z}+"), " ")
-        .replace(Regex("\\s+"), " ")
-        .trim()
-        .ifBlank { "No description available." }
+    val displayOverview = remember(overviewOverride, item.overview) {
+        cleanOverviewText(overviewOverride ?: item.overview)
+    }
 
     Box(
         modifier = Modifier
@@ -1895,13 +1914,7 @@ private fun MobileHeroCarousel(
                 val ratingValue = parseRatingValue(rating)
 
                 val displayOverview = remember(item.id, item.overview) {
-                    item.overview
-                        .replace(Regex("<[^>]*>"), " ")
-                        .replace(Regex("[\\u00A0\\u2007\\u202F]"), " ")
-                        .replace(Regex("\\p{Z}+"), " ")
-                        .replace(Regex("\\s+"), " ")
-                        .trim()
-                        .ifBlank { "No description available." }
+                    cleanOverviewText(item.overview)
                 }
 
                 Box(
@@ -2121,7 +2134,10 @@ private fun HomeInputLayer(
     var rootHasFocus by remember { mutableStateOf(false) }
     val focusRecoveryDelayMs = 180L
     var preferredCategoryId by rememberSaveable { mutableStateOf<String?>(null) }
-    val dpadRepeatGate = rememberArvioDpadRepeatGate(minRepeatIntervalMs = 78L)
+    val dpadRepeatGate = rememberArvioDpadRepeatGate(
+        horizontalMinRepeatIntervalMs = 80L,
+        verticalMinRepeatIntervalMs = 112L
+    )
     // Profile avatar is always shown when a profile exists (clickable, opens
     // profile switcher). Focus navigation includes it as the first focusable item.
     val hasProfile = currentProfile != null
@@ -2701,18 +2717,6 @@ private fun TvHomeRowsLayer(
     val localCurrentRowIndex = (currentRowIndex - rowWindowStart)
         .coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
 
-    val density = LocalDensity.current
-    val rowHeightsPx = remember(renderedCategories.size) { FloatArray(renderedCategories.size) }
-    renderedCategories.forEachIndexed { index, category ->
-        androidx.compose.runtime.key(category.id) {
-            val rowKey = remember(category.id) { "home:${category.id}" }
-            val mode = rememberCatalogueRowLayoutMode(rowKey)
-            val isPoster = mode == CardLayoutMode.POSTER
-            val dp = if (isPoster) 252.dp else 202.dp
-            rowHeightsPx[index] = with(density) { dp.toPx() }
-        }
-    }
-
     var isFastScrolling by remember { mutableStateOf(false) }
     LaunchedEffect(focusState.lastNavEventTime) {
         val anchor = focusState.lastNavEventTime
@@ -2729,11 +2733,7 @@ private fun TvHomeRowsLayer(
             .padding(top = 24.dp)
     ) {
         val rowsViewportHeight = (maxHeight * 0.31f).coerceIn(260.dp, 340.dp)
-        val estimatedRowPitchPx = with(LocalDensity.current) {
-            (if (usePosterCards) 240.dp else 190.dp).toPx().coerceAtLeast(1f)
-        }
         val listState = rememberLazyListState()
-        val rowStackOffsetPx = remember { Animatable(0f) }
         var lastAppliedTargetIndex by remember { mutableIntStateOf(-1) }
         // Only scroll the LazyColumn in response to actual user D-pad navigation,
         // NOT when categories change during loading. The previous implementation
@@ -2761,38 +2761,10 @@ private fun TvHomeRowsLayer(
             if (!initialPlacement && !recentUserNav) return@LaunchedEffect
 
             val jumpDistance = kotlin.math.abs(targetIndex - currentIndex)
-            if (!initialPlacement && jumpDistance <= 2) {
-                val travelPx = if (targetIndex > currentIndex) {
-                    var dist = 0f
-                    for (i in currentIndex until targetIndex) {
-                        dist += rowHeightsPx.getOrElse(i) { estimatedRowPitchPx }
-                    }
-                    dist
-                } else if (targetIndex < currentIndex) {
-                    var dist = 0f
-                    for (i in targetIndex until currentIndex) {
-                        dist += rowHeightsPx.getOrElse(i) { estimatedRowPitchPx }
-                    }
-                    dist
-                } else {
-                    currentOffset.toFloat()
-                }.coerceIn(0f, with(density) { rowsViewportHeight.toPx() })
-
-                val direction = when {
-                    targetIndex > currentIndex -> 1f
-                    targetIndex < currentIndex -> -1f
-                    else -> 0f
-                }
-                rowStackOffsetPx.stop()
-                rowStackOffsetPx.snapTo(direction * travelPx)
+            if (initialPlacement || jumpDistance > 7) {
                 listState.scrollToItem(index = targetIndex, scrollOffset = 0)
-                rowStackOffsetPx.animateTo(
-                    targetValue = 0f,
-                    animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
-                )
             } else {
-                rowStackOffsetPx.snapTo(0f)
-                listState.scrollToItem(index = targetIndex, scrollOffset = 0)
+                listState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
             }
             lastAppliedTargetIndex = targetIndex
         }
@@ -2811,7 +2783,6 @@ private fun TvHomeRowsLayer(
                 contentPadding = PaddingValues(bottom = rowsViewportHeight),
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { translationY = rowStackOffsetPx.value }
                     .arvioDpadFocusGroup(enableFocusRestorer = false)
                     .clipToBounds(),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
@@ -2923,21 +2894,10 @@ private fun HomeViewportRailFocusOverlay(
     val targetWidth = if (effectivePosterMode) 119.dp else 210.dp
     val targetHeight = if (effectivePosterMode) 119.dp * (3f/2f) else 210.dp * (9f/16f)
 
-    val itemWidth by androidx.compose.animation.core.animateDpAsState(
-        targetValue = targetWidth,
-        animationSpec = tween(durationMillis = 180, easing = ArvioSkin.focus.easing),
-        label = "rail_focus_width"
-    )
-    val itemHeight by androidx.compose.animation.core.animateDpAsState(
-        targetValue = targetHeight,
-        animationSpec = tween(durationMillis = 180, easing = ArvioSkin.focus.easing),
-        label = "rail_focus_height"
-    )
-
     ArvioFocusableSurface(
         modifier = Modifier
             .padding(start = startPadding, top = 48.dp)
-            .size(width = itemWidth, height = itemHeight)
+            .size(width = targetWidth, height = targetHeight)
             .zIndex(8f),
         shape = rememberArvioCardShape(ArvioSkin.radius.md),
         backgroundColor = Color.Transparent,
@@ -3280,7 +3240,8 @@ private fun ContentRow(
                     top = 14.dp,
                     bottom = 14.dp
                 ),
-                horizontalArrangement = Arrangement.spacedBy(itemSpacing)
+                horizontalArrangement = Arrangement.spacedBy(itemSpacing),
+                userScrollEnabled = false
             ) {
             itemsIndexed(
                 category.items,

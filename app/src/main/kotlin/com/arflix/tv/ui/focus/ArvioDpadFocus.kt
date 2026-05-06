@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.focus
 
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.relocation.BringIntoViewResponder
@@ -49,7 +50,8 @@ fun isArvioDpadNavigationKey(key: Key): Boolean {
 
 @Stable
 class ArvioDpadRepeatGate(
-    private val minRepeatIntervalMs: Long
+    private val horizontalMinRepeatIntervalMs: Long,
+    private val verticalMinRepeatIntervalMs: Long = horizontalMinRepeatIntervalMs
 ) {
     private var lastKeyCode: Int = Int.MIN_VALUE
     private var lastHandledAtMs: Long = 0L
@@ -61,6 +63,11 @@ class ArvioDpadRepeatGate(
             return false
         }
 
+        val minRepeatIntervalMs = when (keyCode) {
+            AndroidKeyEvent.KEYCODE_DPAD_UP,
+            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> verticalMinRepeatIntervalMs
+            else -> horizontalMinRepeatIntervalMs
+        }
         val skip = keyCode == lastKeyCode && nowMs - lastHandledAtMs < minRepeatIntervalMs
         if (!skip) {
             lastKeyCode = keyCode
@@ -77,7 +84,14 @@ class ArvioDpadRepeatGate(
 
 @Composable
 fun rememberArvioDpadRepeatGate(
-    minRepeatIntervalMs: Long = 82L
+    minRepeatIntervalMs: Long = 82L,
+    horizontalMinRepeatIntervalMs: Long = minRepeatIntervalMs,
+    verticalMinRepeatIntervalMs: Long = minRepeatIntervalMs
 ): ArvioDpadRepeatGate {
-    return remember(minRepeatIntervalMs) { ArvioDpadRepeatGate(minRepeatIntervalMs) }
+    return remember(horizontalMinRepeatIntervalMs, verticalMinRepeatIntervalMs) {
+        ArvioDpadRepeatGate(
+            horizontalMinRepeatIntervalMs = horizontalMinRepeatIntervalMs,
+            verticalMinRepeatIntervalMs = verticalMinRepeatIntervalMs
+        )
+    }
 }
