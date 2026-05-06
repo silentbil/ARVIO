@@ -8,10 +8,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -19,6 +23,8 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
 
 /**
  * Typographic channel logo placeholder. Variant chosen by first char-code % 3.
@@ -34,6 +40,8 @@ fun ChannelLogo(
 ) {
     val initials = initialsFor(channel.name)
     val variant = (channel.name.firstOrNull()?.code ?: 0) % 3
+    val context = LocalContext.current
+    val density = LocalDensity.current
     Box(
         modifier = modifier
             .size(size)
@@ -81,9 +89,22 @@ fun ChannelLogo(
         }
         val logoUrl = channel.logo
         if (!logoUrl.isNullOrBlank()) {
+            val logoRequest = remember(logoUrl, size, density) {
+                val px = with(density) { size.roundToPx() }.coerceAtLeast(1)
+                ImageRequest.Builder(context)
+                    .data(logoUrl)
+                    .size(px, px)
+                    .precision(Precision.INEXACT)
+                    .allowHardware(true)
+                    .crossfade(false)
+                    .memoryCacheKey("$logoUrl|${px}x$px")
+                    .placeholderMemoryCacheKey("$logoUrl|${px}x$px")
+                    .build()
+            }
             AsyncImage(
-                model = logoUrl,
+                model = logoRequest,
                 contentDescription = null,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
             )
         }
