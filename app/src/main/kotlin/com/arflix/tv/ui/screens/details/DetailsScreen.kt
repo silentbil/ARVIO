@@ -2058,13 +2058,13 @@ private fun DetailsTvRows(
     var idx = 0
     val seasonsIdx = if (hasSeasons) idx.also { idx++ } else -1
     val episodesIdx = if (hasEpisodes) idx.also { idx++ } else -1
-    val castSpacerIdx = if (hasCast) idx.also { idx++ } else -1
+    if (hasCast) idx++
     val castIdx = if (hasCast) idx.also { idx++ } else -1
-    val reviewsSpacerIdx = if (hasReviews) idx.also { idx++ } else -1
+    if (hasReviews) idx++
     val reviewsIdx = if (hasReviews) idx.also { idx++ } else -1
-    val collectionSpacerIdx = if (hasCollection) idx.also { idx++ } else -1
+    if (hasCollection) idx++
     val collectionIdx = if (hasCollection) idx.also { idx++ } else -1
-    val similarSpacerIdx = if (hasSimilar) idx.also { idx++ } else -1
+    if (hasSimilar) idx++
     val similarIdx = if (hasSimilar) idx.also { idx++ } else -1
 
     LaunchedEffect(item.mediaType, item.id, currentSeason, hasEpisodes, hasSeasons) {
@@ -2076,10 +2076,10 @@ private fun DetailsTvRows(
 
         val targetIndex = when (focusedSection) {
             FocusSection.BUTTONS, FocusSection.EPISODES, FocusSection.SEASONS -> 0
-            FocusSection.CAST -> castSpacerIdx.takeIf { it >= 0 } ?: castIdx
-            FocusSection.REVIEWS -> reviewsSpacerIdx.takeIf { it >= 0 } ?: reviewsIdx
-            FocusSection.COLLECTION -> collectionSpacerIdx.takeIf { it >= 0 } ?: collectionIdx
-            FocusSection.SIMILAR -> similarSpacerIdx.takeIf { it >= 0 } ?: similarIdx
+            FocusSection.CAST -> castIdx
+            FocusSection.REVIEWS -> reviewsIdx
+            FocusSection.COLLECTION -> collectionIdx
+            FocusSection.SIMILAR -> similarIdx
         }
         if (targetIndex < 0) return@LaunchedEffect
 
@@ -2192,7 +2192,7 @@ private fun DetailsTvRows(
 
         // Collection items row — shown when this movie belongs to a TMDB collection
         if (collectionItems.isNotEmpty()) {
-            item { Spacer(modifier = Modifier.height(80.dp)) }
+            item { Spacer(modifier = Modifier.height(4.dp)) }
             item {
                 DetailsCollectionRail(
                     collectionItems = collectionItems,
@@ -2208,7 +2208,7 @@ private fun DetailsTvRows(
         }
 
         if (similar.isNotEmpty()) {
-            item { Spacer(modifier = Modifier.height(80.dp)) }
+            item { Spacer(modifier = Modifier.height(4.dp)) }
             item {
                 DetailsSimilarRail(
                     similar = similar,

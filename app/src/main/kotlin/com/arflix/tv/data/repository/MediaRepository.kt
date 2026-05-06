@@ -100,6 +100,7 @@ class MediaRepository @Inject constructor(
     private val HOME_CATEGORIES_CACHE_MS = 120_000L // 2 minutes
 
     private val detailsCache = mutableMapOf<String, CacheEntry<MediaItem>>()
+    private val fullDetailsCacheKeys = mutableSetOf<String>()
     private val castCache = mutableMapOf<String, CacheEntry<List<CastMember>>>()
     private val similarCache = mutableMapOf<String, CacheEntry<List<MediaItem>>>()
     private val logoCache = mutableMapOf<String, CacheEntry<String?>>()
@@ -114,6 +115,10 @@ class MediaRepository @Inject constructor(
     private fun <T> getFromCache(cache: Map<String, CacheEntry<T>>, key: String): T? {
         val entry = cache[key] ?: return null
         return if (System.currentTimeMillis() - entry.timestamp < CACHE_TTL_MS) entry.data else null
+    }
+
+    private fun detailsCacheKey(mediaType: MediaType, mediaId: Int): String {
+        return if (mediaType == MediaType.MOVIE) "movie_$mediaId" else "tv_$mediaId"
     }
 
     private fun getAddonImdbLookupEntry(imdbId: String): CacheEntry<Pair<MediaType, Int>?>? {
@@ -270,24 +275,45 @@ class MediaRepository @Inject constructor(
     }
 
     fun getCachedItem(mediaType: MediaType, mediaId: Int): MediaItem? {
-        val cacheKey = if (mediaType == MediaType.MOVIE) "movie_$mediaId" else "tv_$mediaId"
+        val cacheKey = detailsCacheKey(mediaType, mediaId)
         return getFromCache(detailsCache, cacheKey)
+    }
+
+    fun getCachedFullItem(mediaType: MediaType, mediaId: Int): MediaItem? {
+        val cacheKey = detailsCacheKey(mediaType, mediaId)
+        if (cacheKey !in fullDetailsCacheKeys) return null
+        val cached = getFromCache(detailsCache, cacheKey)
+        if (cached == null) {
+            fullDetailsCacheKeys.remove(cacheKey)
+        }
+        return cached
     }
 
     fun cacheImdbId(mediaType: MediaType, mediaId: Int, imdbId: String) {
         if (imdbId.isBlank()) return
-        val cacheKey = if (mediaType == MediaType.MOVIE) "movie_$mediaId" else "tv_$mediaId"
+        val cacheKey = detailsCacheKey(mediaType, mediaId)
         imdbIdCache[cacheKey] = imdbId
     }
 
     fun getCachedImdbId(mediaType: MediaType, mediaId: Int): String? {
-        val cacheKey = if (mediaType == MediaType.MOVIE) "movie_$mediaId" else "tv_$mediaId"
+        val cacheKey = detailsCacheKey(mediaType, mediaId)
         return imdbIdCache[cacheKey]
     }
 
     fun cacheItem(item: MediaItem) {
-        val cacheKey = if (item.mediaType == MediaType.MOVIE) "movie_${item.id}" else "tv_${item.id}"
+        val cacheKey = detailsCacheKey(item.mediaType, item.id)
+        if (cacheKey in fullDetailsCacheKeys) {
+            val existingFullDetails = getFromCache(detailsCache, cacheKey)
+            if (existingFullDetails != null) return
+            fullDetailsCacheKeys.remove(cacheKey)
+        }
         detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
+    }
+
+    private fun cacheFullDetailsItem(item: MediaItem) {
+        val cacheKey = detailsCacheKey(item.mediaType, item.id)
+        detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
+        fullDetailsCacheKeys.add(cacheKey)
     }
 
     private fun cacheItems(items: List<MediaItem>) {
@@ -2365,14 +2391,12 @@ class MediaRepository @Inject constructor(
     suspend fun getMovieDetails(movieId: Int): MediaItem {
         val cacheKey = "movie_$movieId"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
-            // Only use cache hit if it was populated from the full TMDB details API.
-            // Home screen items share the same cache key but lack detail-level fields.
-            if (cached.duration.isNotBlank()) return cached
+            if (cacheKey in fullDetailsCacheKeys) return cached
         }
 
         val details = tmdbApi.getMovieDetails(movieId, apiKey, language = contentLanguage)
         val item = details.toMediaItem()
-        detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
+        cacheFullDetailsItem(item)
         return item
     }
 
@@ -2382,17 +2406,12 @@ class MediaRepository @Inject constructor(
     suspend fun getTvDetails(tvId: Int): MediaItem {
         val cacheKey = "tv_$tvId"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
-            // Only use cache hit if it was populated from the full TMDB details API.
-            // Home screen items (from trending/discover lists) share the same cache key
-            // but lack totalEpisodes (which stores numberOfSeasons). Without this check,
-            // the stale list-level item prevents the real details fetch, causing the
-            // season selector to never appear (totalSeasons stays at 1).
-            if (cached.totalEpisodes != null) return cached
+            if (cacheKey in fullDetailsCacheKeys) return cached
         }
 
         val details = tmdbApi.getTvDetails(tvId, apiKey, language = contentLanguage)
         val item = details.toMediaItem()
-        detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
+        cacheFullDetailsItem(item)
         return item
     }
 
@@ -3158,6 +3177,14 @@ private fun TmdbTvDetails.toMediaItem(): MediaItem {
     val year = firstAirDate?.take(4) ?: ""
     val runtime = episodeRunTime.firstOrNull() ?: 45
     val duration = "${runtime}m"
+    val actualSeasonCount = seasons
+        .asSequence()
+        .filter { it.seasonNumber > 0 && it.episodeCount > 0 }
+        .map { it.seasonNumber }
+        .distinct()
+        .count()
+        .takeIf { it > 0 }
+        ?: numberOfSeasons.coerceAtLeast(1)
     
     return MediaItem(
         id = id,
@@ -3176,7 +3203,7 @@ private fun TmdbTvDetails.toMediaItem(): MediaItem {
         backdrop = backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
         originalLanguage = originalLanguage,
         isOngoing = status == "Returning Series",
-        totalEpisodes = numberOfSeasons,
+        totalEpisodes = actualSeasonCount,
         status = status,
         genreIds = genres.map { it.id }
     )

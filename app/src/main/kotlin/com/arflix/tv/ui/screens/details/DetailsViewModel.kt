@@ -257,7 +257,8 @@ class DetailsViewModel @Inject constructor(
                 val previousItem = _uiState.value.item?.takeIf {
                     it.id == mediaId && it.mediaType == mediaType
                 }
-                val cachedItem = mediaRepository.getCachedItem(mediaType, mediaId)
+                val cachedFullItem = mediaRepository.getCachedFullItem(mediaType, mediaId)
+                val cachedItem = cachedFullItem ?: mediaRepository.getCachedItem(mediaType, mediaId)
                 val initialItem = cachedItem ?: previousItem
                 val cachedLogoUrl = mediaRepository.peekCachedLogoUrl(mediaType, mediaId)
                     ?: previousState.logoUrl?.takeIf { previousMatches }
@@ -266,7 +267,9 @@ class DetailsViewModel @Inject constructor(
                         ?: previousState.episodes.takeIf { previousMatches && previousState.currentSeason == seasonToLoad }
                 } else null
                 val cachedTotalSeasons = if (mediaType == MediaType.TV) {
-                    initialItem?.totalEpisodes?.coerceAtLeast(1) ?: 1
+                    cachedFullItem?.totalEpisodes?.coerceAtLeast(1)
+                        ?: previousState.totalSeasons.takeIf { previousMatches && !previousState.isLoading }
+                        ?: 1
                 } else {
                     1
                 }
@@ -341,7 +344,8 @@ class DetailsViewModel @Inject constructor(
                     }
                 }
 
-                val item = runCatching { itemDeferred.await() }.getOrNull() ?: initialItem
+                val loadedItem = runCatching { itemDeferred.await() }.getOrNull()
+                val item = loadedItem ?: initialItem
                 if (item == null) {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
@@ -350,10 +354,15 @@ class DetailsViewModel @Inject constructor(
                     return@launch
                 }
                 val mergedItem = mergeItem(item, initialItem)
+                val hasTrustedTvDetails = mediaType != MediaType.TV || loadedItem != null || cachedFullItem != null
 
                 // Get total seasons for TV shows (stored in totalEpisodes field)
                 val totalSeasons = if (mediaType == MediaType.TV) {
-                    mergedItem.totalEpisodes?.coerceAtLeast(1) ?: 1
+                    if (hasTrustedTvDetails) {
+                        mergedItem.totalEpisodes?.coerceAtLeast(1) ?: 1
+                    } else {
+                        1
+                    }
                 } else 1
 
                 // Map genre IDs to names
@@ -1742,12 +1751,19 @@ class DetailsViewModel @Inject constructor(
             }
 
             val tvDetails = tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY)
-            val numSeasons = tvDetails.numberOfSeasons
+            val seasonNumbers = tvDetails.seasons
+                .asSequence()
+                .filter { it.seasonNumber > 0 && it.episodeCount > 0 }
+                .map { it.seasonNumber }
+                .distinct()
+                .sorted()
+                .toList()
+                .ifEmpty { (1..tvDetails.numberOfSeasons.coerceAtLeast(1)).toList() }
 
             val progressMap = mutableMapOf<Int, Pair<Int, Int>>()
             var nextUnwatched: Pair<Int, Int>? = null
 
-            for (seasonNum in 1..numSeasons) {
+            for (seasonNum in seasonNumbers) {
                 try {
                     val seasonDetails = tmdbApi.getTvSeason(tmdbId, seasonNum, Constants.TMDB_API_KEY)
                     val totalEpisodes = seasonDetails.episodes.size
