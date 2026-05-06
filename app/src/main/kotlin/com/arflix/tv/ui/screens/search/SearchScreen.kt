@@ -558,11 +558,12 @@ private fun RowsLayer(
                     if (rowUsePosterCards) 134.dp else 260.dp
                 }
                 val baseRowHeight = if (isTouchDevice) {
-                    if (rowUsePosterCards) 220.dp else 160.dp
+                    if (rowUsePosterCards) 260.dp else 190.dp
                 } else if (rowUsePosterCards) {
-                    if (screenHeight <= 640) 245.dp else 320.dp
+                    // Poster cards (2:3) need extra vertical room for title + date below the image
+                    if (screenHeight <= 640) 300.dp else 340.dp
                 } else {
-                    if (screenHeight <= 640) 200.dp else 260.dp
+                    if (screenHeight <= 640) 215.dp else 270.dp
                 }
                 val rowHeight = baseRowHeight + focusBleedPadding
                 // Fade non-current rows
@@ -646,7 +647,12 @@ private fun RowsLayer(
                             itemsIndexed(category.items, key = { _, item -> "${item.mediaType}_${item.id}" }) { itemIdx, item ->
                                 val itemIsFocused = isCurrentRow && itemIdx == currentItemIndex
                                 MediaCard(
-                                    item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
+                                    item = item.copy(
+                                        title = buildCardTitle(item),
+                                        subtitle = buildCardSubtitle(item),
+                                        releaseDate = null,
+                                        year = ""
+                                    ),
                                     width = itemWidth,
                                     isLandscape = !rowUsePosterCards,
                                     logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
@@ -683,7 +689,12 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
         horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(26.dp), modifier = Modifier.fillMaxSize().arvioDpadFocusGroup()) {
         items(items.size, key = { "${items[it].mediaType}_${items[it].id}" }) { idx ->
             val item = items[idx]
-            MediaCard(item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
+            MediaCard(item = item.copy(
+                title = buildCardTitle(item),
+                subtitle = buildCardSubtitle(item),
+                releaseDate = null,
+                year = ""
+            ),
                 width = itemWidth, isLandscape = !usePosterCards, showProgress = false, titleMaxLines = 2, subtitleMaxLines = 1,
                 isFocusedOverride = false, enableSystemFocus = true, onFocused = {}, onClick = { onItemClick(item) },
                 modifier = if (isTouchDevice) Modifier.clickable { onItemClick(item) } else Modifier)
@@ -693,13 +704,18 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
 }
 
 private fun buildCardTitle(item: MediaItem): String {
-    val year = item.year.takeIf { it.isNotBlank() }
-    return if (year != null) "${item.title} ($year)" else item.title
+    // Return the clean title — year is shown separately in the subtitle
+    return item.title
 }
 
 @Composable
 private fun buildCardSubtitle(item: MediaItem): String {
-    return when (item.mediaType) { MediaType.TV -> stringResource(R.string.series); MediaType.MOVIE -> stringResource(R.string.movie) }
+    val mediaLabel = when (item.mediaType) {
+        MediaType.TV -> stringResource(R.string.series)
+        MediaType.MOVIE -> stringResource(R.string.movie)
+    }
+    val year = item.year.takeIf { it.isNotBlank() }
+    return if (year != null) "$mediaLabel · $year" else mediaLabel
 }
 
 private enum class FocusZone { SIDEBAR, SEARCH_INPUT, FILTERS, RESULTS }
