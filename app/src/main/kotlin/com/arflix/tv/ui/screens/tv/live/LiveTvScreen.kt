@@ -667,6 +667,9 @@ fun LiveTvScreen(
                     onMoveCategoryUp = { groupName ->
                         viewModel.moveGroupUp(groupName)
                     },
+                    onMoveCategoryToTop = { groupName ->
+                        viewModel.moveGroupToTop(groupName)
+                    },
                     onMoveCategoryDown = { groupName ->
                         viewModel.moveGroupDown(groupName)
                     },

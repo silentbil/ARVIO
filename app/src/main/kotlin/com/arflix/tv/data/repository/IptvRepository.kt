@@ -674,6 +674,19 @@ class IptvRepository @Inject constructor(
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group up")
     }
 
+    suspend fun moveGroupToTop(groupName: String, currentGroups: List<String> = emptyList()) {
+        context.settingsDataStore.edit { prefs ->
+            var order = decodeGroupOrder(prefs).toMutableList()
+            if (order.isEmpty() && currentGroups.isNotEmpty()) order = currentGroups.toMutableList()
+            if (groupName !in order && currentGroups.contains(groupName)) order.add(groupName)
+            if (order.isEmpty()) return@edit
+            order.remove(groupName)
+            order.add(0, groupName)
+            prefs[groupOrderKey()] = gson.toJson(order)
+        }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group to top")
+    }
+
     suspend fun moveGroupDown(groupName: String, currentGroups: List<String> = emptyList()) {
         context.settingsDataStore.edit { prefs ->
             var order = decodeGroupOrder(prefs).toMutableList()
@@ -706,6 +719,7 @@ class IptvRepository @Inject constructor(
         forcePlaylistReload: Boolean = false,
         forceEpgReload: Boolean = false,
         allowNetworkEpgFetch: Boolean = false,
+        allowBroadShortEpg: Boolean = true,
         onProgress: (IptvLoadProgress) -> Unit = {},
         onChannelsReady: suspend (List<IptvChannel>) -> Unit = {}
     ): IptvSnapshot {
@@ -838,7 +852,8 @@ class IptvRepository @Inject constructor(
             // Check if this is an Xtream provider (can use fast short EPG API)
             val xtreamCreds = resolveXtreamCredentials(config)
             val hasXtreamChannels = channels.any { it.xtreamStreamId != null || it.id.startsWith("xtream:") }
-            System.err.println("[EPG] loadSnapshot: forceEpgReload=$forceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamCreds=${xtreamCreds != null} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size}")
+            val shouldFetchBroadShortEpg = allowBroadShortEpg || epgCandidates.isEmpty() || channels.size <= 10_000
+            System.err.println("[EPG] loadSnapshot: forceEpgReload=$forceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamCreds=${xtreamCreds != null} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size} broadShort=$shouldFetchBroadShortEpg")
             val cachedFallbackNowNext =
                 reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()) ?: cachedNowNext
             val nowNext = if (shouldUseCachedEpg) {
@@ -874,7 +889,7 @@ class IptvRepository @Inject constructor(
                 var shortEpgResult: Map<String, IptvNowNext>? = null
 
                 // ── Fast path: Xtream short EPG API ──
-                if (xtreamCreds != null && hasXtreamChannels) {
+                if (xtreamCreds != null && hasXtreamChannels && shouldFetchBroadShortEpg) {
                     System.err.println("[EPG] Attempting Xtream short EPG (baseUrl=${xtreamCreds.baseUrl})")
                     val shortEpgAttempt = runCatching {
                         fetchXtreamShortEpg(xtreamCreds, channels, onProgress)
@@ -896,6 +911,8 @@ class IptvRepository @Inject constructor(
                     } else {
                         System.err.println("[EPG] Xtream short EPG FAILED: ${shortEpgAttempt.exceptionOrNull()?.message}")
                     }
+                } else if (xtreamCreds != null && hasXtreamChannels) {
+                    System.err.println("[EPG] Skipping broad Xtream short EPG so full XMLTV can backfill ${channels.size} channels first")
                 }
 
                 // ── Slow path: XMLTV download (always runs to fill remaining channels) ──
@@ -940,6 +957,27 @@ class IptvRepository @Inject constructor(
                         cachedEpgAt = System.currentTimeMillis()
                         epgUpdated = true
                         System.err.println("[EPG] Final best EPG coverage=${(bestCoverage * 100).toInt()}% for ${channels.size} channels")
+                    }
+                }
+
+                if (!resolved && !shouldFetchBroadShortEpg && xtreamCreds != null && hasXtreamChannels) {
+                    System.err.println("[EPG] XMLTV did not resolve; falling back to broad Xtream short EPG")
+                    val shortEpgAttempt = runCatching {
+                        fetchXtreamShortEpg(xtreamCreds, channels, onProgress)
+                    }
+                    if (shortEpgAttempt.isSuccess) {
+                        val parsed = shortEpgAttempt.getOrNull()
+                        if (parsed != null && hasAnyProgramData(parsed)) {
+                            cachedNowNext.putAll(parsed)
+                            resolvedNowNext = cachedNowNext
+                            cachedEpgAt = System.currentTimeMillis()
+                            epgUpdated = true
+                            resolved = true
+                            System.err.println("[EPG] Broad Xtream fallback SUCCESS: ${parsed.size} fresh, ${cachedNowNext.size} total cached")
+                        }
+                    } else {
+                        epgFailureMessage = shortEpgAttempt.exceptionOrNull()?.message
+                        System.err.println("[EPG] Broad Xtream fallback failed: $epgFailureMessage")
                     }
                 }
 

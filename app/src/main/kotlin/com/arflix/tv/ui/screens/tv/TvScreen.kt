@@ -1017,6 +1017,7 @@ fun TvScreen(
                         onToggleFavorite = { viewModel.toggleFavoriteGroup(it) },
                         onToggleHidden = { viewModel.toggleHiddenGroup(it) },
                         onMoveUp = { viewModel.moveGroupUp(it) },
+                        onMoveToTop = { viewModel.moveGroupToTop(it) },
                         onMoveDown = { viewModel.moveGroupDown(it) },
                         modifier = Modifier.graphicsLayer { alpha = categoryRailAlpha }
                     )
@@ -1451,6 +1452,7 @@ private fun CategoryRail(
     onToggleFavorite: (String) -> Unit = {},
     onToggleHidden: (String) -> Unit = {},
     onMoveUp: (String) -> Unit = {},
+    onMoveToTop: (String) -> Unit = {},
     onMoveDown: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -1471,6 +1473,7 @@ private fun CategoryRail(
                 onToggleFavorite = { onToggleFavorite(group) },
                 onToggleHidden = { onToggleHidden(group) },
                 onMoveUp = { onMoveUp(group) },
+                onMoveToTop = { onMoveToTop(group) },
                 onMoveDown = { onMoveDown(group) }
             )
         }
@@ -1488,6 +1491,7 @@ private fun GroupRailItem(
     onToggleFavorite: () -> Unit = {},
     onToggleHidden: () -> Unit = {},
     onMoveUp: () -> Unit = {},
+    onMoveToTop: () -> Unit = {},
     onMoveDown: () -> Unit = {}
 ) {
     Box {
@@ -1516,6 +1520,7 @@ private fun GroupRailItem(
         ) {
             FocusableMenuItem(if (isFavorite) "Unfavorite" else "Favorite", if (isFavorite) Icons.Default.StarOutline else Icons.Default.Star, Color(0xFFF5C518)) { onDismissMenu(); onToggleFavorite() }
             FocusableMenuItem("Hide", Icons.Default.VisibilityOff) { onDismissMenu(); onToggleHidden() }
+            FocusableMenuItem("Move to Top", Icons.Default.KeyboardArrowUp) { onDismissMenu(); onMoveToTop() }
             FocusableMenuItem("Move Up", Icons.Default.KeyboardArrowUp) { onDismissMenu(); onMoveUp() }
             FocusableMenuItem("Move Down", Icons.Default.KeyboardArrowDown) { onDismissMenu(); onMoveDown() }
         }
