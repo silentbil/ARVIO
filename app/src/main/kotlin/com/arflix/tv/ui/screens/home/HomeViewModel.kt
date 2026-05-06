@@ -234,7 +234,10 @@ class HomeViewModel @Inject constructor(
             overview = preferred.overview.ifBlank { fallback.overview },
             imdbRating = preferred.imdbRating.ifBlank { fallback.imdbRating },
             duration = preferred.duration.ifBlank { fallback.duration },
+            durationSeconds = maxOf(preferred.durationSeconds, fallback.durationSeconds),
             budget = preferred.budget ?: fallback.budget,
+            totalEpisodes = if (preferred.totalEpisodes > 0) preferred.totalEpisodes else fallback.totalEpisodes,
+            watchedEpisodes = if (preferred.watchedEpisodes > 0) preferred.watchedEpisodes else fallback.watchedEpisodes,
             updatedAtMs = maxOf(preferred.updatedAtMs, fallback.updatedAtMs)
         )
     }
@@ -2467,7 +2470,9 @@ class HomeViewModel @Inject constructor(
                         durationSeconds = maxOf(traktItem.durationSeconds, local.durationSeconds),
                         episodeTitle = traktItem.episodeTitle ?: local.episodeTitle,
                         backdropPath = traktItem.backdropPath ?: local.backdropPath,
-                        posterPath = traktItem.posterPath ?: local.posterPath
+                        posterPath = traktItem.posterPath ?: local.posterPath,
+                        totalEpisodes = if (traktItem.totalEpisodes > 0) traktItem.totalEpisodes else local.totalEpisodes,
+                        watchedEpisodes = if (traktItem.watchedEpisodes > 0) traktItem.watchedEpisodes else local.watchedEpisodes
                     )
                 } else {
                     traktItem
@@ -2825,7 +2830,7 @@ class HomeViewModel @Inject constructor(
                     item.copy(
                         progress = derivedProgress.coerceIn(0, 100),
                         resumePositionSeconds = match.position_seconds.coerceAtLeast(0L),
-                        durationSeconds = match.duration_seconds.coerceAtLeast(0L),
+                        durationSeconds = maxOf(item.durationSeconds, match.duration_seconds.coerceAtLeast(0L)),
                         season = item.season ?: match.season,
                         episode = item.episode ?: match.episode,
                         episodeTitle = item.episodeTitle ?: match.episode_title
