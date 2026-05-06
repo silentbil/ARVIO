@@ -6,6 +6,7 @@ import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.ProfileColors
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.ProfileManager
+import com.arflix.tv.data.repository.ProfileAvatarImageManager
 import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchHistoryRepository
@@ -34,6 +35,8 @@ data class ProfileUiState(
     val newProfileName: String = "",
     val selectedColorIndex: Int = 0,
     val selectedAvatarId: Int = 0, // 0 = legacy letter, 1-24 = cartoon avatar
+    val selectedAvatarImageUri: String? = null,
+    val useCustomAvatarImage: Boolean = false,
     val isKidsProfile: Boolean = false,
     // Edit profile dialog state
     val editingProfile: Profile? = null,
@@ -57,6 +60,7 @@ class ProfileViewModel @Inject constructor(
     private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
     private val iptvRepository: IptvRepository,
+    private val profileAvatarImageManager: ProfileAvatarImageManager,
     private val cloudSyncRepository: CloudSyncRepository
 ) : ViewModel() {
 
@@ -203,6 +207,8 @@ class ProfileViewModel @Inject constructor(
             newProfileName = "",
             selectedColorIndex = (_uiState.value.profiles.size) % ProfileColors.colors.size,
             selectedAvatarId = 0,
+            selectedAvatarImageUri = null,
+            useCustomAvatarImage = false,
             isKidsProfile = false
         )
     }
@@ -216,11 +222,35 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun setSelectedColorIndex(index: Int) {
-        _uiState.value = _uiState.value.copy(selectedColorIndex = index)
+        _uiState.value = _uiState.value.copy(
+            selectedColorIndex = index,
+            selectedAvatarId = 0,
+            selectedAvatarImageUri = null,
+            useCustomAvatarImage = false
+        )
     }
 
     fun setSelectedAvatarId(id: Int) {
-        _uiState.value = _uiState.value.copy(selectedAvatarId = id)
+        _uiState.value = _uiState.value.copy(
+            selectedAvatarId = id,
+            selectedAvatarImageUri = null,
+            useCustomAvatarImage = false
+        )
+    }
+
+    fun setSelectedAvatarImage(uri: String) {
+        _uiState.value = _uiState.value.copy(
+            selectedAvatarImageUri = uri,
+            useCustomAvatarImage = true,
+            selectedAvatarId = 0
+        )
+    }
+
+    fun removeSelectedAvatarImage() {
+        _uiState.value = _uiState.value.copy(
+            selectedAvatarImageUri = null,
+            useCustomAvatarImage = false
+        )
     }
 
     fun createProfile() {
@@ -228,12 +258,28 @@ class ProfileViewModel @Inject constructor(
         if (state.newProfileName.isBlank()) return
 
         viewModelScope.launch {
-            profileRepository.createProfile(
+            val profile = profileRepository.createProfile(
                 name = state.newProfileName.trim(),
                 avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
                 avatarId = state.selectedAvatarId,
                 isKidsProfile = false
             )
+            val selectedImage = state.selectedAvatarImageUri
+            if (state.useCustomAvatarImage && !selectedImage.isNullOrBlank()) {
+                runCatching {
+                    profileAvatarImageManager.importAvatar(profile.id, selectedImage)
+                }.onSuccess { imported ->
+                    profileRepository.updateProfile(
+                        profile.copy(
+                            avatarId = 0,
+                            avatarImageVersion = imported.version,
+                            avatarImageStoragePath = imported.storagePath
+                        )
+                    )
+                }.onFailure {
+                    showToast("Could not import avatar image", ToastType.ERROR)
+                }
+            }
             _uiState.value = _uiState.value.copy(showAddDialog = false)
             showToast("Profile created successfully", ToastType.SUCCESS)
             runCatching { cloudSyncRepository.pushToCloud() }
@@ -257,6 +303,8 @@ class ProfileViewModel @Inject constructor(
                 newProfileName = profile.name,
                 selectedColorIndex = ProfileColors.colors.indexOf(profile.avatarColor).takeIf { it >= 0 } ?: 0,
                 selectedAvatarId = profile.avatarId,
+                selectedAvatarImageUri = null,
+                useCustomAvatarImage = profile.avatarImageVersion > 0L,
                 isKidsProfile = false
             )
         }
@@ -272,14 +320,35 @@ class ProfileViewModel @Inject constructor(
         if (state.newProfileName.isBlank()) return
 
         viewModelScope.launch {
-            profileRepository.updateProfile(
-                editing.copy(
-                    name = state.newProfileName.trim(),
-                    avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
-                    avatarId = state.selectedAvatarId,
-                    isKidsProfile = false
-                )
+            var updatedProfile = editing.copy(
+                name = state.newProfileName.trim(),
+                avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
+                avatarId = state.selectedAvatarId,
+                isKidsProfile = false
             )
+            val selectedImage = state.selectedAvatarImageUri
+            if (state.useCustomAvatarImage && !selectedImage.isNullOrBlank()) {
+                runCatching {
+                    profileAvatarImageManager.importAvatar(editing.id, selectedImage)
+                }.onSuccess { imported ->
+                    updatedProfile = updatedProfile.copy(
+                        avatarId = 0,
+                        avatarImageVersion = imported.version,
+                        avatarImageStoragePath = imported.storagePath
+                    )
+                }.onFailure {
+                    showToast("Could not import avatar image", ToastType.ERROR)
+                    return@launch
+                }
+            } else if (!state.useCustomAvatarImage) {
+                profileAvatarImageManager.clearLocalAvatar(editing.id)
+                updatedProfile = updatedProfile.copy(
+                    avatarImageVersion = 0L,
+                    avatarImageStoragePath = null
+                )
+            }
+
+            profileRepository.updateProfile(updatedProfile)
             _uiState.value = _uiState.value.copy(editingProfile = null)
             showToast("Profile updated", ToastType.SUCCESS)
             runCatching { cloudSyncRepository.pushToCloud() }
@@ -373,6 +442,8 @@ class ProfileViewModel @Inject constructor(
                         newProfileName = profile.name,
                         selectedColorIndex = ProfileColors.colors.indexOf(profile.avatarColor).takeIf { it >= 0 } ?: 0,
                         selectedAvatarId = profile.avatarId,
+                        selectedAvatarImageUri = null,
+                        useCustomAvatarImage = profile.avatarImageVersion > 0L,
                         isKidsProfile = false
                     )
                 }

@@ -10,6 +10,8 @@ data class Profile(
     val name: String,
     val avatarColor: Long = ProfileColors.random(),
     val avatarId: Int = 0, // 0 = legacy letter+color, 1-24 = Compose-drawn avatar
+    val avatarImageVersion: Long = 0L, // 0 = no custom uploaded photo
+    val avatarImageStoragePath: String? = null,
     val isKidsProfile: Boolean = false,
     val pin: String? = null, // 4-5 digit PIN, null if not set
     val isLocked: Boolean = false,

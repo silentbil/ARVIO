@@ -45,6 +45,7 @@ class CloudSyncRepository @Inject constructor(
     private val traktRepository: TraktRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
+    private val profileAvatarImageManager: ProfileAvatarImageManager,
     private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
@@ -313,6 +314,15 @@ class CloudSyncRepository @Inject constructor(
 
         root.put("activeProfileId", profileRepository.getActiveProfileId() ?: JSONObject.NULL)
         root.put("profiles", JSONArray(gson.toJson(profiles)))
+        val avatarImagesById = profiles
+            .filter { it.avatarImageVersion > 0L }
+            .mapNotNull { profile ->
+                profileAvatarImageManager.readInlineBase64(profile)?.let { profile.id to it }
+            }
+            .toMap()
+        if (avatarImagesById.isNotEmpty()) {
+            root.put("profileAvatarImagesById", JSONObject(gson.toJson(avatarImagesById)))
+        }
         root.put("profileSettingsById", JSONObject(gson.toJson(profileSettingsById)))
 
         // Trakt tokens per profile
@@ -505,11 +515,18 @@ class CloudSyncRepository @Inject constructor(
         var preservedNewerLocalSubtitle = false
 
         // ── Profiles ──
+        val avatarImagesById = root.optJSONObject("profileAvatarImagesById")
         root.optJSONArray("profiles")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
             val type = object : TypeToken<List<Profile>>() {}.type
             val profiles: List<Profile> = gson.fromJson(json, type) ?: emptyList()
             val activeProfileId = root.optString("activeProfileId").ifBlank { null }
             if (profiles.isNotEmpty()) {
+                profiles.forEach { profile ->
+                    val inlineAvatar = avatarImagesById
+                        ?.optString(profile.id)
+                        ?.takeIf { it.isNotBlank() }
+                    profileAvatarImageManager.restoreAvatarIfNeeded(profile, inlineAvatar)
+                }
                 // Preserve local active profile if it exists in cloud set
                 val localActiveId = profileRepository.getActiveProfileId()
                 val effectiveActiveId = if (localActiveId != null &&

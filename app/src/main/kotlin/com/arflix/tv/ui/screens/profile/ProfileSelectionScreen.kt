@@ -57,9 +57,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.Profile
-import com.arflix.tv.data.model.ProfileColors
-import com.arflix.tv.ui.components.AvatarIcon
-import com.arflix.tv.ui.components.AvatarRegistry
+import com.arflix.tv.ui.components.ProfileAvatarVisual
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.theme.BackgroundGradientCenter
 import com.arflix.tv.ui.theme.BackgroundGradientEnd
@@ -313,6 +311,10 @@ fun ProfileSelectionScreen(
                 onColorSelected = { viewModel.setSelectedColorIndex(it) },
                 selectedAvatarId = uiState.selectedAvatarId,
                 onAvatarSelected = { viewModel.setSelectedAvatarId(it) },
+                selectedAvatarImageUri = uiState.selectedAvatarImageUri,
+                useCustomAvatarImage = uiState.useCustomAvatarImage,
+                onAvatarImageSelected = { viewModel.setSelectedAvatarImage(it) },
+                onRemoveAvatarImage = { viewModel.removeSelectedAvatarImage() },
                 onConfirm = { viewModel.createProfile() },
                 onDismiss = { viewModel.hideAddDialog() }
             )
@@ -328,6 +330,10 @@ fun ProfileSelectionScreen(
                 onColorSelected = { viewModel.setSelectedColorIndex(it) },
                 selectedAvatarId = uiState.selectedAvatarId,
                 onAvatarSelected = { viewModel.setSelectedAvatarId(it) },
+                selectedAvatarImageUri = uiState.selectedAvatarImageUri,
+                useCustomAvatarImage = uiState.useCustomAvatarImage,
+                onAvatarImageSelected = { viewModel.setSelectedAvatarImage(it) },
+                onRemoveAvatarImage = { viewModel.removeSelectedAvatarImage() },
                 onConfirm = { viewModel.updateProfile() },
                 onDelete = { viewModel.deleteProfile(profile); viewModel.hideEditDialog() },
                 onDismiss = { viewModel.hideEditDialog() },
@@ -392,30 +398,11 @@ private fun ProfileAvatar(
     ) {
         Box(contentAlignment = Alignment.Center) {
             val avatarContent: @Composable () -> Unit = {
-                val bgModifier = if (profile.avatarId > 0) {
-                    val (c1, c2) = AvatarRegistry.gradientColors(profile.avatarId)
-                    Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(c1, c2)))
-                } else {
-                    Modifier.fillMaxSize()
-                }
-                Box(
-                    modifier = bgModifier,
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (profile.avatarId > 0) {
-                        AvatarIcon(
-                            avatarId = profile.avatarId,
-                            modifier = Modifier.fillMaxSize().padding(12.dp)
-                        )
-                    } else {
-                        Text(
-                            text = profile.name.firstOrNull()?.uppercase() ?: "?",
-                            fontSize = 48.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
+                ProfileAvatarVisual(
+                    profile = profile,
+                    letterFontSize = 48.sp,
+                    iconPadding = 12.dp
+                )
             }
 
             if (isTouchDevice) {
@@ -441,8 +428,8 @@ private fun ProfileAvatar(
                         },
                     shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(8.dp)),
                     colors = ClickableSurfaceDefaults.colors(
-                        containerColor = if (profile.avatarId > 0) Color.Transparent else Color(profile.avatarColor),
-                        focusedContainerColor = if (profile.avatarId > 0) Color.Transparent else Color(profile.avatarColor)
+                        containerColor = Color.Transparent,
+                        focusedContainerColor = Color.Transparent
                     ),
                     border = ClickableSurfaceDefaults.border(
                         focusedBorder = androidx.tv.material3.Border(

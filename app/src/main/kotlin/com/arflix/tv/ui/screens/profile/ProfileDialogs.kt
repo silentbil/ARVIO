@@ -1,11 +1,14 @@
 package com.arflix.tv.ui.screens.profile
 
+import android.net.Uri
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -49,9 +52,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -68,6 +74,9 @@ import com.arflix.tv.data.model.ProfileColors
 import com.arflix.tv.ui.components.AvatarIcon
 import com.arflix.tv.ui.components.AvatarRegistry
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.ProfileAvatarFiles
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 
 // ============================================================
 // Add Profile Dialog
@@ -82,6 +91,10 @@ fun AddProfileDialog(
     onColorSelected: (Int) -> Unit,
     selectedAvatarId: Int = 0,
     onAvatarSelected: (Int) -> Unit = {},
+    selectedAvatarImageUri: String? = null,
+    useCustomAvatarImage: Boolean = false,
+    onAvatarImageSelected: (String) -> Unit = {},
+    onRemoveAvatarImage: () -> Unit = {},
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -94,6 +107,10 @@ fun AddProfileDialog(
         onColorSelected = onColorSelected,
         selectedAvatarId = selectedAvatarId,
         onAvatarSelected = onAvatarSelected,
+        selectedAvatarImageUri = selectedAvatarImageUri,
+        useCustomAvatarImage = useCustomAvatarImage,
+        onAvatarImageSelected = onAvatarImageSelected,
+        onRemoveAvatarImage = onRemoveAvatarImage,
         confirmLabel = "Create",
         onConfirm = onConfirm,
         onDismiss = onDismiss,
@@ -115,6 +132,10 @@ fun EditProfileDialog(
     onColorSelected: (Int) -> Unit,
     selectedAvatarId: Int = 0,
     onAvatarSelected: (Int) -> Unit = {},
+    selectedAvatarImageUri: String? = null,
+    useCustomAvatarImage: Boolean = false,
+    onAvatarImageSelected: (String) -> Unit = {},
+    onRemoveAvatarImage: () -> Unit = {},
     onConfirm: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
@@ -130,6 +151,10 @@ fun EditProfileDialog(
         onColorSelected = onColorSelected,
         selectedAvatarId = selectedAvatarId,
         onAvatarSelected = onAvatarSelected,
+        selectedAvatarImageUri = selectedAvatarImageUri,
+        useCustomAvatarImage = useCustomAvatarImage,
+        onAvatarImageSelected = onAvatarImageSelected,
+        onRemoveAvatarImage = onRemoveAvatarImage,
         confirmLabel = "Save",
         onConfirm = onConfirm,
         onDismiss = onDismiss,
@@ -155,6 +180,10 @@ private fun ProfileDialogContent(
     onColorSelected: (Int) -> Unit,
     selectedAvatarId: Int,
     onAvatarSelected: (Int) -> Unit,
+    selectedAvatarImageUri: String?,
+    useCustomAvatarImage: Boolean,
+    onAvatarImageSelected: (String) -> Unit,
+    onRemoveAvatarImage: () -> Unit,
     confirmLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
@@ -187,6 +216,19 @@ private fun ProfileDialogContent(
             imm?.hideSoftInputFromWindow(editText.windowToken, 0)
             editText.clearFocus()
         }
+    }
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            onAvatarImageSelected(uri.toString())
+        }
+    }
+    val hasCustomAvatar = selectedAvatarImageUri != null ||
+        (useCustomAvatarImage && (profile?.avatarImageVersion ?: 0L) > 0L)
+
+    fun launchAvatarPicker() {
+        hideKeyboard()
+        imagePicker.launch("image/*")
     }
 
     LaunchedEffect(isTouchDevice, autoFocusNameInput) {
@@ -241,36 +283,25 @@ private fun ProfileDialogContent(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    val bgColors = if (selectedAvatarId > 0) {
-                        val (c1, c2) = AvatarRegistry.gradientColors(selectedAvatarId)
-                        c1 to c2
-                    } else {
-                        val c = Color(ProfileColors.getByIndex(selectedColorIndex))
-                        c to c
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(84.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                Brush.verticalGradient(listOf(bgColors.first, bgColors.second))
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (selectedAvatarId > 0) {
-                            AvatarIcon(
-                                avatarId = selectedAvatarId,
-                                modifier = Modifier.fillMaxSize().padding(8.dp)
-                            )
-                        } else {
-                            Text(
-                                text = name.firstOrNull()?.uppercase() ?: "?",
-                                fontSize = 34.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        }
-                    }
+                    ProfileAvatarPreview(
+                        name = name,
+                        selectedColorIndex = selectedColorIndex,
+                        selectedAvatarId = selectedAvatarId,
+                        selectedAvatarImageUri = selectedAvatarImageUri,
+                        useCustomAvatarImage = useCustomAvatarImage,
+                        profile = profile,
+                        size = 84.dp,
+                        iconPadding = 8.dp,
+                        letterSize = 34.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    AvatarImageButtons(
+                        hasCustomAvatar = hasCustomAvatar,
+                        onUpload = { launchAvatarPicker() },
+                        onRemove = onRemoveAvatarImage
+                    )
 
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -495,36 +526,25 @@ private fun ProfileDialogContent(
                         Spacer(modifier = Modifier.height(20.dp))
 
                         // Preview avatar
-                        val bgColors = if (selectedAvatarId > 0) {
-                            val (c1, c2) = AvatarRegistry.gradientColors(selectedAvatarId)
-                            c1 to c2
-                        } else {
-                            val c = Color(ProfileColors.getByIndex(selectedColorIndex))
-                            c to c
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(110.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    Brush.verticalGradient(listOf(bgColors.first, bgColors.second))
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (selectedAvatarId > 0) {
-                                AvatarIcon(
-                                    avatarId = selectedAvatarId,
-                                    modifier = Modifier.fillMaxSize().padding(10.dp)
-                                )
-                            } else {
-                                Text(
-                                    text = name.firstOrNull()?.uppercase() ?: "?",
-                                    fontSize = 44.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                        }
+                        ProfileAvatarPreview(
+                            name = name,
+                            selectedColorIndex = selectedColorIndex,
+                            selectedAvatarId = selectedAvatarId,
+                            selectedAvatarImageUri = selectedAvatarImageUri,
+                            useCustomAvatarImage = useCustomAvatarImage,
+                            profile = profile,
+                            size = 110.dp,
+                            iconPadding = 10.dp,
+                            letterSize = 44.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        AvatarImageButtons(
+                            hasCustomAvatar = hasCustomAvatar,
+                            onUpload = { launchAvatarPicker() },
+                            onRemove = onRemoveAvatarImage
+                        )
 
                         Spacer(modifier = Modifier.height(16.dp))
 
@@ -733,6 +753,107 @@ private fun ProfileDialogContent(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ProfileAvatarPreview(
+    name: String,
+    selectedColorIndex: Int,
+    selectedAvatarId: Int,
+    selectedAvatarImageUri: String?,
+    useCustomAvatarImage: Boolean,
+    profile: Profile?,
+    size: Dp,
+    iconPadding: Dp,
+    letterSize: TextUnit
+) {
+    val context = LocalContext.current
+    val existingFile = remember(
+        context,
+        profile?.id,
+        profile?.avatarImageVersion,
+        useCustomAvatarImage,
+        selectedAvatarImageUri
+    ) {
+        if (selectedAvatarImageUri == null && useCustomAvatarImage && profile != null) {
+            ProfileAvatarFiles.localFile(context, profile)?.takeIf { it.exists() && it.length() > 0L }
+        } else {
+            null
+        }
+    }
+    val customModel = selectedAvatarImageUri?.let { Uri.parse(it) } ?: existingFile
+
+    if (customModel != null) {
+        AsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(customModel)
+                .memoryCacheKey("profile-avatar-preview-${profile?.id}-${profile?.avatarImageVersion}-$selectedAvatarImageUri")
+                .build(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF222222))
+        )
+        return
+    }
+
+    val bgColors = if (selectedAvatarId > 0) {
+        val (c1, c2) = AvatarRegistry.gradientColors(selectedAvatarId)
+        c1 to c2
+    } else {
+        val c = Color(ProfileColors.getByIndex(selectedColorIndex))
+        c to c
+    }
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Brush.verticalGradient(listOf(bgColors.first, bgColors.second))),
+        contentAlignment = Alignment.Center
+    ) {
+        if (selectedAvatarId > 0) {
+            AvatarIcon(
+                avatarId = selectedAvatarId,
+                modifier = Modifier.fillMaxSize().padding(iconPadding)
+            )
+        } else {
+            Text(
+                text = name.firstOrNull()?.uppercase() ?: "?",
+                fontSize = letterSize,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+    }
+}
+
+@Composable
+private fun AvatarImageButtons(
+    hasCustomAvatar: Boolean,
+    onUpload: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        DialogButton(
+            text = if (hasCustomAvatar) "Change Photo" else "Upload Photo",
+            isPrimary = false,
+            onClick = onUpload,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (hasCustomAvatar) {
+            DialogButton(
+                text = "Remove Photo",
+                isPrimary = false,
+                onClick = onRemove,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }

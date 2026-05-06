@@ -21,6 +21,7 @@ import javax.inject.Singleton
 class ProfileRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val authRepository: AuthRepository,
+    private val profileAvatarImageManager: ProfileAvatarImageManager,
     private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
@@ -125,6 +126,7 @@ class ProfileRepository @Inject constructor(
                 prefs.remove(ACTIVE_PROFILE_KEY)
             }
         }
+        profileAvatarImageManager.clearLocalAvatar(profileId)
         invalidationBus.markDirty(CloudSyncScope.PROFILES, profileId, "delete profile")
         pushProfilesStateToCloud()
     }
@@ -185,6 +187,15 @@ class ProfileRepository @Inject constructor(
         authRepository.mutateAccountSyncPayload { root ->
             root.put("activeProfileId", activeProfileId ?: JSONObject.NULL)
             root.put("profiles", JSONArray(gson.toJson(profiles)))
+            val avatarImagesById = profiles
+                .filter { it.avatarImageVersion > 0L }
+                .mapNotNull { profile ->
+                    profileAvatarImageManager.readInlineBase64(profile)?.let { profile.id to it }
+                }
+                .toMap()
+            if (avatarImagesById.isNotEmpty()) {
+                root.put("profileAvatarImagesById", JSONObject(gson.toJson(avatarImagesById)))
+            }
             root.put("userId", userId)
         }
     }
