@@ -1633,9 +1633,9 @@ class DetailsViewModel @Inject constructor(
                 val episodeNumbers = seasonEpisodes.map { it.episodeNumber }
 
                 // 1. Single batch Trakt API call to remove from history
-                val batchTraktRemovalResult = runCatching {
+                val batchTraktRemoved = runCatching {
                     traktRepository.removeSeasonFromHistory(currentMediaId, season, episodeNumbers)
-                }
+                }.getOrDefault(false)
 
                 // 2. Concurrent local/Supabase unwatch writes for each episode.
                 // If the batch Trakt removal failed, fall back to per-episode Trakt sync.
@@ -1646,13 +1646,13 @@ class DetailsViewModel @Inject constructor(
                                 currentMediaId,
                                 season,
                                 epNum,
-                                syncTrakt = batchTraktRemovalResult.isFailure
+                                syncTrakt = !batchTraktRemoved
                             )
                         }
                     }
                 }.map { it.await() }
 
-                if (batchTraktRemovalResult.isFailure && episodeUnwatchResults.any { it.isFailure }) {
+                if (!batchTraktRemoved && episodeUnwatchResults.any { it.isFailure }) {
                     _uiState.value = _uiState.value.copy(
                         episodes = updatedEpisodes,
                         seasonProgress = optimisticProgress,
