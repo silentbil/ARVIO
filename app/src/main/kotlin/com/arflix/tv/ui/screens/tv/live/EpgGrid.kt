@@ -91,6 +91,7 @@ fun EpgGrid(
     favorites: Set<String>,
     compact: Boolean = false,
     gridFocused: Boolean = false,
+    onMoveLeftFromChannels: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -311,6 +312,7 @@ fun EpgGrid(
                             stripe = idx % 2 == 1,
                             onClick = { onChannelSelect(ch) },
                             onFocused = { onChannelFocused(ch) },
+                            onMoveLeft = onMoveLeftFromChannels,
                             onFavoriteToggle = { onChannelFavoriteToggle(ch.id) },
                             rowHeight = rowHeight,
                             forceFocused = gridFocused && ch.id == selectedChannelId,

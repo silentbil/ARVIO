@@ -663,37 +663,40 @@ class IptvRepository @Inject constructor(
     }
 
     suspend fun moveGroupUp(groupName: String, currentGroups: List<String> = emptyList()) {
+        val target = groupName.trim()
+        if (target.isEmpty()) return
         context.settingsDataStore.edit { prefs ->
-            var order = decodeGroupOrder(prefs).toMutableList()
-            if (order.isEmpty() && currentGroups.isNotEmpty()) order = currentGroups.toMutableList()
+            val order = mergedGroupOrder(decodeGroupOrder(prefs), currentGroups)
             if (order.isEmpty()) return@edit
-            val idx = order.indexOf(groupName)
-            if (idx > 0) { order.removeAt(idx); order.add(idx - 1, groupName) }
+            val idx = order.indexOf(target)
+            if (idx > 0) { order.removeAt(idx); order.add(idx - 1, target) }
             prefs[groupOrderKey()] = gson.toJson(order)
         }
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group up")
     }
 
     suspend fun moveGroupToTop(groupName: String, currentGroups: List<String> = emptyList()) {
+        val target = groupName.trim()
+        if (target.isEmpty()) return
         context.settingsDataStore.edit { prefs ->
-            var order = decodeGroupOrder(prefs).toMutableList()
-            if (order.isEmpty() && currentGroups.isNotEmpty()) order = currentGroups.toMutableList()
-            if (groupName !in order && currentGroups.contains(groupName)) order.add(groupName)
+            val order = mergedGroupOrder(decodeGroupOrder(prefs), currentGroups)
             if (order.isEmpty()) return@edit
-            order.remove(groupName)
-            order.add(0, groupName)
+            if (target !in order && currentGroups.map { it.trim() }.contains(target)) order.add(target)
+            order.remove(target)
+            order.add(0, target)
             prefs[groupOrderKey()] = gson.toJson(order)
         }
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group to top")
     }
 
     suspend fun moveGroupDown(groupName: String, currentGroups: List<String> = emptyList()) {
+        val target = groupName.trim()
+        if (target.isEmpty()) return
         context.settingsDataStore.edit { prefs ->
-            var order = decodeGroupOrder(prefs).toMutableList()
-            if (order.isEmpty() && currentGroups.isNotEmpty()) order = currentGroups.toMutableList()
+            val order = mergedGroupOrder(decodeGroupOrder(prefs), currentGroups)
             if (order.isEmpty()) return@edit
-            val idx = order.indexOf(groupName)
-            if (idx >= 0 && idx < order.size - 1) { order.removeAt(idx); order.add(idx + 1, groupName) }
+            val idx = order.indexOf(target)
+            if (idx >= 0 && idx < order.size - 1) { order.removeAt(idx); order.add(idx + 1, target) }
             prefs[groupOrderKey()] = gson.toJson(order)
         }
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group down")
@@ -1457,6 +1460,23 @@ class IptvRepository @Inject constructor(
             val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
         }.getOrDefault(emptyList())
+    }
+
+    private fun mergedGroupOrder(savedOrder: List<String>, currentGroups: List<String>): MutableList<String> {
+        val current = currentGroups
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val currentSet = current.toHashSet()
+        val merged = savedOrder
+            .map { it.trim() }
+            .filter { it.isNotBlank() && (currentSet.isEmpty() || it in currentSet) }
+            .distinct()
+            .toMutableList()
+        current.forEach { group ->
+            if (group !in merged) merged.add(group)
+        }
+        return merged
     }
 
     private fun decodeFavoriteChannels(prefs: Preferences): List<String> {

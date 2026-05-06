@@ -666,7 +666,7 @@ class TvViewModel @Inject constructor(
 
     fun moveGroupUp(groupName: String) {
         viewModelScope.launch {
-            val current = _uiState.value.groups.filterNot { it == FAVORITES_GROUP_NAME }
+            val current = currentVisiblePlaylistGroups()
             iptvRepository.moveGroupUp(groupName, current)
             scheduleIptvCloudSync()
         }
@@ -674,7 +674,7 @@ class TvViewModel @Inject constructor(
 
     fun moveGroupToTop(groupName: String) {
         viewModelScope.launch {
-            val current = _uiState.value.groups.filterNot { it == FAVORITES_GROUP_NAME }
+            val current = currentVisiblePlaylistGroups()
             iptvRepository.moveGroupToTop(groupName, current)
             scheduleIptvCloudSync()
         }
@@ -682,10 +682,21 @@ class TvViewModel @Inject constructor(
 
     fun moveGroupDown(groupName: String) {
         viewModelScope.launch {
-            val current = _uiState.value.groups.filterNot { it == FAVORITES_GROUP_NAME }
+            val current = currentVisiblePlaylistGroups()
             iptvRepository.moveGroupDown(groupName, current)
             scheduleIptvCloudSync()
         }
+    }
+
+    private fun currentVisiblePlaylistGroups(): List<String> {
+        val snapshot = _uiState.value.snapshot
+        val hidden = snapshot.hiddenGroups.mapTo(HashSet()) { it.trim() }
+        return snapshot.grouped.keys
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it !in hidden }
+            .distinct()
+            .toList()
     }
 
     fun rememberTvSession(

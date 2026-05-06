@@ -645,6 +645,10 @@ fun LiveTvScreen(
                         onChannelFocused = { channel -> focusedChannelId = channel.id },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
+                        onMoveLeftFromChannels = {
+                            focusZone = LiveTvFocusZone.SIDEBAR
+                            runCatching { sidebarFocus.requestFocus() }
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -731,6 +735,10 @@ fun LiveTvScreen(
                         onChannelFocused = { channel -> focusedChannelId = channel.id },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
+                        onMoveLeftFromChannels = {
+                            focusZone = LiveTvFocusZone.SIDEBAR
+                            runCatching { sidebarFocus.requestFocus() }
+                        },
                         modifier = Modifier
                             .fillMaxSize()
                             .onFocusChanged {
