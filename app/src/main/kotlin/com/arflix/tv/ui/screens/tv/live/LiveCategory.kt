@@ -139,7 +139,7 @@ private val COUNTRY_NAMES = mapOf(
     "EN" to "English", "JA" to "Japanese", "KO" to "Korean", "ZH" to "Chinese",
     "AR" to "Arabic", "SV" to "Swedish", "DA" to "Danish", "EL" to "Greek",
     "CS" to "Czech", "HI" to "Hindi", "HE" to "Hebrew", "FA" to "Persian",
-    "AF" to "Afrikaans",
+    "AF" to "South Africa",
 )
 
 fun countryName(code: String): String = COUNTRY_NAMES[code.uppercase()] ?: code
