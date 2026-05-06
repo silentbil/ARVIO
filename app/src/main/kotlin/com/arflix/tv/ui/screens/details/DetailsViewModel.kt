@@ -1626,6 +1626,95 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
+    fun markSeasonUnwatched(season: Int) {
+        if (currentMediaType != MediaType.TV) return
+        val currentItem = _uiState.value.item ?: return
+
+        viewModelScope.launch {
+            try {
+                val seasonEpisodes = if (_uiState.value.currentSeason == season && _uiState.value.episodes.isNotEmpty()) {
+                    _uiState.value.episodes
+                } else {
+                    mediaRepository.getSeasonEpisodes(currentMediaId, season)
+                }
+
+                if (seasonEpisodes.isEmpty()) {
+                    _uiState.value = _uiState.value.copy(
+                        toastMessage = "No episodes found for Season $season",
+                        toastType = ToastType.ERROR
+                    )
+                    return@launch
+                }
+
+                // OPTIMISTIC UPDATE: Update local state immediately
+                val updatedEpisodes = if (_uiState.value.currentSeason == season) {
+                    _uiState.value.episodes.map { ep ->
+                        if (ep.seasonNumber == season) ep.copy(isWatched = false) else ep
+                    }
+                } else {
+                    _uiState.value.episodes
+                }
+                val optimisticProgress = _uiState.value.seasonProgress.toMutableMap().apply {
+                    this[season] = Pair(0, seasonEpisodes.size)
+                }
+                _uiState.value = _uiState.value.copy(
+                    episodes = updatedEpisodes,
+                    seasonProgress = optimisticProgress
+                )
+
+                // BATCH: Single Trakt API call to remove all episodes, then concurrent Supabase writes
+                val episodeNumbers = seasonEpisodes.map { it.episodeNumber }
+
+                // 1. Single batch Trakt API call to remove from history
+                val batchTraktRemoved = runCatching {
+                    traktRepository.removeSeasonFromHistory(currentMediaId, season, episodeNumbers)
+                }.getOrDefault(false)
+
+                // 2. Concurrent local/Supabase unwatch writes for each episode.
+                // If the batch Trakt removal failed, fall back to per-episode Trakt sync.
+                val episodeUnwatchResults = episodeNumbers.map { epNum ->
+                    async {
+                        runCatching {
+                            traktRepository.markEpisodeUnwatched(
+                                currentMediaId,
+                                season,
+                                epNum,
+                                syncTrakt = !batchTraktRemoved
+                            )
+                        }
+                    }
+                }.map { it.await() }
+
+                if (!batchTraktRemoved && episodeUnwatchResults.any { it.isFailure }) {
+                    _uiState.value = _uiState.value.copy(
+                        episodes = updatedEpisodes,
+                        seasonProgress = optimisticProgress,
+                        toastMessage = "Failed to sync Season $season as unwatched with Trakt",
+                        toastType = ToastType.ERROR
+                    )
+                    return@launch
+                }
+
+                val refreshedProgress = runCatching { fetchSeasonProgress(currentMediaId) }.getOrNull()
+
+                _uiState.value = _uiState.value.copy(
+                    item = currentItem.copy(isWatched = false),
+                    episodes = updatedEpisodes,
+                    seasonProgress = refreshedProgress?.progress ?: optimisticProgress,
+                    toastMessage = "Season $season marked as unwatched",
+                    toastType = ToastType.SUCCESS
+                )
+                runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+                runCatching { cloudSyncRepository.pushToCloud() }
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = "Failed to mark season as unwatched",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
     /**
      * Resolve real IMDB ID from TMDB using external_ids endpoint
      * This is required for addon stream resolution

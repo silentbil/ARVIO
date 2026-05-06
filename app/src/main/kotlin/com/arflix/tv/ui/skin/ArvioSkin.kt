@@ -4,8 +4,31 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
 
 val LocalArvioSkinTokens = staticCompositionLocalOf { ArvioSkinTokens.defaults() }
+
+/**
+ * Optional override for the focus border colour, driven by the user's
+ * "Focus border colour" setting. When non-null every [arvioFocusable]
+ * composable uses this colour instead of [ArvioColorTokens.focusOutline].
+ */
+val LocalFocusBorderColorOverride = staticCompositionLocalOf<Color?> { null }
+
+/**
+ * Maps a user-facing colour name to its [Color] value.
+ * Used by the focus border colour setting and the colour picker.
+ */
+fun focusBorderColorFromName(name: String): Color = when (name) {
+    "Red" -> Color(0xFFFF4444)
+    "Orange" -> Color(0xFFFF8800)
+    "Yellow" -> Color(0xFFFFDD44)
+    "Green" -> Color(0xFF44CC44)
+    "Blue" -> Color(0xFF4488FF)
+    "Indigo" -> Color(0xFF6644CC)
+    "Violet" -> Color(0xFFBB44CC)
+    else -> Color(0xFFFFFFFF) // White (default)
+}
 
 @Composable
 fun ProvideArvioSkin(

@@ -319,7 +319,7 @@ fun SettingsScreen(
     }
     val sectionMaxIndex: (String) -> Int = { section ->
         when (section) {
-            "general" -> 25 // 26 rows
+            "general" -> 26 // 27 rows
             "iptv" -> 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
@@ -755,9 +755,10 @@ fun SettingsScreen(
                                                 20 -> viewModel.cycleClockFormat()
                                                 21 -> viewModel.setShowBudget(!uiState.showBudget)
                                                 22 -> viewModel.setSpoilerBlurEnabled(!uiState.spoilerBlurEnabled)
-                                                23 -> openDnsProviderPicker()
-                                                24 -> viewModel.setShowLoadingStats(!uiState.showLoadingStats)
-                                                25 -> viewModel.cycleVolumeBoost()
+                                                23 -> viewModel.cycleFocusBorderColor()
+                                                24 -> openDnsProviderPicker()
+                                                25 -> viewModel.setShowLoadingStats(!uiState.showLoadingStats)
+                                                26 -> viewModel.cycleVolumeBoost()
                                             }
                                         }
                                         "iptv" -> {
@@ -1087,6 +1088,8 @@ fun SettingsScreen(
                             onShowBudgetToggle = { viewModel.setShowBudget(it) },
                             spoilerBlurEnabled = uiState.spoilerBlurEnabled,
                             onSpoilerBlurToggle = { viewModel.setSpoilerBlurEnabled(it) },
+                            focusBorderColor = uiState.focusBorderColor,
+                            onFocusBorderColorClick = { viewModel.cycleFocusBorderColor() },
                             showLoadingStats = uiState.showLoadingStats,
                             onShowLoadingStatsToggle = { viewModel.setShowLoadingStats(it) },
                             onVolumeBoostClick = { viewModel.cycleVolumeBoost() },
@@ -3126,6 +3129,14 @@ private fun MobileSettingsSubPage(
                         showDivider = false,
                         onClick = { viewModel.setSpoilerBlurEnabled(!uiState.spoilerBlurEnabled) }
                     )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Palette,
+                        title = stringResource(R.string.focus_border_color),
+                        value = uiState.focusBorderColor,
+                        isFocused = false,
+                        showDivider = false,
+                        onClick = { viewModel.cycleFocusBorderColor() }
+                    )
                 }
             }
             "Plugins & Extensions" -> {
@@ -3639,6 +3650,7 @@ private fun GeneralSettings(
     clockFormat: String = "24h",
     showBudget: Boolean = true,
     spoilerBlurEnabled: Boolean = false,
+    focusBorderColor: String = "White",
     volumeBoostDb: Int = 0,
     focusedIndex: Int,
     onSubtitleClick: () -> Unit,
@@ -3657,6 +3669,7 @@ private fun GeneralSettings(
     onClockFormatClick: () -> Unit = {},
     onShowBudgetToggle: (Boolean) -> Unit = {},
     onSpoilerBlurToggle: (Boolean) -> Unit = {},
+    onFocusBorderColorClick: () -> Unit = {},
     showLoadingStats: Boolean = true,
     onShowLoadingStatsToggle: (Boolean) -> Unit = {},
     onVolumeBoostClick: () -> Unit = {},
@@ -3927,6 +3940,16 @@ private fun GeneralSettings(
             onToggle = onSpoilerBlurToggle,
             modifier = Modifier.settingsFocusSlot(22)
         )
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsRow(
+            icon = Icons.Default.Palette,
+            title = stringResource(R.string.focus_border_color),
+            subtitle = stringResource(R.string.focus_border_color_desc),
+            value = focusBorderColor,
+            isFocused = focusedIndex == 23,
+            onClick = onFocusBorderColorClick,
+            modifier = Modifier.settingsFocusSlot(23)
+        )
 
         // ── Network ──
         Spacer(modifier = Modifier.height(24.dp))
@@ -3942,18 +3965,18 @@ private fun GeneralSettings(
             title = stringResource(R.string.dns_provider),
             subtitle = stringResource(R.string.dns_desc),
             value = dnsProvider,
-            isFocused = focusedIndex == 23,
+            isFocused = focusedIndex == 24,
             onClick = onDnsProviderClick,
-            modifier = Modifier.settingsFocusSlot(23)
+            modifier = Modifier.settingsFocusSlot(24)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsToggleRow(
             title = stringResource(R.string.show_loading_stats),
             subtitle = stringResource(R.string.show_loading_stats_desc),
             isEnabled = showLoadingStats,
-            isFocused = focusedIndex == 24,
+            isFocused = focusedIndex == 25,
             onToggle = onShowLoadingStatsToggle,
-            modifier = Modifier.settingsFocusSlot(24)
+            modifier = Modifier.settingsFocusSlot(25)
         )
 
         // ── Audio ──
@@ -3973,9 +3996,9 @@ private fun GeneralSettings(
                 0 -> "Off"
                 else -> "+${volumeBoostDb} dB"
             },
-            isFocused = focusedIndex == 25,
+            isFocused = focusedIndex == 26,
             onClick = onVolumeBoostClick,
-            modifier = Modifier.settingsFocusSlot(25)
+            modifier = Modifier.settingsFocusSlot(26)
         )
     }
 }
@@ -4300,10 +4323,15 @@ private fun SettingsRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
             .background(
                 if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
                 RoundedCornerShape(12.dp)
@@ -4365,10 +4393,15 @@ private fun SettingsToggleRow(
     onToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onToggle(!isEnabled) }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = { onToggle(!isEnabled) }
+            )
             .background(
                 if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
                 RoundedCornerShape(12.dp)

@@ -57,7 +57,12 @@ import androidx.tv.foundation.lazy.grid.itemsIndexed
 import androidx.tv.foundation.lazy.grid.rememberTvLazyGridState
 import coil.compose.AsyncImage
 import com.arflix.tv.data.model.CatalogConfig
+import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.CollectionGroupKind
+import com.arflix.tv.data.model.CollectionSourceConfig
+import com.arflix.tv.data.model.CollectionSourceKind
+import com.arflix.tv.data.model.CollectionTileShape
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.repository.CatalogRepository
@@ -118,6 +123,7 @@ class CollectionDetailsViewModel @Inject constructor(
         const val FIRST_PAGE = 8
         const val PAGE_STEP = 12
         const val BACKGROUND_PREFETCH_DELAY_MS = 350L
+        const val TMDB_COLLECTION_PREFIX = "tmdb_collection:"
     }
 
     fun load(catalogId: String) {
@@ -130,6 +136,7 @@ class CollectionDetailsViewModel @Inject constructor(
 
             _uiState.value = CollectionDetailsUiState(isLoadingMovies = true, isLoadingSeries = true)
             val catalog = catalogRepository.getCatalogs().firstOrNull { it.id == catalogId }
+                ?: syntheticTmdbCollectionCatalog(catalogId)
             if (catalog == null) {
                 _uiState.value = CollectionDetailsUiState(
                     isLoadingMovies = false,
@@ -165,6 +172,34 @@ class CollectionDetailsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun syntheticTmdbCollectionCatalog(catalogId: String): CatalogConfig? {
+        if (!catalogId.startsWith(TMDB_COLLECTION_PREFIX)) return null
+
+        val payload = catalogId.removePrefix(TMDB_COLLECTION_PREFIX)
+        val collectionId = payload.substringBefore(":").toIntOrNull() ?: return null
+        val collectionName = payload.substringAfter(":", missingDelimiterValue = "")
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?: "Collection"
+
+        return CatalogConfig(
+            id = catalogId,
+            title = collectionName,
+            sourceType = CatalogSourceType.PREINSTALLED,
+            isPreinstalled = true,
+            kind = CatalogKind.COLLECTION,
+            collectionGroup = CollectionGroupKind.FRANCHISE,
+            collectionTileShape = CollectionTileShape.POSTER,
+            collectionSources = listOf(
+                CollectionSourceConfig(
+                    kind = CollectionSourceKind.TMDB_COLLECTION,
+                    mediaType = "movie",
+                    tmdbCollectionId = collectionId
+                )
+            )
+        )
     }
 
     private suspend fun loadInitialTab(catalog: CatalogConfig, tab: CollectionTab) {
@@ -313,6 +348,9 @@ class CollectionDetailsViewModel @Inject constructor(
     private fun sourceMatchesTab(source: com.arflix.tv.data.model.CollectionSourceConfig, tab: CollectionTab): Boolean {
         val mediaType = source.mediaType?.trim()?.lowercase()
         if (mediaType != null) {
+            if (mediaType == "all" || mediaType == "any" || mediaType == "both" || mediaType == "mixed") {
+                return true
+            }
             return when (tab) {
                 CollectionTab.MOVIES -> mediaType == "movie" || mediaType == "film"
                 CollectionTab.SERIES -> mediaType == "series" || mediaType == "tv" || mediaType == "show" || mediaType == "anime"
@@ -537,7 +575,7 @@ fun CollectionDetailsScreen(
             isLoading = isTabLoading,
             isLoadingMore = isTabLoadingMore,
             emptyMessage = uiState.error ?: "Nothing to show here yet.",
-            topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 14.dp else 10.dp
+            topContentPadding = if (isMobile) 18.dp else if (usePosterCards) 22.dp else 10.dp
         )
     }
 }
@@ -717,6 +755,7 @@ private fun CollectionItemsGrid(
     topContentPadding: androidx.compose.ui.unit.Dp
 ) {
     val cardContentType = if (usePosterCards) "poster_card" else "landscape_card"
+    val focusBleedPadding = if (usePosterCards) 10.dp else 6.dp
     // Collect scroll position without restarting on page-load-size changes —
     // items.size used to live in the key, which relaunched the snapshotFlow on
     // every page append and caused a stutter frame during scroll.
@@ -738,7 +777,7 @@ private fun CollectionItemsGrid(
             start = 42.dp,
             top = topContentPadding,
             end = 42.dp,
-            bottom = 48.dp
+            bottom = 48.dp + focusBleedPadding
         ),
         verticalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp),
         horizontalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp)
