@@ -128,15 +128,16 @@ class CollectionDetailsViewModel @Inject constructor(
 
     fun load(catalogId: String) {
         viewModelScope.launch {
+            val normalizedCatalogId = normalizeCatalogId(catalogId)
             // Skip reload if this catalog is already loaded — the composable is re-entered
             // after back navigation (Navigation Compose tears down composables on forward nav)
             // and we want to preserve all paginated data so saved scroll positions stay valid.
             val current = _uiState.value
-            if (current.catalog?.id == catalogId && !current.isLoadingMovies && !current.isLoadingSeries) return@launch
+            if (current.catalog?.id == normalizedCatalogId && !current.isLoadingMovies && !current.isLoadingSeries) return@launch
 
             _uiState.value = CollectionDetailsUiState(isLoadingMovies = true, isLoadingSeries = true)
-            val catalog = catalogRepository.getCatalogs().firstOrNull { it.id == catalogId }
-                ?: syntheticTmdbCollectionCatalog(catalogId)
+            val catalog = catalogRepository.getCatalogs().firstOrNull { it.id == normalizedCatalogId || it.id == catalogId }
+                ?: syntheticTmdbCollectionCatalog(normalizedCatalogId)
             if (catalog == null) {
                 _uiState.value = CollectionDetailsUiState(
                     isLoadingMovies = false,
@@ -172,6 +173,13 @@ class CollectionDetailsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun normalizeCatalogId(catalogId: String): String {
+        val trimmed = catalogId.trim()
+        return runCatching {
+            java.net.URLDecoder.decode(trimmed, "UTF-8")
+        }.getOrDefault(trimmed)
     }
 
     private fun syntheticTmdbCollectionCatalog(catalogId: String): CatalogConfig? {

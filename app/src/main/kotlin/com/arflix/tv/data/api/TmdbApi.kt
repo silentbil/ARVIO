@@ -236,7 +236,8 @@ data class TmdbMediaItem(
     @SerializedName("media_type") val mediaType: String? = null,
     val adult: Boolean = false,
     val popularity: Float = 0f,
-    val character: String? = null
+    val character: String? = null,
+    @SerializedName("known_for") val knownFor: List<TmdbMediaItem> = emptyList()
 )
 
 data class TmdbMovieDetails(

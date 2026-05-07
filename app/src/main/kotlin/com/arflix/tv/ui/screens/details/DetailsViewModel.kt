@@ -1813,9 +1813,33 @@ class DetailsViewModel @Inject constructor(
             } else {
                 null
             }
+            val watchedEpisodeKeys = if (mediaType == MediaType.TV) {
+                val prefix = "show_tmdb:$tmdbId:"
+                val cached = runCatching {
+                    traktRepository.getWatchedEpisodesFromCache()
+                        .filter { it.startsWith(prefix) }
+                        .toSet()
+                }.getOrDefault(emptySet())
+                if (cached.isNotEmpty()) {
+                    cached
+                } else {
+                    runCatching { traktRepository.getWatchedEpisodesForShow(tmdbId) }.getOrDefault(emptySet())
+                }
+            } else {
+                emptySet()
+            }
+            fun ResumeInfo?.dropIfWatchedEpisode(): ResumeInfo? {
+                val info = this ?: return null
+                if (mediaType != MediaType.TV) return info
+                val s = info.season ?: return null
+                val e = info.episode ?: return null
+                val key = "show_tmdb:$tmdbId:$s:$e"
+                return if (watchedEpisodeKeys.contains(key)) null else info
+            }
+
             val entry = exactEntry ?: watchHistoryRepository.getLatestProgress(mediaType, tmdbId)
             val cloudResume = if (entry != null) {
-                val resume = buildResumeFromProgress(
+                buildResumeFromProgress(
                     mediaType = mediaType,
                     tmdbId = tmdbId,
                     season = entry.season,
@@ -1823,8 +1847,7 @@ class DetailsViewModel @Inject constructor(
                     progress = entry.progress,
                     positionSeconds = entry.position_seconds,
                     durationSeconds = entry.duration_seconds
-                )
-                resume
+                ).dropIfWatchedEpisode()
             } else null
 
             val hasTrakt = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
@@ -1880,7 +1903,7 @@ class DetailsViewModel @Inject constructor(
 
             val resumeCandidate = fetchedTraktItem ?: cachedTraktItem ?: localItem ?: localFallbackItem
             val localResume = if (resumeCandidate != null) {
-                val resume = buildResumeFromProgress(
+                buildResumeFromProgress(
                     mediaType = mediaType,
                     tmdbId = tmdbId,
                     season = resumeCandidate.season,
@@ -1888,8 +1911,7 @@ class DetailsViewModel @Inject constructor(
                     progress = resumeCandidate.progress / 100f,
                     positionSeconds = resumeCandidate.resumePositionSeconds,
                     durationSeconds = resumeCandidate.durationSeconds
-                )
-                resume
+                ).dropIfWatchedEpisode()
             } else null
 
             when {
@@ -1922,6 +1944,14 @@ class DetailsViewModel @Inject constructor(
     private suspend fun fetchResumeInfoFromHistoryOnly(tmdbId: Int, mediaType: MediaType): ResumeInfo? {
         return try {
             val entry = watchHistoryRepository.getLatestProgress(mediaType, tmdbId) ?: return null
+            if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
+                val watchedKey = "show_tmdb:$tmdbId:${entry.season}:${entry.episode}"
+                val isWatched = runCatching {
+                    traktRepository.getWatchedEpisodesFromCache().contains(watchedKey) ||
+                        traktRepository.getWatchedEpisodesForShow(tmdbId).contains(watchedKey)
+                }.getOrDefault(false)
+                if (isWatched) return null
+            }
             buildResumeFromProgress(
                 mediaType = mediaType,
                 tmdbId = tmdbId,
@@ -1947,6 +1977,8 @@ class DetailsViewModel @Inject constructor(
     ): ResumeInfo? {
         val normalizedDuration = if (durationSeconds > 86_400L) durationSeconds / 1000L else durationSeconds
         val normalizedPosition = if (positionSeconds > 86_400L) positionSeconds / 1000L else positionSeconds
+        val normalizedProgress = progress.coerceIn(0f, 1f)
+        val minPlaybackProgress = Constants.MIN_PROGRESS_THRESHOLD / 100f
 
         // If both position and duration are 0, this entry has no real playback data.
         // The progress field may be a show-level synthetic value (% of episodes watched),
@@ -1955,9 +1987,26 @@ class DetailsViewModel @Inject constructor(
             return null
         }
 
+        // TV "up next" placeholders intentionally point at the next episode with
+        // little/no progress. Older builds could accidentally attach the previous
+        // episode's position to that placeholder, causing labels like
+        // "Continue S4E4 at 23:16" for a never-started episode.
+        if (
+            mediaType == MediaType.TV &&
+            season != null &&
+            episode != null &&
+            normalizedPosition > 0L &&
+            (
+                (normalizedProgress <= minPlaybackProgress && normalizedDuration < 60L) ||
+                    (normalizedDuration in 1L..59L && normalizedPosition >= 60L)
+            )
+        ) {
+            return null
+        }
+
         var seconds = when {
             normalizedPosition > 0 -> normalizedPosition
-            normalizedDuration > 0 && progress > 0f -> (normalizedDuration * progress).toLong()
+            normalizedDuration > 0 && normalizedProgress > 0f -> (normalizedDuration * normalizedProgress).toLong()
             else -> 0L
         }
         if (normalizedDuration > 0L && seconds > 0L) {

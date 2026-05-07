@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.util.Log
 import coil.ImageLoader
+import coil.decode.SvgDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.arflix.tv.BuildConfig
@@ -371,6 +372,9 @@ object OkHttpProvider {
             .crossfade(false)
             .respectCacheHeaders(false)
             .allowRgb565(true)
+            .components {
+                add(SvgDecoder.Factory())
+            }
             .build()
     }
 }

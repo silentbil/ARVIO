@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.details
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
@@ -705,6 +706,7 @@ fun DetailsScreen(
                     similarLogoUrls = uiState.similarLogoUrls,
                     collectionItems = uiState.collectionItems,
                     collectionName = uiState.collectionName,
+                    hasCollectionAction = uiState.collectionId != null,
                     collectionIndex = collectionIndex,
                     focusedSection = focusedSection,
                     buttonIndex = buttonIndex,
@@ -1086,6 +1088,22 @@ private fun handleRight(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
+private fun rememberMetadataLogoImageLoader(context: Context): ImageLoader {
+    return remember(context) {
+        ImageLoader.Builder(context)
+            .okHttpClient(OkHttpProvider.coilClient)
+            .components {
+                add(SvgDecoder.Factory())
+            }
+            .allowRgb565(false)
+            .crossfade(false)
+            .placeholder(android.R.color.transparent)
+            .error(android.R.color.transparent)
+            .build()
+    }
+}
+
+@Composable
 private fun DetailsContent(
     item: MediaItem,
     logoUrl: String?,
@@ -1098,6 +1116,7 @@ private fun DetailsContent(
     similarLogoUrls: Map<String, String>,
     collectionItems: List<MediaItem> = emptyList(),
     collectionName: String? = null,
+    hasCollectionAction: Boolean = collectionItems.isNotEmpty(),
     collectionIndex: Int = 0,
     focusedSection: FocusSection,
     buttonIndex: Int,
@@ -1127,13 +1146,7 @@ private fun DetailsContent(
     onCollectionClick: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
-    val metadataLogoImageLoader = remember(context) {
-        ImageLoader.Builder(context)
-            .okHttpClient(OkHttpProvider.coilClient)
-            .components { add(SvgDecoder.Factory()) }
-            .crossfade(false)
-            .build()
-    }
+    val metadataLogoImageLoader = rememberMetadataLogoImageLoader(context)
     val focusSectionForUi = if (contentHasFocus) focusedSection else null
     // === PREMIUM LAYERED TEXT SHADOWS ===
     val textShadow = Shadow(
@@ -1972,7 +1985,7 @@ private fun DetailsContent(
                 }
 
                 // "View Collection" button — only shown when this movie belongs to a TMDB collection
-                if (collectionItems.isNotEmpty()) {
+                if (hasCollectionAction) {
                     Box(modifier = Modifier.clickable { onButtonClick(5) }) {
                         PremiumActionButton(
                             icon = Icons.Default.Star,

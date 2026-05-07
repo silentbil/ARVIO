@@ -42,7 +42,7 @@ sealed class Screen(val route: String) {
     object Watchlist : Screen("watchlist")
     object CollectionDetails : Screen("collections/{catalogId}") {
         fun createRoute(catalogId: String): String {
-            return "collections/${java.net.URLEncoder.encode(catalogId, "UTF-8")}" 
+            return "collections/${android.net.Uri.encode(catalogId)}"
         }
     }
     object Tv : Screen("tv?channelId={channelId}&streamUrl={streamUrl}") {

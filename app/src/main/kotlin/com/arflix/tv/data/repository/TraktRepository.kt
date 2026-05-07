@@ -1907,10 +1907,11 @@ class TraktRepository @Inject constructor(
         val items = loadLocalContinueWatchingRaw()
             .filter { it.id == tmdbId && it.mediaType == mediaType }
         if (items.isEmpty()) return null
-        return items.maxByOrNull { item ->
-            (item.resumePositionSeconds.coerceAtLeast(0L) * 1000L) +
-                item.progress.coerceAtLeast(0).toLong()
-        }
+        return items.maxWithOrNull(
+            compareBy<ContinueWatchingItem> { it.updatedAtMs }
+                .thenBy { it.resumePositionSeconds.coerceAtLeast(0L) }
+                .thenBy { it.progress.coerceAtLeast(0) }
+        )
     }
 
     /**

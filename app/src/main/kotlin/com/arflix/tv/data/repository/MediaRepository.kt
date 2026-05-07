@@ -63,6 +63,12 @@ data class StreamingServicesResult(
     val services: List<StreamingServiceInfo>
 )
 
+data class PersonMediaSearchResult(
+    val personId: Int,
+    val name: String,
+    val items: List<MediaItem>
+)
+
 /**
  * Repository for media data from TMDB
  * Cross-references with Trakt for watched status
@@ -2630,6 +2636,61 @@ class MediaRepository @Inject constructor(
             }
         cacheItems(items)
         return items
+    }
+
+    /**
+     * Search people and expose their known-for media as result rows.
+     *
+     * TMDB multi-search already returns person hits, but normal title search
+     * cannot display a person card. Returning rows keeps actor/director queries
+     * useful without changing the media-card detail flow.
+     */
+    suspend fun searchPeopleKnownFor(query: String, maxPeople: Int = 3): List<PersonMediaSearchResult> {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return emptyList()
+
+        val response = tmdbApi.searchMulti(apiKey, trimmed, language = contentLanguage)
+        val people = response.results
+            .asSequence()
+            .filter { it.mediaType == "person" && it.id > 0 && !it.name.isNullOrBlank() }
+            .distinctBy { it.id }
+            .sortedByDescending { it.popularity }
+            .take(maxPeople)
+            .toList()
+
+        val rows = people.mapNotNull { person ->
+            val knownForItems = person.knownFor
+                .asSequence()
+                .filter { it.posterPath != null && (it.mediaType == "movie" || it.mediaType == "tv") }
+                .sortedWith(
+                    compareByDescending<TmdbMediaItem> { it.voteCount }
+                        .thenByDescending { it.popularity }
+                )
+                .map {
+                    it.toMediaItem(
+                        if (it.mediaType == "tv") MediaType.TV else MediaType.MOVIE
+                    )
+                }
+                .distinctBy { "${it.mediaType}_${it.id}" }
+                .take(20)
+                .toList()
+                .ifEmpty {
+                    runCatching { getPersonDetails(person.id).knownFor }.getOrDefault(emptyList())
+                }
+
+            if (knownForItems.isEmpty()) {
+                null
+            } else {
+                PersonMediaSearchResult(
+                    personId = person.id,
+                    name = person.name.orEmpty(),
+                    items = knownForItems
+                )
+            }
+        }
+
+        rows.flatMap { it.items }.takeIf { it.isNotEmpty() }?.let(::cacheItems)
+        return rows
     }
 
     /**

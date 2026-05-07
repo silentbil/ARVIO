@@ -32,6 +32,10 @@
         android:theme="@style/Theme.ArflixTV"
         android:usesCleartextTraffic="true">
 
+        <profileable
+            android:shell="true"
+            tools:targetApi="q" />
+
         <meta-data
             android:name="io.sentry.auto-init"
             android:value="false" />

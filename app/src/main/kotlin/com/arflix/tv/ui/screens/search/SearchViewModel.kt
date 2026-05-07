@@ -65,6 +65,7 @@ enum class SortOption(val label: String, val apiValue: String) { POPULAR("Popula
 
 // Memoized empty collections to reduce GC pressure
 private val EMPTY_MEDIA_ITEMS: List<MediaItem> = emptyList()
+private val EMPTY_CATEGORIES: List<Category> = emptyList()
 private val EMPTY_LOGO_URLS: Map<String, String> = emptyMap()
 
 data class SearchUiState(
@@ -73,10 +74,11 @@ data class SearchUiState(
     val results: List<MediaItem> = EMPTY_MEDIA_ITEMS,
     val movieResults: List<MediaItem> = EMPTY_MEDIA_ITEMS,
     val tvResults: List<MediaItem> = EMPTY_MEDIA_ITEMS,
+    val personResults: List<Category> = EMPTY_CATEGORIES,
     val cardLogoUrls: Map<String, String> = EMPTY_LOGO_URLS,
     val error: String? = null,
     // Discover rows - always 5 rows, dynamically built from active filters
-    val discoverCategories: List<Category> = EMPTY_MEDIA_ITEMS as List<Category>,
+    val discoverCategories: List<Category> = EMPTY_CATEGORIES,
     val discoverLogoUrls: Map<String, String> = EMPTY_LOGO_URLS,
     val isDiscoverLoading: Boolean = false,
     // Filters
@@ -101,6 +103,8 @@ class SearchViewModel @Inject constructor(
     private var discoverJob: Job? = null
     private var cachedSuggestionQuery = ""
     private var cachedSuggestionResults: List<MediaItem> = EMPTY_MEDIA_ITEMS
+    private var cachedPeopleQuery = ""
+    private var cachedPeopleResults: List<Category> = EMPTY_CATEGORIES
 
     init { loadDiscoverRows() }
 
@@ -192,6 +196,15 @@ class SearchViewModel @Inject constructor(
         loadDiscoverRows()
     }
 
+    fun setDiscoverFilters(type: DiscoverType, genre: Genre?, country: Country?) {
+        _uiState.value = _uiState.value.copy(
+            selectedType = type,
+            selectedGenre = genre,
+            selectedCountry = country
+        )
+        loadDiscoverRows()
+    }
+
     fun selectGenre(genre: Genre?) {
         _uiState.value = _uiState.value.copy(selectedGenre = genre)
         loadDiscoverRows()
@@ -211,7 +224,8 @@ class SearchViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(query = newQuery, isAiSearch = false, aiInterpretation = null, aiResults = EMPTY_MEDIA_ITEMS)
         if (newQuery.trim().isEmpty()) {
             cachedSuggestionQuery = ""; cachedSuggestionResults = EMPTY_MEDIA_ITEMS
-            _uiState.value = _uiState.value.copy(query = "", isLoading = false, results = EMPTY_MEDIA_ITEMS, movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS, cardLogoUrls = EMPTY_LOGO_URLS, error = null, isAiSearch = false, aiInterpretation = null, aiResults = EMPTY_MEDIA_ITEMS)
+            cachedPeopleQuery = ""; cachedPeopleResults = EMPTY_CATEGORIES
+            _uiState.value = _uiState.value.copy(query = "", isLoading = false, results = EMPTY_MEDIA_ITEMS, movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS, personResults = EMPTY_CATEGORIES, cardLogoUrls = EMPTY_LOGO_URLS, error = null, isAiSearch = false, aiInterpretation = null, aiResults = EMPTY_MEDIA_ITEMS)
             searchJob?.cancel(); return
         }
         debounceSearch()
@@ -222,14 +236,46 @@ class SearchViewModel @Inject constructor(
         val aiQuery = parseSmartQuery(query); if (aiQuery != null) { executeSmartSearch(aiQuery); return }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null, isAiSearch = false)
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null, isAiSearch = false, personResults = EMPTY_CATEGORIES)
             try {
-                val sorted = if (cachedSuggestionQuery.equals(query, true) && cachedSuggestionResults.isNotEmpty()) cachedSuggestionResults
-                else { val f = mediaRepository.search(query); val s = sortResults(query, f); cachedSuggestionQuery = query; cachedSuggestionResults = s; s }
+                val (sorted, peopleRows) = withContext(Dispatchers.IO) {
+                    coroutineScope {
+                        val mediaDeferred = async {
+                            if (cachedSuggestionQuery.equals(query, true) && cachedSuggestionResults.isNotEmpty()) {
+                                cachedSuggestionResults
+                            } else {
+                                val found = mediaRepository.search(query)
+                                val sortedResults = sortResults(query, found)
+                                cachedSuggestionQuery = query
+                                cachedSuggestionResults = sortedResults
+                                sortedResults
+                            }
+                        }
+                        val peopleDeferred = async {
+                            if (cachedPeopleQuery.equals(query, true) && cachedPeopleResults.isNotEmpty()) {
+                                cachedPeopleResults
+                            } else {
+                                val rows = mediaRepository.searchPeopleKnownFor(query)
+                                    .map { result ->
+                                        Category(
+                                            id = "person_${result.personId}",
+                                            title = result.name,
+                                            items = result.items
+                                        )
+                                    }
+                                cachedPeopleQuery = query
+                                cachedPeopleResults = rows
+                                rows
+                            }
+                        }
+                        mediaDeferred.await() to peopleDeferred.await()
+                    }
+                }
                 val movies = sorted.filter { it.mediaType == MediaType.MOVIE }; val tv = sorted.filter { it.mediaType == MediaType.TV }
-                val top = (movies.take(16) + tv.take(16)).distinctBy { "${it.mediaType}_${it.id}" }
+                val personItems = peopleRows.flatMap { it.items }
+                val top = (personItems.take(24) + movies.take(16) + tv.take(16)).distinctBy { "${it.mediaType}_${it.id}" }
                 val logos = withContext(Dispatchers.IO) { top.map { item -> async { val k = "${item.mediaType}_${item.id}"; val l = runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }.getOrNull(); if (l.isNullOrBlank()) null else k to l } }.awaitAll().filterNotNull().toMap() }
-                _uiState.value = _uiState.value.copy(isLoading = false, results = sorted, movieResults = movies, tvResults = tv, cardLogoUrls = logos)
+                _uiState.value = _uiState.value.copy(isLoading = false, results = sorted, movieResults = movies, tvResults = tv, personResults = peopleRows, cardLogoUrls = logos)
             } catch (e: Exception) { _uiState.value = _uiState.value.copy(isLoading = false, error = e.message) }
         }
     }
@@ -255,7 +301,7 @@ class SearchViewModel @Inject constructor(
 
     private fun executeSmartSearch(sq: SmartQuery) {
         searchJob?.cancel(); searchJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, isAiSearch = true, aiInterpretation = sq.interpretation, error = null, movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS)
+            _uiState.value = _uiState.value.copy(isLoading = true, isAiSearch = true, aiInterpretation = sq.interpretation, error = null, movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS, personResults = EMPTY_CATEGORIES)
             try {
                 val items = withContext(Dispatchers.IO) {
                     if (sq.similarTo != null) { val r = mediaRepository.search(sq.similarTo); val m = r.firstOrNull(); if (m != null) mediaRepository.getSimilar(m.mediaType, m.id) else EMPTY_MEDIA_ITEMS }
@@ -303,7 +349,7 @@ class SearchViewModel @Inject constructor(
         )
     }
 
-    fun clearSearch() { searchJob?.cancel(); cachedSuggestionQuery = ""; cachedSuggestionResults = EMPTY_MEDIA_ITEMS; _uiState.value = _uiState.value.copy(query = "", isLoading = false, results = EMPTY_MEDIA_ITEMS, movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS, cardLogoUrls = EMPTY_LOGO_URLS, error = null, isAiSearch = false, aiInterpretation = null, aiResults = EMPTY_MEDIA_ITEMS) }
+    fun clearSearch() { searchJob?.cancel(); cachedSuggestionQuery = ""; cachedSuggestionResults = EMPTY_MEDIA_ITEMS; cachedPeopleQuery = ""; cachedPeopleResults = EMPTY_CATEGORIES; _uiState.value = _uiState.value.copy(query = "", isLoading = false, results = EMPTY_MEDIA_ITEMS, movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS, personResults = EMPTY_CATEGORIES, cardLogoUrls = EMPTY_LOGO_URLS, error = null, isAiSearch = false, aiInterpretation = null, aiResults = EMPTY_MEDIA_ITEMS) }
     fun getGenresForType(): List<Genre> = when (_uiState.value.selectedType) { DiscoverType.MOVIES -> MOVIE_GENRES; DiscoverType.TV_SHOWS -> TV_GENRES; DiscoverType.ALL -> ALL_GENRES; DiscoverType.ANIME -> ANIME_GENRES }
     private fun interleave(a: List<MediaItem>, b: List<MediaItem>): List<MediaItem> { val r = mutableListOf<MediaItem>(); for (i in 0 until maxOf(a.size, b.size)) { if (i < a.size) r.add(a[i]); if (i < b.size) r.add(b[i]) }; return r }
 }
