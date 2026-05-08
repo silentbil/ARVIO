@@ -1731,10 +1731,10 @@ private fun DetailsContent(
         val heroStartPadding = 36.dp
         val heroEndPadding = 400.dp
         val configuration = LocalConfiguration.current
-        // 290.dp minimum accommodates poster cards (126dp wide × 3/2 aspect ratio =
+        // 276.dp minimum accommodates poster cards (126dp wide × 3/2 aspect ratio =
         // 189dp image + ~36dp title/subtitle + 36dp focus bleed = ~261dp) plus the
-        // section title (~24dp), totaling ~285dp per row item.
-        val contentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(290.dp, 360.dp)
+        // section title (~24dp), keeping the stack low without clipping.
+        val contentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(276.dp, 346.dp)
         val contentRowBottomPadding = 0.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
