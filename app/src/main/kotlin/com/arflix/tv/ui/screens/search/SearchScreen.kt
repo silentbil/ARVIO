@@ -663,37 +663,29 @@ private fun SearchInputBar(
         ) {
             Icon(Icons.Default.Search, null, tint = if (isFocused) Color.White else TextSecondary, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(12.dp))
-            if (isEditing) {
-                BasicTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
-                    textStyle = ArflixTypography.body.copy(color = TextPrimary, fontSize = 17.sp),
-                    cursorBrush = SolidColor(Color.White),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { onSearch() }),
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(textInputFocusRequester),
-                    decorationBox = { inner ->
-                        if (query.isEmpty()) {
-                            Text(
-                                stringResource(R.string.search),
-                                style = ArflixTypography.body.copy(fontSize = 17.sp),
-                                color = Color.White.copy(alpha = 0.32f)
-                            )
-                        }
-                        inner()
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                readOnly = !isEditing,
+                textStyle = ArflixTypography.body.copy(color = TextPrimary, fontSize = 17.sp),
+                cursorBrush = SolidColor(Color.White),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(textInputFocusRequester),
+                decorationBox = { inner ->
+                    if (query.isEmpty()) {
+                        Text(
+                            stringResource(R.string.search),
+                            style = ArflixTypography.body.copy(fontSize = 17.sp),
+                            color = Color.White.copy(alpha = 0.32f)
+                        )
                     }
-                )
-            } else {
-                Text(
-                    text = query.ifEmpty { stringResource(R.string.search) },
-                    style = ArflixTypography.body.copy(fontSize = 17.sp, fontWeight = FontWeight.Medium),
-                    color = if (query.isEmpty()) Color.White.copy(alpha = 0.36f) else TextPrimary,
-                    maxLines = 1
-                )
-            }
+                    inner()
+                }
+            )
         }
     }
 }
