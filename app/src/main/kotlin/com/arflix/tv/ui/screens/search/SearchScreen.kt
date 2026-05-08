@@ -776,12 +776,12 @@ private fun GlowChip(
     val active = focused || isSelected
     val chipShape = RoundedCornerShape(7.dp)
     val backgroundColor = when {
-        focused -> Color.White
+        focused -> Color.White.copy(alpha = 0.12f)  // Dark enough for white border to be visible
         isSelected -> Color.White.copy(alpha = 0.92f)
         else -> Color.White.copy(alpha = 0.075f)
     }
     val borderColor = when {
-        focused -> Color.White
+        focused -> Color.White                       // Same white as media card focusOutline
         isSelected -> Color.White.copy(alpha = 0.92f)
         else -> Color.White.copy(alpha = 0.24f)
     }
@@ -811,7 +811,11 @@ private fun GlowChip(
                 fontSize = 12.sp,
                 fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium
             ),
-            color = if (active) Color.Black else Color.White.copy(alpha = 0.84f),
+            color = when {
+                focused -> Color.White                // White text on dark bg
+                isSelected -> Color.Black             // Black text on bright bg
+                else -> Color.White.copy(alpha = 0.84f)
+            },
             maxLines = 1
         )
     }
