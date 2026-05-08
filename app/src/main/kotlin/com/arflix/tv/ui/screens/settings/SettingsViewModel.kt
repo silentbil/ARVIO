@@ -164,6 +164,7 @@ data class SettingsUiState(
     val cloudstreamSupportedApiVersion: Int = StreamRepository.SUPPORTED_CLOUDSTREAM_API_VERSION,
     val torrServerBaseUrl: String = "",
     val homeServerConnection: HomeServerConnection? = null,
+    val homeServerConnections: List<HomeServerConnection> = emptyList(),
     val isHomeServerConnecting: Boolean = false,
     val homeServerError: String? = null,
     // Content language (TMDB metadata)
@@ -535,8 +536,11 @@ class SettingsViewModel @Inject constructor(
 
     private fun observeHomeServer() {
         viewModelScope.launch {
-            homeServerRepository.connection.collect { connection ->
-                _uiState.value = _uiState.value.copy(homeServerConnection = connection)
+            homeServerRepository.connections.collect { connections ->
+                _uiState.value = _uiState.value.copy(
+                    homeServerConnection = connections.firstOrNull(),
+                    homeServerConnections = connections
+                )
             }
         }
     }
@@ -2133,9 +2137,11 @@ class SettingsViewModel @Inject constructor(
             )
             val result = homeServerRepository.connect(serverUrl, username, password)
             result.onSuccess { connection ->
+                val connections = homeServerRepository.currentConnections()
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,
                     homeServerConnection = connection,
+                    homeServerConnections = connections,
                     homeServerError = null,
                     toastMessage = "Home Server connected",
                     toastType = ToastType.SUCCESS
@@ -2159,11 +2165,12 @@ class SettingsViewModel @Inject constructor(
                 isHomeServerConnecting = true,
                 homeServerError = null
             )
-            val result = homeServerRepository.testConnection()
-            result.onSuccess { connection ->
+            val result = homeServerRepository.testConnections()
+            result.onSuccess { connections ->
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,
-                    homeServerConnection = connection,
+                    homeServerConnection = connections.firstOrNull(),
+                    homeServerConnections = connections,
                     homeServerError = null,
                     toastMessage = "Home Server is reachable",
                     toastType = ToastType.SUCCESS
@@ -2185,6 +2192,7 @@ class SettingsViewModel @Inject constructor(
             homeServerRepository.disconnect()
             _uiState.value = _uiState.value.copy(
                 homeServerConnection = null,
+                homeServerConnections = emptyList(),
                 homeServerError = null,
                 toastMessage = "Home Server disconnected",
                 toastType = ToastType.INFO

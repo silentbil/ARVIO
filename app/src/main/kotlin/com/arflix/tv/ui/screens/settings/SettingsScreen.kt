@@ -136,6 +136,7 @@ import com.arflix.tv.data.model.RuntimeKind
 import com.arflix.tv.data.model.CloudstreamPluginIndexEntry
 import com.arflix.tv.data.model.CloudstreamRepositoryManifest
 import com.arflix.tv.data.repository.HomeServerConnection
+import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.CloudstreamRepositoryRecord
 import com.arflix.tv.ui.components.AppTopBar
@@ -327,7 +328,7 @@ fun SettingsScreen(
         when (section) {
             "general" -> 26 // 27 rows
             "iptv" -> 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
-            "home_server" -> 2
+            "home_server" -> uiState.homeServerConnections.size + 2
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
             "cloudstream" -> cloudstreamPlugins.size + uiState.cloudstreamRepositories.size // plugins + repos + add button
@@ -821,14 +822,20 @@ fun SettingsScreen(
                                         "home_server" -> {
                                             when (contentFocusIndex) {
                                                 0 -> {
-                                                    val connection = uiState.homeServerConnection
+                                                    homeServerUrl = ""
+                                                    homeServerUsername = ""
+                                                    homeServerPassword = ""
+                                                    showHomeServerInput = true
+                                                }
+                                                in 1..uiState.homeServerConnections.size -> {
+                                                    val connection = uiState.homeServerConnections.getOrNull(contentFocusIndex - 1)
                                                     homeServerUrl = connection?.serverUrl.orEmpty()
                                                     homeServerUsername = connection?.userName.orEmpty()
                                                     homeServerPassword = ""
                                                     showHomeServerInput = true
                                                 }
-                                                1 -> viewModel.testHomeServerConnection()
-                                                2 -> viewModel.disconnectHomeServer()
+                                                uiState.homeServerConnections.size + 1 -> viewModel.testHomeServerConnection()
+                                                uiState.homeServerConnections.size + 2 -> viewModel.disconnectHomeServer()
                                             }
                                         }
                                         "catalogs" -> {
@@ -1176,14 +1183,19 @@ fun SettingsScreen(
                             onDelete = { viewModel.clearIptvConfig() }
                         )
                         "home_server" -> HomeServerSettings(
-                            connection = uiState.homeServerConnection,
+                            connections = uiState.homeServerConnections,
                             isWorking = uiState.isHomeServerConnecting,
                             error = uiState.homeServerError,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             onConnect = {
-                                val connection = uiState.homeServerConnection
-                                homeServerUrl = connection?.serverUrl.orEmpty()
-                                homeServerUsername = connection?.userName.orEmpty()
+                                homeServerUrl = ""
+                                homeServerUsername = ""
+                                homeServerPassword = ""
+                                showHomeServerInput = true
+                            },
+                            onEditConnection = { connection ->
+                                homeServerUrl = connection.serverUrl
+                                homeServerUsername = connection.userName
                                 homeServerPassword = ""
                                 showHomeServerInput = true
                             },
@@ -1325,23 +1337,24 @@ fun SettingsScreen(
                     InputField(
                         label = "Server URL",
                         value = homeServerUrl,
-                        placeholder = "http://server:8096",
+                        placeholder = "http://server:8096 or http://plex:32400",
                         onValueChange = { homeServerUrl = it }
                     ),
                     InputField(
                         label = "Username",
                         value = homeServerUsername,
+                        placeholder = "Optional for Plex token",
                         onValueChange = { homeServerUsername = it }
                     ),
                     InputField(
-                        label = "Password",
+                        label = "Password / Plex token",
                         value = homeServerPassword,
                         isSecret = true,
                         onValueChange = { homeServerPassword = it }
                     )
                 ),
                 onConfirm = {
-                    if (homeServerUrl.isNotBlank() && homeServerUsername.isNotBlank() && homeServerPassword.isNotBlank()) {
+                    if (homeServerUrl.isNotBlank() && homeServerPassword.isNotBlank()) {
                         viewModel.connectHomeServer(
                             serverUrl = homeServerUrl.trim(),
                             username = homeServerUsername.trim(),
@@ -3310,11 +3323,14 @@ private fun MobileSettingsSubPage(
             }
             "Home Server" -> {
                 HomeServerSettings(
-                    connection = uiState.homeServerConnection,
+                    connections = uiState.homeServerConnections,
                     isWorking = uiState.isHomeServerConnecting,
                     error = uiState.homeServerError,
                     focusedIndex = -1,
                     onConnect = onConnectHomeServerClick,
+                    onEditConnection = { connection ->
+                        onConnectHomeServerClick()
+                    },
                     onTest = { viewModel.testHomeServerConnection() },
                     onDisconnect = { viewModel.disconnectHomeServer() }
                 )
@@ -4105,14 +4121,16 @@ private fun GeneralSettings(
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun HomeServerSettings(
-    connection: HomeServerConnection?,
+    connections: List<HomeServerConnection>,
     isWorking: Boolean,
     error: String?,
     focusedIndex: Int,
     onConnect: () -> Unit,
+    onEditConnection: (HomeServerConnection) -> Unit,
     onTest: () -> Unit,
     onDisconnect: () -> Unit
 ) {
+    val hasConnections = connections.isNotEmpty()
     Column {
         if (!LocalDeviceType.current.isTouchDevice()) {
             Text(
@@ -4125,35 +4143,56 @@ private fun HomeServerSettings(
 
         SettingsRow(
             icon = Icons.Default.Cloud,
-            title = if (connection == null) "Connect server" else "Server account",
-            subtitle = connection?.serverName?.takeIf { it.isNotBlank() }
-                ?: "Use your own local media server as a source",
-            value = if (isWorking) "Working" else if (connection == null) "Connect" else "Change",
+            title = "Add server",
+            subtitle = "Jellyfin, Emby, or Plex libraries as sources",
+            value = if (isWorking) "Working" else if (hasConnections) "Add another" else "Connect",
             isFocused = focusedIndex == 0,
             onClick = onConnect,
             modifier = Modifier.settingsFocusSlot(0)
         )
 
+        connections.forEachIndexed { index, connection ->
+            Spacer(modifier = Modifier.height(16.dp))
+            val libraries = connection.collections.count { it.enabled }
+            val description = listOfNotNull(
+                homeServerKindLabel(connection.serverKind).takeIf { it.isNotBlank() },
+                connection.userName.takeIf { it.isNotBlank() },
+                if (libraries > 0) "$libraries collections" else null
+            ).joinToString("  |  ").ifBlank { connection.serverUrl }
+
+            SettingsActionRow(
+                title = connection.serverName.ifBlank { connection.serverUrl },
+                description = description,
+                actionLabel = "Change",
+                isFocused = focusedIndex == index + 1,
+                onClick = { onEditConnection(connection) },
+                modifier = Modifier.settingsFocusSlot(index + 1)
+            )
+        }
+
+        val testIndex = connections.size + 1
+        val disconnectIndex = connections.size + 2
+
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsActionRow(
             title = "Test connection",
-            description = if (connection == null) "Connect a server first" else "Check that this profile can reach the server",
+            description = if (!hasConnections) "Connect a server first" else "Check that this profile can reach every server",
             actionLabel = if (isWorking) "Working" else "Test",
-            isFocused = focusedIndex == 1,
-            onClick = { if (connection != null) onTest() },
-            modifier = Modifier.settingsFocusSlot(1)
+            isFocused = focusedIndex == testIndex,
+            onClick = { if (hasConnections) onTest() },
+            modifier = Modifier.settingsFocusSlot(testIndex)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsActionRow(
-            title = "Disconnect",
-            description = if (connection == null) "No server is connected" else "Remove this server from the active profile",
+            title = "Disconnect all",
+            description = if (!hasConnections) "No server is connected" else "Remove all servers from the active profile",
             actionLabel = "Remove",
-            isFocused = focusedIndex == 2,
-            onClick = { if (connection != null) onDisconnect() },
-            modifier = Modifier.settingsFocusSlot(2)
+            isFocused = focusedIndex == disconnectIndex,
+            onClick = { if (hasConnections) onDisconnect() },
+            modifier = Modifier.settingsFocusSlot(disconnectIndex)
         )
 
         if (!error.isNullOrBlank()) {
@@ -4164,6 +4203,15 @@ private fun HomeServerSettings(
                 color = Color(0xFFFF6B6B)
             )
         }
+    }
+}
+
+private fun homeServerKindLabel(kind: HomeServerKind): String {
+    return when (kind) {
+        HomeServerKind.JELLYFIN -> "Jellyfin"
+        HomeServerKind.EMBY -> "Emby"
+        HomeServerKind.PLEX -> "Plex"
+        HomeServerKind.UNKNOWN -> ""
     }
 }
 
