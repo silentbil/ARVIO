@@ -2152,17 +2152,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun setHomeServerEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            homeServerRepository.setEnabled(enabled)
-            _uiState.value = _uiState.value.copy(
-                toastMessage = if (enabled) "Home Server enabled" else "Home Server disabled",
-                toastType = ToastType.INFO
-            )
-            syncLocalStateToCloud(silent = true)
-        }
-    }
-
     fun testHomeServerConnection() {
         if (_uiState.value.isHomeServerConnecting) return
         viewModelScope.launch {

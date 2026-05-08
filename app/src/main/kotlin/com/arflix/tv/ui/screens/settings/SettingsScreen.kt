@@ -327,7 +327,7 @@ fun SettingsScreen(
         when (section) {
             "general" -> 26 // 27 rows
             "iptv" -> 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
-            "home_server" -> 3
+            "home_server" -> 2
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
             "cloudstream" -> cloudstreamPlugins.size + uiState.cloudstreamRepositories.size // plugins + repos + add button
@@ -827,13 +827,8 @@ fun SettingsScreen(
                                                     homeServerPassword = ""
                                                     showHomeServerInput = true
                                                 }
-                                                1 -> {
-                                                    uiState.homeServerConnection?.let {
-                                                        viewModel.setHomeServerEnabled(!it.enabled)
-                                                    }
-                                                }
-                                                2 -> viewModel.testHomeServerConnection()
-                                                3 -> viewModel.disconnectHomeServer()
+                                                1 -> viewModel.testHomeServerConnection()
+                                                2 -> viewModel.disconnectHomeServer()
                                             }
                                         }
                                         "catalogs" -> {
@@ -1191,9 +1186,6 @@ fun SettingsScreen(
                                 homeServerUsername = connection?.userName.orEmpty()
                                 homeServerPassword = ""
                                 showHomeServerInput = true
-                            },
-                            onToggleEnabled = {
-                                uiState.homeServerConnection?.let { viewModel.setHomeServerEnabled(!it.enabled) }
                             },
                             onTest = { viewModel.testHomeServerConnection() },
                             onDisconnect = { viewModel.disconnectHomeServer() }
@@ -3323,9 +3315,6 @@ private fun MobileSettingsSubPage(
                     error = uiState.homeServerError,
                     focusedIndex = -1,
                     onConnect = onConnectHomeServerClick,
-                    onToggleEnabled = {
-                        uiState.homeServerConnection?.let { viewModel.setHomeServerEnabled(!it.enabled) }
-                    },
                     onTest = { viewModel.testHomeServerConnection() },
                     onDisconnect = { viewModel.disconnectHomeServer() }
                 )
@@ -4121,7 +4110,6 @@ private fun HomeServerSettings(
     error: String?,
     focusedIndex: Int,
     onConnect: () -> Unit,
-    onToggleEnabled: () -> Unit,
     onTest: () -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -4148,24 +4136,13 @@ private fun HomeServerSettings(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        SettingsToggleRow(
-            title = "Use as source",
-            subtitle = "Show matched movies and episodes from this server in source selection",
-            isEnabled = connection?.enabled == true,
-            isFocused = focusedIndex == 1,
-            onToggle = { if (connection != null) onToggleEnabled() },
-            modifier = Modifier.settingsFocusSlot(1)
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
         SettingsActionRow(
             title = "Test connection",
             description = if (connection == null) "Connect a server first" else "Check that this profile can reach the server",
             actionLabel = if (isWorking) "Working" else "Test",
-            isFocused = focusedIndex == 2,
+            isFocused = focusedIndex == 1,
             onClick = { if (connection != null) onTest() },
-            modifier = Modifier.settingsFocusSlot(2)
+            modifier = Modifier.settingsFocusSlot(1)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -4174,9 +4151,9 @@ private fun HomeServerSettings(
             title = "Disconnect",
             description = if (connection == null) "No server is connected" else "Remove this server from the active profile",
             actionLabel = "Remove",
-            isFocused = focusedIndex == 3,
+            isFocused = focusedIndex == 2,
             onClick = { if (connection != null) onDisconnect() },
-            modifier = Modifier.settingsFocusSlot(3)
+            modifier = Modifier.settingsFocusSlot(2)
         )
 
         if (!error.isNullOrBlank()) {

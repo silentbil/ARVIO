@@ -49,7 +49,7 @@ data class HomeServerConnection(
     val lastConnectedAt: Long = 0L
 ) {
     val isUsable: Boolean
-        get() = enabled && serverUrl.isNotBlank() && userId.isNotBlank() && accessToken.isNotBlank()
+        get() = serverUrl.isNotBlank() && userId.isNotBlank() && accessToken.isNotBlank()
 }
 
 internal data class HomeServerCandidateInfo(
@@ -177,11 +177,6 @@ class HomeServerRepository @Inject constructor(
                 lastConnectedAt = System.currentTimeMillis()
             ).also { saveConnection(it) }
         }
-    }
-
-    suspend fun setEnabled(enabled: Boolean) {
-        val current = currentConnection() ?: return
-        saveConnection(current.copy(enabled = enabled))
     }
 
     suspend fun disconnect() {
