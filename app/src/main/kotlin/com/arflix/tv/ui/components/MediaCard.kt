@@ -411,9 +411,9 @@ fun MediaCard(
                         }
                     }
 
-                    // Poster-only: season/episode marker, right-aligned with top-right badge.
+                    // Season/episode marker, right-aligned with top-right badge.
                     val nextEpisode = item.nextEpisode
-                    if (!isLandscape && !item.isWatched && item.mediaType == MediaType.TV && nextEpisode != null) {
+                    if (!item.isWatched && item.mediaType == MediaType.TV && nextEpisode != null) {
                         Box(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
