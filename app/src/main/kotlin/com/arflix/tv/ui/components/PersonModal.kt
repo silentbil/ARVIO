@@ -74,6 +74,23 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 /**
+ * Formats a TMDB birthday string ("yyyy-MM-dd") to the app-standard "d MMM yyyy" format.
+ * Matches [com.arflix.tv.data.repository.MediaRepository.formatDate] and
+ * [com.arflix.tv.ui.screens.details.DetailsScreen.formatEpisodeAirDateLabel].
+ */
+private fun formatBirthday(dateStr: String?): String {
+    if (dateStr.isNullOrEmpty()) return ""
+    return try {
+        val inputFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val outputFormat = SimpleDateFormat("d MMM yyyy", Locale.US)
+        val date = inputFormat.parse(dateStr)
+        date?.let { outputFormat.format(it) } ?: dateStr
+    } catch (e: Exception) {
+        dateStr
+    }
+}
+
+/**
  * Premium full-screen modal for displaying person/cast details
  * Clean, minimal design with horizontal cards like homepage
  */
@@ -613,23 +630,6 @@ private fun HorizontalKnownForCard(
                 }
             }
             
-            /**
-             * Formats a TMDB birthday string ("yyyy-MM-dd") to the app-standard "d MMM yyyy" format.
-             * Matches [com.arflix.tv.data.repository.MediaRepository.formatDate] and
-             * [com.arflix.tv.ui.screens.details.DetailsScreen.formatEpisodeAirDateLabel].
-             */
-            private fun formatBirthday(dateStr: String?): String {
-                if (dateStr.isNullOrEmpty()) return ""
-                return try {
-                    val inputFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                    val outputFormat = SimpleDateFormat("d MMM yyyy", Locale.US)
-                    val date = inputFormat.parse(dateStr)
-                    date?.let { outputFormat.format(it) } ?: dateStr
-                } catch (e: Exception) {
-                    dateStr
-                }
-            }
-
             // Focus glow effect
             if (isFocused) {
                 Box(

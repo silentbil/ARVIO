@@ -389,7 +389,11 @@ fun MediaCard(
                     if (item.mediaType == MediaType.TV && item.totalEpisodes != null && item.totalEpisodes > 0) {
                         val epsRemaining = item.totalEpisodes - (item.watchedEpisodes ?: 0)
                         if (epsRemaining > 0) {
-                            val epsLabel = if (epsRemaining == 1) "1 ep left" else "$epsRemaining eps left"
+                            val epsLabel = if (isLandscape) {
+                                if (epsRemaining == 1) "1 ep left" else "$epsRemaining eps left"
+                            } else {
+                                epsRemaining.toString()
+                            }
 
                             Box(
                                 modifier = Modifier
