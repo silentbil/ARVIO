@@ -385,13 +385,7 @@ fun SearchScreen(
                         }
                     }
                     FocusZone.FILTERS -> {
-                        if (focusedFilterIndex > 0) {
-                            focusedFilterIndex--
-                        } else {
-                            focusZone = FocusZone.SEARCH_INPUT
-                            runCatching { searchFocusRequester.requestFocus() }
-                        }
-                        true
+                        false
                     }
                     else -> false
                 }
@@ -410,10 +404,7 @@ fun SearchScreen(
                         }
                     }
                     FocusZone.FILTERS -> {
-                        if (focusedFilterIndex < quickFilters.size - 1) {
-                            focusedFilterIndex++
-                        }
-                        true
+                        false
                     }
                     else -> false
                 }
@@ -424,10 +415,12 @@ fun SearchScreen(
                             else when (topBarFocusedItem(sidebarFocusIndex, hasProfile)) { SidebarItem.SEARCH -> Unit; SidebarItem.HOME -> onNavigateToHome(); SidebarItem.WATCHLIST -> onNavigateToWatchlist(); SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings(); null -> Unit }
                             true
                         }
-                        FocusZone.SEARCH_INPUT -> false
-                        FocusZone.FILTERS -> {
-                            quickFilters.getOrNull(focusedFilterIndex)?.onSelect?.invoke()
+                        FocusZone.SEARCH_INPUT -> {
+                            isSearchEditing = true
                             true
+                        }
+                        FocusZone.FILTERS -> {
+                            false
                         }
                         FocusZone.RESULTS -> {
                             if (hasAiResults) false
@@ -465,7 +458,7 @@ fun SearchScreen(
                     query = uiState.query,
                     searchBarWidth = searchBarWidth,
                     isTouchDevice = isTouchDevice,
-                    isFocused = focusZone == FocusZone.SEARCH_INPUT || isSearchInputFocused || isSearchEditing,
+                    isFocused = focusZone == FocusZone.SEARCH_INPUT || isSearchEditing,
                     isEditing = isSearchEditing,
                     searchFocusRequester = searchFocusRequester,
                     textInputFocusRequester = textInputFocusRequester,
@@ -538,9 +531,6 @@ fun SearchScreen(
                         if (focusedFilterIndex < quickFilters.size - 1) {
                             focusedFilterIndex++
                         }
-                    },
-                    onSelect = {
-                        quickFilters.getOrNull(focusedFilterIndex)?.onSelect?.invoke()
                     }
                 )
             }
@@ -719,8 +709,7 @@ private fun DiscoverFilterStrip(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onMoveLeft: () -> Unit,
-    onMoveRight: () -> Unit,
-    onSelect: () -> Unit
+    onMoveRight: () -> Unit
 ) {
     if (filters.isEmpty()) return
     val rowState = rememberLazyListState()
@@ -746,7 +735,7 @@ private fun DiscoverFilterStrip(
                     Key.DirectionDown -> { onMoveDown(); true }
                     Key.DirectionLeft -> { onMoveLeft(); true }
                     Key.DirectionRight -> { onMoveRight(); true }
-                    Key.Enter, Key.DirectionCenter -> { onSelect(); true }
+                    Key.Enter, Key.DirectionCenter -> false
                     else -> false
                 }
             }
@@ -896,9 +885,10 @@ private fun RowsLayer(
                     if (rowUsePosterCards) 260.dp else 190.dp
                 } else if (rowUsePosterCards) {
                     // Poster cards (2:3) need extra vertical room for title + date below the image
-                    if (screenHeight <= 640) 300.dp else 340.dp
+                    if (screenHeight <= 640) 314.dp else 352.dp
                 } else {
-                    if (screenHeight <= 640) 215.dp else 270.dp
+                    // Landscape cards still render title + subtitle below artwork.
+                    if (screenHeight <= 640) 238.dp else 302.dp
                 }
                 val rowHeight = baseRowHeight + focusBleedPadding
                 // Fade non-current rows
