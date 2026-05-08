@@ -771,12 +771,9 @@ fun DetailsScreen(
                             }
                             3 -> viewModel.toggleWatched(episodeIndex)
                             4 -> viewModel.toggleWatchlist()
-                            5 -> { // View Collection — navigate to the CollectionDetailsScreen
-                                val collectionId = uiState.collectionId
-                                if (collectionId != null) {
-                                    val collectionName = uiState.collectionName.orEmpty()
-                                    onNavigateToCollection("tmdb_collection:$collectionId:$collectionName")
-                                }
+                            5 -> { // View Collection — scroll to and focus the collection row on this page
+                                focusedSection = FocusSection.COLLECTION
+                                collectionIndex = 0
                             }
                         }
                     },
@@ -2091,7 +2088,7 @@ private fun DetailsTvRows(
         contentScrollState.scrollToItem(0, 0)
     }
 
-    LaunchedEffect(focusedSection, contentHasFocus) {
+    LaunchedEffect(focusedSection, contentHasFocus, hasCollection, hasSimilar) {
         if (!contentHasFocus) return@LaunchedEffect
 
         val targetIndex = when (focusedSection) {
