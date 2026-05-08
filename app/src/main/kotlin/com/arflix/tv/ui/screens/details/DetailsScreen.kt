@@ -2619,6 +2619,7 @@ private fun DetailsCollectionRail(
 ) {
     val collectionRowState = rememberTvLazyListState()
     val collectionCardWidth = if (usePosterCards) 126.dp else 210.dp
+    val collectionFocusBleed = if (usePosterCards) 18.dp else 14.dp
     val collectionFixedFocus = focusSectionForUi == FocusSection.COLLECTION &&
         detailsRailUsesFixedFirstSlotFocus(
             totalItems = collectionItems.size,
@@ -2657,8 +2658,8 @@ private fun DetailsCollectionRail(
                         outerStartPadding = contentOuterStartPadding,
                         minimum = if (usePosterCards) 140.dp else 210.dp
                     ),
-                    top = 14.dp,
-                    bottom = 14.dp,
+                    top = collectionFocusBleed,
+                    bottom = collectionFocusBleed,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
@@ -2678,7 +2679,7 @@ private fun DetailsCollectionRail(
             if (collectionFixedFocus) {
                 FixedDetailsRailFocusOverlay(
                     startPadding = contentStartPadding,
-                    topPadding = 14.dp,
+                    topPadding = collectionFocusBleed,
                     width = collectionCardWidth,
                     aspectRatio = if (usePosterCards) 2f / 3f else 16f / 9f
                 )
