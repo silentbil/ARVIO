@@ -1735,10 +1735,10 @@ private fun DetailsContent(
         // 189dp image + ~36dp title/subtitle + 36dp focus bleed = ~261dp) plus the
         // section title (~24dp), totaling ~285dp per row item.
         val contentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(290.dp, 360.dp)
-        val contentRowBottomPadding = 0.dp
+        val contentRowBottomPadding = 12.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
-        val buttonsBottomPadding = contentRowTopPadding + 18.dp
-        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 38.dp else 40.dp
+        val buttonsBottomPadding = contentRowTopPadding - 10.dp
+        val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 46.dp else 58.dp
 
         Box(
             modifier = Modifier
