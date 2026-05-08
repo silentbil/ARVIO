@@ -1354,17 +1354,17 @@ fun SettingsScreen(
                     InputField(
                         label = "Server URL",
                         value = homeServerUrl,
-                        placeholder = "http://server:8096 or http://plex:32400",
+                        placeholder = "http://server:8096 or http://server:32400",
                         onValueChange = { homeServerUrl = it }
                     ),
                     InputField(
                         label = "Username",
                         value = homeServerUsername,
-                        placeholder = "Optional for Plex token",
+                        placeholder = "Optional for token sign-in",
                         onValueChange = { homeServerUsername = it }
                     ),
                     InputField(
-                        label = "Password / Plex token",
+                        label = "Password / token",
                         value = homeServerPassword,
                         isSecret = true,
                         onValueChange = { homeServerPassword = it }
@@ -1389,12 +1389,12 @@ fun SettingsScreen(
         }
         if (showPlexHomeServerInput) {
             InputModal(
-                title = "Connect Plex",
+                title = "Connect with code",
                 fields = listOf(
                     InputField(
-                        label = "Plex Server URL",
+                        label = "Server URL",
                         value = plexHomeServerUrl,
-                        placeholder = "http://plex:32400",
+                        placeholder = "http://server:32400",
                         onValueChange = { plexHomeServerUrl = it }
                     )
                 ),
@@ -1672,8 +1672,8 @@ fun SettingsScreen(
 
         uiState.plexHomeServerAuth?.let { plexAuth ->
             TraktActivationModal(
-                title = "Connect Plex",
-                instruction = "Scan the QR code or open Plex auth and confirm this code",
+                title = "Connect with code",
+                instruction = "Scan the QR code or open the auth page and confirm this code",
                 verificationUrl = plexAuth.verificationUrl,
                 userCode = plexAuth.code,
                 onDismiss = { viewModel.cancelPlexHomeServerAuth() }
@@ -4202,7 +4202,7 @@ private fun HomeServerSettings(
         SettingsRow(
             icon = Icons.Default.Cloud,
             title = "Add server",
-            subtitle = "Jellyfin, Emby, or Plex libraries as sources",
+            subtitle = "Personal media libraries as sources",
             value = if (isWorking) "Working" else if (hasConnections) "Add another" else "Connect",
             isFocused = focusedIndex == 0,
             onClick = onConnect,
@@ -4212,8 +4212,8 @@ private fun HomeServerSettings(
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsActionRow(
-            title = "Connect Plex",
-            description = "Sign in with a Plex code and use Plex libraries as sources",
+            title = "Connect with code",
+            description = "Sign in with a server code and use media libraries as sources",
             actionLabel = if (isPlexWorking) "Waiting" else "Code",
             isFocused = focusedIndex == 1,
             onClick = onConnectPlex,
@@ -4277,9 +4277,9 @@ private fun HomeServerSettings(
 
 private fun homeServerKindLabel(kind: HomeServerKind): String {
     return when (kind) {
-        HomeServerKind.JELLYFIN -> "Jellyfin"
-        HomeServerKind.EMBY -> "Emby"
-        HomeServerKind.PLEX -> "Plex"
+        HomeServerKind.JELLYFIN,
+        HomeServerKind.EMBY,
+        HomeServerKind.PLEX -> "Media Server"
         HomeServerKind.UNKNOWN -> ""
     }
 }

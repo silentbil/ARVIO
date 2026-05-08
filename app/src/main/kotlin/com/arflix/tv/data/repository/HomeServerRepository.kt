@@ -175,7 +175,7 @@ class HomeServerRepository @Inject constructor(
                 val serverUrl = normalizeServerUrl(rawUrl)
                 val trimmedUsername = username.trim()
                 require(serverUrl.isNotBlank()) { "Enter a valid server URL" }
-                require(password.isNotBlank()) { "Enter a password or Plex token" }
+                require(password.isNotBlank()) { "Enter a password or token" }
 
                 val publicInfo = fetchPublicInfo(serverUrl)
                 val detectedKind = publicInfo.serverKind
@@ -235,7 +235,7 @@ class HomeServerRepository @Inject constructor(
                 ?.addQueryParameter("X-Plex-Product", "ARVIO")
                 ?.build()
                 ?.toString()
-                ?: error("Invalid Plex auth URL")
+                ?: error("Invalid code sign-in URL")
             val request = Request.Builder()
                 .url(url)
                 .post(ByteArray(0).toRequestBody(null))
@@ -244,12 +244,12 @@ class HomeServerRepository @Inject constructor(
             okHttpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    error("Plex sign in failed (${response.code})")
+                    error("Code sign in failed (${response.code})")
                 }
                 val json = JsonParser().parse(body).asJsonObjectOrNull() ?: JsonObject()
                 val id = json.string("id").ifBlank { json.string("pinId") }
                 val code = json.string("code")
-                require(id.isNotBlank() && code.isNotBlank()) { "Plex did not return an activation code" }
+                require(id.isNotBlank() && code.isNotBlank()) { "Server did not return an activation code" }
                 PlexPinAuthSession(
                     id = id,
                     code = code,
@@ -268,7 +268,7 @@ class HomeServerRepository @Inject constructor(
                 ?.addQueryParameter("X-Plex-Client-Identifier", deviceId())
                 ?.build()
                 ?.toString()
-                ?: error("Invalid Plex auth URL")
+                ?: error("Invalid code sign-in URL")
             val request = Request.Builder()
                 .url(url)
                 .get()
@@ -277,7 +277,7 @@ class HomeServerRepository @Inject constructor(
             okHttpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    error("Plex sign in polling failed (${response.code})")
+                    error("Code sign in polling failed (${response.code})")
                 }
                 val json = JsonParser().parse(body).asJsonObjectOrNull() ?: JsonObject()
                 json.string("authToken")
@@ -603,7 +603,7 @@ class HomeServerRepository @Inject constructor(
         return ServerInfo(
             serverName = plexName,
             serverId = plexId,
-            productName = if (plexId.isNotBlank() || plexIdentity?.contains("MediaContainer") == true) "Plex" else "",
+            productName = if (plexId.isNotBlank() || plexIdentity?.contains("MediaContainer") == true) "Media Server" else "",
             serverKind = if (plexId.isNotBlank() || plexIdentity?.contains("MediaContainer") == true) HomeServerKind.PLEX else HomeServerKind.UNKNOWN
         )
     }
@@ -615,7 +615,7 @@ class HomeServerRepository @Inject constructor(
             return ServerInfo(
                 serverName = identityName.ifBlank { connection.serverName },
                 serverId = identityId.ifBlank { connection.serverId },
-                productName = "Plex",
+                productName = "Media Server",
                 serverKind = HomeServerKind.PLEX
             )
         }
@@ -656,11 +656,11 @@ class HomeServerRepository @Inject constructor(
             serverKind = HomeServerKind.PLEX,
             accessToken = accountToken,
             userId = "plex",
-            userName = username.ifBlank { "Plex" }
+            userName = username.ifBlank { "Account" }
         )
         val identity = fetchSystemInfo(identityConnection)
         val userName = validatePlexAccount(accountToken)
-            .ifBlank { username.ifBlank { "Plex" } }
+            .ifBlank { username.ifBlank { "Account" } }
         val serverToken = resolvePlexServerToken(accountToken, identity.serverId)
             .ifBlank { accountToken }
         val serverConnection = identityConnection.copy(
@@ -670,7 +670,7 @@ class HomeServerRepository @Inject constructor(
             userName = userName
         )
         runCatching { fetchCollections(serverConnection) }.getOrElse {
-            error("Plex token could not access libraries")
+            error("Token could not access libraries")
         }
         return AuthResponse(
             accessToken = serverToken,
@@ -1242,9 +1242,9 @@ class HomeServerRepository @Inject constructor(
 
     private fun homeServerKindLabel(kind: HomeServerKind): String {
         return when (kind) {
-            HomeServerKind.PLEX -> "Plex"
-            HomeServerKind.JELLYFIN -> "Jellyfin"
-            HomeServerKind.EMBY -> "Emby"
+            HomeServerKind.PLEX,
+            HomeServerKind.JELLYFIN,
+            HomeServerKind.EMBY -> "Media Server"
             HomeServerKind.UNKNOWN -> ""
         }
     }

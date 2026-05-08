@@ -104,7 +104,7 @@ fun MediaCard(
     val visualFocused = isFocusedOverride || isFocused
 
     val aspectRatio = if (isLandscape) 16f / 9f else 2f / 3f
-    // Plex-like behavior: landscape cards should prefer wide artwork/backdrops.
+    // Landscape cards should prefer wide artwork/backdrops.
     // Poster art is portrait and looks cropped in 16:9 cards, so only use it as fallback.
     // Guard empty/blank URLs — TMDB items with no posterPath AND no backdropPath
     // produce image="" in toMediaItem(). Passing "" to Coil throws

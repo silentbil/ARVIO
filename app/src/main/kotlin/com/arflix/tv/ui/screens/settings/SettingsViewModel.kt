@@ -2169,8 +2169,8 @@ class SettingsViewModel @Inject constructor(
         val trimmedUrl = serverUrl.trim()
         if (trimmedUrl.isBlank()) {
             _uiState.value = _uiState.value.copy(
-                homeServerError = "Enter a Plex server URL",
-                toastMessage = "Enter a Plex server URL",
+                homeServerError = "Enter a server URL",
+                toastMessage = "Enter a server URL",
                 toastType = ToastType.ERROR
             )
             return
@@ -2184,7 +2184,7 @@ class SettingsViewModel @Inject constructor(
                 homeServerError = null,
                 plexHomeServerAuth = null,
                 isPlexHomeServerPolling = false,
-                toastMessage = "Starting Plex sign in...",
+                toastMessage = "Starting code sign in...",
                 toastType = ToastType.INFO
             )
             val result = homeServerRepository.startPlexPinAuth()
@@ -2194,7 +2194,7 @@ class SettingsViewModel @Inject constructor(
                     plexHomeServerAuth = session,
                     isPlexHomeServerPolling = true,
                     homeServerError = null,
-                    toastMessage = "Enter the Plex code to connect",
+                    toastMessage = "Enter the code to connect",
                     toastType = ToastType.INFO
                 )
                 startPlexHomeServerPolling(trimmedUrl, session)
@@ -2204,8 +2204,8 @@ class SettingsViewModel @Inject constructor(
                     isHomeServerConnecting = false,
                     plexHomeServerAuth = null,
                     isPlexHomeServerPolling = false,
-                    homeServerError = error.message ?: "Plex sign in failed",
-                    toastMessage = error.message ?: "Plex sign in failed",
+                    homeServerError = error.message ?: "Code sign in failed",
+                    toastMessage = error.message ?: "Code sign in failed",
                     toastType = ToastType.ERROR
                 )
             }
@@ -2230,7 +2230,7 @@ class SettingsViewModel @Inject constructor(
 
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = true,
-                    toastMessage = "Connecting Plex server...",
+                    toastMessage = "Connecting server...",
                     toastType = ToastType.INFO
                 )
                 val connectionResult = homeServerRepository.connect(
@@ -2248,7 +2248,7 @@ class SettingsViewModel @Inject constructor(
                         plexHomeServerAuth = null,
                         isPlexHomeServerPolling = false,
                         homeServerError = null,
-                        toastMessage = "Plex connected",
+                        toastMessage = "Server connected",
                         toastType = ToastType.SUCCESS
                     )
                     syncLocalStateToCloud(silent = true)
@@ -2259,8 +2259,8 @@ class SettingsViewModel @Inject constructor(
                         isHomeServerConnecting = false,
                         plexHomeServerAuth = null,
                         isPlexHomeServerPolling = false,
-                        homeServerError = error.message ?: "Plex connection failed",
-                        toastMessage = error.message ?: "Plex connection failed",
+                        homeServerError = error.message ?: "Server connection failed",
+                        toastMessage = error.message ?: "Server connection failed",
                         toastType = ToastType.ERROR
                     )
                     return@launch
@@ -2272,8 +2272,8 @@ class SettingsViewModel @Inject constructor(
                 isHomeServerConnecting = false,
                 plexHomeServerAuth = null,
                 isPlexHomeServerPolling = false,
-                homeServerError = lastFailure ?: "Plex activation code expired",
-                toastMessage = lastFailure ?: "Plex activation code expired",
+                homeServerError = lastFailure ?: "Activation code expired",
+                toastMessage = lastFailure ?: "Activation code expired",
                 toastType = ToastType.ERROR
             )
         }
