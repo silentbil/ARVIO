@@ -166,5 +166,32 @@
     <string name="enter_pin_to_unlock">הזן PIN לפתיחה</string>
     <string name="set_profile_pin">הגדר PIN לפרופיל</string>
     <string name="done">סיום</string>
+    <string name="save">שמור</string>
     <string name="connect_to_cloud">התחבר ל-ARVIO Cloud</string>
+
+    <!-- AI Subtitles -->
+    <string name="ai_subtitles_section">כתוביות בינה מלאכותית</string>
+    <string name="ai_subtitle_translation_title">תרגום כתוביות AI</string>
+    <string name="ai_subtitle_translation_desc">תרגם כתוביות בזמן אמת עם גרוק או ג\'מיני</string>
+    <string name="ai_model_title">מודל</string>
+    <string name="ai_model_desc">בחר ספק ומודל לתרגום</string>
+    <string name="ai_auto_select_title">בחירה אוטומטית של תרגום בינה מלאכותית</string>
+    <string name="ai_auto_select_desc">הפעל אוטומטית כאשר קיים תרגום מובנה כלשהו</string>
+    <string name="ai_remove_hi_title">הסר טקסט למוגבלי שמיעה</string>
+    <string name="ai_remove_hi_desc">הסר סימוני [סוגריים] למוגבלי שמיעה לפני תרגום</string>
+    <string name="ai_api_key_title">מפתח API</string>
+    <string name="ai_api_key_desc">הזן ידנית את המפתח מגרוק או ג\'ימיני</string>
+    <string name="ai_scan_qr_title">סרוק ברקוד להגדרת מפתח</string>
+    <string name="ai_scan_qr_desc">פתח דפדפן בטלפון להזנה בקלות של המפתח</string>
+    <string name="ai_groq_disclaimer">Groq חינמי: ~500 בקשות ביום. מפתח ה-API מתחיל ב-gsk_</string>
+    <string name="ai_gemini_disclaimer">Gemini זמין בחינם. מפתח ה-API מתחיל ב-AIzaSy</string>
+    <string name="ai_key_not_set">לא מוגדר</string>
+    <string name="ai_model_dialog_subtitle">בחר ספק ומודל AI לתרגום כתוביות</string>
+    <string name="ai_groq_model_note">חינמי: 1K RPM / 500K RPD · ברירת מחדל</string>
+    <string name="ai_gemini_model_note">איכות גבוהה יותר · גרסה חינמית זמינה</string>
+    <string name="ai_api_key_dialog_subtitle_groq">הזן את מפתח ה-API של Groq</string>
+    <string name="ai_api_key_dialog_subtitle_gemini">הזן את מפתח ה-API של Gemini</string>
+    <string name="ai_key_saved_title">מפתח API נשמר</string>
+    <string name="ai_key_saved_subtitle">תרגום AI מוכן לשימוש</string>
+    <string name="ai_qr_scan_hint">סרוק עם הטלפון — בחר Groq או Gemini</string>
 </resources>

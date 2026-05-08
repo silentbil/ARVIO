@@ -50,6 +50,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -134,6 +135,8 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.ui.components.LoadingIndicator
+import com.arflix.tv.ui.components.Toast
+import com.arflix.tv.ui.components.ToastType
 import com.arflix.tv.ui.components.NextEpisodeOverlay
 import com.arflix.tv.ui.components.StreamSelector
 import com.arflix.tv.ui.components.WaveLoadingDots
@@ -525,7 +528,11 @@ fun PlayerScreen(
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .setRenderersFactory(
-                DefaultRenderersFactory(context)
+                AiSubtitleRenderersFactory(
+                    context = context,
+                    translationManager = viewModel.translationManager,
+                    scope = coroutineScope
+                )
                     // Use hardware decoders first; extension decoders only as fallback.
                     // MODE_PREFER forces software decoding which is slow/jumpy on TV.
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
@@ -1112,9 +1119,14 @@ fun PlayerScreen(
         val subtitle = uiState.selectedSubtitle ?: return@LaunchedEffect
         if (!subtitle.isEmbedded) return@LaunchedEffect
 
-        // Find the resolved version with groupIndex/trackIndex from ExoPlayer
+        // Find the resolved version with groupIndex/trackIndex from ExoPlayer.
+        // Fall back to lang+label match because generated IDs (embedded_N_i) change when
+        // ExoPlayer reassigns group indices after a MediaItem rebuild.
         val resolved = uiState.subtitles.firstOrNull {
             it.id == subtitle.id && it.groupIndex != null && it.trackIndex != null
+        } ?: uiState.subtitles.firstOrNull {
+            it.isEmbedded && it.lang == subtitle.lang && it.label == subtitle.label &&
+                it.groupIndex != null && it.trackIndex != null
         } ?: return@LaunchedEffect
 
         val groups = exoPlayer.currentTracks.groups
@@ -1740,7 +1752,11 @@ fun PlayerScreen(
                                         if (subtitleLangIndex < subtitleGroups.size) subtitleLangIndex++
                                     }
                                     else -> {
-                                        val trackCount = subtitleGroups.getOrNull(subtitleLangIndex - 1)?.second?.size ?: 0
+                                        val group = subtitleGroups.getOrNull(subtitleLangIndex - 1)
+                                        val aiGroup = latestUiState.isAiAvailable &&
+                                            latestUiState.aiTargetLanguageName.isNotBlank() &&
+                                            group?.first?.equals(latestUiState.aiTargetLanguageName, ignoreCase = true) == true
+                                        val trackCount = (group?.second?.size ?: 0) + if (aiGroup) 1 else 0
                                         if (subtitleTrackIndex < trackCount - 1) subtitleTrackIndex++
                                     }
                                 }
@@ -1803,9 +1819,17 @@ fun PlayerScreen(
                                         subtitleTrackIndex = 0
                                     }
                                 } else {
-                                    subtitleGroups.getOrNull(subtitleLangIndex - 1)
-                                        ?.second?.getOrNull(subtitleTrackIndex)?.second
-                                        ?.let { viewModel.selectSubtitle(it) }
+                                    val group = subtitleGroups.getOrNull(subtitleLangIndex - 1)
+                                    val aiGroup = latestUiState.isAiAvailable &&
+                                        latestUiState.aiTargetLanguageName.isNotBlank() &&
+                                        group?.first?.equals(latestUiState.aiTargetLanguageName, ignoreCase = true) == true
+                                    val realIdx = if (aiGroup) subtitleTrackIndex - 1 else subtitleTrackIndex
+                                    if (aiGroup && subtitleTrackIndex == 0) {
+                                        if (!latestUiState.isAiTranslating) viewModel.activateAiSubtitle()
+                                    } else {
+                                        group?.second?.getOrNull(realIdx)?.second
+                                            ?.let { viewModel.selectSubtitle(it) }
+                                    }
                                     showSubtitleMenu = false
                                     showControls = true
                                     coroutineScope.launch {
@@ -2045,6 +2069,52 @@ fun PlayerScreen(
             )
         }
 
+        // AI Translating badge — shown in top-right while subtitle translation is in progress
+        val isTranslatingLive by viewModel.isTranslatingLive.collectAsStateWithLifecycle()
+        AnimatedVisibility(
+            visible = hasPlaybackStarted && uiState.isAiTranslating && isTranslatingLive,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 12.dp, end = 16.dp)
+                .zIndex(6f)
+        ) {
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier
+                    .background(
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.65f),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = androidx.compose.ui.graphics.Color(0xFF7EC8A0),
+                    modifier = Modifier.size(12.dp)
+                )
+                Text(
+                    text = "AI Translating",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f)
+                )
+            }
+        }
+
+        // AI translation API error toast
+        uiState.aiErrorToast?.let { msg ->
+            Toast(
+                message = msg,
+                type = ToastType.ERROR,
+                isVisible = true,
+                durationMs = 5000,
+                onDismiss = { viewModel.dismissAiErrorToast() }
+            )
+        }
+
         // Netflix-style Controls Overlay
         AnimatedVisibility(
             visible = hasPlaybackStarted && showControls && !showSubtitleMenu && !showSourceMenu,
@@ -2245,6 +2315,14 @@ fun PlayerScreen(
                                 if (selected == null) {
                                     subtitleLangIndex = 0
                                     subtitleTrackIndex = 0
+                                } else if (latestUiState.isAiAvailable && latestUiState.aiTargetLanguageName.isNotBlank() &&
+                                    (latestUiState.isAiTranslating || latestUiState.selectedSubtitle?.let { sub ->
+                                        subtitleGroups.none { (_, items) -> items.any { (_, s) -> s.id == sub.id } }
+                                    } == true)) {
+                                    val aiLangName = latestUiState.aiTargetLanguageName
+                                    val idx = subtitleGroups.indexOfFirst { (name, _) -> name.equals(aiLangName, ignoreCase = true) }
+                                    subtitleLangIndex = if (idx >= 0) idx + 1 else 0
+                                    subtitleTrackIndex = 0
                                 } else {
                                     val langName = getFullLanguageName(selected.lang)
                                     val idx = subtitleGroups.indexOfFirst { (name, _) -> name.equals(langName, ignoreCase = true) }
@@ -2435,6 +2513,9 @@ fun PlayerScreen(
             SubtitleMenu(
                 subtitles = uiState.subtitles,
                 selectedSubtitle = uiState.selectedSubtitle,
+                isAiTranslating = uiState.isAiTranslating,
+                isAiAvailable = uiState.isAiAvailable,
+                aiTargetLanguageName = uiState.aiTargetLanguageName,
                 audioTracks = audioTracks,
                 selectedAudioIndex = selectedAudioIndex,
                 activeTab = subtitleMenuTab,
@@ -3217,6 +3298,9 @@ private fun handleSubtitleMenuKey(
 private fun SubtitleMenu(
     subtitles: List<Subtitle>,
     selectedSubtitle: Subtitle?,
+    isAiTranslating: Boolean = false,
+    isAiAvailable: Boolean = false,
+    aiTargetLanguageName: String = "",
     audioTracks: List<AudioTrackInfo>,
     selectedAudioIndex: Int,
     activeTab: Int,
@@ -3327,8 +3411,13 @@ private fun SubtitleMenu(
                                         count = items.size,
                                         isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == idx + 1,
                                         isActivePanel = subtitleLangIndex == idx + 1,
-                                        isSelected = selectedSubtitle != null &&
-                                            items.any { (_, sub) -> sub.id == selectedSubtitle.id }
+                                        isSelected = if (isAiTranslating && aiTargetLanguageName.isNotBlank() &&
+                                            langName.equals(aiTargetLanguageName, ignoreCase = true)) {
+                                            true
+                                        } else {
+                                            selectedSubtitle != null &&
+                                                items.any { (_, sub) -> sub.id == selectedSubtitle.id }
+                                        }
                                     )
                                 }
                             }
@@ -3358,6 +3447,8 @@ private fun SubtitleMenu(
                                     )
                                 }
                             } else {
+                                val isAiGroup = isAiAvailable && aiTargetLanguageName.isNotBlank() &&
+                                    selectedGroup.first.equals(aiTargetLanguageName, ignoreCase = true)
                                 LazyColumn(
                                     state = trackListState,
                                     modifier = Modifier
@@ -3366,6 +3457,18 @@ private fun SubtitleMenu(
                                         .padding(start = 8.dp),
                                     verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
+                                    if (isAiGroup) {
+                                        item {
+                                            TrackMenuItem(
+                                                label = aiTargetLanguageName,
+                                                subtitle = "AI",
+                                                subtitleDetail = null,
+                                                isSelected = isAiTranslating,
+                                                isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == 0,
+                                                onClick = { /* D-pad only */ }
+                                            )
+                                        }
+                                    }
                                     itemsIndexed(selectedGroup.second) { idx, (_, subtitle) ->
                                         val score = subtitleMatchScore(streamSource, subtitle)
                                         val langName = getFullLanguageName(subtitle.lang)
@@ -3382,12 +3485,13 @@ private fun SubtitleMenu(
                                                 .ifBlank { subtitle.id }
                                                 .ifBlank { null }
                                         }
+                                        val itemIdx = if (isAiGroup) idx + 1 else idx
                                         TrackMenuItem(
                                             label = mainLabel,
                                             subtitle = badge,
                                             subtitleDetail = detail,
-                                            isSelected = selectedSubtitle?.id == subtitle.id,
-                                            isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == idx,
+                                            isSelected = !isAiTranslating && selectedSubtitle?.id == subtitle.id,
+                                            isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == itemIdx,
                                             onClick = { /* D-pad only */ }
                                         )
                                     }
