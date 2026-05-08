@@ -1737,7 +1737,7 @@ private fun DetailsContent(
         val contentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(290.dp, 360.dp)
         val contentRowBottomPadding = 0.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
-        val buttonsBottomPadding = contentRowTopPadding - 28.dp
+        val buttonsBottomPadding = contentRowTopPadding + 18.dp
         val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 38.dp else 40.dp
 
         Box(
