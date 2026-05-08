@@ -244,18 +244,7 @@ fun WatchlistScreen(
                             if (isSidebarFocused) {
                                 if (uiState.items.isNotEmpty()) {
                                     isSidebarFocused = false
-                                    scope.launch {
-                                        runCatching { gridFocusRequester.requestFocus() }
-                                        delay(50)
-                                        if (!gridHasFocus) {
-                                            runCatching { gridFocusRequester.requestFocus() }
-                                            delay(80)
-                                        }
-                                        if (!gridHasFocus) {
-                                            isSidebarFocused = true
-                                            runCatching { rootFocusRequester.requestFocus() }
-                                        }
-                                    }
+                                    runCatching { gridFocusRequester.requestFocus() }
                                 }
                                 true
                             } else {
