@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -67,6 +68,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -116,15 +118,20 @@ fun SearchScreen(
     val isCompactHeight = configuration.screenHeightDp <= 780
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     val searchBarWidth = if (isTouchDevice) configuration.screenWidthDp.dp - 24.dp
-        else (configuration.screenWidthDp.dp * 0.56f).coerceIn(500.dp, 760.dp)
+        else (configuration.screenWidthDp.dp * 0.48f).coerceIn(460.dp, 680.dp)
 
-    val hasSearchResults = uiState.movieResults.isNotEmpty() || uiState.tvResults.isNotEmpty()
+    val hasSearchResults = uiState.movieResults.isNotEmpty() || uiState.tvResults.isNotEmpty() || uiState.personResults.isNotEmpty()
     val hasAiResults = uiState.isAiSearch && uiState.aiResults.isNotEmpty()
+    val searchTopResults = remember(uiState.movieResults, uiState.tvResults) {
+        interleaveSearchResults(uiState.movieResults, uiState.tvResults).take(24)
+    }
 
     // Determine which categories to show in rows (filter out empty ones)
     val activeCategories: List<Category> = when {
         hasSearchResults -> {
             val list = mutableListOf<Category>()
+            list.addAll(uiState.personResults)
+            if (searchTopResults.isNotEmpty()) list.add(Category("s_all", "${stringResource(R.string.search)} (${searchTopResults.size})", searchTopResults))
             if (uiState.movieResults.isNotEmpty()) list.add(Category("s_m", "${stringResource(R.string.movies)} (${uiState.movieResults.size})", uiState.movieResults))
             if (uiState.tvResults.isNotEmpty()) list.add(Category("s_t", "${stringResource(R.string.tv_shows)} (${uiState.tvResults.size})", uiState.tvResults))
             list
@@ -148,13 +155,111 @@ fun SearchScreen(
     // Manual row/item focus tracking (like HomeScreen)
     var currentRowIndex by remember { mutableIntStateOf(0) }
     var currentItemIndex by remember { mutableIntStateOf(0) }
-    var focusedFilterRow by remember { mutableIntStateOf(0) }
     var focusedFilterIndex by remember { mutableIntStateOf(0) }
     var resultsLastNavEventTime by remember { mutableLongStateOf(0L) }
+    var isSearchEditing by remember { mutableStateOf(false) }
 
     val searchFocusRequester = remember { FocusRequester() }
+    val textInputFocusRequester = remember { FocusRequester() }
     val filtersFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val actionGenre = remember { ALL_GENRES.firstOrNull { it.id == 28 } }
+    val comedyGenre = remember { ALL_GENRES.firstOrNull { it.id == 35 } }
+    val horrorGenre = remember { ALL_GENRES.firstOrNull { it.id == 27 } }
+    val sciFiGenre = remember { ALL_GENRES.firstOrNull { it.id == 878 } }
+    val japaneseCountry = remember { COUNTRIES.firstOrNull { it.code == "ja" } }
+    val koreanCountry = remember { COUNTRIES.firstOrNull { it.code == "ko" } }
+    val hindiCountry = remember { COUNTRIES.firstOrNull { it.code == "hi" } }
+    val quickFilters = listOfNotNull(
+        DiscoverQuickFilter(
+            key = "all",
+            label = "All",
+            isSelected = uiState.selectedType == DiscoverType.ALL && uiState.selectedGenre == null && uiState.selectedCountry == null,
+            onSelect = { viewModel.setDiscoverFilters(DiscoverType.ALL, null, null) }
+        ),
+        DiscoverQuickFilter(
+            key = "movies",
+            label = stringResource(R.string.movies),
+            isSelected = uiState.selectedType == DiscoverType.MOVIES && uiState.selectedGenre == null && uiState.selectedCountry == null,
+            onSelect = { viewModel.setDiscoverFilters(DiscoverType.MOVIES, null, null) }
+        ),
+        DiscoverQuickFilter(
+            key = "shows",
+            label = stringResource(R.string.tv_shows),
+            isSelected = uiState.selectedType == DiscoverType.TV_SHOWS && uiState.selectedGenre == null && uiState.selectedCountry == null,
+            onSelect = { viewModel.setDiscoverFilters(DiscoverType.TV_SHOWS, null, null) }
+        ),
+        DiscoverQuickFilter(
+            key = "anime",
+            label = "Anime",
+            isSelected = uiState.selectedType == DiscoverType.ANIME && uiState.selectedGenre == null && uiState.selectedCountry == null,
+            onSelect = { viewModel.setDiscoverFilters(DiscoverType.ANIME, null, null) }
+        ),
+        actionGenre?.let { genre ->
+            DiscoverQuickFilter(
+                key = "genre_${genre.id}",
+                label = genre.name,
+                isSelected = uiState.selectedGenre?.id == genre.id,
+                onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, genre, uiState.selectedCountry) }
+            )
+        },
+        comedyGenre?.let { genre ->
+            DiscoverQuickFilter(
+                key = "genre_${genre.id}",
+                label = genre.name,
+                isSelected = uiState.selectedGenre?.id == genre.id,
+                onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, genre, uiState.selectedCountry) }
+            )
+        },
+        horrorGenre?.let { genre ->
+            DiscoverQuickFilter(
+                key = "genre_${genre.id}",
+                label = genre.name,
+                isSelected = uiState.selectedGenre?.id == genre.id,
+                onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, genre, uiState.selectedCountry) }
+            )
+        },
+        sciFiGenre?.let { genre ->
+            DiscoverQuickFilter(
+                key = "genre_${genre.id}",
+                label = genre.name,
+                isSelected = uiState.selectedGenre?.id == genre.id,
+                onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, genre, uiState.selectedCountry) }
+            )
+        },
+        japaneseCountry?.let { country ->
+            DiscoverQuickFilter(
+                key = "country_${country.code}",
+                label = country.name,
+                isSelected = uiState.selectedCountry?.code == country.code,
+                onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, uiState.selectedGenre, country) }
+            )
+        },
+        koreanCountry?.let { country ->
+            DiscoverQuickFilter(
+                key = "country_${country.code}",
+                label = country.name,
+                isSelected = uiState.selectedCountry?.code == country.code,
+                onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, uiState.selectedGenre, country) }
+            )
+        },
+        hindiCountry?.let { country ->
+            DiscoverQuickFilter(
+                key = "country_${country.code}",
+                label = country.name,
+                isSelected = uiState.selectedCountry?.code == country.code,
+                onSelect = { viewModel.setDiscoverFilters(uiState.selectedType, uiState.selectedGenre, country) }
+            )
+        }
+    )
+    LaunchedEffect(quickFilters.size) {
+        focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
+    }
+    LaunchedEffect(uiState.query, activeCategories.size, hasAiResults) {
+        currentRowIndex = currentRowIndex.coerceIn(0, (activeCategories.size - 1).coerceAtLeast(0))
+        val maxItem = (activeCategories.getOrNull(currentRowIndex)?.items?.size ?: 1) - 1
+        currentItemIndex = currentItemIndex.coerceIn(0, maxItem.coerceAtLeast(0))
+    }
 
     // LaunchedEffect to restore RESULTS focus when results become available
     LaunchedEffect(activeCategories, hasAiResults) {
@@ -164,14 +269,20 @@ fun SearchScreen(
         }
     }
     
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isTouchDevice) {
         // FocusRequester can throw IllegalStateException if the target composable
         // hasn't been placed yet (e.g. zero-sized keyboard on cold start, or when
         // the screen is composed then immediately navigated away). Swallow that
         // specific case so it doesn't surface to the user as a crash — TalkBack
         // focus will re-claim on next frame.
-        runCatching { searchFocusRequester.requestFocus() }
+        if (!isTouchDevice) runCatching { searchFocusRequester.requestFocus() }
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
+    }
+    LaunchedEffect(isSearchEditing) {
+        if (isSearchEditing) {
+            runCatching { textInputFocusRequester.requestFocus() }
+            keyboardController?.show()
+        }
     }
 
     val showFilters = uiState.query.isEmpty()
@@ -180,10 +291,20 @@ fun SearchScreen(
     val dpadModifier = if (!isTouchDevice) {
         Modifier.onPreviewKeyEvent { event ->
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            if (isSearchEditing && (event.key == Key.Back || event.key == Key.Escape)) {
+                isSearchEditing = false
+                keyboardController?.hide()
+                runCatching { searchFocusRequester.requestFocus() }
+                return@onPreviewKeyEvent true
+            }
             when (event.key) {
                 Key.Back, Key.Escape -> when (focusZone) {
                     FocusZone.RESULTS -> {
-                        if (showFilters) focusZone = FocusZone.FILTERS
+                        if (showFilters && quickFilters.isNotEmpty()) {
+                            focusZone = FocusZone.FILTERS
+                            focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
+                            try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
+                        }
                         else { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus() }
                         true
                     }
@@ -198,7 +319,7 @@ fun SearchScreen(
                 Key.DirectionUp -> when (focusZone) {
                     FocusZone.SIDEBAR -> true
                     FocusZone.SEARCH_INPUT -> { focusZone = FocusZone.SIDEBAR; true }
-                    FocusZone.FILTERS -> false // Let native focus handle up/down between 3 filter chip rows
+                    FocusZone.FILTERS -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
                         else if (currentRowIndex > 0) {
@@ -207,10 +328,9 @@ fun SearchScreen(
                             currentItemIndex = 0
                             true
                         }
-                        else if (showFilters) {
+                        else if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
-                            focusedFilterRow = 0
-                            focusedFilterIndex = 0
+                            focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
                             try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                             true
                         }
@@ -220,10 +340,9 @@ fun SearchScreen(
                 Key.DirectionDown -> when (focusZone) {
                     FocusZone.SIDEBAR -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.SEARCH_INPUT -> {
-                        if (showFilters) {
+                        if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
-                            focusedFilterRow = 0
-                            focusedFilterIndex = 0
+                            focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
                             try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                         }
                         else if (activeCategories.isNotEmpty() || hasAiResults) {
@@ -234,7 +353,15 @@ fun SearchScreen(
                         }
                         true
                     }
-                    FocusZone.FILTERS -> false // Let native focus handle up/down between 3 filter chip rows
+                    FocusZone.FILTERS -> {
+                        if (activeCategories.isNotEmpty() || hasAiResults) {
+                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
+                            focusZone = FocusZone.RESULTS
+                            currentRowIndex = 0
+                            currentItemIndex = 0
+                        }
+                        true
+                    }
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
                         else if (currentRowIndex < activeCategories.size - 1) {
@@ -257,7 +384,9 @@ fun SearchScreen(
                             true
                         }
                     }
-                    FocusZone.FILTERS -> false
+                    FocusZone.FILTERS -> {
+                        false
+                    }
                     else -> false
                 }
                 Key.DirectionRight -> when (focusZone) {
@@ -274,7 +403,9 @@ fun SearchScreen(
                             true
                         }
                     }
-                    FocusZone.FILTERS -> false
+                    FocusZone.FILTERS -> {
+                        false
+                    }
                     else -> false
                 }
                 Key.Enter, Key.DirectionCenter -> {
@@ -284,8 +415,13 @@ fun SearchScreen(
                             else when (topBarFocusedItem(sidebarFocusIndex, hasProfile)) { SidebarItem.SEARCH -> Unit; SidebarItem.HOME -> onNavigateToHome(); SidebarItem.WATCHLIST -> onNavigateToWatchlist(); SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings(); null -> Unit }
                             true
                         }
-                        FocusZone.SEARCH_INPUT -> false
-                        FocusZone.FILTERS -> false
+                        FocusZone.SEARCH_INPUT -> {
+                            isSearchEditing = true
+                            true
+                        }
+                        FocusZone.FILTERS -> {
+                            false
+                        }
                         FocusZone.RESULTS -> {
                             if (hasAiResults) false
                             else {
@@ -308,118 +444,95 @@ fun SearchScreen(
 
         Column(modifier = Modifier.fillMaxSize().padding(top = if (isTouchDevice) 16.dp else AppTopBarContentTopInset).padding(horizontal = if (isTouchDevice) 12.dp else if (isCompactHeight) 20.dp else 28.dp)) {
             // ── Search Bar ──
-            Box(modifier = Modifier.fillMaxWidth().padding(bottom = if (isCompactHeight) 3.dp else 5.dp), contentAlignment = Alignment.Center) {
-                if (isTouchDevice) {
-                    OutlinedTextField(value = uiState.query, onValueChange = { viewModel.updateQuery(it) },
-                        placeholder = { Text(stringResource(R.string.search), style = ArflixTypography.body, color = TextSecondary) },
-                        leadingIcon = { Icon(Icons.Default.Search, null, tint = if (isSearchInputFocused) Pink else TextSecondary, modifier = Modifier.size(22.dp)) },
-                        textStyle = ArflixTypography.body.copy(color = TextPrimary), singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { viewModel.search(); keyboardController?.hide() }),
-                        colors = TextFieldDefaults.colors(focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary, cursorColor = Color.White, focusedContainerColor = BackgroundCard, unfocusedContainerColor = BackgroundCard, focusedIndicatorColor = Color.White, unfocusedIndicatorColor = Color.White.copy(alpha = 0.15f)),
-                        shape = RoundedCornerShape(10.dp), modifier = Modifier.width(searchBarWidth).focusRequester(searchFocusRequester).onFocusChanged { isSearchInputFocused = it.isFocused })
-                } else {
-                    Row(modifier = Modifier.width(searchBarWidth).background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(10.dp)).border(if (isSearchInputFocused) 1.5.dp else 0.5.dp, if (isSearchInputFocused) Color.White.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Search, null, tint = if (isSearchInputFocused) Color.White else TextSecondary, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp))
-                        BasicTextField(value = uiState.query, onValueChange = { viewModel.updateQuery(it) },
-                            textStyle = ArflixTypography.body.copy(color = TextPrimary, fontSize = 14.sp), cursorBrush = SolidColor(Color.White), singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { viewModel.search(); keyboardController?.hide() }),
-                            modifier = Modifier.weight(1f).focusRequester(searchFocusRequester).onFocusChanged { s -> isSearchInputFocused = s.isFocused; if (s.isFocused) focusZone = FocusZone.SEARCH_INPUT },
-                            decorationBox = { inner -> if (uiState.query.isEmpty()) Text(stringResource(R.string.search), style = ArflixTypography.body.copy(fontSize = 14.sp), color = Color.White.copy(alpha = 0.25f)); inner() })
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = if (isTouchDevice) 0.dp else 22.dp,
+                        end = if (isTouchDevice) 0.dp else 22.dp,
+                        bottom = if (isCompactHeight) 6.dp else 8.dp
+                    ),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SearchInputBar(
+                    query = uiState.query,
+                    searchBarWidth = searchBarWidth,
+                    isTouchDevice = isTouchDevice,
+                    isFocused = focusZone == FocusZone.SEARCH_INPUT || isSearchEditing,
+                    isEditing = isSearchEditing,
+                    searchFocusRequester = searchFocusRequester,
+                    textInputFocusRequester = textInputFocusRequester,
+                    onQueryChange = { viewModel.updateQuery(it) },
+                    onSearch = {
+                        viewModel.search()
+                        keyboardController?.hide()
+                        isSearchEditing = false
+                    },
+                    onFocused = {
+                        focusZone = FocusZone.SEARCH_INPUT
+                        isSearchInputFocused = true
+                    },
+                    onFocusLost = { isSearchInputFocused = false },
+                    onStartEditing = {
+                        focusZone = FocusZone.SEARCH_INPUT
+                        isSearchEditing = true
+                    },
+                    onMoveUp = {
+                        focusZone = FocusZone.SIDEBAR
+                    },
+                    onMoveDown = {
+                        if (showFilters && quickFilters.isNotEmpty()) {
+                            focusZone = FocusZone.FILTERS
+                            focusedFilterIndex = 0
+                            runCatching { filtersFocusRequester.requestFocus() }
+                        } else if (activeCategories.isNotEmpty() || hasAiResults) {
+                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
+                            focusZone = FocusZone.RESULTS
+                            currentRowIndex = 0
+                            currentItemIndex = 0
+                        }
                     }
-                }
+                )
             }
 
             // ── Filter Chips (discover mode) - focusable with D-pad ──
             if (showFilters) {
-                Column(modifier = Modifier
-                    .onFocusChanged { state ->
-                        if (state.hasFocus) focusZone = FocusZone.FILTERS
-                        else if (focusZone == FocusZone.FILTERS && !state.hasFocus) {
-                            // Focus left filters - if search bar got focus, zone will update via its onFocusChanged
-                            // If nothing else caught it, transition to rows
-                            if (!isSearchInputFocused && activeCategories.isNotEmpty()) {
-                                focusZone = FocusZone.RESULTS
-                                currentRowIndex = 0; currentItemIndex = 0
-                            }
+                DiscoverFilterStrip(
+                    filters = quickFilters,
+                    focusZone = focusZone,
+                    focusedFilterIndex = focusedFilterIndex,
+                    filtersFocusRequester = filtersFocusRequester,
+                    isTouchDevice = isTouchDevice,
+                    onFocused = { index ->
+                        focusZone = FocusZone.FILTERS
+                        focusedFilterIndex = index
+                    },
+                    onMoveUp = {
+                        focusZone = FocusZone.SEARCH_INPUT
+                        runCatching { searchFocusRequester.requestFocus() }
+                    },
+                    onMoveDown = {
+                        if (activeCategories.isNotEmpty() || hasAiResults) {
+                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
+                            focusZone = FocusZone.RESULTS
+                            currentRowIndex = 0
+                            currentItemIndex = 0
+                        }
+                    },
+                    onMoveLeft = {
+                        if (focusedFilterIndex > 0) {
+                            focusedFilterIndex--
+                        } else {
+                            focusZone = FocusZone.SEARCH_INPUT
+                            runCatching { searchFocusRequester.requestFocus() }
+                        }
+                    },
+                    onMoveRight = {
+                        if (focusedFilterIndex < quickFilters.size - 1) {
+                            focusedFilterIndex++
                         }
                     }
-                ) {
-                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        items(DiscoverType.entries.size, key = { DiscoverType.entries[it].name }) { i ->
-                            val t = DiscoverType.entries[i]
-                            GlowChip(
-                                label = t.label,
-                                isSelected = uiState.selectedType == t,
-                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 0 && focusedFilterIndex == i,
-                                modifier = if (i == 0) Modifier.focusRequester(filtersFocusRequester) else Modifier,
-                                onFocused = {
-                                    focusZone = FocusZone.FILTERS
-                                    focusedFilterRow = 0
-                                    focusedFilterIndex = i
-                                },
-                                onSelect = { viewModel.selectType(t) }
-                            )
-                        }
-                    }
-                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        val genres = viewModel.getGenresForType()
-                        item(key = "all_g") {
-                            GlowChip(
-                                label = stringResource(R.string.all_genres),
-                                isSelected = uiState.selectedGenre == null,
-                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 1 && focusedFilterIndex == 0,
-                                onFocused = {
-                                    focusZone = FocusZone.FILTERS
-                                    focusedFilterRow = 1
-                                    focusedFilterIndex = 0
-                                },
-                                onSelect = { viewModel.selectGenre(null) }
-                            )
-                        }
-                        items(genres.size, key = { "g_${genres[it].id}" }) { i ->
-                            GlowChip(
-                                label = genres[i].name,
-                                isSelected = uiState.selectedGenre == genres[i],
-                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 1 && focusedFilterIndex == i + 1,
-                                onFocused = {
-                                    focusZone = FocusZone.FILTERS
-                                    focusedFilterRow = 1
-                                    focusedFilterIndex = i + 1
-                                },
-                                onSelect = { viewModel.selectGenre(genres[i]) }
-                            )
-                        }
-                    }
-                    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp).arvioDpadFocusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        item(key = "any_l") {
-                            GlowChip(
-                                label = stringResource(R.string.any_language),
-                                isSelected = uiState.selectedCountry == null,
-                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 2 && focusedFilterIndex == 0,
-                                onFocused = {
-                                    focusZone = FocusZone.FILTERS
-                                    focusedFilterRow = 2
-                                    focusedFilterIndex = 0
-                                },
-                                onSelect = { viewModel.selectCountry(null) }
-                            )
-                        }
-                        items(COUNTRIES.size, key = { "c_${COUNTRIES[it].code}" }) { i ->
-                            GlowChip(
-                                label = COUNTRIES[i].name,
-                                isSelected = uiState.selectedCountry == COUNTRIES[i],
-                                isVisuallyFocused = focusZone == FocusZone.FILTERS && focusedFilterRow == 2 && focusedFilterIndex == i + 1,
-                                onFocused = {
-                                    focusZone = FocusZone.FILTERS
-                                    focusedFilterRow = 2
-                                    focusedFilterIndex = i + 1
-                                },
-                                onSelect = { viewModel.selectCountry(COUNTRIES[i]) }
-                            )
-                        }
-                    }
-                }
+                )
             }
 
             // ── Content ──
@@ -462,6 +575,184 @@ fun SearchScreen(
 
 // ── Glow Chip ───────────────────────────────────────────────────────────────
 
+private data class DiscoverQuickFilter(
+    val key: String,
+    val label: String,
+    val isSelected: Boolean,
+    val onSelect: () -> Unit
+)
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SearchInputBar(
+    query: String,
+    searchBarWidth: Dp,
+    isTouchDevice: Boolean,
+    isFocused: Boolean,
+    isEditing: Boolean,
+    searchFocusRequester: FocusRequester,
+    textInputFocusRequester: FocusRequester,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onFocused: () -> Unit,
+    onFocusLost: () -> Unit,
+    onStartEditing: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit
+) {
+    if (isTouchDevice) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            placeholder = { Text(stringResource(R.string.search), style = ArflixTypography.body, color = TextSecondary) },
+            leadingIcon = { Icon(Icons.Default.Search, null, tint = if (isFocused) Pink else TextSecondary, modifier = Modifier.size(22.dp)) },
+            textStyle = ArflixTypography.body.copy(color = TextPrimary),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+            colors = TextFieldDefaults.colors(
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary,
+                cursorColor = Color.White,
+                focusedContainerColor = BackgroundCard,
+                unfocusedContainerColor = BackgroundCard,
+                focusedIndicatorColor = Color.White,
+                unfocusedIndicatorColor = Color.White.copy(alpha = 0.18f)
+            ),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(searchFocusRequester)
+                .onFocusChanged {
+                    if (it.isFocused) onFocused() else onFocusLost()
+                }
+        )
+        return
+    }
+
+    val shape = rememberArvioCardShape(10.dp)
+    ArvioFocusableSurface(
+        modifier = Modifier
+            .width(searchBarWidth)
+            .height(54.dp)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionUp -> { onMoveUp(); true }
+                    Key.DirectionDown -> { onMoveDown(); true }
+                    Key.Enter, Key.DirectionCenter -> { onStartEditing(); true }
+                    else -> false
+                }
+            }
+            .focusRequester(searchFocusRequester),
+        shape = shape,
+        backgroundColor = Color.White.copy(alpha = if (isFocused) 0.075f else 0.045f),
+        outlineColor = Color.White,
+        outlineWidth = 2.dp,
+        focusedScale = 1f,
+        pressedScale = 0.985f,
+        isFocusedOverride = isFocused,
+        onClick = onStartEditing,
+        onFocusChanged = { if (it) onFocused() else onFocusLost() }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Search, null, tint = if (isFocused) Color.White else TextSecondary, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(12.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                readOnly = !isEditing,
+                textStyle = ArflixTypography.body.copy(color = TextPrimary, fontSize = 17.sp),
+                cursorBrush = SolidColor(Color.White),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(textInputFocusRequester),
+                decorationBox = { inner ->
+                    if (query.isEmpty()) {
+                        Text(
+                            stringResource(R.string.search),
+                            style = ArflixTypography.body.copy(fontSize = 17.sp),
+                            color = Color.White.copy(alpha = 0.32f)
+                        )
+                    }
+                    inner()
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiscoverFilterStrip(
+    filters: List<DiscoverQuickFilter>,
+    focusZone: FocusZone,
+    focusedFilterIndex: Int,
+    filtersFocusRequester: FocusRequester,
+    isTouchDevice: Boolean,
+    onFocused: (Int) -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onMoveLeft: () -> Unit,
+    onMoveRight: () -> Unit
+) {
+    if (filters.isEmpty()) return
+    val rowState = rememberLazyListState()
+
+    LaunchedEffect(focusedFilterIndex, filters.size) {
+        val target = focusedFilterIndex.coerceIn(0, (filters.size - 1).coerceAtLeast(0))
+        val first = rowState.firstVisibleItemIndex
+        val last = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: first
+        if (target < first || target > last - 1) {
+            rowState.animateScrollToItem(target)
+        }
+    }
+
+    LazyRow(
+        state = rowState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = if (isTouchDevice) 10.dp else 8.dp)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionUp -> { onMoveUp(); true }
+                    Key.DirectionDown -> { onMoveDown(); true }
+                    Key.DirectionLeft -> false
+                    Key.DirectionRight -> false
+                    Key.Enter, Key.DirectionCenter -> false
+                    else -> false
+                }
+            }
+            .arvioDpadFocusGroup(),
+        horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 7.dp else 9.dp),
+        contentPadding = PaddingValues(
+            start = if (isTouchDevice) 0.dp else 22.dp,
+            end = if (isTouchDevice) 6.dp else 40.dp,
+            top = 4.dp,
+            bottom = 4.dp
+        )
+    ) {
+        itemsIndexed(filters, key = { _, filter -> filter.key }) { index, filter ->
+            GlowChip(
+                label = filter.label,
+                isSelected = filter.isSelected,
+                isVisuallyFocused = !isTouchDevice && focusedFilterIndex == index,
+                modifier = if (index == 0) Modifier.focusRequester(filtersFocusRequester) else Modifier,
+                onFocused = { onFocused(index) },
+                onSelect = filter.onSelect
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun GlowChip(
@@ -472,24 +763,53 @@ private fun GlowChip(
     onFocused: () -> Unit = {},
     onSelect: () -> Unit
 ) {
-    val chipShape = rememberArvioCardShape(6.dp)
-    ArvioFocusableSurface(
-        modifier = modifier.padding(vertical = 1.dp),
-        shape = chipShape,
-        backgroundColor = if (isSelected) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.03f),
-        outlineColor = ArvioSkin.colors.focusOutline,
-        outlineWidth = 2.5.dp,
-        focusedScale = 1.05f,
-        pressedScale = 0.97f,
-        enableSystemFocus = true,
-        isFocusedOverride = isVisuallyFocused,
-        onClick = onSelect,
-        onFocusChanged = { if (it) onFocused() },
-    ) { isFocused ->
-        Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)) {
-            Text(label, style = ArflixTypography.caption.copy(fontSize = 12.sp, fontWeight = if (isSelected || isFocused) FontWeight.SemiBold else FontWeight.Normal),
-                color = if (isFocused) Color.White else if (isSelected) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.5f))
-        }
+    var systemFocused by remember { mutableStateOf(false) }
+    val focused = isVisuallyFocused || systemFocused
+    val active = focused || isSelected
+    val chipShape = RoundedCornerShape(7.dp)
+    val backgroundColor = when {
+        focused -> Color.White.copy(alpha = 0.12f)  // Dark enough for white border to be visible
+        isSelected -> Color.White.copy(alpha = 0.92f)
+        else -> Color.White.copy(alpha = 0.075f)
+    }
+    val borderColor = when {
+        focused -> Color.White                       // Same white as media card focusOutline
+        isSelected -> Color.White.copy(alpha = 0.92f)
+        else -> Color.White.copy(alpha = 0.24f)
+    }
+    Box(
+        modifier = modifier
+            .padding(vertical = 2.dp)
+            .background(
+                color = backgroundColor,
+                shape = chipShape
+            )
+            .border(
+                width = if (focused) 2.5.dp else 1.dp,
+                color = borderColor,
+                shape = chipShape
+            )
+            .clickable { onSelect() }
+            .onFocusChanged {
+                systemFocused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
+            .focusable()
+            .padding(horizontal = 17.dp, vertical = 8.dp)
+    ) {
+        Text(
+            label,
+            style = ArflixTypography.caption.copy(
+                fontSize = 12.sp,
+                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium
+            ),
+            color = when {
+                focused -> Color.White                // White text on dark bg
+                isSelected -> Color.Black             // Black text on bright bg
+                else -> Color.White.copy(alpha = 0.84f)
+            },
+            maxLines = 1
+        )
     }
 }
 
@@ -558,11 +878,13 @@ private fun RowsLayer(
                     if (rowUsePosterCards) 134.dp else 260.dp
                 }
                 val baseRowHeight = if (isTouchDevice) {
-                    if (rowUsePosterCards) 220.dp else 160.dp
+                    if (rowUsePosterCards) 260.dp else 190.dp
                 } else if (rowUsePosterCards) {
-                    if (screenHeight <= 640) 245.dp else 320.dp
+                    // Poster cards (2:3) need extra vertical room for title + date below the image
+                    if (screenHeight <= 640) 314.dp else 352.dp
                 } else {
-                    if (screenHeight <= 640) 200.dp else 260.dp
+                    // Landscape cards still render title + subtitle below artwork.
+                    if (screenHeight <= 640) 238.dp else 302.dp
                 }
                 val rowHeight = baseRowHeight + focusBleedPadding
                 // Fade non-current rows
@@ -646,7 +968,12 @@ private fun RowsLayer(
                             itemsIndexed(category.items, key = { _, item -> "${item.mediaType}_${item.id}" }) { itemIdx, item ->
                                 val itemIsFocused = isCurrentRow && itemIdx == currentItemIndex
                                 MediaCard(
-                                    item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
+                                    item = item.copy(
+                                        title = buildCardTitle(item),
+                                        subtitle = buildCardSubtitle(item),
+                                        releaseDate = null,
+                                        year = ""
+                                    ),
                                     width = itemWidth,
                                     isLandscape = !rowUsePosterCards,
                                     logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
@@ -683,7 +1010,12 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
         horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(26.dp), modifier = Modifier.fillMaxSize().arvioDpadFocusGroup()) {
         items(items.size, key = { "${items[it].mediaType}_${items[it].id}" }) { idx ->
             val item = items[idx]
-            MediaCard(item = item.copy(title = buildCardTitle(item), subtitle = buildCardSubtitle(item)),
+            MediaCard(item = item.copy(
+                title = buildCardTitle(item),
+                subtitle = buildCardSubtitle(item),
+                releaseDate = null,
+                year = ""
+            ),
                 width = itemWidth, isLandscape = !usePosterCards, showProgress = false, titleMaxLines = 2, subtitleMaxLines = 1,
                 isFocusedOverride = false, enableSystemFocus = true, onFocused = {}, onClick = { onItemClick(item) },
                 modifier = if (isTouchDevice) Modifier.clickable { onItemClick(item) } else Modifier)
@@ -693,13 +1025,28 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
 }
 
 private fun buildCardTitle(item: MediaItem): String {
-    val year = item.year.takeIf { it.isNotBlank() }
-    return if (year != null) "${item.title} ($year)" else item.title
+    // Return the clean title — year is shown separately in the subtitle
+    return item.title
 }
 
 @Composable
 private fun buildCardSubtitle(item: MediaItem): String {
-    return when (item.mediaType) { MediaType.TV -> stringResource(R.string.series); MediaType.MOVIE -> stringResource(R.string.movie) }
+    val mediaLabel = when (item.mediaType) {
+        MediaType.TV -> stringResource(R.string.series)
+        MediaType.MOVIE -> stringResource(R.string.movie)
+    }
+    val year = item.year.takeIf { it.isNotBlank() }
+    return if (year != null) "$mediaLabel · $year" else mediaLabel
+}
+
+private fun interleaveSearchResults(movies: List<MediaItem>, shows: List<MediaItem>): List<MediaItem> {
+    val combined = ArrayList<MediaItem>(movies.size + shows.size)
+    val maxSize = maxOf(movies.size, shows.size)
+    for (index in 0 until maxSize) {
+        if (index < movies.size) combined.add(movies[index])
+        if (index < shows.size) combined.add(shows[index])
+    }
+    return combined.distinctBy { "${it.mediaType}_${it.id}" }
 }
 
 private enum class FocusZone { SIDEBAR, SEARCH_INPUT, FILTERS, RESULTS }

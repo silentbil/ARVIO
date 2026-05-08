@@ -66,6 +66,7 @@ fun ChannelRow(
     stripe: Boolean = false,
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit,
+    onMoveLeft: () -> Unit = {},
     onFocused: () -> Unit = {},
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     forceFocused: Boolean = false,
@@ -118,6 +119,10 @@ fun ChannelRow(
             // repeatCount == 1) on CENTER / ENTER / MENU triggers favorite
             // toggle, giving the user the "hold OK" gesture everywhere.
             .onKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft) {
+                    onMoveLeft()
+                    return@onKeyEvent true
+                }
                 val isLongHoldCenter = ev.type == KeyEventType.KeyDown &&
                     (ev.key == Key.DirectionCenter || ev.key == Key.Enter) &&
                     ev.nativeKeyEvent.repeatCount == 1

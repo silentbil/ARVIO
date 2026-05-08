@@ -42,7 +42,7 @@ sealed class Screen(val route: String) {
     object Watchlist : Screen("watchlist")
     object CollectionDetails : Screen("collections/{catalogId}") {
         fun createRoute(catalogId: String): String {
-            return "collections/${java.net.URLEncoder.encode(catalogId, "UTF-8")}" 
+            return "collections/${android.net.Uri.encode(catalogId)}"
         }
     }
     object Tv : Screen("tv?channelId={channelId}&streamUrl={streamUrl}") {
@@ -384,6 +384,9 @@ fun AppNavigation(
                 },
                 onNavigateToDetails = { type, id ->
                     navController.navigate(Screen.Details.createRoute(type, id))
+                },
+                onNavigateToCollection = { catalogId ->
+                    navController.navigate(Screen.CollectionDetails.createRoute(catalogId))
                 },
                 onNavigateToHome = {
                     navigateHome()

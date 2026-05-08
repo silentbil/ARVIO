@@ -54,6 +54,8 @@ fun Modifier.arvioFocusable(
     onFocusChanged: (Boolean) -> Unit = {},
 ): Modifier = composed {
     val interactionSource = remember { MutableInteractionSource() }
+    // Allow the user's "Focus border colour" setting to override the default
+    val resolvedOutlineColor = LocalFocusBorderColorOverride.current ?: outlineColor
     val isPressed by interactionSource.collectIsPressedAsState()
 
     var isFocused by remember { mutableStateOf(false) }
@@ -147,10 +149,10 @@ fun Modifier.arvioFocusable(
         Modifier.drawWithCache {
             val outline = shape.createOutline(size, layoutDirection, this)
             val borderWidth = outlineWidth.toPx()
-            val ringColor = outlineColor.copy(alpha = highlightAlpha)
+            val ringColor = resolvedOutlineColor.copy(alpha = highlightAlpha)
             val glowStrokeWidth = glowWidth.toPx()
             val drawGlow = glowStrokeWidth > 0.01f && glowAlpha > 0.01f
-            val glowColor = outlineColor.copy(alpha = highlightAlpha * glowAlpha)
+            val glowColor = resolvedOutlineColor.copy(alpha = highlightAlpha * glowAlpha)
 
             onDrawWithContent {
                 drawContent()

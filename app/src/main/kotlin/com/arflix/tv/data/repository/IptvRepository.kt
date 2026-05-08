@@ -58,6 +58,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeFormatterBuilder
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
@@ -197,6 +198,7 @@ class IptvRepository @Inject constructor(
     private val epgEmptyRetryMs = 30_000L
     private val epgUpcomingProgramLimit = 14
     private val epgRecentProgramLimit = 2
+    private val completeEpgCoverageTarget = 0.98f
     private val xtreamShortEpgLimit = 8
     private val startupShortEpgChannelLimit = 1200
     private val xtreamShortEpgBatchSize = 512
@@ -663,24 +665,40 @@ class IptvRepository @Inject constructor(
     }
 
     suspend fun moveGroupUp(groupName: String, currentGroups: List<String> = emptyList()) {
+        val target = groupName.trim()
+        if (target.isEmpty()) return
         context.settingsDataStore.edit { prefs ->
-            var order = decodeGroupOrder(prefs).toMutableList()
-            if (order.isEmpty() && currentGroups.isNotEmpty()) order = currentGroups.toMutableList()
+            val order = mergedGroupOrder(decodeGroupOrder(prefs), currentGroups)
             if (order.isEmpty()) return@edit
-            val idx = order.indexOf(groupName)
-            if (idx > 0) { order.removeAt(idx); order.add(idx - 1, groupName) }
+            val idx = order.indexOf(target)
+            if (idx > 0) { order.removeAt(idx); order.add(idx - 1, target) }
             prefs[groupOrderKey()] = gson.toJson(order)
         }
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group up")
     }
 
-    suspend fun moveGroupDown(groupName: String, currentGroups: List<String> = emptyList()) {
+    suspend fun moveGroupToTop(groupName: String, currentGroups: List<String> = emptyList()) {
+        val target = groupName.trim()
+        if (target.isEmpty()) return
         context.settingsDataStore.edit { prefs ->
-            var order = decodeGroupOrder(prefs).toMutableList()
-            if (order.isEmpty() && currentGroups.isNotEmpty()) order = currentGroups.toMutableList()
+            val order = mergedGroupOrder(decodeGroupOrder(prefs), currentGroups)
             if (order.isEmpty()) return@edit
-            val idx = order.indexOf(groupName)
-            if (idx >= 0 && idx < order.size - 1) { order.removeAt(idx); order.add(idx + 1, groupName) }
+            if (target !in order && currentGroups.map { it.trim() }.contains(target)) order.add(target)
+            order.remove(target)
+            order.add(0, target)
+            prefs[groupOrderKey()] = gson.toJson(order)
+        }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group to top")
+    }
+
+    suspend fun moveGroupDown(groupName: String, currentGroups: List<String> = emptyList()) {
+        val target = groupName.trim()
+        if (target.isEmpty()) return
+        context.settingsDataStore.edit { prefs ->
+            val order = mergedGroupOrder(decodeGroupOrder(prefs), currentGroups)
+            if (order.isEmpty()) return@edit
+            val idx = order.indexOf(target)
+            if (idx >= 0 && idx < order.size - 1) { order.removeAt(idx); order.add(idx + 1, target) }
             prefs[groupOrderKey()] = gson.toJson(order)
         }
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group down")
@@ -706,6 +724,7 @@ class IptvRepository @Inject constructor(
         forcePlaylistReload: Boolean = false,
         forceEpgReload: Boolean = false,
         allowNetworkEpgFetch: Boolean = false,
+        allowBroadShortEpg: Boolean = true,
         onProgress: (IptvLoadProgress) -> Unit = {},
         onChannelsReady: suspend (List<IptvChannel>) -> Unit = {}
     ): IptvSnapshot {
@@ -837,8 +856,9 @@ class IptvRepository @Inject constructor(
 
             // Check if this is an Xtream provider (can use fast short EPG API)
             val xtreamCreds = resolveXtreamCredentials(config)
-            val hasXtreamChannels = channels.any { it.xtreamStreamId != null || it.id.startsWith("xtream:") }
-            System.err.println("[EPG] loadSnapshot: forceEpgReload=$forceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamCreds=${xtreamCreds != null} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size}")
+            val hasXtreamChannels = channels.any { resolveXtreamStreamId(it) != null }
+            val shouldFetchBroadShortEpg = allowBroadShortEpg || epgCandidates.isEmpty() || channels.size <= 10_000
+            System.err.println("[EPG] loadSnapshot: forceEpgReload=$forceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamCreds=${xtreamCreds != null} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size} broadShort=$shouldFetchBroadShortEpg")
             val cachedFallbackNowNext =
                 reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()) ?: cachedNowNext
             val nowNext = if (shouldUseCachedEpg) {
@@ -874,7 +894,7 @@ class IptvRepository @Inject constructor(
                 var shortEpgResult: Map<String, IptvNowNext>? = null
 
                 // ── Fast path: Xtream short EPG API ──
-                if (xtreamCreds != null && hasXtreamChannels) {
+                if (xtreamCreds != null && hasXtreamChannels && shouldFetchBroadShortEpg) {
                     System.err.println("[EPG] Attempting Xtream short EPG (baseUrl=${xtreamCreds.baseUrl})")
                     val shortEpgAttempt = runCatching {
                         fetchXtreamShortEpg(xtreamCreds, channels, onProgress)
@@ -896,6 +916,8 @@ class IptvRepository @Inject constructor(
                     } else {
                         System.err.println("[EPG] Xtream short EPG FAILED: ${shortEpgAttempt.exceptionOrNull()?.message}")
                     }
+                } else if (xtreamCreds != null && hasXtreamChannels) {
+                    System.err.println("[EPG] Skipping broad Xtream short EPG so full XMLTV can backfill ${channels.size} channels first")
                 }
 
                 // ── Slow path: XMLTV download (always runs to fill remaining channels) ──
@@ -940,6 +962,68 @@ class IptvRepository @Inject constructor(
                         cachedEpgAt = System.currentTimeMillis()
                         epgUpdated = true
                         System.err.println("[EPG] Final best EPG coverage=${(bestCoverage * 100).toInt()}% for ${channels.size} channels")
+                    }
+                }
+
+                val currentCoverage = epgCoverageRatio(channels, resolvedNowNext)
+                if (
+                    resolved &&
+                    currentCoverage < completeEpgCoverageTarget &&
+                    !shouldFetchBroadShortEpg &&
+                    xtreamCreds != null &&
+                    hasXtreamChannels
+                ) {
+                    val missingXtreamChannels = channels.filter { channel ->
+                        resolveXtreamStreamId(channel) != null && !hasProgramData(resolvedNowNext[channel.id])
+                    }
+                    if (missingXtreamChannels.isNotEmpty()) {
+                        System.err.println(
+                            "[EPG] XMLTV coverage ${(currentCoverage * 100).toInt()}%; " +
+                                "backfilling ${missingXtreamChannels.size} missing Xtream channels"
+                        )
+                        val shortEpgAttempt = runCatching {
+                            fetchXtreamShortEpg(xtreamCreds, missingXtreamChannels, onProgress)
+                        }
+                        if (shortEpgAttempt.isSuccess) {
+                            val parsed = shortEpgAttempt.getOrNull()
+                            if (parsed != null && hasAnyProgramData(parsed)) {
+                                val merged = ConcurrentHashMap(resolvedNowNext)
+                                merged.putAll(parsed)
+                                resolvedNowNext = merged
+                                cachedNowNext = ConcurrentHashMap(merged)
+                                cachedEpgAt = System.currentTimeMillis()
+                                epgUpdated = true
+                                val backfilledCoverage = epgCoverageRatio(channels, merged)
+                                System.err.println(
+                                    "[EPG] Missing-channel Xtream backfill added ${parsed.size} channels; " +
+                                        "coverage=${(backfilledCoverage * 100).toInt()}%"
+                                )
+                            }
+                        } else {
+                            epgFailureMessage = shortEpgAttempt.exceptionOrNull()?.message
+                            System.err.println("[EPG] Missing-channel Xtream backfill failed: $epgFailureMessage")
+                        }
+                    }
+                }
+
+                if (!resolved && !shouldFetchBroadShortEpg && xtreamCreds != null && hasXtreamChannels) {
+                    System.err.println("[EPG] XMLTV did not resolve; falling back to broad Xtream short EPG")
+                    val shortEpgAttempt = runCatching {
+                        fetchXtreamShortEpg(xtreamCreds, channels, onProgress)
+                    }
+                    if (shortEpgAttempt.isSuccess) {
+                        val parsed = shortEpgAttempt.getOrNull()
+                        if (parsed != null && hasAnyProgramData(parsed)) {
+                            cachedNowNext.putAll(parsed)
+                            resolvedNowNext = cachedNowNext
+                            cachedEpgAt = System.currentTimeMillis()
+                            epgUpdated = true
+                            resolved = true
+                            System.err.println("[EPG] Broad Xtream fallback SUCCESS: ${parsed.size} fresh, ${cachedNowNext.size} total cached")
+                        }
+                    } else {
+                        epgFailureMessage = shortEpgAttempt.exceptionOrNull()?.message
+                        System.err.println("[EPG] Broad Xtream fallback failed: $epgFailureMessage")
                     }
                 }
 
@@ -1342,7 +1426,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun ensureCacheOwnership(profileId: String, config: IptvConfig) {
-        val sig = "${config.m3uUrl.trim()}|${config.epgUrl.trim()}"
+        val sig = buildConfigSignature(config)
         val ownerChanged = cacheOwnerProfileId != null && cacheOwnerProfileId != profileId
         val configChanged = cacheOwnerConfigSig != null && cacheOwnerConfigSig != sig
         if (ownerChanged || configChanged) {
@@ -1419,6 +1503,23 @@ class IptvRepository @Inject constructor(
             val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
         }.getOrDefault(emptyList())
+    }
+
+    private fun mergedGroupOrder(savedOrder: List<String>, currentGroups: List<String>): MutableList<String> {
+        val current = currentGroups
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val currentSet = current.toHashSet()
+        val merged = savedOrder
+            .map { it.trim() }
+            .filter { it.isNotBlank() && (currentSet.isEmpty() || it in currentSet) }
+            .distinct()
+            .toMutableList()
+        current.forEach { group ->
+            if (group !in merged) merged.add(group)
+        }
+        return merged
     }
 
     private fun decodeFavoriteChannels(prefs: Preferences): List<String> {
@@ -3768,6 +3869,12 @@ class IptvRepository @Inject constructor(
         if (ch.id.startsWith("xtream:")) {
             return ch.id.removePrefix("xtream:").toIntOrNull()
         }
+        val path = ch.streamUrl.substringBefore('?').substringBefore('#')
+        if (path.contains("/live/", ignoreCase = true)) {
+            return path.substringAfterLast('/')
+                .substringBefore('.')
+                .toIntOrNull()
+        }
         return null
     }
 
@@ -3885,40 +3992,49 @@ class IptvRepository @Inject constructor(
         val distinctStreamIds = streamIds.distinct()
         if (distinctStreamIds.isEmpty()) return emptyList()
         val gate = Semaphore(xtreamShortEpgConcurrency)
-        val result = withTimeoutOrNull(timeoutMillis) {
+        val listingsResult = ConcurrentLinkedQueue<XtreamEpgListing>()
+        val completed = withTimeoutOrNull(timeoutMillis) {
             withContext(Dispatchers.IO.limitedParallelism(32)) {
                 val sampleLogged = AtomicBoolean(false)
-                distinctStreamIds.chunked(xtreamShortEpgBatchSize).flatMap { batch ->
+                distinctStreamIds.chunked(xtreamShortEpgBatchSize).forEach { batch ->
                     batch.map { sid ->
-                    async {
-                        gate.withPermit {
-                        var hadError = false
-                        val url = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
-                            "&password=${creds.password}&action=get_short_epg&stream_id=$sid&limit=$xtreamShortEpgLimit"
-                        var listings: List<XtreamEpgListing>? = null
-                        try {
-                            var resp: XtreamEpgResponse? = requestJson(url, XtreamEpgResponse::class.java)
-                            listings = resp?.epgListings
-                            if (listings.isNullOrEmpty()) {
-                                val fallbackUrl = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
-                                    "&password=${creds.password}&action=get_short_epg&stream_id=$sid"
-                                resp = requestJson(fallbackUrl, XtreamEpgResponse::class.java)
-                                listings = resp?.epgListings
+                        async {
+                            gate.withPermit {
+                                var hadError = false
+                                val url = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
+                                    "&password=${creds.password}&action=get_short_epg&stream_id=$sid&limit=$xtreamShortEpgLimit"
+                                var listings: List<XtreamEpgListing>? = null
+                                try {
+                                    var resp: XtreamEpgResponse? = requestJson(url, XtreamEpgResponse::class.java)
+                                    listings = resp?.epgListings
+                                    if (listings.isNullOrEmpty()) {
+                                        val fallbackUrl = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
+                                            "&password=${creds.password}&action=get_short_epg&stream_id=$sid"
+                                        resp = requestJson(fallbackUrl, XtreamEpgResponse::class.java)
+                                        listings = resp?.epgListings
+                                    }
+                                    if (!listings.isNullOrEmpty()) {
+                                        listingsResult.addAll(listings)
+                                        if (sampleLogged.compareAndSet(false, true)) {
+                                            val sample = listings.first()
+                                            System.err.println("[EPG] Sample response for stream_id=$sid: channelId=${sample.channelId} epgId=${sample.epgId} streamId=${sample.streamId} start=${sample.start} startTs=${sample.startTimestamp} title=${sample.title?.take(40)}")
+                                        }
+                                    }
+                                } catch (_: Exception) { hadError = true }
+                                onStreamProcessed(sid, hadError)
                             }
-                            if (!listings.isNullOrEmpty() && sampleLogged.compareAndSet(false, true)) {
-                                val sample = listings.first()
-                                System.err.println("[EPG] Sample response for stream_id=$sid: channelId=${sample.channelId} epgId=${sample.epgId} streamId=${sample.streamId} start=${sample.start} startTs=${sample.startTimestamp} title=${sample.title?.take(40)}")
-                            }
-                        } catch (_: Exception) { hadError = true }
-                        onStreamProcessed(sid, hadError)
-                        listings ?: emptyList()
                         }
-                    }
-                    }.awaitAll().flatten()
+                    }.awaitAll()
                 }
             }
         }
-        return result ?: emptyList()
+        if (completed == null) {
+            System.err.println(
+                "[EPG] Xtream short EPG timed out after ${timeoutMillis}ms; " +
+                    "keeping ${listingsResult.size} fetched listings"
+            )
+        }
+        return listingsResult.toList()
     }
 
     private fun xtreamShortEpgTimeout(streamCount: Int): Long =
@@ -4463,16 +4579,17 @@ class IptvRepository @Inject constructor(
 
     private fun hasAnyProgramData(nowNext: Map<String, IptvNowNext>): Boolean {
         if (nowNext.isEmpty()) return false
-        return nowNext.values.any { item ->
-            item.now != null || item.next != null || item.later != null || item.upcoming.isNotEmpty()
-        }
+        return nowNext.values.any { item -> hasProgramData(item) }
+    }
+
+    private fun hasProgramData(item: IptvNowNext?): Boolean {
+        return item != null && (item.now != null || item.next != null || item.later != null || item.upcoming.isNotEmpty())
     }
 
     private fun epgCoverageRatio(channels: List<IptvChannel>, nowNext: Map<String, IptvNowNext>): Float {
         if (channels.isEmpty() || nowNext.isEmpty()) return 0f
         val covered = channels.count { ch ->
-            val item = nowNext[ch.id]
-            item != null && (item.now != null || item.next != null || item.later != null || item.upcoming.isNotEmpty())
+            hasProgramData(nowNext[ch.id])
         }
         return covered.toFloat() / channels.size.toFloat()
     }
@@ -4743,21 +4860,24 @@ class IptvRepository @Inject constructor(
                     rawTitle = channel.name
                 )
             }
-            val compactNowNext = nowNext.mapValues { (_, value) ->
-                IptvNowNext(
-                    now = value.now?.compactForCache(),
-                    next = value.next?.compactForCache(),
-                    later = value.later?.compactForCache(),
-                    upcoming = value.upcoming
-                        .asSequence()
-                        .map { it.compactForCache() }
-                        .take(cacheUpcomingProgramLimit)
-                        .toList(),
-                    recent = value.recent
-                        .takeLast(cacheRecentProgramLimit)
-                        .map { it.compactForCache() }
-                )
-            }
+            val compactNowNext = nowNext
+                .asSequence()
+                .filter { (_, value) -> hasProgramData(value) }
+                .associate { (channelId, value) ->
+                    channelId to IptvNowNext(
+                        now = value.now?.compactForCache(),
+                        next = value.next?.compactForCache(),
+                        later = value.later?.compactForCache(),
+                        upcoming = value.upcoming
+                            .asSequence()
+                            .map { it.compactForCache() }
+                            .take(cacheUpcomingProgramLimit)
+                            .toList(),
+                        recent = value.recent
+                            .takeLast(cacheRecentProgramLimit)
+                            .map { it.compactForCache() }
+                    )
+                }
             val payload = IptvCachePayload(
                 channels = compactChannels,
                 nowNext = compactNowNext,

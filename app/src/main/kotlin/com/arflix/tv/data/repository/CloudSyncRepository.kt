@@ -45,6 +45,7 @@ class CloudSyncRepository @Inject constructor(
     private val traktRepository: TraktRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
+    private val profileAvatarImageManager: ProfileAvatarImageManager,
     private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
@@ -129,6 +130,7 @@ class CloudSyncRepository @Inject constructor(
         val iptvGroupOrder: String = "",
         val secondarySubtitle: String = "Off",
         val filterSubtitlesByLanguage: Boolean = true,
+        val homeServerConnectionJson: String? = null,
         val catalogueRowLayoutModes: Map<String, String> = emptyMap()
     )
 
@@ -171,6 +173,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "secondary_subtitle")
     private fun filterSubtitlesByLanguageKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "filter_subtitles_by_lang")
+    private fun homeServerConnectionKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, HomeServerRepository.CONNECTION_KEY_NAME)
     private fun defaultSubtitleKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "default_subtitle")
     private fun defaultAudioLanguageKeyFor(profileId: String) =
@@ -284,6 +288,7 @@ class CloudSyncRepository @Inject constructor(
                         iptvGroupOrder = prefs[iptvGroupOrderKeyFor(profile.id)] ?: "",
                         secondarySubtitle = prefs[secondarySubtitleKeyFor(profile.id)] ?: "Off",
                         filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKeyFor(profile.id)] ?: true,
+                        homeServerConnectionJson = prefs[homeServerConnectionKeyFor(profile.id)] ?: "",
                         catalogueRowLayoutModes = catalogueRowLayoutModesForProfile(prefs, profile.id),
                         cardLayoutMode = normalizeCardLayoutMode(
                             prefs[cardLayoutModeKeyFor(profile.id)] ?: CARD_LAYOUT_MODE_LANDSCAPE
@@ -327,6 +332,15 @@ class CloudSyncRepository @Inject constructor(
 
         root.put("activeProfileId", profileRepository.getActiveProfileId() ?: JSONObject.NULL)
         root.put("profiles", JSONArray(gson.toJson(profiles)))
+        val avatarImagesById = profiles
+            .filter { it.avatarImageVersion > 0L }
+            .mapNotNull { profile ->
+                profileAvatarImageManager.readInlineBase64(profile)?.let { profile.id to it }
+            }
+            .toMap()
+        if (avatarImagesById.isNotEmpty()) {
+            root.put("profileAvatarImagesById", JSONObject(gson.toJson(avatarImagesById)))
+        }
         root.put("profileSettingsById", JSONObject(gson.toJson(profileSettingsById)))
 
         // Trakt tokens per profile
@@ -519,11 +533,18 @@ class CloudSyncRepository @Inject constructor(
         var preservedNewerLocalSubtitle = false
 
         // ── Profiles ──
+        val avatarImagesById = root.optJSONObject("profileAvatarImagesById")
         root.optJSONArray("profiles")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
             val type = object : TypeToken<List<Profile>>() {}.type
             val profiles: List<Profile> = gson.fromJson(json, type) ?: emptyList()
             val activeProfileId = root.optString("activeProfileId").ifBlank { null }
             if (profiles.isNotEmpty()) {
+                profiles.forEach { profile ->
+                    val inlineAvatar = avatarImagesById
+                        ?.optString(profile.id)
+                        ?.takeIf { it.isNotBlank() }
+                    profileAvatarImageManager.restoreAvatarIfNeeded(profile, inlineAvatar)
+                }
                 // Preserve local active profile if it exists in cloud set
                 val localActiveId = profileRepository.getActiveProfileId()
                 val effectiveActiveId = if (localActiveId != null &&
@@ -596,6 +617,13 @@ class CloudSyncRepository @Inject constructor(
                         if (state.iptvGroupOrder.isNotBlank()) prefs[iptvGroupOrderKeyFor(profileId)] = state.iptvGroupOrder
                         prefs[secondarySubtitleKeyFor(profileId)] = state.secondarySubtitle.ifBlank { "Off" }
                         prefs[filterSubtitlesByLanguageKeyFor(profileId)] = state.filterSubtitlesByLanguage
+                        state.homeServerConnectionJson?.let { homeServerConnectionJson ->
+                            if (homeServerConnectionJson.isBlank()) {
+                                prefs.remove(homeServerConnectionKeyFor(profileId))
+                            } else {
+                                prefs[homeServerConnectionKeyFor(profileId)] = homeServerConnectionJson
+                            }
+                        }
                         val normalizedProfileLayout = normalizeCardLayoutMode(state.cardLayoutMode)
                         prefs[cardLayoutModeKeyFor(profileId)] = normalizedProfileLayout
                         state.catalogueRowLayoutModes.forEach { (rowKey, mode) ->

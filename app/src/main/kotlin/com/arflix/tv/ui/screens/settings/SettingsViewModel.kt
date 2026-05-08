@@ -28,6 +28,8 @@ import com.arflix.tv.data.repository.CatalogDiscoveryRepository
 import com.arflix.tv.data.repository.CatalogRepository
 import com.arflix.tv.data.repository.CollectionTemplateManifest
 import com.arflix.tv.data.repository.CloudSyncRepository
+import com.arflix.tv.data.repository.HomeServerConnection
+import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvPlaylistEntry
@@ -173,6 +175,10 @@ data class SettingsUiState(
     val cloudstreamEnabled: Boolean = BuildConfig.CLOUDSTREAM_ENABLED,
     val cloudstreamSupportedApiVersion: Int = StreamRepository.SUPPORTED_CLOUDSTREAM_API_VERSION,
     val torrServerBaseUrl: String = "",
+    val homeServerConnection: HomeServerConnection? = null,
+    val homeServerConnections: List<HomeServerConnection> = emptyList(),
+    val isHomeServerConnecting: Boolean = false,
+    val homeServerError: String? = null,
     // Content language (TMDB metadata)
     val contentLanguage: String = "en-US",
     // Device mode override
@@ -184,6 +190,8 @@ data class SettingsUiState(
     val qualityFilters: List<QualityFilterConfig> = emptyList(),
     // Spoiler blur — blur unwatched episode card images and hide synopsis
     val spoilerBlurEnabled: Boolean = false,
+    // Focus border color — user-selectable theme colour for the D-pad focus ring
+    val focusBorderColor: String = "White",
     val qualityFilterPresetLabel: String = "OFF",
     // Toast
     val toastMessage: String? = null,
@@ -207,6 +215,7 @@ class SettingsViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val catalogDiscoveryRepository: CatalogDiscoveryRepository,
     private val iptvRepository: IptvRepository,
+    private val homeServerRepository: HomeServerRepository,
     private val watchlistRepository: WatchlistRepository,
     private val authRepository: AuthRepository,
     private val profileRepository: ProfileRepository,
@@ -345,6 +354,7 @@ class SettingsViewModel @Inject constructor(
         observeAddons()
         observeCloudstreamRepositories()
         observeTorrServer()
+        observeHomeServer()
         observeSyncState()
         observeAuthState()
         observeIptvConfig()
@@ -403,6 +413,7 @@ class SettingsViewModel @Inject constructor(
             val spoilerBlurEnabled = prefs[spoilerBlurKey()] ?: false
             val showBudget = prefs[showBudgetKey()] ?: true
             val clockFormat = prefs[clockFormatKey()] ?: "24h"
+            val focusBorderColor = prefs[com.arflix.tv.util.FOCUS_BORDER_COLOR_KEY] ?: "White"
             val volumeBoostDb = prefs[volumeBoostDbKey()]?.toIntOrNull()?.coerceIn(0, 15) ?: 0
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
 
@@ -488,6 +499,7 @@ class SettingsViewModel @Inject constructor(
                 skipProfileSelection = skipProfileSelection,
                 oledBlackBackground = oledBlackBackground,
                 clockFormat = clockFormat,
+                focusBorderColor = focusBorderColor,
                 qualityFilters = qualityFilters,
                 qualityFilterPresetLabel = detectQualityFilterPreset(qualityFilters).label,
                 subtitleAiEnabled = subtitleAiEnabled,
@@ -558,6 +570,17 @@ class SettingsViewModel @Inject constructor(
                 if (_uiState.value.torrServerBaseUrl != url) {
                     _uiState.value = _uiState.value.copy(torrServerBaseUrl = url)
                 }
+            }
+        }
+    }
+
+    private fun observeHomeServer() {
+        viewModelScope.launch {
+            homeServerRepository.connections.collect { connections ->
+                _uiState.value = _uiState.value.copy(
+                    homeServerConnection = connections.firstOrNull(),
+                    homeServerConnections = connections
+                )
             }
         }
     }
@@ -1033,6 +1056,22 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[clockFormatKey()] = next }
             _uiState.value = _uiState.value.copy(clockFormat = next)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    /**
+     * Cycle the focus border color through the rainbow palette.
+     * Order: White → Red → Orange → Yellow → Green → Blue → Indigo → Violet → White
+     */
+    fun cycleFocusBorderColor() {
+        val colors = listOf("White", "Red", "Orange", "Yellow", "Green", "Blue", "Indigo", "Violet")
+        val current = _uiState.value.focusBorderColor
+        val nextIndex = (colors.indexOf(current) + 1) % colors.size
+        val next = colors[nextIndex]
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[com.arflix.tv.util.FOCUS_BORDER_COLOR_KEY] = next }
+            _uiState.value = _uiState.value.copy(focusBorderColor = next)
             syncLocalStateToCloud(silent = true)
         }
     }
@@ -2197,6 +2236,81 @@ class SettingsViewModel @Inject constructor(
             if (startPolling) {
                 startCloudPolling()
             }
+        }
+    }
+
+    fun connectHomeServer(serverUrl: String, username: String, password: String) {
+        if (_uiState.value.isHomeServerConnecting) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isHomeServerConnecting = true,
+                homeServerError = null,
+                toastMessage = "Connecting Home Server...",
+                toastType = ToastType.INFO
+            )
+            val result = homeServerRepository.connect(serverUrl, username, password)
+            result.onSuccess { connection ->
+                val connections = homeServerRepository.currentConnections()
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    homeServerConnection = connection,
+                    homeServerConnections = connections,
+                    homeServerError = null,
+                    toastMessage = "Home Server connected",
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    homeServerError = error.message ?: "Home Server connection failed",
+                    toastMessage = error.message ?: "Home Server connection failed",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun testHomeServerConnection() {
+        if (_uiState.value.isHomeServerConnecting) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isHomeServerConnecting = true,
+                homeServerError = null
+            )
+            val result = homeServerRepository.testConnections()
+            result.onSuccess { connections ->
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    homeServerConnection = connections.firstOrNull(),
+                    homeServerConnections = connections,
+                    homeServerError = null,
+                    toastMessage = "Home Server is reachable",
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    homeServerError = error.message ?: "Home Server test failed",
+                    toastMessage = error.message ?: "Home Server test failed",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun disconnectHomeServer() {
+        viewModelScope.launch {
+            homeServerRepository.disconnect()
+            _uiState.value = _uiState.value.copy(
+                homeServerConnection = null,
+                homeServerConnections = emptyList(),
+                homeServerError = null,
+                toastMessage = "Home Server disconnected",
+                toastType = ToastType.INFO
+            )
+            syncLocalStateToCloud(silent = true)
         }
     }
 

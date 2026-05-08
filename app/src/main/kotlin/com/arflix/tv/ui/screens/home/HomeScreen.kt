@@ -368,6 +368,22 @@ private suspend fun androidx.compose.foundation.lazy.LazyListState.animateHomeSc
 }
 
 @Composable
+private fun rememberMetadataLogoImageLoader(context: Context): ImageLoader {
+    return remember(context) {
+        ImageLoader.Builder(context)
+            .okHttpClient(OkHttpProvider.coilClient)
+            .components {
+                add(SvgDecoder.Factory())
+            }
+            .allowRgb565(false)
+            .crossfade(false)
+            .placeholder(android.R.color.transparent)
+            .error(android.R.color.transparent)
+            .build()
+    }
+}
+
+@Composable
 private fun HomeBackdropCrossfade(
     backdropUrl: String?,
     backdropSize: Pair<Int, Int>,
@@ -425,13 +441,17 @@ private fun HomeBackdropCrossfade(
     }
 
     fun buildBackdropRequest(url: String): ImageRequest =
+        "$url|${backdropWidthPx}x$backdropHeightPx".let { cacheKey ->
         ImageRequest.Builder(context)
             .data(url)
             .size(backdropWidthPx, backdropHeightPx)
             .precision(Precision.INEXACT)
             .allowHardware(true)
+            .memoryCacheKey(cacheKey)
+            .placeholderMemoryCacheKey(cacheKey)
             .crossfade(false)
             .build()
+        }
 
     Box(modifier = modifier) {
         displayedBackdropUrl?.let { stableBackdropUrl ->
@@ -587,25 +607,28 @@ fun HomeScreen(
     val showCinematicHomeLayer = isMobile || allowHomeBackgroundWork
     val limitRowsDuringStartup = !isMobile && !allowHomeBackgroundWork && !focusState.userHasNavigated
 
-    LaunchedEffect(focusState.lastNavEventTime, focusState.isSidebarFocused) {
+    LaunchedEffect(isMobile, focusState) {
         if (isMobile) {
             suppressHeroVideoPlayback = false
             return@LaunchedEffect
         }
-        if (focusState.isSidebarFocused) {
-            suppressHeroVideoPlayback = true
-            return@LaunchedEffect
-        }
-        val anchor = focusState.lastNavEventTime
-        if (anchor <= 0L) {
-            suppressHeroVideoPlayback = false
-            return@LaunchedEffect
-        }
-        suppressHeroVideoPlayback = true
-        delay(heroVideoIdleThresholdMs)
-        if (focusState.lastNavEventTime == anchor && !focusState.isSidebarFocused) {
-            suppressHeroVideoPlayback = false
-        }
+        snapshotFlow { focusState.lastNavEventTime to focusState.isSidebarFocused }
+            .distinctUntilChanged()
+            .collectLatest { (anchor, sidebarFocused) ->
+                if (sidebarFocused) {
+                    suppressHeroVideoPlayback = true
+                    return@collectLatest
+                }
+                if (anchor <= 0L) {
+                    suppressHeroVideoPlayback = false
+                    return@collectLatest
+                }
+                suppressHeroVideoPlayback = true
+                delay(heroVideoIdleThresholdMs)
+                if (focusState.lastNavEventTime == anchor && !focusState.isSidebarFocused) {
+                    suppressHeroVideoPlayback = false
+                }
+            }
     }
 
     // Context menu state (Menu button only, no long-press)
@@ -620,21 +643,30 @@ fun HomeScreen(
         contextMenuIsContinueWatching = false
     }
 
-    // Preload logos for current and next rows when row changes
+    // Preload artwork for the focused row and the next rows soon after DPAD settles.
     LaunchedEffect(allowHomeBackgroundWork) {
         if (!allowHomeBackgroundWork) return@LaunchedEffect
-        snapshotFlow { focusState.currentRowIndex to focusState.lastNavEventTime }
+        val rowPreloadIdleMs = 320L
+        snapshotFlow {
+            Triple(
+                focusState.currentRowIndex,
+                focusState.currentItemIndex,
+                focusState.lastNavEventTime
+            )
+        }
             .distinctUntilChanged()
-            .collectLatest { (rowIndex, navEventTime) ->
+            .collectLatest { (rowIndex, itemIndex, navEventTime) ->
                 val idleForMs = if (navEventTime > 0L) {
                     SystemClock.elapsedRealtime() - navEventTime
                 } else {
-                    fastScrollThresholdMs
+                    rowPreloadIdleMs
                 }
-                if (idleForMs < heroVideoIdleThresholdMs) {
-                    delay(heroVideoIdleThresholdMs - idleForMs)
+                if (idleForMs < rowPreloadIdleMs) {
+                    delay(rowPreloadIdleMs - idleForMs)
                 }
                 if (focusState.currentRowIndex != rowIndex) return@collectLatest
+                if (focusState.currentItemIndex != itemIndex) return@collectLatest
+                viewModel.onFocusChanged(rowIndex, itemIndex, shouldPrefetch = true)
                 viewModel.preloadLogosForCategory(rowIndex, prioritizeVisible = true)
                 viewModel.preloadLogosForCategory(rowIndex + 1, prioritizeVisible = false)
                 viewModel.preloadLogosForCategory(rowIndex + 2, prioritizeVisible = false)
@@ -827,7 +859,7 @@ fun HomeScreen(
         }
         var settledBackdrop by remember { mutableStateOf<String?>(null) }
         val latestCurrentBackdrop by rememberUpdatedState(currentBackdrop)
-        LaunchedEffect(currentBackdrop, focusState.lastNavEventTime, isMobile) {
+        LaunchedEffect(currentBackdrop, isMobile) {
             if (isMobile) {
                 settledBackdrop = currentBackdrop
                 return@LaunchedEffect
@@ -1150,13 +1182,7 @@ private fun HeroSection(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val metadataLogoImageLoader = remember(context) {
-        ImageLoader.Builder(context)
-            .okHttpClient(OkHttpProvider.coilClient)
-            .components { add(SvgDecoder.Factory()) }
-            .crossfade(false)
-            .build()
-    }
+    val metadataLogoImageLoader = rememberMetadataLogoImageLoader(context)
     val density = LocalDensity.current
     val logoSize = remember(density) {
         val widthPx = with(density) { 320.dp.roundToPx() }
@@ -1204,11 +1230,14 @@ private fun HeroSection(
                     if (currentLogoUrl != null) {
                         val (logoWidthPx, logoHeightPx) = logoSize
                         val request = remember(currentLogoUrl, logoWidthPx, logoHeightPx) {
+                            val cacheKey = "$currentLogoUrl|${logoWidthPx}x$logoHeightPx"
                             ImageRequest.Builder(context)
                                 .data(currentLogoUrl)
                                 .size(logoWidthPx, logoHeightPx)
                                 .precision(Precision.INEXACT)
                                 .allowHardware(true)
+                                .memoryCacheKey(cacheKey)
+                                .placeholderMemoryCacheKey(cacheKey)
                                 .crossfade(false)
                                 .build()
                         }
@@ -1591,13 +1620,7 @@ private fun MobileHeroOverlay(
     onDetails: () -> Unit
 ) {
     val context = LocalContext.current
-    val metadataLogoImageLoader = remember(context) {
-        ImageLoader.Builder(context)
-            .okHttpClient(OkHttpProvider.coilClient)
-            .components { add(SvgDecoder.Factory()) }
-            .crossfade(false)
-            .build()
-    }
+    val metadataLogoImageLoader = rememberMetadataLogoImageLoader(context)
     val mobileHeroGradient = remember {
         Brush.verticalGradient(
             listOf(
@@ -1806,13 +1829,7 @@ private fun MobileHeroCarousel(
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit
 ) {
     val context = LocalContext.current
-    val metadataLogoImageLoader = remember(context) {
-        ImageLoader.Builder(context)
-            .okHttpClient(OkHttpProvider.coilClient)
-            .components { add(SvgDecoder.Factory()) }
-            .crossfade(false)
-            .build()
-    }
+    val metadataLogoImageLoader = rememberMetadataLogoImageLoader(context)
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     // Hero area height: 40% of screen
@@ -2711,26 +2728,21 @@ private fun TvHomeRowsLayer(
     val localCurrentRowIndex = (currentRowIndex - rowWindowStart)
         .coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
 
-    val density = LocalDensity.current
-    val rowHeightsPx = remember(renderedCategories.size) { FloatArray(renderedCategories.size) }
-    renderedCategories.forEachIndexed { index, category ->
-        androidx.compose.runtime.key(category.id) {
-            val rowKey = remember(category.id) { "home:${category.id}" }
-            val mode = rememberCatalogueRowLayoutMode(rowKey)
-            val isPoster = mode == CardLayoutMode.POSTER
-            val dp = if (isPoster) 252.dp else 202.dp
-            rowHeightsPx[index] = with(density) { dp.toPx() }
-        }
-    }
-
     var isFastScrolling by remember { mutableStateOf(false) }
-    LaunchedEffect(focusState.lastNavEventTime) {
-        val anchor = focusState.lastNavEventTime
-        isFastScrolling = true
-        delay(fastScrollThresholdMs)
-        if (focusState.lastNavEventTime == anchor) {
-            isFastScrolling = false
-        }
+    LaunchedEffect(focusState) {
+        snapshotFlow { focusState.lastNavEventTime }
+            .distinctUntilChanged()
+            .collectLatest { anchor ->
+                if (anchor <= 0L) {
+                    isFastScrolling = false
+                    return@collectLatest
+                }
+                isFastScrolling = true
+                delay(fastScrollThresholdMs)
+                if (focusState.lastNavEventTime == anchor) {
+                    isFastScrolling = false
+                }
+            }
     }
 
     BoxWithConstraints(
@@ -2739,25 +2751,10 @@ private fun TvHomeRowsLayer(
             .padding(top = 24.dp)
     ) {
         val rowsViewportHeight = (maxHeight * 0.31f).coerceIn(260.dp, 340.dp)
-        val estimatedRowPitchPx = with(LocalDensity.current) {
-            (if (usePosterCards) 240.dp else 190.dp).toPx().coerceAtLeast(1f)
-        }
         val listState = rememberLazyListState()
-        val rowStackOffsetPx = remember { Animatable(0f) }
         var lastAppliedTargetIndex by remember { mutableIntStateOf(-1) }
-        // Only scroll the LazyColumn in response to actual user D-pad navigation,
-        // NOT when categories change during loading. The previous implementation
-        // scrolled on every `targetIndex` change, which meant when `publishMerged()`
-        // inserted new rows (Favorite TV, custom catalogs) and the focus-stabilizer
-        // updated `currentRowIndex`, the viewport would jump to the new index — even
-        // though the user hadn't pressed anything. This caused the visible "trip"
-        // where the screen would suddenly show a different row than expected.
-        //
-        // `userScrollNonce` is incremented only when the user physically presses
-        // Up/Down on the D-pad (in the key handler). The LaunchedEffect keys on
-        // this nonce AND the target index, so it only fires on real user navigation.
         val targetIndex = localCurrentRowIndex.coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
-        LaunchedEffect(targetIndex, focusState.lastNavEventTime) {
+        LaunchedEffect(targetIndex) {
             val currentIndex = listState.firstVisibleItemIndex
             val currentOffset = listState.firstVisibleItemScrollOffset
             val initialPlacement = lastAppliedTargetIndex < 0
@@ -2770,39 +2767,26 @@ private fun TvHomeRowsLayer(
                 (SystemClock.elapsedRealtime() - focusState.lastNavEventTime) <= fastScrollThresholdMs
             if (!initialPlacement && !recentUserNav) return@LaunchedEffect
 
-            val jumpDistance = kotlin.math.abs(targetIndex - currentIndex)
-            if (!initialPlacement && jumpDistance <= 2) {
-                val travelPx = if (targetIndex > currentIndex) {
-                    var dist = 0f
-                    for (i in currentIndex until targetIndex) {
-                        dist += rowHeightsPx.getOrElse(i) { estimatedRowPitchPx }
-                    }
-                    dist
-                } else if (targetIndex < currentIndex) {
-                    var dist = 0f
-                    for (i in targetIndex until currentIndex) {
-                        dist += rowHeightsPx.getOrElse(i) { estimatedRowPitchPx }
-                    }
-                    dist
-                } else {
-                    currentOffset.toFloat()
-                }.coerceIn(0f, with(density) { rowsViewportHeight.toPx() })
-
-                val direction = when {
-                    targetIndex > currentIndex -> 1f
-                    targetIndex < currentIndex -> -1f
-                    else -> 0f
-                }
-                rowStackOffsetPx.stop()
-                rowStackOffsetPx.snapTo(direction * travelPx)
+            val jumpDistance = abs(targetIndex - currentIndex)
+            if (initialPlacement || jumpDistance > 7) {
                 listState.scrollToItem(index = targetIndex, scrollOffset = 0)
-                rowStackOffsetPx.animateTo(
-                    targetValue = 0f,
-                    animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
-                )
             } else {
-                rowStackOffsetPx.snapTo(0f)
-                listState.scrollToItem(index = targetIndex, scrollOffset = 0)
+                val visibleTarget = listState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.index == targetIndex }
+                if (visibleTarget != null) {
+                    listState.animateHomeScrollDelta(
+                        deltaPx = visibleTarget.offset.toFloat(),
+                        durationMillis = if (jumpDistance >= 3) 180 else 150
+                    )
+                    if (
+                        listState.firstVisibleItemIndex != targetIndex ||
+                        abs(listState.firstVisibleItemScrollOffset) > 6
+                    ) {
+                        listState.scrollToItem(index = targetIndex, scrollOffset = 0)
+                    }
+                } else {
+                    listState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
+                }
             }
             lastAppliedTargetIndex = targetIndex
         }
@@ -2821,38 +2805,31 @@ private fun TvHomeRowsLayer(
                 contentPadding = PaddingValues(bottom = rowsViewportHeight),
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(
-                        if (kotlin.math.abs(rowStackOffsetPx.value) > 0.01f) {
-                            Modifier.graphicsLayer { translationY = rowStackOffsetPx.value }
-                        } else {
-                            Modifier
-                        }
-                    )
                     .arvioDpadFocusGroup(enableFocusRestorer = false)
                     .clipToBounds(),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
-            itemsIndexed(
-                items = renderedCategories,
-                key = { _, category -> category.id },
-                contentType = { _, category ->
-                    when {
-                        category.id.startsWith("collection_row_") -> "home_collection_row"
-                        category.title.contains("Top 10", ignoreCase = true) -> "home_ranked_row"
-                        else -> "home_category_row"
+                itemsIndexed(
+                    items = renderedCategories,
+                    key = { _, category -> category.id },
+                    contentType = { _, category ->
+                        when {
+                            category.id.startsWith("collection_row_") -> "home_collection_row"
+                            category.title.contains("Top 10", ignoreCase = true) -> "home_ranked_row"
+                            else -> "home_category_row"
+                        }
                     }
-                }
-            ) { index, category ->
+                ) { index, category ->
                     val actualRowIndex = rowWindowStart + index
                     val rowIsFocused = !focusState.isSidebarFocused && actualRowIndex == focusState.currentRowIndex
                     val rowKey = remember(category.id) { "home:${category.id}" }
                     val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
                     val rowHeight = if (rowUsePosterCards) 252.dp else 202.dp
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(rowHeight)
-                            .clipToBounds()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(rowHeight)
+                        .clipToBounds()
                     ) {
                         ContentRow(
                             category = category,
@@ -2877,7 +2854,7 @@ private fun TvHomeRowsLayer(
                             }
                         )
                     }
-            }
+                }
             }
             val focusedCategory = categories.getOrNull(focusState.currentRowIndex)
             if (
@@ -3181,6 +3158,8 @@ private fun ContentRow(
         startPadding = startPadding,
         minimum = itemWidth + 30.dp
     )
+    val latestOnItemClick = rememberUpdatedState(onItemClick)
+    val latestOnItemFocused = rememberUpdatedState(onItemFocused)
     // Keep focused card anchored by scrolling the row on every focus change.
     // Use smooth scroll (animated) for D-pad moves to avoid abrupt jumps.
     var lastScrollIndex by remember { mutableIntStateOf(-1) }
@@ -3218,8 +3197,8 @@ private fun ContentRow(
 
         val currentLastIndex = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: currentFirstIndex
         val targetOutsideViewport = focusedItemIndex < currentFirstIndex || focusedItemIndex > currentLastIndex
-        val jumpDistance = kotlin.math.abs(scrollTargetIndex - currentFirstIndex)
-        val offsetDelta = kotlin.math.abs(extraOffset - currentFirstOffset)
+        val jumpDistance = abs(scrollTargetIndex - currentFirstIndex)
+        val offsetDelta = abs(extraOffset - currentFirstOffset)
         if (jumpDistance > 7) {
             rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         } else if (
@@ -3239,7 +3218,7 @@ private fun ContentRow(
             if (
                 !isFastScrolling && (
                     rowState.firstVisibleItemIndex != scrollTargetIndex ||
-                        kotlin.math.abs(rowState.firstVisibleItemScrollOffset - extraOffset) > 6
+                        abs(rowState.firstVisibleItemScrollOffset - extraOffset) > 6
                     )
             ) {
                 rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
@@ -3288,20 +3267,26 @@ private fun ContentRow(
                 horizontalArrangement = Arrangement.spacedBy(itemSpacing),
                 userScrollEnabled = false
             ) {
-            itemsIndexed(
-                category.items,
-                key = { _, item ->
-                    homeRowItemKey(item)
-                },
-                contentType = { index, item ->
-                    when {
-                        isCollectionRow -> "collection_tile"
-                        isRanked && index < 10 -> "${item.mediaType.name}_ranked_card"
-                        else -> "${item.mediaType.name}_card"
+                itemsIndexed(
+                    category.items,
+                    key = { _, item ->
+                        homeRowItemKey(item)
+                    },
+                    contentType = { index, item ->
+                        when {
+                            isCollectionRow -> "collection_tile"
+                            isRanked && index < 10 -> "${item.mediaType.name}_ranked_card"
+                            else -> "${item.mediaType.name}_card"
+                        }
                     }
-                }
-            ) { index, item ->
+                ) { index, item ->
                 val itemIsFocused = isCurrentRow && index == focusedCardIndex
+                val onCardFocused = remember(item, index) {
+                    { latestOnItemFocused.value(item, index) }
+                }
+                val onCardClick = remember(item) {
+                    { latestOnItemClick.value(item) }
+                }
                 if (isRanked && index < 10) {
                     // Top 10 rows should use the SAME card sizing as every other row.
                     // The previous layout used giant background numerals and a smaller
@@ -3326,8 +3311,8 @@ private fun ContentRow(
                             enableFocusedImageSwap = !isCollectionRow && !isFastScrolling,
                             animateFocus = false,
                             enableSystemFocus = false,
-                            onFocused = { onItemFocused(item, index) },
-                            onClick = { onItemClick(item) },
+                            onFocused = onCardFocused,
+                            onClick = onCardClick,
                         )
 
                         TopRankRibbon(
@@ -3357,12 +3342,12 @@ private fun ContentRow(
                         enableFocusedImageSwap = !isCollectionRow && !isFastScrolling,
                         animateFocus = false,
                         enableSystemFocus = false,
-                        onFocused = { onItemFocused(item, index) },
-                        onClick = { onItemClick(item) },
+                        onFocused = onCardFocused,
+                        onClick = onCardClick,
                     )
                 }
+                }
             }
-            }  // Close TvLazyRow
             if (railFocusOverlayActive) {
                 ArvioFocusableSurface(
                     modifier = Modifier

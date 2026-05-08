@@ -41,8 +41,6 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +53,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -70,6 +70,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Job
@@ -92,6 +94,7 @@ fun CategorySidebar(
     onHideCategory: (String) -> Unit = {},
     onUnhideCategory: (String) -> Unit = {},
     onMoveCategoryUp: (String) -> Unit = {},
+    onMoveCategoryToTop: (String) -> Unit = {},
     onMoveCategoryDown: (String) -> Unit = {},
     onFocusEnter: () -> Unit = {},
     onMoveRight: () -> Unit = {},
@@ -231,6 +234,11 @@ fun CategorySidebar(
                             menuForGroup = null
                             onMoveCategoryUp(groupName)
                         },
+                        onMoveToTop = {
+                            val groupName = cat.playlistGroupName ?: return@SidebarRow
+                            menuForGroup = null
+                            onMoveCategoryToTop(groupName)
+                        },
                         onMoveDown = {
                             val groupName = cat.playlistGroupName ?: return@SidebarRow
                             menuForGroup = null
@@ -294,31 +302,6 @@ fun CategorySidebar(
                         active = selectedId == cat.id,
                         expanded = expanded,
                         onFocused = { onTopBoundaryFocusChanged(false) },
-                        onClick = { onSelect(cat.id) },
-                    )
-                }
-            }
-            if (tree.hidden.categories.isNotEmpty()) {
-                item { SectionHeader(tree.hidden.label, expanded) }
-                items(tree.hidden.categories, key = { it.id }) { cat ->
-                    SidebarRow(
-                        label = cat.label,
-                        count = cat.count,
-                        icon = Icons.Filled.VisibilityOff,
-                        active = selectedId == cat.id,
-                        expanded = expanded,
-                        showMenu = menuForGroup == cat.playlistGroupName,
-                        canUnhide = cat.playlistGroupName != null,
-                        onFocused = { onTopBoundaryFocusChanged(false) },
-                        onLongClick = {
-                            menuForGroup = cat.playlistGroupName
-                        },
-                        onDismissMenu = { menuForGroup = null },
-                        onUnhide = {
-                            val groupName = cat.playlistGroupName ?: return@SidebarRow
-                            menuForGroup = null
-                            onUnhideCategory(groupName)
-                        },
                         onClick = { onSelect(cat.id) },
                     )
                 }
@@ -420,6 +403,7 @@ private fun SidebarRow(
     onHide: () -> Unit = {},
     onUnhide: () -> Unit = {},
     onMoveUp: () -> Unit = {},
+    onMoveToTop: () -> Unit = {},
     onMoveDown: () -> Unit = {},
     flagEmoji: String? = null,
     leadingCode: String? = null,
@@ -573,6 +557,7 @@ private fun SidebarRow(
                 onHide = onHide,
                 onUnhide = onUnhide,
                 onMoveUp = onMoveUp,
+                onMoveToTop = onMoveToTop,
                 onMoveDown = onMoveDown,
             )
         }
@@ -589,56 +574,129 @@ private fun CategoryContextMenu(
     onHide: () -> Unit,
     onUnhide: () -> Unit,
     onMoveUp: () -> Unit,
+    onMoveToTop: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
-    DropdownMenu(
-        expanded = true,
-        onDismissRequest = onDismiss,
-        modifier = Modifier
-            .background(LiveColors.PanelRaised)
-            .border(1.dp, LiveColors.FocusRing.copy(alpha = 0.7f), RoundedCornerShape(8.dp)),
-    ) {
+    val actions = buildList {
         if (canMove) {
-            CategoryMenuItem("Move up", Icons.Filled.KeyboardArrowUp, onMoveUp)
-            CategoryMenuItem("Move down", Icons.Filled.KeyboardArrowDown, onMoveDown)
+            add(CategoryMenuAction("Move to top", Icons.Filled.KeyboardArrowUp, onMoveToTop))
+            add(CategoryMenuAction("Move up", Icons.Filled.KeyboardArrowUp, onMoveUp))
+            add(CategoryMenuAction("Move down", Icons.Filled.KeyboardArrowDown, onMoveDown))
         }
         if (canHide) {
-            CategoryMenuItem("Hide category", Icons.Filled.VisibilityOff, onHide)
+            add(CategoryMenuAction("Hide category", Icons.Filled.VisibilityOff, onHide))
         }
         if (canUnhide) {
-            CategoryMenuItem("Unhide category", Icons.Filled.Visibility, onUnhide)
+            add(CategoryMenuAction("Unhide category", Icons.Filled.Visibility, onUnhide))
+        }
+    }
+    if (actions.isEmpty()) return
+
+    var focusedIndex by remember(actions.size) { mutableStateOf(0) }
+    var ignoreSelectUntilRelease by remember(actions.size) { mutableStateOf(true) }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    Popup(
+        alignment = Alignment.CenterEnd,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .width(184.dp)
+                .background(LiveColors.PanelRaised, RoundedCornerShape(10.dp))
+                .border(1.dp, LiveColors.FocusRing.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+                .focusRequester(focusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    val isSelect = event.key == Key.DirectionCenter || event.key == Key.Enter
+                    if (ignoreSelectUntilRelease && isSelect) {
+                        if (event.type == KeyEventType.KeyUp) {
+                            ignoreSelectUntilRelease = false
+                        }
+                        true
+                    } else if (event.type != KeyEventType.KeyDown) {
+                        false
+                    } else {
+                        when (event.key) {
+                            Key.DirectionUp -> {
+                                focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                focusedIndex = (focusedIndex + 1).coerceAtMost(actions.lastIndex)
+                                true
+                            }
+                            Key.DirectionCenter, Key.Enter -> {
+                                actions[focusedIndex].onClick()
+                                true
+                            }
+                            Key.DirectionLeft, Key.Back, Key.Escape -> {
+                                onDismiss()
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                }
+                .padding(4.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            actions.forEachIndexed { index, action ->
+                CategoryMenuItem(
+                    action = action,
+                    focused = index == focusedIndex,
+                    onClick = action.onClick,
+                )
+            }
         }
     }
 }
 
+private data class CategoryMenuAction(
+    val label: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit,
+)
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun CategoryMenuItem(
-    label: String,
-    icon: ImageVector,
+    action: CategoryMenuAction,
+    focused: Boolean,
     onClick: () -> Unit,
 ) {
-    DropdownMenuItem(
-        text = {
-            Text(
-                text = label,
-                style = LiveType.CatLabel.copy(
-                    color = LiveColors.Fg,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                ),
-            )
-        },
-        leadingIcon = {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = LiveColors.FgDim,
-                modifier = Modifier.size(16.dp),
-            )
-        },
-        onClick = onClick,
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(36.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) LiveColors.FocusRing else Color.Transparent)
+            .pointerInput(onClick) { detectTapGestures(onTap = { onClick() }) }
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = action.icon,
+            contentDescription = null,
+            tint = if (focused) Color.Black else LiveColors.FgDim,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = action.label,
+            style = LiveType.CatLabel.copy(
+                color = if (focused) Color.Black else LiveColors.Fg,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 private fun selectedCountryGroupId(

@@ -19,6 +19,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
+import coil.decode.SvgDecoder
 import coil.disk.DiskCache
 import coil.imageLoader
 import coil.memory.MemoryCache
@@ -185,6 +186,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             // (the card surface background is the fallback visual).
             .error(android.R.color.transparent)
             .components {
+                add(SvgDecoder.Factory())
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     add(ImageDecoderDecoder.Factory())
                 } else {

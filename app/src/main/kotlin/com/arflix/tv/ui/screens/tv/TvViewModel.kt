@@ -69,6 +69,8 @@ class TvViewModel @Inject constructor(
     private var startupGuideWarmupKey: String? = null
     private var fullEpgWarmupJob: Job? = null
     private var lastFullEpgWarmupKey: String? = null
+    private var completeEpgBackfillJob: Job? = null
+    private var lastCompleteEpgBackfillKey: String? = null
     private var preparedContentJob: Job? = null
     private var preparedContentRevision: Long = 0L
 
@@ -118,6 +120,7 @@ class TvViewModel @Inject constructor(
                 )
                 maybeWarmStartupGuide()
                 startFullEpgWarmup()
+                startCompleteEpgBackfill()
                 warmXtreamVodCache()
                 val hasPotentialEpg = config.epgUrl.isNotBlank() || config.m3uUrl.contains("get.php", ignoreCase = true) || config.m3uUrl.contains("player_api.php", ignoreCase = true)
                 val needsChannelReload = config.m3uUrl.isNotBlank() && cached.channels.isEmpty()
@@ -272,6 +275,7 @@ class TvViewModel @Inject constructor(
                                 )
                             )
                             startFullEpgWarmup()
+                            startCompleteEpgBackfill()
                         }
                     )
                 } ?: throw IllegalStateException("IPTV load timed out")
@@ -289,6 +293,7 @@ class TvViewModel @Inject constructor(
                 )
                 maybeWarmStartupGuide()
                 startFullEpgWarmup()
+                startCompleteEpgBackfill()
                 warmXtreamVodCache()
                 if (!force && _uiState.value.isConfigured && snapshot.channels.isEmpty()) {
                     // Soft refresh returned empty even though IPTV is configured:
@@ -471,6 +476,68 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    private fun startCompleteEpgBackfill(force: Boolean = false) {
+        val state = _uiState.value
+        val channels = state.snapshot.channels
+        if (!state.isConfigured || channels.isEmpty()) return
+        if (!hasNetworkEpgSource(state.config)) return
+
+        val coverage = epgCoverageRatio(state.snapshot)
+        val ageMs = iptvRepository.cachedEpgAgeMs()
+        val cacheLooksComplete = coverage >= 0.98f && ageMs < 6 * 60 * 60_000L
+        if (!force && cacheLooksComplete) return
+        if (completeEpgBackfillJob?.isActive == true) return
+
+        val backfillKey = buildString {
+            append(state.config.syncSignature())
+            append('|')
+            append(channels.size)
+            append('|')
+            append((coverage * 1_000).toInt())
+            append('|')
+            append(ageMs / (30 * 60_000L))
+        }
+        if (!force && backfillKey == lastCompleteEpgBackfillKey) return
+        lastCompleteEpgBackfillKey = backfillKey
+
+        completeEpgBackfillJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(if (channels.size > 10_000) 5_000L else 2_000L)
+            val snapshot = runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(900_000L) {
+                    iptvRepository.loadSnapshot(
+                        forcePlaylistReload = false,
+                        forceEpgReload = true,
+                        allowNetworkEpgFetch = true,
+                        allowBroadShortEpg = false,
+                        onProgress = { progress ->
+                            System.err.println("[EPG-Complete] ${progress.message} ${progress.percent ?: ""}".trim())
+                        }
+                    )
+                }
+            }.getOrNull() ?: return@launch
+
+            if (snapshot.channels.isEmpty() || snapshot.nowNext.isEmpty()) return@launch
+            withContext(Dispatchers.Main.immediate) {
+                val current = _uiState.value
+                if (current.config.syncSignature() != state.config.syncSignature()) return@withContext
+                val mergedSnapshot = snapshot.copy(
+                    favoriteGroups = current.snapshot.favoriteGroups,
+                    favoriteChannels = current.snapshot.favoriteChannels,
+                    hiddenGroups = current.snapshot.hiddenGroups,
+                    groupOrder = current.snapshot.groupOrder,
+                )
+                setUiState(current.copy(snapshot = mergedSnapshot))
+                System.err.println("[EPG-Complete] merged full guide coverage=${(epgCoverageRatio(mergedSnapshot) * 100).toInt()}%")
+            }
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (completeEpgBackfillJob === job) {
+                    completeEpgBackfillJob = null
+                }
+            }
+        }
+    }
+
     fun setQuery(query: String) {
         setUiState(_uiState.value.copy(query = query))
     }
@@ -599,18 +666,37 @@ class TvViewModel @Inject constructor(
 
     fun moveGroupUp(groupName: String) {
         viewModelScope.launch {
-            val current = _uiState.value.groups.filterNot { it == FAVORITES_GROUP_NAME }
+            val current = currentVisiblePlaylistGroups()
             iptvRepository.moveGroupUp(groupName, current)
+            scheduleIptvCloudSync()
+        }
+    }
+
+    fun moveGroupToTop(groupName: String) {
+        viewModelScope.launch {
+            val current = currentVisiblePlaylistGroups()
+            iptvRepository.moveGroupToTop(groupName, current)
             scheduleIptvCloudSync()
         }
     }
 
     fun moveGroupDown(groupName: String) {
         viewModelScope.launch {
-            val current = _uiState.value.groups.filterNot { it == FAVORITES_GROUP_NAME }
+            val current = currentVisiblePlaylistGroups()
             iptvRepository.moveGroupDown(groupName, current)
             scheduleIptvCloudSync()
         }
+    }
+
+    private fun currentVisiblePlaylistGroups(): List<String> {
+        val snapshot = _uiState.value.snapshot
+        val hidden = snapshot.hiddenGroups.mapTo(HashSet()) { it.trim() }
+        return snapshot.grouped.keys
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it !in hidden }
+            .distinct()
+            .toList()
     }
 
     fun rememberTvSession(
@@ -892,6 +978,25 @@ private fun filterTvChannels(
     }
         .sortedByDescending { it.second }
         .map { it.first }
+}
+
+private fun hasNetworkEpgSource(config: IptvConfig): Boolean {
+    fun looksLikeXtream(url: String): Boolean {
+        return url.contains("player_api.php", ignoreCase = true) ||
+            url.contains("get.php", ignoreCase = true) ||
+            url.contains("xmltv.php", ignoreCase = true)
+    }
+    return config.epgUrl.isNotBlank() ||
+        config.m3uUrl.isNotBlank() ||
+        looksLikeXtream(config.m3uUrl) ||
+        config.playlists.any { playlist ->
+            playlist.enabled && (
+                playlist.epgUrl.isNotBlank() ||
+                    playlist.m3uUrl.isNotBlank() ||
+                    looksLikeXtream(playlist.m3uUrl) ||
+                    looksLikeXtream(playlist.epgUrl)
+                )
+        }
 }
 
 private fun IptvConfig.syncSignature(): String {

@@ -142,6 +142,8 @@ import com.arflix.tv.data.model.QualityFilterConfig
 import com.arflix.tv.data.model.RuntimeKind
 import com.arflix.tv.data.model.CloudstreamPluginIndexEntry
 import com.arflix.tv.data.model.CloudstreamRepositoryManifest
+import com.arflix.tv.data.repository.HomeServerConnection
+import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.CloudstreamRepositoryRecord
 import com.arflix.tv.ui.components.AppTopBar
@@ -307,6 +309,10 @@ fun SettingsScreen(
     var showAiModelDialog by remember { mutableStateOf(false) }
     var showAiApiKeyDialog by remember { mutableStateOf(false) }
     var qualityFilterRegexPattern by remember { mutableStateOf("") }
+    var showHomeServerInput by remember { mutableStateOf(false) }
+    var homeServerUrl by remember { mutableStateOf("") }
+    var homeServerUsername by remember { mutableStateOf("") }
+    var homeServerPassword by remember { mutableStateOf("") }
 
     val stremioAddons = remember(uiState.addons) {
         uiState.addons.filter { it.runtimeKind == RuntimeKind.STREMIO }
@@ -318,6 +324,7 @@ fun SettingsScreen(
         buildList {
             add("general")
             add("iptv")
+            add("home_server")
             add("catalogs")
             add("stremio")
             if (uiState.cloudstreamEnabled) {
@@ -328,8 +335,9 @@ fun SettingsScreen(
     }
     val sectionMaxIndex: (String) -> Int = { section ->
         when (section) {
-            "general" -> 31 // 32 rows (26 original + 6 AI subtitle rows)
+            "general" -> 32 // 33 rows (27 from main + 6 AI subtitle rows)
             "iptv" -> 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
+            "home_server" -> uiState.homeServerConnections.size + 2
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
             "cloudstream" -> cloudstreamPlugins.size + uiState.cloudstreamRepositories.size // plugins + repos + add button
@@ -552,6 +560,7 @@ fun SettingsScreen(
         showCustomAddonInput ||
         showCloudstreamRepoInput ||
         showIptvInput ||
+        showHomeServerInput ||
         showCatalogInput ||
         showCatalogRename ||
         showSubtitlePicker ||
@@ -764,15 +773,16 @@ fun SettingsScreen(
                                                 20 -> viewModel.cycleClockFormat()
                                                 21 -> viewModel.setShowBudget(!uiState.showBudget)
                                                 22 -> viewModel.setSpoilerBlurEnabled(!uiState.spoilerBlurEnabled)
-                                                23 -> openDnsProviderPicker()
-                                                24 -> viewModel.setShowLoadingStats(!uiState.showLoadingStats)
-                                                25 -> viewModel.cycleVolumeBoost()
-                                                26 -> viewModel.setSubtitleAiEnabled(!uiState.subtitleAiEnabled)
-                                                27 -> showAiModelDialog = true
-                                                28 -> viewModel.setSubtitleAiAutoSelect(!uiState.subtitleAiAutoSelect)
-                                                29 -> viewModel.setSubtitleRemoveHearingImpaired(!uiState.subtitleRemoveHearingImpaired)
-                                                30 -> showAiApiKeyDialog = true
-                                                31 -> viewModel.startAiKeyServer()
+                                                23 -> viewModel.cycleFocusBorderColor()
+                                                24 -> openDnsProviderPicker()
+                                                25 -> viewModel.setShowLoadingStats(!uiState.showLoadingStats)
+                                                26 -> viewModel.cycleVolumeBoost()
+                                                27 -> viewModel.setSubtitleAiEnabled(!uiState.subtitleAiEnabled)
+                                                28 -> showAiModelDialog = true
+                                                29 -> viewModel.setSubtitleAiAutoSelect(!uiState.subtitleAiAutoSelect)
+                                                30 -> viewModel.setSubtitleRemoveHearingImpaired(!uiState.subtitleRemoveHearingImpaired)
+                                                31 -> showAiApiKeyDialog = true
+                                                32 -> viewModel.startAiKeyServer()
                                             }
                                         }
                                         "iptv" -> {
@@ -822,6 +832,25 @@ fun SettingsScreen(
                                                 contentFocusIndex == uiState.iptvPlaylists.size + 2 -> {
                                                     viewModel.clearIptvConfig()
                                                 }
+                                            }
+                                        }
+                                        "home_server" -> {
+                                            when (contentFocusIndex) {
+                                                0 -> {
+                                                    homeServerUrl = ""
+                                                    homeServerUsername = ""
+                                                    homeServerPassword = ""
+                                                    showHomeServerInput = true
+                                                }
+                                                in 1..uiState.homeServerConnections.size -> {
+                                                    val connection = uiState.homeServerConnections.getOrNull(contentFocusIndex - 1)
+                                                    homeServerUrl = connection?.serverUrl.orEmpty()
+                                                    homeServerUsername = connection?.userName.orEmpty()
+                                                    homeServerPassword = ""
+                                                    showHomeServerInput = true
+                                                }
+                                                uiState.homeServerConnections.size + 1 -> viewModel.testHomeServerConnection()
+                                                uiState.homeServerConnections.size + 2 -> viewModel.disconnectHomeServer()
                                             }
                                         }
                                         "catalogs" -> {
@@ -967,6 +996,13 @@ fun SettingsScreen(
                     renameCatalogTitle = catalog.title
                     showCatalogRename = true
                 },
+                onConnectHomeServerClick = {
+                    val connection = uiState.homeServerConnection
+                    homeServerUrl = connection?.serverUrl.orEmpty()
+                    homeServerUsername = connection?.userName.orEmpty()
+                    homeServerPassword = ""
+                    showHomeServerInput = true
+                },
                 onAddCustomAddonClick = { showCustomAddonInput = true },
                 onAddCloudstreamRepoClick = { showCloudstreamRepoInput = true }
             )
@@ -1011,6 +1047,7 @@ fun SettingsScreen(
                                 icon = when (section) {
                                     "general" -> Icons.Default.Settings
                                     "iptv" -> Icons.Default.LiveTv
+                                    "home_server" -> Icons.Default.Cloud
                                     "catalogs" -> Icons.Default.Widgets
                                     "stremio" -> Icons.Default.Widgets
                                     "cloudstream" -> Icons.Default.Cloud
@@ -1020,6 +1057,7 @@ fun SettingsScreen(
                                 title = when (section) {
                                     "general" -> stringResource(R.string.general)
                                     "iptv" -> stringResource(R.string.iptv)
+                                    "home_server" -> "Home Server"
                                     "catalogs" -> stringResource(R.string.catalogs)
                                     "stremio" -> stringResource(R.string.addons)
                                     "cloudstream" -> stringResource(R.string.cloudstream)
@@ -1103,6 +1141,8 @@ fun SettingsScreen(
                             onShowBudgetToggle = { viewModel.setShowBudget(it) },
                             spoilerBlurEnabled = uiState.spoilerBlurEnabled,
                             onSpoilerBlurToggle = { viewModel.setSpoilerBlurEnabled(it) },
+                            focusBorderColor = uiState.focusBorderColor,
+                            onFocusBorderColorClick = { viewModel.cycleFocusBorderColor() },
                             showLoadingStats = uiState.showLoadingStats,
                             onShowLoadingStatsToggle = { viewModel.setShowLoadingStats(it) },
                             onVolumeBoostClick = { viewModel.cycleVolumeBoost() },
@@ -1198,6 +1238,26 @@ fun SettingsScreen(
                             },
                             onRefresh = { viewModel.refreshIptv() },
                             onDelete = { viewModel.clearIptvConfig() }
+                        )
+                        "home_server" -> HomeServerSettings(
+                            connections = uiState.homeServerConnections,
+                            isWorking = uiState.isHomeServerConnecting,
+                            error = uiState.homeServerError,
+                            focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
+                            onConnect = {
+                                homeServerUrl = ""
+                                homeServerUsername = ""
+                                homeServerPassword = ""
+                                showHomeServerInput = true
+                            },
+                            onEditConnection = { connection ->
+                                homeServerUrl = connection.serverUrl
+                                homeServerUsername = connection.userName
+                                homeServerPassword = ""
+                                showHomeServerInput = true
+                            },
+                            onTest = { viewModel.testHomeServerConnection() },
+                            onDisconnect = { viewModel.disconnectHomeServer() }
                         )
                         "catalogs" -> CatalogsSettings(
                             catalogs = uiState.catalogs,
@@ -1325,6 +1385,46 @@ fun SettingsScreen(
                 onToggleInstalledPlugin = { viewModel.toggleAddon(it) },
                 onRemoveInstalledPlugin = { viewModel.removeAddon(it) },
                 onDismiss = { viewModel.dismissCloudstreamPluginPicker() }
+            )
+        }
+        if (showHomeServerInput) {
+            InputModal(
+                title = "Home Server",
+                fields = listOf(
+                    InputField(
+                        label = "Server URL",
+                        value = homeServerUrl,
+                        placeholder = "http://server:8096 or http://plex:32400",
+                        onValueChange = { homeServerUrl = it }
+                    ),
+                    InputField(
+                        label = "Username",
+                        value = homeServerUsername,
+                        placeholder = "Optional for Plex token",
+                        onValueChange = { homeServerUsername = it }
+                    ),
+                    InputField(
+                        label = "Password / Plex token",
+                        value = homeServerPassword,
+                        isSecret = true,
+                        onValueChange = { homeServerPassword = it }
+                    )
+                ),
+                onConfirm = {
+                    if (homeServerUrl.isNotBlank() && homeServerPassword.isNotBlank()) {
+                        viewModel.connectHomeServer(
+                            serverUrl = homeServerUrl.trim(),
+                            username = homeServerUsername.trim(),
+                            password = homeServerPassword
+                        )
+                        homeServerPassword = ""
+                        showHomeServerInput = false
+                    }
+                },
+                onDismiss = {
+                    homeServerPassword = ""
+                    showHomeServerInput = false
+                }
             )
         }
         if (showIptvInput) {
@@ -2764,6 +2864,7 @@ private fun MobileSettingsLayout(
     onEditIptvClick: (Int) -> Unit,
     onAddCatalogClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
+    onConnectHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
     onAddCloudstreamRepoClick: () -> Unit
 ) {
@@ -2844,6 +2945,7 @@ private fun MobileSettingsLayout(
                 onEditIptvClick = onEditIptvClick,
                 onAddCatalogClick = onAddCatalogClick,
                 onRenameCatalogClick = onRenameCatalogClick,
+                onConnectHomeServerClick = onConnectHomeServerClick,
                 onAddCustomAddonClick = onAddCustomAddonClick,
                 onAddCloudstreamRepoClick = onAddCloudstreamRepoClick
             )
@@ -2916,7 +3018,8 @@ private fun MobileSettingsMainPage(
                     "Appearance" to Icons.Default.Palette,
                     "Plugins & Extensions" to Icons.Default.Extension,
                     "Catalogs" to Icons.Default.Widgets,
-                    "IPTV" to Icons.Default.LiveTv
+                    "IPTV" to Icons.Default.LiveTv,
+                    "Home Server" to Icons.Default.Cloud
                 )
                 categories.forEachIndexed { index, (name, icon) ->
                     Column {
@@ -3002,6 +3105,7 @@ private fun MobileSettingsSubPage(
     onEditIptvClick: (Int) -> Unit,
     onAddCatalogClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
+    onConnectHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
     onAddCloudstreamRepoClick: () -> Unit
 ) {
@@ -3183,6 +3287,14 @@ private fun MobileSettingsSubPage(
                         showDivider = false,
                         onClick = { viewModel.setSpoilerBlurEnabled(!uiState.spoilerBlurEnabled) }
                     )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Palette,
+                        title = stringResource(R.string.focus_border_color),
+                        value = uiState.focusBorderColor,
+                        isFocused = false,
+                        showDivider = false,
+                        onClick = { viewModel.cycleFocusBorderColor() }
+                    )
                 }
             }
             "Plugins & Extensions" -> {
@@ -3264,6 +3376,20 @@ private fun MobileSettingsSubPage(
                     },
                     onRefresh = { viewModel.refreshIptv() },
                     onDelete = { viewModel.clearIptvConfig() }
+                )
+            }
+            "Home Server" -> {
+                HomeServerSettings(
+                    connections = uiState.homeServerConnections,
+                    isWorking = uiState.isHomeServerConnecting,
+                    error = uiState.homeServerError,
+                    focusedIndex = -1,
+                    onConnect = onConnectHomeServerClick,
+                    onEditConnection = { connection ->
+                        onConnectHomeServerClick()
+                    },
+                    onTest = { viewModel.testHomeServerConnection() },
+                    onDisconnect = { viewModel.disconnectHomeServer() }
                 )
             }
         }
@@ -3696,6 +3822,7 @@ private fun GeneralSettings(
     clockFormat: String = "24h",
     showBudget: Boolean = true,
     spoilerBlurEnabled: Boolean = false,
+    focusBorderColor: String = "White",
     volumeBoostDb: Int = 0,
     focusedIndex: Int,
     onSubtitleClick: () -> Unit,
@@ -3714,6 +3841,7 @@ private fun GeneralSettings(
     onClockFormatClick: () -> Unit = {},
     onShowBudgetToggle: (Boolean) -> Unit = {},
     onSpoilerBlurToggle: (Boolean) -> Unit = {},
+    onFocusBorderColorClick: () -> Unit = {},
     showLoadingStats: Boolean = true,
     onShowLoadingStatsToggle: (Boolean) -> Unit = {},
     onVolumeBoostClick: () -> Unit = {},
@@ -3995,6 +4123,16 @@ private fun GeneralSettings(
             onToggle = onSpoilerBlurToggle,
             modifier = Modifier.settingsFocusSlot(22)
         )
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsRow(
+            icon = Icons.Default.Palette,
+            title = stringResource(R.string.focus_border_color),
+            subtitle = stringResource(R.string.focus_border_color_desc),
+            value = focusBorderColor,
+            isFocused = focusedIndex == 23,
+            onClick = onFocusBorderColorClick,
+            modifier = Modifier.settingsFocusSlot(23)
+        )
 
         // ── Network ──
         Spacer(modifier = Modifier.height(24.dp))
@@ -4010,18 +4148,18 @@ private fun GeneralSettings(
             title = stringResource(R.string.dns_provider),
             subtitle = stringResource(R.string.dns_desc),
             value = dnsProvider,
-            isFocused = focusedIndex == 23,
+            isFocused = focusedIndex == 24,
             onClick = onDnsProviderClick,
-            modifier = Modifier.settingsFocusSlot(23)
+            modifier = Modifier.settingsFocusSlot(24)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsToggleRow(
             title = stringResource(R.string.show_loading_stats),
             subtitle = stringResource(R.string.show_loading_stats_desc),
             isEnabled = showLoadingStats,
-            isFocused = focusedIndex == 24,
+            isFocused = focusedIndex == 25,
             onToggle = onShowLoadingStatsToggle,
-            modifier = Modifier.settingsFocusSlot(24)
+            modifier = Modifier.settingsFocusSlot(25)
         )
 
         // ── Audio ──
@@ -4041,9 +4179,9 @@ private fun GeneralSettings(
                 0 -> "Off"
                 else -> "+${volumeBoostDb} dB"
             },
-            isFocused = focusedIndex == 25,
+            isFocused = focusedIndex == 26,
             onClick = onVolumeBoostClick,
-            modifier = Modifier.settingsFocusSlot(25)
+            modifier = Modifier.settingsFocusSlot(26)
         )
 
         // ── AI Subtitles ──
@@ -4058,9 +4196,9 @@ private fun GeneralSettings(
             title = stringResource(R.string.ai_subtitle_translation_title),
             subtitle = stringResource(R.string.ai_subtitle_translation_desc),
             isEnabled = subtitleAiEnabled,
-            isFocused = focusedIndex == 26,
+            isFocused = focusedIndex == 27,
             onToggle = onSubtitleAiEnabledToggle,
-            modifier = Modifier.settingsFocusSlot(26)
+            modifier = Modifier.settingsFocusSlot(27)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsRow(
@@ -4071,27 +4209,27 @@ private fun GeneralSettings(
                 com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq – Llama 3.3 70B"
                 com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google – Gemini 2.5 Flash"
             },
-            isFocused = focusedIndex == 27,
+            isFocused = focusedIndex == 28,
             onClick = onSubtitleAiModelClick,
-            modifier = Modifier.settingsFocusSlot(27).alpha(if (subtitleAiEnabled) 1f else 0.4f)
+            modifier = Modifier.settingsFocusSlot(28).alpha(if (subtitleAiEnabled) 1f else 0.4f)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsToggleRow(
             title = stringResource(R.string.ai_auto_select_title),
             subtitle = stringResource(R.string.ai_auto_select_desc),
             isEnabled = subtitleAiAutoSelect,
-            isFocused = focusedIndex == 28,
+            isFocused = focusedIndex == 29,
             onToggle = onSubtitleAiAutoSelectToggle,
-            modifier = Modifier.settingsFocusSlot(28).alpha(if (subtitleAiEnabled) 1f else 0.4f)
+            modifier = Modifier.settingsFocusSlot(29).alpha(if (subtitleAiEnabled) 1f else 0.4f)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsToggleRow(
             title = stringResource(R.string.ai_remove_hi_title),
             subtitle = stringResource(R.string.ai_remove_hi_desc),
             isEnabled = subtitleRemoveHearingImpaired,
-            isFocused = focusedIndex == 29,
+            isFocused = focusedIndex == 30,
             onToggle = onSubtitleRemoveHearingImpairedToggle,
-            modifier = Modifier.settingsFocusSlot(29).alpha(if (subtitleAiEnabled) 1f else 0.4f)
+            modifier = Modifier.settingsFocusSlot(30).alpha(if (subtitleAiEnabled) 1f else 0.4f)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsRow(
@@ -4099,9 +4237,9 @@ private fun GeneralSettings(
             title = stringResource(R.string.ai_api_key_title),
             subtitle = stringResource(R.string.ai_api_key_desc),
             value = maskAiApiKey(subtitleAiApiKey, stringResource(R.string.ai_key_not_set)),
-            isFocused = focusedIndex == 30,
+            isFocused = focusedIndex == 31,
             onClick = onSubtitleAiApiKeyClick,
-            modifier = Modifier.settingsFocusSlot(30).alpha(if (subtitleAiEnabled) 1f else 0.4f)
+            modifier = Modifier.settingsFocusSlot(31).alpha(if (subtitleAiEnabled) 1f else 0.4f)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsRow(
@@ -4109,9 +4247,9 @@ private fun GeneralSettings(
             title = stringResource(R.string.ai_scan_qr_title),
             subtitle = stringResource(R.string.ai_scan_qr_desc),
             value = "",
-            isFocused = focusedIndex == 31,
+            isFocused = focusedIndex == 32,
             onClick = onSubtitleAiQrClick,
-            modifier = Modifier.settingsFocusSlot(31).alpha(if (subtitleAiEnabled) 1f else 0.4f)
+            modifier = Modifier.settingsFocusSlot(32).alpha(if (subtitleAiEnabled) 1f else 0.4f)
         )
         if (subtitleAiEnabled) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -4370,6 +4508,103 @@ private fun AiKeyQrOverlay(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun HomeServerSettings(
+    connections: List<HomeServerConnection>,
+    isWorking: Boolean,
+    error: String?,
+    focusedIndex: Int,
+    onConnect: () -> Unit,
+    onEditConnection: (HomeServerConnection) -> Unit,
+    onTest: () -> Unit,
+    onDisconnect: () -> Unit
+) {
+    val hasConnections = connections.isNotEmpty()
+    Column {
+        if (!LocalDeviceType.current.isTouchDevice()) {
+            Text(
+                text = "Home Server",
+                style = ArflixTypography.sectionTitle,
+                color = TextPrimary,
+                modifier = Modifier.padding(bottom = 24.dp)
+            )
+        }
+
+        SettingsRow(
+            icon = Icons.Default.Cloud,
+            title = "Add server",
+            subtitle = "Jellyfin, Emby, or Plex libraries as sources",
+            value = if (isWorking) "Working" else if (hasConnections) "Add another" else "Connect",
+            isFocused = focusedIndex == 0,
+            onClick = onConnect,
+            modifier = Modifier.settingsFocusSlot(0)
+        )
+
+        connections.forEachIndexed { index, connection ->
+            Spacer(modifier = Modifier.height(16.dp))
+            val libraries = connection.collections.count { it.enabled }
+            val description = listOfNotNull(
+                homeServerKindLabel(connection.serverKind).takeIf { it.isNotBlank() },
+                connection.userName.takeIf { it.isNotBlank() },
+                if (libraries > 0) "$libraries collections" else null
+            ).joinToString("  |  ").ifBlank { connection.serverUrl }
+
+            SettingsActionRow(
+                title = connection.serverName.ifBlank { connection.serverUrl },
+                description = description,
+                actionLabel = "Change",
+                isFocused = focusedIndex == index + 1,
+                onClick = { onEditConnection(connection) },
+                modifier = Modifier.settingsFocusSlot(index + 1)
+            )
+        }
+
+        val testIndex = connections.size + 1
+        val disconnectIndex = connections.size + 2
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsActionRow(
+            title = "Test connection",
+            description = if (!hasConnections) "Connect a server first" else "Check that this profile can reach every server",
+            actionLabel = if (isWorking) "Working" else "Test",
+            isFocused = focusedIndex == testIndex,
+            onClick = { if (hasConnections) onTest() },
+            modifier = Modifier.settingsFocusSlot(testIndex)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsActionRow(
+            title = "Disconnect all",
+            description = if (!hasConnections) "No server is connected" else "Remove all servers from the active profile",
+            actionLabel = "Remove",
+            isFocused = focusedIndex == disconnectIndex,
+            onClick = { if (hasConnections) onDisconnect() },
+            modifier = Modifier.settingsFocusSlot(disconnectIndex)
+        )
+
+        if (!error.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = error,
+                style = ArflixTypography.caption,
+                color = Color(0xFFFF6B6B)
+            )
+        }
+    }
+}
+
+private fun homeServerKindLabel(kind: HomeServerKind): String {
+    return when (kind) {
+        HomeServerKind.JELLYFIN -> "Jellyfin"
+        HomeServerKind.EMBY -> "Emby"
+        HomeServerKind.PLEX -> "Plex"
+        HomeServerKind.UNKNOWN -> ""
     }
 }
 
@@ -7865,9 +8100,13 @@ private fun InputModal(
                                         }
                                         focusedIndex == fields.size -> {
                                             val clipboardText = clipboardManager.getText()?.text
-                                            // Paste into the URL field (index 1) when available,
-                                            // otherwise fall back to the first field.
-                                            val targetIndex = if (fields.size > 1) 1 else 0
+                                            // Paste into the URL/server/host field when present,
+                                            // otherwise fall back to the historical second field.
+                                            val targetIndex = fields.indexOfFirst { field ->
+                                                field.label.contains("url", ignoreCase = true) ||
+                                                    field.label.contains("server", ignoreCase = true) ||
+                                                    field.label.contains("host", ignoreCase = true)
+                                            }.takeIf { it >= 0 } ?: if (fields.size > 1) 1 else 0
                                             val target = fields.getOrNull(targetIndex)
                                             if (clipboardText != null && target != null) {
                                                 target.onValueChange(clipboardText)

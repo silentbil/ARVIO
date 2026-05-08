@@ -57,7 +57,12 @@ import androidx.tv.foundation.lazy.grid.itemsIndexed
 import androidx.tv.foundation.lazy.grid.rememberTvLazyGridState
 import coil.compose.AsyncImage
 import com.arflix.tv.data.model.CatalogConfig
+import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.CollectionGroupKind
+import com.arflix.tv.data.model.CollectionSourceConfig
+import com.arflix.tv.data.model.CollectionSourceKind
+import com.arflix.tv.data.model.CollectionTileShape
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.repository.CatalogRepository
@@ -118,18 +123,21 @@ class CollectionDetailsViewModel @Inject constructor(
         const val FIRST_PAGE = 8
         const val PAGE_STEP = 12
         const val BACKGROUND_PREFETCH_DELAY_MS = 350L
+        const val TMDB_COLLECTION_PREFIX = "tmdb_collection:"
     }
 
     fun load(catalogId: String) {
         viewModelScope.launch {
+            val normalizedCatalogId = normalizeCatalogId(catalogId)
             // Skip reload if this catalog is already loaded — the composable is re-entered
             // after back navigation (Navigation Compose tears down composables on forward nav)
             // and we want to preserve all paginated data so saved scroll positions stay valid.
             val current = _uiState.value
-            if (current.catalog?.id == catalogId && !current.isLoadingMovies && !current.isLoadingSeries) return@launch
+            if (current.catalog?.id == normalizedCatalogId && !current.isLoadingMovies && !current.isLoadingSeries) return@launch
 
             _uiState.value = CollectionDetailsUiState(isLoadingMovies = true, isLoadingSeries = true)
-            val catalog = catalogRepository.getCatalogs().firstOrNull { it.id == catalogId }
+            val catalog = catalogRepository.getCatalogs().firstOrNull { it.id == normalizedCatalogId || it.id == catalogId }
+                ?: syntheticTmdbCollectionCatalog(normalizedCatalogId)
             if (catalog == null) {
                 _uiState.value = CollectionDetailsUiState(
                     isLoadingMovies = false,
@@ -165,6 +173,41 @@ class CollectionDetailsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun normalizeCatalogId(catalogId: String): String {
+        val trimmed = catalogId.trim()
+        return runCatching {
+            java.net.URLDecoder.decode(trimmed, "UTF-8")
+        }.getOrDefault(trimmed)
+    }
+
+    private fun syntheticTmdbCollectionCatalog(catalogId: String): CatalogConfig? {
+        if (!catalogId.startsWith(TMDB_COLLECTION_PREFIX)) return null
+
+        val payload = catalogId.removePrefix(TMDB_COLLECTION_PREFIX)
+        val collectionId = payload.substringBefore(":").toIntOrNull() ?: return null
+        val collectionName = payload.substringAfter(":", missingDelimiterValue = "")
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?: "Collection"
+
+        return CatalogConfig(
+            id = catalogId,
+            title = collectionName,
+            sourceType = CatalogSourceType.PREINSTALLED,
+            isPreinstalled = true,
+            kind = CatalogKind.COLLECTION,
+            collectionGroup = CollectionGroupKind.FRANCHISE,
+            collectionTileShape = CollectionTileShape.POSTER,
+            collectionSources = listOf(
+                CollectionSourceConfig(
+                    kind = CollectionSourceKind.TMDB_COLLECTION,
+                    mediaType = "movie",
+                    tmdbCollectionId = collectionId
+                )
+            )
+        )
     }
 
     private suspend fun loadInitialTab(catalog: CatalogConfig, tab: CollectionTab) {

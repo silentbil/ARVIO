@@ -7,7 +7,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
+import com.arflix.tv.ui.skin.LocalFocusBorderColorOverride
 import com.arflix.tv.ui.skin.ProvideArvioSkin
+import com.arflix.tv.ui.skin.focusBorderColorFromName
 
 /**
  * ARVIO Color scheme holder - Arctic Fuse 2 inspired
@@ -87,9 +89,11 @@ val LocalArflixColors = LocalArvioColors
 @Composable
 fun ArvioTvTheme(
     oledBlackBackground: Boolean = false,
+    focusBorderColorName: String? = null,
     content: @Composable () -> Unit
 ) {
     val backgroundDark = if (oledBlackBackground) Color.Black else BackgroundDark
+    val focusBorderColor = focusBorderColorName?.let { focusBorderColorFromName(it) }
     val colorScheme = darkColorScheme(
         primary = ArcticWhite,
         onPrimary = ArcticBlack,
@@ -118,7 +122,8 @@ fun ArvioTvTheme(
 
     CompositionLocalProvider(
         LocalArvioColors provides arvioColors,
-        LocalOledBlackBackground provides oledBlackBackground
+        LocalOledBlackBackground provides oledBlackBackground,
+        LocalFocusBorderColorOverride provides focusBorderColor
     ) {
         ProvideArvioSkin {
             MaterialTheme(
@@ -134,8 +139,13 @@ fun ArvioTvTheme(
 @Composable
 fun ArflixTvTheme(
     oledBlackBackground: Boolean = false,
+    focusBorderColorName: String? = null,
     content: @Composable () -> Unit
-) = ArvioTvTheme(oledBlackBackground = oledBlackBackground, content = content)
+) = ArvioTvTheme(
+    oledBlackBackground = oledBlackBackground,
+    focusBorderColorName = focusBorderColorName,
+    content = content
+)
 
 /**
  * Access custom ARVIO colors

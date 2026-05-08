@@ -176,6 +176,8 @@
     <string name="show_budget_desc">Display the movie budget on the home hero banner</string>
     <string name="spoiler_blur">Spoiler Blur</string>
     <string name="spoiler_blur_desc">Blur unwatched episode cards to avoid spoilers</string>
+    <string name="focus_border_color">Focus Border Color</string>
+    <string name="focus_border_color_desc">Choose the D-pad focus ring color</string>
     <string name="show_loading_stats_desc">Display stream resolution progress</string>
     <string name="volume_boost_desc">Amplify quiet sources (via system LoudnessEnhancer)</string>
     <string name="dns_desc">Resolve API and stream requests</string>
@@ -208,6 +210,7 @@
     <string name="done">Done</string>
     <string name="save">Save</string>
     <string name="connect_to_cloud">Connect to ARVIO Cloud</string>
+    <string name="view_collection">View Collection</string>
 
     <!-- AI Subtitles -->
     <string name="ai_subtitles_section">AI Subtitles</string>

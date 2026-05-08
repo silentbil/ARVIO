@@ -3,6 +3,7 @@ package com.arflix.tv.data.repository
 import com.arflix.tv.R
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.api.TmdbCastMember
+import com.arflix.tv.data.api.TmdbCrewMember
 import com.arflix.tv.data.api.TmdbEpisode
 import com.arflix.tv.data.api.TmdbImage
 import com.arflix.tv.data.api.TmdbListResponse
@@ -62,6 +63,12 @@ data class StreamingServicesResult(
     val services: List<StreamingServiceInfo>
 )
 
+data class PersonMediaSearchResult(
+    val personId: Int,
+    val name: String,
+    val items: List<MediaItem>
+)
+
 /**
  * Repository for media data from TMDB
  * Cross-references with Trakt for watched status
@@ -99,6 +106,7 @@ class MediaRepository @Inject constructor(
     private val HOME_CATEGORIES_CACHE_MS = 120_000L // 2 minutes
 
     private val detailsCache = mutableMapOf<String, CacheEntry<MediaItem>>()
+    private val fullDetailsCacheKeys = mutableSetOf<String>()
     private val castCache = mutableMapOf<String, CacheEntry<List<CastMember>>>()
     private val similarCache = mutableMapOf<String, CacheEntry<List<MediaItem>>>()
     private val logoCache = mutableMapOf<String, CacheEntry<String?>>()
@@ -113,6 +121,10 @@ class MediaRepository @Inject constructor(
     private fun <T> getFromCache(cache: Map<String, CacheEntry<T>>, key: String): T? {
         val entry = cache[key] ?: return null
         return if (System.currentTimeMillis() - entry.timestamp < CACHE_TTL_MS) entry.data else null
+    }
+
+    private fun detailsCacheKey(mediaType: MediaType, mediaId: Int): String {
+        return if (mediaType == MediaType.MOVIE) "movie_$mediaId" else "tv_$mediaId"
     }
 
     private fun getAddonImdbLookupEntry(imdbId: String): CacheEntry<Pair<MediaType, Int>?>? {
@@ -269,24 +281,45 @@ class MediaRepository @Inject constructor(
     }
 
     fun getCachedItem(mediaType: MediaType, mediaId: Int): MediaItem? {
-        val cacheKey = if (mediaType == MediaType.MOVIE) "movie_$mediaId" else "tv_$mediaId"
+        val cacheKey = detailsCacheKey(mediaType, mediaId)
         return getFromCache(detailsCache, cacheKey)
+    }
+
+    fun getCachedFullItem(mediaType: MediaType, mediaId: Int): MediaItem? {
+        val cacheKey = detailsCacheKey(mediaType, mediaId)
+        if (cacheKey !in fullDetailsCacheKeys) return null
+        val cached = getFromCache(detailsCache, cacheKey)
+        if (cached == null) {
+            fullDetailsCacheKeys.remove(cacheKey)
+        }
+        return cached
     }
 
     fun cacheImdbId(mediaType: MediaType, mediaId: Int, imdbId: String) {
         if (imdbId.isBlank()) return
-        val cacheKey = if (mediaType == MediaType.MOVIE) "movie_$mediaId" else "tv_$mediaId"
+        val cacheKey = detailsCacheKey(mediaType, mediaId)
         imdbIdCache[cacheKey] = imdbId
     }
 
     fun getCachedImdbId(mediaType: MediaType, mediaId: Int): String? {
-        val cacheKey = if (mediaType == MediaType.MOVIE) "movie_$mediaId" else "tv_$mediaId"
+        val cacheKey = detailsCacheKey(mediaType, mediaId)
         return imdbIdCache[cacheKey]
     }
 
     fun cacheItem(item: MediaItem) {
-        val cacheKey = if (item.mediaType == MediaType.MOVIE) "movie_${item.id}" else "tv_${item.id}"
+        val cacheKey = detailsCacheKey(item.mediaType, item.id)
+        if (cacheKey in fullDetailsCacheKeys) {
+            val existingFullDetails = getFromCache(detailsCache, cacheKey)
+            if (existingFullDetails != null) return
+            fullDetailsCacheKeys.remove(cacheKey)
+        }
         detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
+    }
+
+    private fun cacheFullDetailsItem(item: MediaItem) {
+        val cacheKey = detailsCacheKey(item.mediaType, item.id)
+        detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
+        fullDetailsCacheKeys.add(cacheKey)
     }
 
     private fun cacheItems(items: List<MediaItem>) {
@@ -2364,14 +2397,12 @@ class MediaRepository @Inject constructor(
     suspend fun getMovieDetails(movieId: Int): MediaItem {
         val cacheKey = "movie_$movieId"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
-            // Only use cache hit if it was populated from the full TMDB details API.
-            // Home screen items share the same cache key but lack detail-level fields.
-            if (cached.duration.isNotBlank()) return cached
+            if (cacheKey in fullDetailsCacheKeys) return cached
         }
 
         val details = tmdbApi.getMovieDetails(movieId, apiKey, language = contentLanguage)
         val item = details.toMediaItem()
-        detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
+        cacheFullDetailsItem(item)
         return item
     }
 
@@ -2381,20 +2412,41 @@ class MediaRepository @Inject constructor(
     suspend fun getTvDetails(tvId: Int): MediaItem {
         val cacheKey = "tv_$tvId"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
-            // Only use cache hit if it was populated from the full TMDB details API.
-            // Home screen items (from trending/discover lists) share the same cache key
-            // but lack totalEpisodes (which stores numberOfSeasons). Without this check,
-            // the stale list-level item prevents the real details fetch, causing the
-            // season selector to never appear (totalSeasons stays at 1).
-            if (cached.totalEpisodes != null) return cached
+            if (cacheKey in fullDetailsCacheKeys) return cached
         }
 
         val details = tmdbApi.getTvDetails(tvId, apiKey, language = contentLanguage)
         val item = details.toMediaItem()
-        detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
+        cacheFullDetailsItem(item)
         return item
     }
-    
+
+    /**
+     * Get the TMDB collection (franchise) reference for a movie.
+     * Calls /movie/{id} directly to access the `belongs_to_collection` field,
+     * which is discarded by getMovieDetails() → toMediaItem().
+     * The response is cached by OkHttp, making the redundant call negligible.
+     */
+    suspend fun getMovieCollectionRef(movieId: Int): com.arflix.tv.data.api.TmdbCollectionRef? {
+        return runCatching {
+            tmdbApi.getMovieDetails(movieId, apiKey, language = contentLanguage).belongsToCollection
+        }.getOrNull()
+    }
+
+    /**
+     * Fetch all movies in a TMDB collection (franchise).
+     * Calls TMDB /collection/{id} and maps the parts array to Movie MediaItems.
+     * Used by the Details page to show franchise rows (e.g. "Cars Collection").
+     */
+    suspend fun getTmdbCollectionItems(collectionId: Int): List<MediaItem> {
+        val response = runCatching {
+            tmdbApi.getTmdbCollection(collectionId, apiKey, language = contentLanguage)
+        }.getOrNull() ?: return emptyList()
+        return response.parts
+            .sortedBy { it.releaseDate.orEmpty() }
+            .map { it.toMediaItem(MediaType.MOVIE) }
+    }
+
     /**
      * Get season episodes with Trakt watched status
      */
@@ -2448,12 +2500,22 @@ class MediaRepository @Inject constructor(
 
         val type = if (mediaType == MediaType.TV) "tv" else "movie"
         val credits = tmdbApi.getCredits(type, mediaId, apiKey, language = contentLanguage)
-        val cast = credits.cast
+
+        // Find the director from crew and prepend as the first cast member
+        val director = credits.crew.firstOrNull { it.job == "Director" }
+
+        val castMembers = credits.cast
             .distinctBy { it.id } // TMDB can occasionally return duplicate cast IDs.
             .take(15)
             .map { it.toCastMember() }
-        castCache[cacheKey] = CacheEntry(cast, System.currentTimeMillis())
-        return cast
+
+        val result = if (director != null) {
+            listOf(director.toDirectorCastMember()) + castMembers
+        } else {
+            castMembers
+        }
+        castCache[cacheKey] = CacheEntry(result, System.currentTimeMillis())
+        return result
     }
 
     /**
@@ -2574,6 +2636,61 @@ class MediaRepository @Inject constructor(
             }
         cacheItems(items)
         return items
+    }
+
+    /**
+     * Search people and expose their known-for media as result rows.
+     *
+     * TMDB multi-search already returns person hits, but normal title search
+     * cannot display a person card. Returning rows keeps actor/director queries
+     * useful without changing the media-card detail flow.
+     */
+    suspend fun searchPeopleKnownFor(query: String, maxPeople: Int = 3): List<PersonMediaSearchResult> {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return emptyList()
+
+        val response = tmdbApi.searchMulti(apiKey, trimmed, language = contentLanguage)
+        val people = response.results
+            .asSequence()
+            .filter { it.mediaType == "person" && it.id > 0 && !it.name.isNullOrBlank() }
+            .distinctBy { it.id }
+            .sortedByDescending { it.popularity }
+            .take(maxPeople)
+            .toList()
+
+        val rows = people.mapNotNull { person ->
+            val knownForItems = person.knownFor
+                .asSequence()
+                .filter { it.posterPath != null && (it.mediaType == "movie" || it.mediaType == "tv") }
+                .sortedWith(
+                    compareByDescending<TmdbMediaItem> { it.voteCount }
+                        .thenByDescending { it.popularity }
+                )
+                .map {
+                    it.toMediaItem(
+                        if (it.mediaType == "tv") MediaType.TV else MediaType.MOVIE
+                    )
+                }
+                .distinctBy { "${it.mediaType}_${it.id}" }
+                .take(20)
+                .toList()
+                .ifEmpty {
+                    runCatching { getPersonDetails(person.id).knownFor }.getOrDefault(emptyList())
+                }
+
+            if (knownForItems.isEmpty()) {
+                null
+            } else {
+                PersonMediaSearchResult(
+                    personId = person.id,
+                    name = person.name.orEmpty(),
+                    items = knownForItems
+                )
+            }
+        }
+
+        rows.flatMap { it.items }.takeIf { it.isNotEmpty() }?.let(::cacheItems)
+        return rows
     }
 
     /**
@@ -3121,6 +3238,14 @@ private fun TmdbTvDetails.toMediaItem(): MediaItem {
     val year = firstAirDate?.take(4) ?: ""
     val runtime = episodeRunTime.firstOrNull() ?: 45
     val duration = "${runtime}m"
+    val actualSeasonCount = seasons
+        .asSequence()
+        .filter { it.seasonNumber > 0 && it.episodeCount > 0 }
+        .map { it.seasonNumber }
+        .distinct()
+        .count()
+        .takeIf { it > 0 }
+        ?: numberOfSeasons.coerceAtLeast(1)
     
     return MediaItem(
         id = id,
@@ -3139,7 +3264,7 @@ private fun TmdbTvDetails.toMediaItem(): MediaItem {
         backdrop = backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
         originalLanguage = originalLanguage,
         isOngoing = status == "Returning Series",
-        totalEpisodes = numberOfSeasons,
+        totalEpisodes = actualSeasonCount,
         status = status,
         genreIds = genres.map { it.id }
     )
@@ -3164,6 +3289,15 @@ private fun TmdbCastMember.toCastMember(): CastMember {
         id = id,
         name = name,
         character = character ?: "",
+        profilePath = profilePath?.let { "${Constants.IMAGE_BASE}$it" }
+    )
+}
+
+private fun TmdbCrewMember.toDirectorCastMember(): CastMember {
+    return CastMember(
+        id = id,
+        name = name,
+        character = job,
         profilePath = profilePath?.let { "${Constants.IMAGE_BASE}$it" }
     )
 }

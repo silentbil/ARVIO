@@ -70,6 +70,25 @@ import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+/**
+ * Formats a TMDB birthday string ("yyyy-MM-dd") to the app-standard "d MMM yyyy" format.
+ * Matches [com.arflix.tv.data.repository.MediaRepository.formatDate] and
+ * [com.arflix.tv.ui.screens.details.DetailsScreen.formatEpisodeAirDateLabel].
+ */
+private fun formatBirthday(dateStr: String?): String {
+    if (dateStr.isNullOrEmpty()) return ""
+    return try {
+        val inputFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val outputFormat = SimpleDateFormat("d MMM yyyy", Locale.US)
+        val date = inputFormat.parse(dateStr)
+        date?.let { outputFormat.format(it) } ?: dateStr
+    } catch (e: Exception) {
+        dateStr
+    }
+}
 
 /**
  * Premium full-screen modal for displaying person/cast details
@@ -246,7 +265,7 @@ fun PersonModal(
                         // Birth info - subtle
                         if (person.birthday != null) {
                             Text(
-                                text = person.birthday,
+                                text = formatBirthday(person.birthday),
                                 style = ArflixTypography.body.copy(fontSize = 13.sp),
                                 color = TextSecondary.copy(alpha = 0.7f)
                             )
@@ -428,7 +447,7 @@ private fun MobilePersonContent(
             if (person.birthday != null) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = person.birthday,
+                    text = formatBirthday(person.birthday),
                     style = ArflixTypography.body.copy(fontSize = 13.sp),
                     color = TextSecondary.copy(alpha = 0.7f)
                 )
@@ -610,7 +629,7 @@ private fun HorizontalKnownForCard(
                     }
                 }
             }
-
+            
             // Focus glow effect
             if (isFocused) {
                 Box(

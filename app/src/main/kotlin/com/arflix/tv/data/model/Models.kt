@@ -50,7 +50,11 @@ data class MediaItem(
     // Explicit source order when a remote list already gives the correct order.
     val sourceOrder: Int = Int.MAX_VALUE,
     // Placeholder card - shows skeleton loading animation
-    val isPlaceholder: Boolean = false
+    val isPlaceholder: Boolean = false,
+    // Continue Watching: formatted time remaining (e.g., "23min left", "1hr 15min left")
+    val timeRemainingLabel: String? = null,
+    // Continue Watching: true only when progress represents current movie/episode playback.
+    val showPlaybackProgress: Boolean = true,
 ) : Serializable
 
 enum class MediaType {

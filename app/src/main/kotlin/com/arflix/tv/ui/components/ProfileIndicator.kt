@@ -82,29 +82,14 @@ fun ProfileIndicator(
                 modifier = Modifier
                     .size(28.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(
-                        if (profile.avatarId > 0) {
-                            val (c1, c2) = AvatarRegistry.gradientColors(profile.avatarId)
-                            Brush.verticalGradient(listOf(c1, c2))
-                        } else {
-                            Brush.linearGradient(listOf(Color(profile.avatarColor), Color(profile.avatarColor)))
-                        }
-                    ),
+                    .background(Color.Transparent),
                 contentAlignment = Alignment.Center
             ) {
-                if (profile.avatarId > 0) {
-                    AvatarIcon(
-                        avatarId = profile.avatarId,
-                        modifier = Modifier.size(28.dp).padding(2.dp)
-                    )
-                } else {
-                    Text(
-                        text = profile.name.firstOrNull()?.uppercase() ?: "?",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
+                ProfileAvatarVisual(
+                    profile = profile,
+                    letterFontSize = 14.sp,
+                    iconPadding = 2.dp
+                )
             }
 
             Spacer(modifier = Modifier.width(8.dp))

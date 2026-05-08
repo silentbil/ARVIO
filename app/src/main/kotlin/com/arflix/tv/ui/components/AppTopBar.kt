@@ -346,31 +346,14 @@ private fun TopBarProfileAvatar(
             modifier = Modifier
                 .size(34.dp)
                 .clip(CircleShape)
-                .background(
-                    if (profile.avatarId > 0) {
-                        val (c1, c2) = AvatarRegistry.gradientColors(profile.avatarId)
-                        Brush.verticalGradient(listOf(c1, c2))
-                    } else {
-                        Brush.linearGradient(listOf(Color(profile.avatarColor), Color(profile.avatarColor)))
-                    }
-                ),
+                .background(Color.Transparent),
             contentAlignment = Alignment.Center
         ) {
-            if (profile.avatarId > 0) {
-                AvatarIcon(
-                    avatarId = profile.avatarId,
-                    modifier = Modifier
-                        .size(34.dp)
-                        .padding(4.dp)
-                )
-            } else {
-                Text(
-                    text = profile.name.firstOrNull()?.uppercase() ?: "?",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-            }
+            ProfileAvatarVisual(
+                profile = profile,
+                letterFontSize = 13.sp,
+                iconPadding = 4.dp
+            )
         }
     }
 }

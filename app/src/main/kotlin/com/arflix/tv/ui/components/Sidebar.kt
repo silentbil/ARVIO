@@ -185,33 +185,18 @@ private fun SidebarProfileAvatar(
                 .align(Alignment.Center)
                 .size(30.dp)
                 .clip(CircleShape)
-                .background(
-                    if (profile.avatarId > 0) {
-                        val (c1, c2) = AvatarRegistry.gradientColors(profile.avatarId)
-                        Brush.verticalGradient(listOf(c1, c2))
-                    } else {
-                        Brush.linearGradient(listOf(Color(profile.avatarColor), Color(profile.avatarColor)))
-                    }
-                )
+                .background(Color.Transparent)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
                 },
             contentAlignment = Alignment.Center
         ) {
-            if (profile.avatarId > 0) {
-                AvatarIcon(
-                    avatarId = profile.avatarId,
-                    modifier = Modifier.size(30.dp).padding(3.dp)
-                )
-            } else {
-                Text(
-                    text = profile.name.firstOrNull()?.uppercase() ?: "?",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-            }
+            ProfileAvatarVisual(
+                profile = profile,
+                letterFontSize = 12.sp,
+                iconPadding = 3.dp
+            )
         }
     }
 }

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
@@ -84,6 +85,7 @@ object ContextActions {
     val removeWatchlist = ContextAction("remove_watchlist", "Remove from Watchlist", Icons.Default.Bookmark, TextSecondary)
     val viewDetails = ContextAction("view_details", "View Details", Icons.Default.Info, TextPrimary)
     val markSeasonWatched = ContextAction("mark_season_watched", "Mark Season Watched", Icons.Default.Check, Color(0xFF22C55E))
+    val markSeasonUnwatched = ContextAction("mark_season_unwatched", "Mark Season Unwatched", Icons.Default.Clear, TextSecondary)
 }
 
 /**
@@ -450,16 +452,21 @@ fun SeasonContextMenu(
     isVisible: Boolean,
     seasonNumber: Int,
     onMarkSeasonWatched: () -> Unit,
+    onMarkSeasonUnwatched: () -> Unit,
     onDismiss: () -> Unit
 ) {
     ContextMenu(
         isVisible = isVisible,
         title = "Season $seasonNumber",
         subtitle = "Quick Actions",
-        actions = listOf(ContextActions.markSeasonWatched),
+        actions = listOf(
+            ContextActions.markSeasonWatched,
+            ContextActions.markSeasonUnwatched
+        ),
         onAction = { action ->
-            if (action.id == "mark_season_watched") {
-                onMarkSeasonWatched()
+            when (action.id) {
+                "mark_season_watched" -> onMarkSeasonWatched()
+                "mark_season_unwatched" -> onMarkSeasonUnwatched()
             }
             onDismiss()
         },
