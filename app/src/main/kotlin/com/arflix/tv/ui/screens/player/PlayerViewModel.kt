@@ -13,6 +13,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.PlaybackTelemetryRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.SkipInterval
@@ -41,6 +42,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+private fun isSupplementalStream(stream: StreamSource): Boolean =
+    stream.addonId == "iptv_xtream_vod" || stream.addonId == HomeServerRepository.ADDON_ID
 
 data class PlayerUiState(
     val isLoading: Boolean = true,
@@ -488,7 +492,7 @@ class PlayerViewModel @Inject constructor(
                             val u = stream.url?.trim().orEmpty()
                             u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                         }
-                    val existingVod = _uiState.value.streams.filter { it.addonId == "iptv_xtream_vod" }
+                    val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
                     val mergedStreams = sortStreamsByQualityAndSize(
                         (allStreams + existingVod)
                             .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" },
@@ -2092,6 +2096,7 @@ class PlayerViewModel @Inject constructor(
                 episode = episodeNumber ?: 1,
                 title = lookupTitle,
                 tmdbId = currentMediaId,
+                tvdbId = currentTvdbId,
                 timeoutMs = timeoutMs
             )
         }
@@ -2164,7 +2169,7 @@ class PlayerViewModel @Inject constructor(
                     u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                 }
 
-            val existingVod = _uiState.value.streams.filter { it.addonId == "iptv_xtream_vod" }
+            val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
             val mergedStreams = (allStreams + existingVod)
                 .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
 

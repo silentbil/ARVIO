@@ -130,6 +130,7 @@ class CloudSyncRepository @Inject constructor(
         val iptvGroupOrder: String = "",
         val secondarySubtitle: String = "Off",
         val filterSubtitlesByLanguage: Boolean = true,
+        val homeServerConnectionJson: String? = null,
         val catalogueRowLayoutModes: Map<String, String> = emptyMap()
     )
 
@@ -172,6 +173,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "secondary_subtitle")
     private fun filterSubtitlesByLanguageKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "filter_subtitles_by_lang")
+    private fun homeServerConnectionKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, HomeServerRepository.CONNECTION_KEY_NAME)
     private fun defaultSubtitleKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "default_subtitle")
     private fun defaultAudioLanguageKeyFor(profileId: String) =
@@ -278,6 +281,7 @@ class CloudSyncRepository @Inject constructor(
                         iptvGroupOrder = prefs[iptvGroupOrderKeyFor(profile.id)] ?: "",
                         secondarySubtitle = prefs[secondarySubtitleKeyFor(profile.id)] ?: "Off",
                         filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKeyFor(profile.id)] ?: true,
+                        homeServerConnectionJson = prefs[homeServerConnectionKeyFor(profile.id)] ?: "",
                         catalogueRowLayoutModes = catalogueRowLayoutModesForProfile(prefs, profile.id),
                         cardLayoutMode = normalizeCardLayoutMode(
                             prefs[cardLayoutModeKeyFor(profile.id)] ?: CARD_LAYOUT_MODE_LANDSCAPE
@@ -599,6 +603,13 @@ class CloudSyncRepository @Inject constructor(
                         if (state.iptvGroupOrder.isNotBlank()) prefs[iptvGroupOrderKeyFor(profileId)] = state.iptvGroupOrder
                         prefs[secondarySubtitleKeyFor(profileId)] = state.secondarySubtitle.ifBlank { "Off" }
                         prefs[filterSubtitlesByLanguageKeyFor(profileId)] = state.filterSubtitlesByLanguage
+                        state.homeServerConnectionJson?.let { homeServerConnectionJson ->
+                            if (homeServerConnectionJson.isBlank()) {
+                                prefs.remove(homeServerConnectionKeyFor(profileId))
+                            } else {
+                                prefs[homeServerConnectionKeyFor(profileId)] = homeServerConnectionJson
+                            }
+                        }
                         val normalizedProfileLayout = normalizeCardLayoutMode(state.cardLayoutMode)
                         prefs[cardLayoutModeKeyFor(profileId)] = normalizedProfileLayout
                         state.catalogueRowLayoutModes.forEach { (rowKey, mode) ->

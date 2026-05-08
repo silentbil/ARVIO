@@ -23,6 +23,8 @@ import com.arflix.tv.data.repository.CatalogDiscoveryRepository
 import com.arflix.tv.data.repository.CatalogRepository
 import com.arflix.tv.data.repository.CollectionTemplateManifest
 import com.arflix.tv.data.repository.CloudSyncRepository
+import com.arflix.tv.data.repository.HomeServerConnection
+import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvPlaylistEntry
@@ -161,6 +163,9 @@ data class SettingsUiState(
     val cloudstreamEnabled: Boolean = BuildConfig.CLOUDSTREAM_ENABLED,
     val cloudstreamSupportedApiVersion: Int = StreamRepository.SUPPORTED_CLOUDSTREAM_API_VERSION,
     val torrServerBaseUrl: String = "",
+    val homeServerConnection: HomeServerConnection? = null,
+    val isHomeServerConnecting: Boolean = false,
+    val homeServerError: String? = null,
     // Content language (TMDB metadata)
     val contentLanguage: String = "en-US",
     // Device mode override
@@ -190,6 +195,7 @@ class SettingsViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val catalogDiscoveryRepository: CatalogDiscoveryRepository,
     private val iptvRepository: IptvRepository,
+    private val homeServerRepository: HomeServerRepository,
     private val watchlistRepository: WatchlistRepository,
     private val authRepository: AuthRepository,
     private val profileRepository: ProfileRepository,
@@ -320,6 +326,7 @@ class SettingsViewModel @Inject constructor(
         observeAddons()
         observeCloudstreamRepositories()
         observeTorrServer()
+        observeHomeServer()
         observeSyncState()
         observeAuthState()
         observeIptvConfig()
@@ -522,6 +529,14 @@ class SettingsViewModel @Inject constructor(
                 if (_uiState.value.torrServerBaseUrl != url) {
                     _uiState.value = _uiState.value.copy(torrServerBaseUrl = url)
                 }
+            }
+        }
+    }
+
+    private fun observeHomeServer() {
+        viewModelScope.launch {
+            homeServerRepository.connection.collect { connection ->
+                _uiState.value = _uiState.value.copy(homeServerConnection = connection)
             }
         }
     }
@@ -2104,6 +2119,88 @@ class SettingsViewModel @Inject constructor(
             if (startPolling) {
                 startCloudPolling()
             }
+        }
+    }
+
+    fun connectHomeServer(serverUrl: String, username: String, password: String) {
+        if (_uiState.value.isHomeServerConnecting) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isHomeServerConnecting = true,
+                homeServerError = null,
+                toastMessage = "Connecting Home Server...",
+                toastType = ToastType.INFO
+            )
+            val result = homeServerRepository.connect(serverUrl, username, password)
+            result.onSuccess { connection ->
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    homeServerConnection = connection,
+                    homeServerError = null,
+                    toastMessage = "Home Server connected",
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    homeServerError = error.message ?: "Home Server connection failed",
+                    toastMessage = error.message ?: "Home Server connection failed",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun setHomeServerEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            homeServerRepository.setEnabled(enabled)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = if (enabled) "Home Server enabled" else "Home Server disabled",
+                toastType = ToastType.INFO
+            )
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun testHomeServerConnection() {
+        if (_uiState.value.isHomeServerConnecting) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isHomeServerConnecting = true,
+                homeServerError = null
+            )
+            val result = homeServerRepository.testConnection()
+            result.onSuccess { connection ->
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    homeServerConnection = connection,
+                    homeServerError = null,
+                    toastMessage = "Home Server is reachable",
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    homeServerError = error.message ?: "Home Server test failed",
+                    toastMessage = error.message ?: "Home Server test failed",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun disconnectHomeServer() {
+        viewModelScope.launch {
+            homeServerRepository.disconnect()
+            _uiState.value = _uiState.value.copy(
+                homeServerConnection = null,
+                homeServerError = null,
+                toastMessage = "Home Server disconnected",
+                toastType = ToastType.INFO
+            )
+            syncLocalStateToCloud(silent = true)
         }
     }
 

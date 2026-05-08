@@ -14,6 +14,7 @@ import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.repository.CloudSyncRepository
+import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
@@ -157,6 +158,9 @@ private fun formatBudget(budget: Long): String {
 enum class ToastType {
     SUCCESS, ERROR, INFO
 }
+
+private fun isSupplementalStream(stream: StreamSource): Boolean =
+    stream.addonId == "iptv_xtream_vod" || stream.addonId == HomeServerRepository.ADDON_ID
 
 @HiltViewModel
 class DetailsViewModel @Inject constructor(
@@ -1359,7 +1363,7 @@ class DetailsViewModel @Inject constructor(
                         year = item?.year?.toIntOrNull()
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
-                        val existingVod = _uiState.value.streams.filter { it.addonId == "iptv_xtream_vod" }
+                        val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
                         val mergedStreams = sortPlayableStreamsFirst(
                             (progressive.streams + existingVod)
                                 .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
@@ -1414,7 +1418,7 @@ class DetailsViewModel @Inject constructor(
                         airDate = episodeAirDate
                     ).collect { progressive ->
                         if (!isCurrentRequest()) return@collect
-                        val existingVod = _uiState.value.streams.filter { it.addonId == "iptv_xtream_vod" }
+                        val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
                         val mergedStreams = sortPlayableStreamsFirst(
                             (progressive.streams + existingVod)
                                 .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
@@ -2160,6 +2164,7 @@ class DetailsViewModel @Inject constructor(
                 episode = episode ?: 1,
                 title = itemTitle,
                 tmdbId = currentMediaId,
+                tvdbId = _uiState.value.tvdbId,
                 timeoutMs = timeoutMs
             )
         }
