@@ -390,6 +390,7 @@ fun MediaCard(
                         val epsRemaining = item.totalEpisodes - (item.watchedEpisodes ?: 0)
                         if (epsRemaining > 0) {
                             val epsLabel = if (epsRemaining == 1) "1 ep left" else "$epsRemaining eps left"
+
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
@@ -406,6 +407,30 @@ fun MediaCard(
                                     color = ArvioSkin.colors.textPrimary,
                                 )
                             }
+                        }
+                    }
+
+                    // Season/episode marker, right-aligned with top-right badge.
+                    val nextEpisode = item.nextEpisode
+                    if (!item.isWatched && item.mediaType == MediaType.TV && nextEpisode != null) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(
+                                    end = ArvioSkin.spacing.x2,
+                                    bottom = 14.dp
+                                )
+                                .background(
+                                    color = ArvioSkin.colors.surfaceRaised.copy(alpha = 0.70f),
+                                    shape = rememberArvioCardShape(ArvioSkin.radius.sm),
+                                )
+                                .padding(horizontal = ArvioSkin.spacing.x2, vertical = ArvioSkin.spacing.x1),
+                        ) {
+                            Text(
+                                text = "S${nextEpisode.seasonNumber} • E${nextEpisode.episodeNumber}",
+                                style = ArvioSkin.typography.badge,
+                                color = ArvioSkin.colors.textPrimary,
+                            )
                         }
                     }
                 }
