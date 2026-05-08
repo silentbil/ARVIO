@@ -733,8 +733,8 @@ private fun DiscoverFilterStrip(
                 when (event.key) {
                     Key.DirectionUp -> { onMoveUp(); true }
                     Key.DirectionDown -> { onMoveDown(); true }
-                    Key.DirectionLeft -> { onMoveLeft(); true }
-                    Key.DirectionRight -> { onMoveRight(); true }
+                    Key.DirectionLeft -> false
+                    Key.DirectionRight -> false
                     Key.Enter, Key.DirectionCenter -> false
                     else -> false
                 }
