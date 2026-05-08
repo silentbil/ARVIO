@@ -391,7 +391,6 @@ fun MediaCard(
                         if (epsRemaining > 0) {
                             val epsLabel = if (epsRemaining == 1) "1 ep left" else "$epsRemaining eps left"
 
-
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
