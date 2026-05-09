@@ -186,6 +186,7 @@ class DetailsViewModel @Inject constructor(
     private var currentMediaType: MediaType = MediaType.MOVIE
     private var currentMediaId: Int = 0
     private var vodAppendJob: kotlinx.coroutines.Job? = null
+    private var homeServerAppendJob: kotlinx.coroutines.Job? = null
     private var loadStreamsJob: kotlinx.coroutines.Job? = null
     private var loadStreamsRequestId: Long = 0L
     private var focusedStreamPrewarmJob: kotlinx.coroutines.Job? = null
@@ -242,6 +243,7 @@ class DetailsViewModel @Inject constructor(
         currentMediaId = mediaId
         initialLoadComplete = false
         vodAppendJob?.cancel()
+        homeServerAppendJob?.cancel()
         streamListPrewarmJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
         lastStreamListPrewarmKey = ""
@@ -1144,9 +1146,20 @@ class DetailsViewModel @Inject constructor(
     private var prefetchJob: kotlinx.coroutines.Job? = null
     private fun prefetchStreamsInBackground(imdbId: String, season: Int?, episode: Int?) {
         prefetchJob?.cancel()
+        val requestMediaType = currentMediaType
+        val requestMediaId = currentMediaId
         prefetchJob = viewModelScope.launch {
             runCatching {
-                if (currentMediaType == MediaType.MOVIE) {
+                if (requestMediaType == MediaType.MOVIE) {
+                    launch {
+                        streamRepository.resolveMovieHomeServerSources(
+                            imdbId = imdbId,
+                            title = _uiState.value.item?.title.orEmpty(),
+                            year = _uiState.value.item?.year?.toIntOrNull(),
+                            tmdbId = requestMediaId,
+                            timeoutMs = 5_000L
+                        )
+                    }
                     streamRepository.resolveMovieStreamsProgressive(
                         imdbId = imdbId,
                         title = _uiState.value.item?.title.orEmpty(),
@@ -1161,6 +1174,17 @@ class DetailsViewModel @Inject constructor(
                         )
                     }
                 } else if (season != null && episode != null) {
+                    launch {
+                        streamRepository.resolveEpisodeHomeServerSources(
+                            imdbId = imdbId,
+                            season = season,
+                            episode = episode,
+                            title = _uiState.value.item?.title.orEmpty(),
+                            tmdbId = requestMediaId,
+                            tvdbId = _uiState.value.tvdbId,
+                            timeoutMs = 5_000L
+                        )
+                    }
                     val prefetchAirDate = _uiState.value.episodes
                         .firstOrNull { it.seasonNumber == season && it.episodeNumber == episode }
                         ?.airDate?.takeIf { it.isNotBlank() }
@@ -1241,6 +1265,7 @@ class DetailsViewModel @Inject constructor(
         loadStreamsJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
         streamListPrewarmJob?.cancel()
+        homeServerAppendJob?.cancel()
         val requestId = ++loadStreamsRequestId
         val requestMediaType = currentMediaType
         val requestMediaId = currentMediaId
@@ -1290,6 +1315,17 @@ class DetailsViewModel @Inject constructor(
                 val genreIds = item?.genreIds ?: emptyList()
                 val originalLanguage = item?.originalLanguage
                 // Start VOD append in background - runs parallel to addon stream fetch
+                homeServerAppendJob = viewModelScope.launch {
+                    appendHomeServerSourcesInBackground(
+                        imdbId = resolvedImdbId,
+                        season = season,
+                        episode = episode,
+                        timeoutMs = 5_000L,
+                        requestId = requestId,
+                        requestMediaType = requestMediaType,
+                        requestMediaId = requestMediaId
+                    )
+                }
                 vodAppendJob?.cancel()
                 vodAppendJob = viewModelScope.launch {
                     // VOD lookups use disk-cached catalogs (near-instant on warm starts).
@@ -2130,6 +2166,62 @@ class DetailsViewModel @Inject constructor(
         } catch (_: Exception) {
             ExternalIds(null, null)
         }
+    }
+
+    private suspend fun appendHomeServerSourcesInBackground(
+        imdbId: String?,
+        season: Int?,
+        episode: Int?,
+        timeoutMs: Long,
+        requestId: Long,
+        requestMediaType: MediaType,
+        requestMediaId: Int
+    ) {
+        if (requestId != loadStreamsRequestId ||
+            currentMediaType != requestMediaType ||
+            currentMediaId != requestMediaId
+        ) {
+            return
+        }
+        val itemTitle = _uiState.value.item?.title.orEmpty()
+
+        val sources = if (currentMediaType == MediaType.MOVIE) {
+            streamRepository.resolveMovieHomeServerSources(
+                imdbId = imdbId,
+                title = itemTitle,
+                year = _uiState.value.item?.year?.toIntOrNull(),
+                tmdbId = currentMediaId,
+                timeoutMs = timeoutMs
+            )
+        } else {
+            streamRepository.resolveEpisodeHomeServerSources(
+                imdbId = imdbId,
+                season = season ?: 1,
+                episode = episode ?: 1,
+                title = itemTitle,
+                tmdbId = currentMediaId,
+                tvdbId = _uiState.value.tvdbId,
+                timeoutMs = timeoutMs
+            )
+        }
+        val validSources = sources.filter { !it.url.isNullOrBlank() }
+        if (validSources.isEmpty()) return
+        val latest = _uiState.value.streams
+        if (requestId != loadStreamsRequestId ||
+            currentMediaType != requestMediaType ||
+            currentMediaId != requestMediaId
+        ) {
+            return
+        }
+        val mergedStreams = sortPlayableStreamsFirst(
+            (latest + validSources)
+                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+        )
+        _uiState.value = _uiState.value.copy(
+            streams = mergedStreams,
+            isLoadingStreams = false
+        )
+        prewarmVisibleStreams(mergedStreams)
     }
 
     private suspend fun appendVodSourceInBackground(

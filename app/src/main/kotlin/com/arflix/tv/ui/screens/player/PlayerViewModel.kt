@@ -196,6 +196,7 @@ class PlayerViewModel @Inject constructor(
         subtitleRefreshJob?.cancel()
         subtitleSelectionJob?.cancel()
         vodAppendJob?.cancel()
+        homeServerAppendJob?.cancel()
         streamPrewarmJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
         streamSelectionJob?.cancel()
@@ -428,6 +429,16 @@ class PlayerViewModel @Inject constructor(
                     }
                 }
                 // Start VOD append in background - single fast attempt, no retries blocking UI
+                homeServerAppendJob?.cancel()
+                homeServerAppendJob = launch {
+                    appendHomeServerSourcesInBackground(
+                        mediaType = mediaType,
+                        imdbId = imdbId,
+                        seasonNumber = seasonNumber,
+                        episodeNumber = episodeNumber,
+                        timeoutMs = 5_000L
+                    )
+                }
                 vodAppendJob?.cancel()
                 vodAppendJob = launch {
                     // VOD runs in parallel with addon streams — catalog is disk-cached
@@ -478,8 +489,10 @@ class PlayerViewModel @Inject constructor(
 
                 // Collect progressive emissions. Wait a very short window so
                 // cached/debrid-ready sources can arrive before autoplay picks.
-                val AUTOPLAY_MAX_WINDOW_MS = 650L
-                val AUTOPLAY_QUALITY_WINDOW_MS = 350L
+                val hasHomeServerConnections = streamRepository.hasHomeServerConnections()
+                val HOME_SERVER_AUTOPLAY_WAIT_MS = 1_100L
+                val AUTOPLAY_MAX_WINDOW_MS = if (hasHomeServerConnections) HOME_SERVER_AUTOPLAY_WAIT_MS else 650L
+                val AUTOPLAY_QUALITY_WINDOW_MS = if (hasHomeServerConnections) 550L else 350L
                 val collectionStartMs = System.currentTimeMillis()
                 var autoplaySelected = false
                 var autoplayDeferredJob: Job? = null
@@ -538,6 +551,10 @@ class PlayerViewModel @Inject constructor(
                     isFirstEmission = false
 
                     val elapsedMs = System.currentTimeMillis() - collectionStartMs
+                    val hasHomeServerStream = mergedStreams.any { it.addonId == HomeServerRepository.ADDON_ID }
+                    val homeServerReadyForAutoplay = !hasHomeServerConnections ||
+                        hasHomeServerStream ||
+                        elapsedMs >= HOME_SERVER_AUTOPLAY_WAIT_MS
                     val hasCachedReadyStream = mergedStreams.any { stream ->
                         stream.behaviorHints?.cached == true &&
                             stream.behaviorHints.notWebReady != true &&
@@ -547,7 +564,18 @@ class PlayerViewModel @Inject constructor(
                         autoplayDeferredJob = launch {
                             delay(AUTOPLAY_QUALITY_WINDOW_MS)
                             if (!autoplaySelected) {
-                                val snapshot = lastMergedStreams.ifEmpty { mergedStreams }
+                                var snapshot = lastMergedStreams.ifEmpty { mergedStreams }
+                                if (hasHomeServerConnections &&
+                                    snapshot.none { it.addonId == HomeServerRepository.ADDON_ID }
+                                ) {
+                                    val remainingMs = HOME_SERVER_AUTOPLAY_WAIT_MS - (System.currentTimeMillis() - collectionStartMs)
+                                    if (remainingMs > 0L) delay(remainingMs)
+                                    snapshot = sortStreamsByQualityAndSize(
+                                        (_uiState.value.streams + snapshot)
+                                            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" },
+                                        preferredLanguage
+                                    )
+                                }
                                 if (snapshot.isNotEmpty()) {
                                     autoplaySelected = true
                                     Log.i(
@@ -561,7 +589,7 @@ class PlayerViewModel @Inject constructor(
                     }
                     val topStream = mergedStreams.firstOrNull()
                     val hasRequestedPreferredStream = hasRequestedPreferredStream(mergedStreams)
-                    val shouldSelectNow = !autoplaySelected && mergedStreams.isNotEmpty() && (
+                    val shouldSelectNow = !autoplaySelected && mergedStreams.isNotEmpty() && homeServerReadyForAutoplay && (
                         cacheHit ||
                             progressive.isFinal ||
                             hasCachedReadyStream ||
@@ -583,6 +611,17 @@ class PlayerViewModel @Inject constructor(
                 }
 
                 if (!autoplaySelected && lastMergedStreams.isNotEmpty()) {
+                    if (hasHomeServerConnections &&
+                        lastMergedStreams.none { it.addonId == HomeServerRepository.ADDON_ID }
+                    ) {
+                        val remainingMs = HOME_SERVER_AUTOPLAY_WAIT_MS - (System.currentTimeMillis() - collectionStartMs)
+                        if (remainingMs > 0L) delay(remainingMs)
+                        lastMergedStreams = sortStreamsByQualityAndSize(
+                            (_uiState.value.streams + lastMergedStreams)
+                                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" },
+                            preferredLanguage
+                        )
+                    }
                     autoplaySelected = true
                     autoplayDeferredJob?.cancel()
                     autoplayDeferredJob = null
@@ -2064,11 +2103,59 @@ class PlayerViewModel @Inject constructor(
     private var progressSaveJob: Job? = null
     private var subtitleRefreshJob: Job? = null
     private var vodAppendJob: Job? = null
+    private var homeServerAppendJob: Job? = null
     private var subtitleSelectionJob: Job? = null
     private var streamPrewarmJob: Job? = null
     private var focusedStreamPrewarmJob: Job? = null
     private var streamSelectionJob: Job? = null
     private var lastTopPrewarmKey: String = ""
+
+    private suspend fun appendHomeServerSourcesInBackground(
+        mediaType: MediaType,
+        imdbId: String,
+        seasonNumber: Int?,
+        episodeNumber: Int?,
+        timeoutMs: Long
+    ) {
+        val lookupTitle = currentItemTitle
+            .ifBlank { currentTitle }
+            .ifBlank { mediaRepository.getCachedItem(mediaType, currentMediaId)?.title.orEmpty() }
+
+        val sources = if (mediaType == MediaType.MOVIE) {
+            streamRepository.resolveMovieHomeServerSources(
+                imdbId = imdbId,
+                title = lookupTitle,
+                year = null,
+                tmdbId = currentMediaId,
+                timeoutMs = timeoutMs
+            )
+        } else {
+            streamRepository.resolveEpisodeHomeServerSources(
+                imdbId = imdbId,
+                season = seasonNumber ?: 1,
+                episode = episodeNumber ?: 1,
+                title = lookupTitle,
+                tmdbId = currentMediaId,
+                tvdbId = currentTvdbId,
+                timeoutMs = timeoutMs
+            )
+        }
+
+        val validSources = sources.filter { !it.url.isNullOrBlank() }
+        if (validSources.isEmpty()) return
+        val latest = _uiState.value.streams
+
+        val updated = (latest + validSources)
+            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+        _uiState.value = _uiState.value.copy(
+            streams = sortStreamsByQualityAndSize(
+                updated,
+                _uiState.value.preferredAudioLanguage.ifBlank { "en" }
+            ),
+            isLoadingStreams = false
+        )
+        prewarmTopStreams(_uiState.value.streams, _uiState.value.preferredAudioLanguage.ifBlank { "en" })
+    }
 
     private suspend fun appendVodSourceInBackground(
         mediaType: MediaType,

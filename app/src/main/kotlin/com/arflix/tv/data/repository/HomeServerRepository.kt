@@ -153,10 +153,22 @@ class HomeServerRepository @Inject constructor(
         const val ADDON_ID = "home_server"
         const val ADDON_NAME = "Home Server"
         const val CONNECTION_KEY_NAME = "home_server_connection_v1"
+        private const val SOURCE_CACHE_MAX_ENTRIES = 128
+        private const val SOURCE_CACHE_TTL_MS = 30L * 60L * 1000L
     }
 
     private val gson = Gson()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+    private data class CachedHomeServerSources(
+        val sources: List<StreamSource>,
+        val createdAtMs: Long
+    )
+    private val sourceCacheLock = Any()
+    private val sourceCache = object : LinkedHashMap<String, CachedHomeServerSources>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedHomeServerSources>?): Boolean {
+            return size > SOURCE_CACHE_MAX_ENTRIES
+        }
+    }
 
     val connections: Flow<List<HomeServerConnection>> = combine(
         profileManager.activeProfileId,
@@ -220,6 +232,7 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun disconnect() {
+        clearSourceCache()
         val profileId = profileManager.getProfileId()
         context.settingsDataStore.edit { prefs ->
             prefs.remove(connectionKeyFor(profileId))
@@ -297,14 +310,30 @@ class HomeServerRepository @Inject constructor(
         return parseConnections(prefs[connectionKeyFor(profileId)])
     }
 
+    suspend fun hasUsableConnections(): Boolean = currentConnections().any { it.isUsable }
+
     suspend fun resolveMovieSources(
         imdbId: String?,
         title: String,
         year: Int?,
         tmdbId: Int?
     ): List<StreamSource> = withContext(Dispatchers.IO) {
-        currentConnections()
-            .filter { it.isUsable }
+        val connections = currentConnections().filter { it.isUsable }
+        if (connections.isEmpty()) return@withContext emptyList()
+        val cacheKey = sourceCacheKey(
+            type = "movie",
+            connections = connections,
+            title = title,
+            year = year,
+            imdbId = imdbId,
+            tmdbId = tmdbId,
+            tvdbId = null,
+            season = null,
+            episode = null
+        )
+        getCachedSources(cacheKey)?.let { return@withContext it }
+
+        val sources = connections
             .flatMap { connection ->
                 runCatching {
                     val item = findBestMovie(connection, imdbId, title, year, tmdbId) ?: return@runCatching emptyList()
@@ -312,6 +341,8 @@ class HomeServerRepository @Inject constructor(
                 }.getOrDefault(emptyList())
             }
             .distinctBy { "${it.addonId}|${it.source}|${it.url}" }
+        putCachedSources(cacheKey, sources)
+        sources
     }
 
     suspend fun resolveEpisodeSources(
@@ -322,8 +353,22 @@ class HomeServerRepository @Inject constructor(
         tmdbId: Int?,
         tvdbId: Int?
     ): List<StreamSource> = withContext(Dispatchers.IO) {
-        currentConnections()
-            .filter { it.isUsable }
+        val connections = currentConnections().filter { it.isUsable }
+        if (connections.isEmpty()) return@withContext emptyList()
+        val cacheKey = sourceCacheKey(
+            type = "episode",
+            connections = connections,
+            title = title,
+            year = null,
+            imdbId = imdbId,
+            tmdbId = tmdbId,
+            tvdbId = tvdbId,
+            season = season,
+            episode = episode
+        )
+        getCachedSources(cacheKey)?.let { return@withContext it }
+
+        val sources = connections
             .flatMap { connection ->
                 runCatching {
                     val series = findBestSeries(connection, imdbId, title, null, tmdbId, tvdbId)
@@ -335,9 +380,12 @@ class HomeServerRepository @Inject constructor(
                 }.getOrDefault(emptyList())
             }
             .distinctBy { "${it.addonId}|${it.source}|${it.url}" }
+        putCachedSources(cacheKey, sources)
+        sources
     }
 
     private suspend fun saveConnection(connection: HomeServerConnection) {
+        clearSourceCache()
         val existing = currentConnections()
         val key = connectionIdentity(connection)
         saveConnections(
@@ -422,6 +470,60 @@ class HomeServerRepository @Inject constructor(
                 connection.serverKind,
                 connection.userId.ifBlank { connection.userName }
             )
+        }
+    }
+
+    private fun sourceCacheKey(
+        type: String,
+        connections: List<HomeServerConnection>,
+        title: String,
+        year: Int?,
+        imdbId: String?,
+        tmdbId: Int?,
+        tvdbId: Int?,
+        season: Int?,
+        episode: Int?
+    ): String {
+        val connectionSignature = connections.joinToString("|") { connection ->
+            val enabledCollections = connection.collections
+                .filter { it.enabled }
+                .joinToString(",") { it.id }
+            "${connectionIdentity(connection)}:${connection.lastConnectedAt}:$enabledCollections"
+        }
+        return listOf(
+            type,
+            connectionSignature,
+            imdbId?.trim().orEmpty().lowercase(Locale.US),
+            tmdbId?.toString().orEmpty(),
+            tvdbId?.toString().orEmpty(),
+            HomeServerMatcher.normalizeTitle(title),
+            year?.toString().orEmpty(),
+            season?.toString().orEmpty(),
+            episode?.toString().orEmpty()
+        ).joinToString("|")
+    }
+
+    private fun getCachedSources(key: String): List<StreamSource>? = synchronized(sourceCacheLock) {
+        val cached = sourceCache[key] ?: return@synchronized null
+        val isFresh = System.currentTimeMillis() - cached.createdAtMs < SOURCE_CACHE_TTL_MS
+        if (isFresh) {
+            cached.sources
+        } else {
+            sourceCache.remove(key)
+            null
+        }
+    }
+
+    private fun putCachedSources(key: String, sources: List<StreamSource>) {
+        if (sources.isEmpty()) return
+        synchronized(sourceCacheLock) {
+            sourceCache[key] = CachedHomeServerSources(sources, System.currentTimeMillis())
+        }
+    }
+
+    private fun clearSourceCache() {
+        synchronized(sourceCacheLock) {
+            sourceCache.clear()
         }
     }
 
@@ -1121,24 +1223,6 @@ class HomeServerRepository @Inject constructor(
         connection: HomeServerConnection,
         item: HomeServerItem
     ): List<StreamSource> {
-        val playbackInfo = if (connection.serverKind == HomeServerKind.PLEX) null else runCatching {
-            postJson(
-                buildUrl(
-                    connection.serverUrl,
-                    "/Items/${item.id}/PlaybackInfo",
-                    mapOf(
-                        "UserId" to connection.userId,
-                        "StartTimeTicks" to "0",
-                        "IsPlayback" to "true",
-                        "AutoOpenLiveStream" to "true",
-                        "MaxStreamingBitrate" to "2147483647"
-                    )
-                ),
-                JsonObject(),
-                connection
-            )
-        }.getOrNull()
-
         val sources = if (connection.serverKind == HomeServerKind.PLEX) {
             item.mediaSources.ifEmpty {
                 runCatching {
@@ -1153,7 +1237,25 @@ class HomeServerRepository @Inject constructor(
                 }.getOrDefault(emptyList())
             }
         } else {
-            playbackInfo?.mediaSources().orEmpty().ifEmpty { item.mediaSources }
+            item.mediaSources.ifEmpty {
+                runCatching {
+                    postJson(
+                        buildUrl(
+                            connection.serverUrl,
+                            "/Items/${item.id}/PlaybackInfo",
+                            mapOf(
+                                "UserId" to connection.userId,
+                                "StartTimeTicks" to "0",
+                                "IsPlayback" to "true",
+                                "AutoOpenLiveStream" to "true",
+                                "MaxStreamingBitrate" to "2147483647"
+                            )
+                        ),
+                        JsonObject(),
+                        connection
+                    ).mediaSources()
+                }.getOrDefault(emptyList())
+            }
         }
         return sources
             .mapNotNull { mediaSource ->

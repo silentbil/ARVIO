@@ -1959,6 +1959,27 @@ class StreamRepository @Inject constructor(
         timeoutMs = timeoutMs
     ).firstOrNull()
 
+    suspend fun hasHomeServerConnections(): Boolean = withContext(Dispatchers.IO) {
+        runCatching { homeServerRepository.hasUsableConnections() }.getOrDefault(false)
+    }
+
+    suspend fun resolveMovieHomeServerSources(
+        imdbId: String?,
+        title: String = "",
+        year: Int? = null,
+        tmdbId: Int? = null,
+        timeoutMs: Long = 5_000L
+    ): List<StreamSource> = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(timeoutMs.coerceIn(250L, 20_000L)) {
+            homeServerRepository.resolveMovieSources(
+                imdbId = imdbId,
+                title = title,
+                year = year,
+                tmdbId = tmdbId
+            )
+        }.orEmpty()
+    }
+
     suspend fun resolveMovieVodSources(
         imdbId: String?,
         title: String = "",
@@ -2364,6 +2385,27 @@ class StreamRepository @Inject constructor(
         tvdbId = tvdbId,
         timeoutMs = timeoutMs
     ).firstOrNull()
+
+    suspend fun resolveEpisodeHomeServerSources(
+        imdbId: String?,
+        season: Int,
+        episode: Int,
+        title: String = "",
+        tmdbId: Int? = null,
+        tvdbId: Int? = null,
+        timeoutMs: Long = 5_000L
+    ): List<StreamSource> = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(timeoutMs.coerceIn(250L, 20_000L)) {
+            homeServerRepository.resolveEpisodeSources(
+                imdbId = imdbId,
+                title = title,
+                season = season,
+                episode = episode,
+                tmdbId = tmdbId,
+                tvdbId = tvdbId
+            )
+        }.orEmpty()
+    }
 
     suspend fun resolveEpisodeVodSources(
         imdbId: String?,
