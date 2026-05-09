@@ -270,6 +270,7 @@ class SettingsViewModel @Inject constructor(
     private var traktPollingJob: Job? = null
     private var plexHomeServerPollingJob: Job? = null
     private var plexHomeServerUrl: String? = null
+    private var plexHomeServerDisplayName: String? = null
     private var iptvLoadJob: Job? = null
     private var catalogSearchJob: Job? = null
     private var lastCloudSyncedUserId: String? = null
@@ -2131,7 +2132,7 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun connectHomeServer(serverUrl: String, username: String, password: String) {
+    fun connectHomeServer(serverUrl: String, username: String, password: String, displayName: String = "") {
         if (_uiState.value.isHomeServerConnecting) return
         viewModelScope.launch {
             cancelPlexHomeServerAuth(updateState = false)
@@ -2141,7 +2142,7 @@ class SettingsViewModel @Inject constructor(
                 toastMessage = "Connecting Home Server...",
                 toastType = ToastType.INFO
             )
-            val result = homeServerRepository.connect(serverUrl, username, password)
+            val result = homeServerRepository.connect(serverUrl, username, password, displayName)
             result.onSuccess { connection ->
                 syncHomeServerCatalogsFromConnections()
                 val connections = homeServerRepository.currentConnections()
@@ -2165,13 +2166,14 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun startPlexHomeServerAuth(serverUrl: String) {
+    fun startPlexHomeServerAuth(serverUrl: String, displayName: String = "") {
         if (_uiState.value.isHomeServerConnecting || _uiState.value.isPlexHomeServerPolling) return
         val trimmedUrl = serverUrl.trim()
 
         viewModelScope.launch {
             cancelPlexHomeServerAuth(updateState = false)
             plexHomeServerUrl = trimmedUrl
+            plexHomeServerDisplayName = displayName.trim()
             _uiState.value = _uiState.value.copy(
                 isHomeServerConnecting = true,
                 homeServerError = null,
@@ -2193,6 +2195,7 @@ class SettingsViewModel @Inject constructor(
                 startPlexHomeServerPolling(trimmedUrl, session)
             }.onFailure { error ->
                 plexHomeServerUrl = null
+                plexHomeServerDisplayName = null
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,
                     plexHomeServerAuth = null,
@@ -2228,12 +2231,14 @@ class SettingsViewModel @Inject constructor(
                 )
                 val connectionResult = homeServerRepository.connectPlexAccount(
                     accountToken = accountToken,
-                    preferredServerUrl = serverUrl
+                    preferredServerUrl = serverUrl,
+                    displayName = plexHomeServerDisplayName.orEmpty()
                 )
                 connectionResult.onSuccess { connection ->
                     syncHomeServerCatalogsFromConnections()
                     val connections = homeServerRepository.currentConnections()
                     plexHomeServerUrl = null
+                    plexHomeServerDisplayName = null
                     _uiState.value = _uiState.value.copy(
                         isHomeServerConnecting = false,
                         homeServerConnection = connection,
@@ -2248,6 +2253,7 @@ class SettingsViewModel @Inject constructor(
                     return@launch
                 }.onFailure { error ->
                     plexHomeServerUrl = null
+                    plexHomeServerDisplayName = null
                     _uiState.value = _uiState.value.copy(
                         isHomeServerConnecting = false,
                         plexHomeServerAuth = null,
@@ -2261,6 +2267,7 @@ class SettingsViewModel @Inject constructor(
             }
 
             plexHomeServerUrl = null
+            plexHomeServerDisplayName = null
             _uiState.value = _uiState.value.copy(
                 isHomeServerConnecting = false,
                 plexHomeServerAuth = null,
@@ -2276,6 +2283,7 @@ class SettingsViewModel @Inject constructor(
         plexHomeServerPollingJob?.cancel()
         plexHomeServerPollingJob = null
         plexHomeServerUrl = null
+        plexHomeServerDisplayName = null
         if (updateState) {
             _uiState.value = _uiState.value.copy(
                 isHomeServerConnecting = false,

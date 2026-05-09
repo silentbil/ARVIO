@@ -520,7 +520,12 @@ class CatalogRepository @Inject constructor(
             .filter { it.sourceRef.isNotBlank() && it.title.isNotBlank() }
             .map { candidate ->
                 val stableId = "home_server_${sha256Short(candidate.sourceRef)}"
-                CatalogConfig(
+                stableId to candidate
+            }
+            .filterNot { (stableId, _) -> stableId in hiddenHomeServerIds }
+            .distinctBy { (stableId, _) -> stableId }
+            .map { (stableId, candidate) ->
+                candidate to CatalogConfig(
                     id = stableId,
                     title = candidate.title,
                     sourceType = CatalogSourceType.HOME_SERVER,
@@ -528,9 +533,8 @@ class CatalogRepository @Inject constructor(
                     isPreinstalled = false
                 )
             }
-            .filterNot { it.id in hiddenHomeServerIds }
-            .distinctBy { it.id }
-        val desiredById = desiredCatalogs.associateBy { it.id }
+        val desiredById = desiredCatalogs.associate { (candidate, config) -> config.id to config }
+        val candidateById = desiredCatalogs.associate { (candidate, config) -> config.id to candidate }
 
         val current = getCatalogs().toMutableList()
         var changed = false
@@ -544,7 +548,12 @@ class CatalogRepository @Inject constructor(
         current.indices.forEach { index ->
             val existing = current[index]
             val desired = desiredById[existing.id] ?: return@forEach
+            val candidate = candidateById[existing.id]
+            val shouldRefreshTitle = existing.title.isBlank() ||
+                existing.title == candidate?.collectionName ||
+                existing.title == candidate?.serverName
             val merged = existing.copy(
+                title = if (shouldRefreshTitle) desired.title else existing.title,
                 sourceType = CatalogSourceType.HOME_SERVER,
                 sourceRef = desired.sourceRef,
                 sourceUrl = null,
@@ -557,7 +566,7 @@ class CatalogRepository @Inject constructor(
         }
 
         val existingIds = current.map { it.id }.toHashSet()
-        val missing = desiredCatalogs.filterNot { it.id in existingIds }
+        val missing = desiredCatalogs.map { (_, config) -> config }.filterNot { it.id in existingIds }
         if (missing.isNotEmpty()) {
             current.addAll(0, missing)
             changed = true

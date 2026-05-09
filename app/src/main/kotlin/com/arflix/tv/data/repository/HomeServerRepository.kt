@@ -55,6 +55,7 @@ data class HomeServerConnection(
     val enabled: Boolean = true,
     val connectionId: String = "",
     val serverUrl: String = "",
+    val displayName: String = "",
     val serverName: String = "",
     val serverKind: HomeServerKind = HomeServerKind.UNKNOWN,
     val serverId: String = "",
@@ -257,11 +258,17 @@ class HomeServerRepository @Inject constructor(
         .map { it.firstOrNull() }
         .distinctUntilChanged()
 
-    suspend fun connect(rawUrl: String, username: String, password: String): Result<HomeServerConnection> =
+    suspend fun connect(
+        rawUrl: String,
+        username: String,
+        password: String,
+        displayName: String = ""
+    ): Result<HomeServerConnection> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val serverUrl = normalizeServerUrl(rawUrl)
                 val trimmedUsername = username.trim()
+                val trimmedDisplayName = displayName.trim()
                 require(serverUrl.isNotBlank()) { "Enter a valid server URL" }
                 require(password.isNotBlank()) { "Enter a password or token" }
 
@@ -274,7 +281,8 @@ class HomeServerRepository @Inject constructor(
                         accountToken = password,
                         preferredServerUrl = serverUrl,
                         preferredUsername = trimmedUsername,
-                        preferredInfo = publicInfo
+                        preferredInfo = publicInfo,
+                        displayName = trimmedDisplayName
                     )
                     saveConnection(connection)
                     return@runCatching connection
@@ -286,6 +294,7 @@ class HomeServerRepository @Inject constructor(
                     enabled = true,
                     connectionId = createConnectionId(serverUrl, detectedKind, auth.userId.ifBlank { trimmedUsername }),
                     serverUrl = serverUrl,
+                    displayName = trimmedDisplayName,
                     serverName = publicInfo.serverName.ifBlank { auth.serverName }.ifBlank { "Home Server" },
                     serverKind = detectedKind,
                     serverId = auth.serverId.ifBlank { publicInfo.serverId },
@@ -301,14 +310,19 @@ class HomeServerRepository @Inject constructor(
             }
         }
 
-    suspend fun connectPlexAccount(accountToken: String, preferredServerUrl: String = ""): Result<HomeServerConnection> =
+    suspend fun connectPlexAccount(
+        accountToken: String,
+        preferredServerUrl: String = "",
+        displayName: String = ""
+    ): Result<HomeServerConnection> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val connection = buildPlexConnection(
                     accountToken = accountToken,
                     preferredServerUrl = preferredServerUrl,
                     preferredUsername = "",
-                    preferredInfo = null
+                    preferredInfo = null,
+                    displayName = displayName.trim()
                 )
                 saveConnection(connection)
                 connection
@@ -575,6 +589,7 @@ class HomeServerRepository @Inject constructor(
                 createConnectionId(serverUrl.orEmpty(), serverKind, userId.orEmpty().ifBlank { userName.orEmpty() })
             },
             serverUrl = normalizeServerUrl(serverUrl.orEmpty()),
+            displayName = displayName.orEmpty(),
             serverName = serverName.orEmpty(),
             serverKind = serverKind,
             serverId = serverId.orEmpty(),
@@ -913,9 +928,11 @@ class HomeServerRepository @Inject constructor(
         accountToken: String,
         preferredServerUrl: String,
         preferredUsername: String,
-        preferredInfo: ServerInfo?
+        preferredInfo: ServerInfo?,
+        displayName: String = ""
     ): HomeServerConnection {
         val trimmedAccountToken = accountToken.trim()
+        val trimmedDisplayName = displayName.trim()
         require(trimmedAccountToken.isNotBlank()) { "Missing account token" }
 
         val normalizedPreferredUrl = normalizeServerUrl(preferredServerUrl)
@@ -959,6 +976,7 @@ class HomeServerRepository @Inject constructor(
                 enabled = true,
                 connectionId = "",
                 serverUrl = candidateUrl,
+                displayName = trimmedDisplayName,
                 serverName = targetDevice?.name.orEmpty().ifBlank { preferredIdentity?.serverName.orEmpty() },
                 serverKind = HomeServerKind.PLEX,
                 serverId = targetServerId,
@@ -986,6 +1004,7 @@ class HomeServerRepository @Inject constructor(
                     info.serverId.ifBlank { accountName }
                 ),
                 serverName = info.serverName.ifBlank { candidate.serverName.ifBlank { "Home Server" } },
+                displayName = candidate.displayName,
                 serverId = info.serverId.ifBlank { candidate.serverId },
                 lastConnectedAt = System.currentTimeMillis()
             )
@@ -1132,11 +1151,13 @@ class HomeServerRepository @Inject constructor(
                     serverId = connection.serverId,
                     productName = "Media Server",
                     serverKind = HomeServerKind.PLEX
-                )
+                ),
+                displayName = connection.displayName
             )
             return refreshed.copy(
                 enabled = connection.enabled,
                 connectionId = connection.connectionId.ifBlank { refreshed.connectionId },
+                displayName = connection.displayName.ifBlank { refreshed.displayName },
                 collections = mergeCollectionStates(refreshed.collections, connection.collections)
             )
         }
@@ -1196,10 +1217,17 @@ class HomeServerRepository @Inject constructor(
     }
 
     private fun HomeServerConnection.toCatalogCandidate(collection: HomeServerCollection): HomeServerCatalogCandidate {
+        val connectionLabel = displayLabel()
+        val collectionLabel = collection.name.ifBlank { "Library" }
+        val title = if (collectionLabel.contains(connectionLabel, ignoreCase = true)) {
+            collectionLabel
+        } else {
+            "$connectionLabel - $collectionLabel"
+        }
         return HomeServerCatalogCandidate(
-            title = collection.name.ifBlank { serverName.ifBlank { "Home Server" } },
+            title = title,
             sourceRef = buildCatalogSourceRef(this, collection),
-            serverName = serverName.ifBlank { "Home Server" },
+            serverName = connectionLabel,
             collectionName = collection.name,
             collectionType = collection.type
         )
@@ -1751,9 +1779,7 @@ class HomeServerRepository @Inject constructor(
                 val url = mediaSource.playbackUrl(connection, item.id) ?: return@mapNotNull null
                 val quality = qualityLabel(mediaSource)
                 val labelParts = listOfNotNull(
-                    ADDON_NAME,
-                    homeServerKindLabel(connection.serverKind).takeIf { it.isNotBlank() },
-                    connection.serverName.takeIf { it.isNotBlank() },
+                    connection.displayLabel(),
                     quality.takeIf { it.isNotBlank() },
                     mediaSource.container.takeIf { it.isNotBlank() }?.uppercase(Locale.US)
                 )
@@ -1838,6 +1864,32 @@ class HomeServerRepository @Inject constructor(
             HomeServerKind.EMBY -> "Media Server"
             HomeServerKind.UNKNOWN -> ""
         }
+    }
+
+    private fun HomeServerConnection.displayLabel(): String {
+        val rawName = displayName.ifBlank { serverName }.ifBlank { serverHostLabel(serverUrl) }.ifBlank { "Home Server" }
+        val kind = specificHomeServerKindLabel(serverKind)
+        return when {
+            kind.isBlank() -> rawName
+            rawName.contains(kind, ignoreCase = true) -> rawName
+            else -> "$kind $rawName"
+        }
+    }
+
+    private fun specificHomeServerKindLabel(kind: HomeServerKind): String {
+        return when (kind) {
+            HomeServerKind.PLEX -> "Plex"
+            HomeServerKind.JELLYFIN -> "Jellyfin"
+            HomeServerKind.EMBY -> "Emby"
+            HomeServerKind.UNKNOWN -> ""
+        }
+    }
+
+    private fun serverHostLabel(serverUrl: String): String {
+        return serverUrl.toHttpUrlOrNull()?.let { url ->
+            val defaultPort = if (url.scheme == "https") 443 else 80
+            if (url.port != defaultPort) "${url.host}:${url.port}" else url.host
+        }.orEmpty()
     }
 
     private fun HomeServerMediaSource.streamExtension(): String? {

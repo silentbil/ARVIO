@@ -303,8 +303,10 @@ fun SettingsScreen(
     var showHomeServerInput by remember { mutableStateOf(false) }
     var showPlexHomeServerInput by remember { mutableStateOf(false) }
     var homeServerUrl by remember { mutableStateOf("") }
+    var homeServerDisplayName by remember { mutableStateOf("") }
     var homeServerUsername by remember { mutableStateOf("") }
     var homeServerPassword by remember { mutableStateOf("") }
+    var plexHomeServerDisplayName by remember { mutableStateOf("") }
     var plexHomeServerUrl by remember { mutableStateOf("") }
 
     val stremioAddons = remember(uiState.addons) {
@@ -825,23 +827,26 @@ fun SettingsScreen(
                                         }
                                         "home_server" -> {
                                             when (contentFocusIndex) {
-                                                0 -> {
-                                                    homeServerUrl = ""
-                                                    homeServerUsername = ""
-                                                    homeServerPassword = ""
-                                                    showHomeServerInput = true
-                                                }
-                                                1 -> {
-                                                    plexHomeServerUrl = ""
-                                                    showPlexHomeServerInput = true
-                                                }
-                                                in 2..(uiState.homeServerConnections.size + 1) -> {
-                                                    val connection = uiState.homeServerConnections.getOrNull(contentFocusIndex - 2)
-                                                    homeServerUrl = connection?.serverUrl.orEmpty()
-                                                    homeServerUsername = connection?.userName.orEmpty()
-                                                    homeServerPassword = ""
-                                                    showHomeServerInput = true
-                                                }
+                                       0 -> {
+                                           homeServerUrl = ""
+                                           homeServerDisplayName = ""
+                                           homeServerUsername = ""
+                                           homeServerPassword = ""
+                                           showHomeServerInput = true
+                                       }
+                                       1 -> {
+                                           plexHomeServerDisplayName = ""
+                                           plexHomeServerUrl = ""
+                                           showPlexHomeServerInput = true
+                                       }
+                                       in 2..(uiState.homeServerConnections.size + 1) -> {
+                                           val connection = uiState.homeServerConnections.getOrNull(contentFocusIndex - 2)
+                                           homeServerUrl = connection?.serverUrl.orEmpty()
+                                           homeServerDisplayName = connection?.displayName.orEmpty()
+                                           homeServerUsername = connection?.userName.orEmpty()
+                                           homeServerPassword = ""
+                                           showHomeServerInput = true
+                                       }
                                                 uiState.homeServerConnections.size + 2 -> viewModel.testHomeServerConnection()
                                                 uiState.homeServerConnections.size + 3 -> viewModel.disconnectHomeServer()
                                             }
@@ -992,11 +997,13 @@ fun SettingsScreen(
                 onConnectHomeServerClick = {
                     val connection = uiState.homeServerConnection
                     homeServerUrl = connection?.serverUrl.orEmpty()
+                    homeServerDisplayName = connection?.displayName.orEmpty()
                     homeServerUsername = connection?.userName.orEmpty()
                     homeServerPassword = ""
                     showHomeServerInput = true
                 },
                 onConnectPlexHomeServerClick = {
+                    plexHomeServerDisplayName = ""
                     plexHomeServerUrl = ""
                     showPlexHomeServerInput = true
                 },
@@ -1202,16 +1209,19 @@ fun SettingsScreen(
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             onConnect = {
                                 homeServerUrl = ""
+                                homeServerDisplayName = ""
                                 homeServerUsername = ""
                                 homeServerPassword = ""
                                 showHomeServerInput = true
                             },
                             onConnectPlex = {
+                                plexHomeServerDisplayName = ""
                                 plexHomeServerUrl = ""
                                 showPlexHomeServerInput = true
                             },
                             onEditConnection = { connection ->
                                 homeServerUrl = connection.serverUrl
+                                homeServerDisplayName = connection.displayName
                                 homeServerUsername = connection.userName
                                 homeServerPassword = ""
                                 showHomeServerInput = true
@@ -1352,6 +1362,12 @@ fun SettingsScreen(
                 title = "Home Server",
                 fields = listOf(
                     InputField(
+                        label = "Server name",
+                        value = homeServerDisplayName,
+                        placeholder = "Optional, shown in sources",
+                        onValueChange = { homeServerDisplayName = it }
+                    ),
+                    InputField(
                         label = "Server URL",
                         value = homeServerUrl,
                         placeholder = "http://server:8096 or http://server:32400",
@@ -1375,13 +1391,16 @@ fun SettingsScreen(
                         viewModel.connectHomeServer(
                             serverUrl = homeServerUrl.trim(),
                             username = homeServerUsername.trim(),
-                            password = homeServerPassword
+                            password = homeServerPassword,
+                            displayName = homeServerDisplayName.trim()
                         )
+                        homeServerDisplayName = ""
                         homeServerPassword = ""
                         showHomeServerInput = false
                     }
                 },
                 onDismiss = {
+                    homeServerDisplayName = ""
                     homeServerPassword = ""
                     showHomeServerInput = false
                 }
@@ -1392,6 +1411,12 @@ fun SettingsScreen(
                 title = "Connect with code",
                 fields = listOf(
                     InputField(
+                        label = "Server name",
+                        value = plexHomeServerDisplayName,
+                        placeholder = "Optional, shown in sources",
+                        onValueChange = { plexHomeServerDisplayName = it }
+                    ),
+                    InputField(
                         label = "Server URL (optional)",
                         value = plexHomeServerUrl,
                         placeholder = "Leave empty to discover automatically",
@@ -1399,10 +1424,15 @@ fun SettingsScreen(
                     )
                 ),
                 onConfirm = {
-                    viewModel.startPlexHomeServerAuth(plexHomeServerUrl.trim())
+                    viewModel.startPlexHomeServerAuth(
+                        serverUrl = plexHomeServerUrl.trim(),
+                        displayName = plexHomeServerDisplayName.trim()
+                    )
+                    plexHomeServerDisplayName = ""
                     showPlexHomeServerInput = false
                 },
                 onDismiss = {
+                    plexHomeServerDisplayName = ""
                     showPlexHomeServerInput = false
                 }
             )
@@ -4228,7 +4258,7 @@ private fun HomeServerSettings(
             ).joinToString("  |  ").ifBlank { connection.serverUrl }
 
             SettingsActionRow(
-                title = connection.serverName.ifBlank { connection.serverUrl },
+                title = connection.displayName.ifBlank { connection.serverName }.ifBlank { connection.serverUrl },
                 description = description,
                 actionLabel = "Change",
                 isFocused = focusedIndex == index + 2,
