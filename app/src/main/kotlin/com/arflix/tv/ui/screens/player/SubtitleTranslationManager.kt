@@ -76,6 +76,7 @@ class SubtitleTranslationManager(
             val texts = batch.map { it.text }
             val result = service.translateBatch(texts, targetLanguage)
             if (!result.success) {
+                onBatchResult?.invoke(false, result.errorMessage)
                 // On rate-limit or error, complete deferreds with original text so the caller
                 // doesn't hang, then back off before accepting more requests.
                 batch.forEachIndexed { i, item ->
@@ -148,6 +149,7 @@ class SubtitleTranslationManager(
                     cache[text] = result.lines.getOrElse(i) { text }
                 }
             } else {
+                onBatchResult?.invoke(false, result.errorMessage)
                 delay(5_000L)
                 return
             }
