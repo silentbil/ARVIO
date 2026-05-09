@@ -301,11 +301,11 @@ fun PlayerScreen(
     var subtitleLangIndex by remember { mutableIntStateOf(0) }
     var subtitleTrackIndex by remember { mutableIntStateOf(0) }
     var subtitlePanelFocus by remember { mutableIntStateOf(0) } // 0=lang panel, 1=track panel
-    val subtitleGroups = remember(uiState.subtitles, uiState.preferredSubtitleLang, uiState.secondarySubtitleLang, uiState.selectedStream) {
+    val subtitleGroups = remember(uiState.subtitles, uiState.preferredSubtitleLang, uiState.secondarySubtitleLang, uiState.selectedStream, uiState.isAiAvailable, uiState.aiTargetLanguageName) {
         val streamSource = uiState.selectedStream?.source ?: ""
         val primaryName = getFullLanguageName(uiState.preferredSubtitleLang)
         val secondaryName = getFullLanguageName(uiState.secondarySubtitleLang)
-        uiState.subtitles.mapIndexed { idx, sub -> Pair(idx, sub) }
+        val groups = uiState.subtitles.mapIndexed { idx, sub -> Pair(idx, sub) }
             .groupBy { (_, sub) -> getFullLanguageName(sub.lang).ifBlank { sub.lang.ifBlank { "Unknown" } } }
             .entries
             .sortedWith(compareBy(
@@ -326,6 +326,14 @@ fun PlayerScreen(
                         .thenBy { (_, sub) -> sub.trackIndex ?: Int.MAX_VALUE }
                 ))
             }
+            .toMutableList()
+        // When AI is available but no subtitles exist in the target language yet, inject a
+        // synthetic empty group so the AI option is reachable in the picker.
+        if (uiState.isAiAvailable && uiState.aiTargetLanguageName.isNotBlank() &&
+            groups.none { (name, _) -> name.equals(uiState.aiTargetLanguageName, ignoreCase = true) }) {
+            groups.add(0, Pair(uiState.aiTargetLanguageName, emptyList()))
+        }
+        groups.toList()
     }
     // Audio tracks from ExoPlayer
     var audioTracks by remember { mutableStateOf<List<AudioTrackInfo>>(emptyList()) }
