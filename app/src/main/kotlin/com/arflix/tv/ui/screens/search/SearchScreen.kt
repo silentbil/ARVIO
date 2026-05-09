@@ -385,7 +385,13 @@ fun SearchScreen(
                         }
                     }
                     FocusZone.FILTERS -> {
-                        false
+                        if (focusedFilterIndex > 0) {
+                            focusedFilterIndex--
+                        } else {
+                            focusZone = FocusZone.SEARCH_INPUT
+                            runCatching { searchFocusRequester.requestFocus() }
+                        }
+                        true
                     }
                     else -> false
                 }
@@ -404,7 +410,10 @@ fun SearchScreen(
                         }
                     }
                     FocusZone.FILTERS -> {
-                        false
+                        if (focusedFilterIndex < quickFilters.size - 1) {
+                            focusedFilterIndex++
+                        }
+                        true
                     }
                     else -> false
                 }
@@ -420,7 +429,8 @@ fun SearchScreen(
                             true
                         }
                         FocusZone.FILTERS -> {
-                            false
+                            quickFilters.getOrNull(focusedFilterIndex)?.onSelect?.invoke()
+                            true
                         }
                         FocusZone.RESULTS -> {
                             if (hasAiResults) false
@@ -648,7 +658,9 @@ private fun SearchInputBar(
         shape = shape,
         backgroundColor = Color.White.copy(alpha = if (isFocused) 0.075f else 0.045f),
         outlineColor = Color.White,
-        outlineWidth = 2.dp,
+        outlineWidth = if (isFocused) 3.dp else 2.dp,
+        glowWidth = if (isFocused) 2.dp else 0.dp,
+        glowAlpha = 0.22f,
         focusedScale = 1f,
         pressedScale = 0.985f,
         isFocusedOverride = isFocused,
@@ -725,8 +737,8 @@ private fun DiscoverFilterStrip(
                 when (event.key) {
                     Key.DirectionUp -> { onMoveUp(); true }
                     Key.DirectionDown -> { onMoveDown(); true }
-                    Key.DirectionLeft -> false
-                    Key.DirectionRight -> false
+                    Key.DirectionLeft -> { onMoveLeft(); true }
+                    Key.DirectionRight -> { onMoveRight(); true }
                     Key.Enter, Key.DirectionCenter -> false
                     else -> false
                 }
@@ -744,7 +756,7 @@ private fun DiscoverFilterStrip(
             GlowChip(
                 label = filter.label,
                 isSelected = filter.isSelected,
-                isVisuallyFocused = !isTouchDevice && focusedFilterIndex == index,
+                isVisuallyFocused = !isTouchDevice && focusZone == FocusZone.FILTERS && focusedFilterIndex == index,
                 modifier = if (index == 0) Modifier.focusRequester(filtersFocusRequester) else Modifier,
                 onFocused = { onFocused(index) },
                 onSelect = filter.onSelect

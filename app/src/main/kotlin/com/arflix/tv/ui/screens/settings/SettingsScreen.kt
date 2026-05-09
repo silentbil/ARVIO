@@ -310,9 +310,11 @@ fun SettingsScreen(
     var showAiApiKeyDialog by remember { mutableStateOf(false) }
     var qualityFilterRegexPattern by remember { mutableStateOf("") }
     var showHomeServerInput by remember { mutableStateOf(false) }
+    var showPlexHomeServerInput by remember { mutableStateOf(false) }
     var homeServerUrl by remember { mutableStateOf("") }
     var homeServerUsername by remember { mutableStateOf("") }
     var homeServerPassword by remember { mutableStateOf("") }
+    var plexHomeServerUrl by remember { mutableStateOf("") }
 
     val stremioAddons = remember(uiState.addons) {
         uiState.addons.filter { it.runtimeKind == RuntimeKind.STREMIO }
@@ -337,7 +339,7 @@ fun SettingsScreen(
         when (section) {
             "general" -> 32 // 33 rows (27 from main + 6 AI subtitle rows)
             "iptv" -> 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
-            "home_server" -> uiState.homeServerConnections.size + 2
+            "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
             "cloudstream" -> cloudstreamPlugins.size + uiState.cloudstreamRepositories.size // plugins + repos + add button
@@ -561,6 +563,7 @@ fun SettingsScreen(
         showCloudstreamRepoInput ||
         showIptvInput ||
         showHomeServerInput ||
+        showPlexHomeServerInput ||
         showCatalogInput ||
         showCatalogRename ||
         showSubtitlePicker ||
@@ -572,6 +575,7 @@ fun SettingsScreen(
         uiState.showCloudPairDialog ||
         uiState.showCloudEmailPasswordDialog ||
         uiState.traktCode != null ||
+        uiState.plexHomeServerAuth != null ||
         uiState.showAppUpdateDialog ||
         uiState.showUnknownSourcesDialog ||
         (uiState.pendingCloudstreamManifest != null && uiState.pendingCloudstreamRepoUrl != null)
@@ -842,15 +846,19 @@ fun SettingsScreen(
                                                     homeServerPassword = ""
                                                     showHomeServerInput = true
                                                 }
-                                                in 1..uiState.homeServerConnections.size -> {
-                                                    val connection = uiState.homeServerConnections.getOrNull(contentFocusIndex - 1)
+                                                1 -> {
+                                                    plexHomeServerUrl = ""
+                                                    showPlexHomeServerInput = true
+                                                }
+                                                in 2..(uiState.homeServerConnections.size + 1) -> {
+                                                    val connection = uiState.homeServerConnections.getOrNull(contentFocusIndex - 2)
                                                     homeServerUrl = connection?.serverUrl.orEmpty()
                                                     homeServerUsername = connection?.userName.orEmpty()
                                                     homeServerPassword = ""
                                                     showHomeServerInput = true
                                                 }
-                                                uiState.homeServerConnections.size + 1 -> viewModel.testHomeServerConnection()
-                                                uiState.homeServerConnections.size + 2 -> viewModel.disconnectHomeServer()
+                                                uiState.homeServerConnections.size + 2 -> viewModel.testHomeServerConnection()
+                                                uiState.homeServerConnections.size + 3 -> viewModel.disconnectHomeServer()
                                             }
                                         }
                                         "catalogs" -> {
@@ -1002,6 +1010,10 @@ fun SettingsScreen(
                     homeServerUsername = connection?.userName.orEmpty()
                     homeServerPassword = ""
                     showHomeServerInput = true
+                },
+                onConnectPlexHomeServerClick = {
+                    plexHomeServerUrl = ""
+                    showPlexHomeServerInput = true
                 },
                 onAddCustomAddonClick = { showCustomAddonInput = true },
                 onAddCloudstreamRepoClick = { showCloudstreamRepoInput = true }
@@ -1242,6 +1254,7 @@ fun SettingsScreen(
                         "home_server" -> HomeServerSettings(
                             connections = uiState.homeServerConnections,
                             isWorking = uiState.isHomeServerConnecting,
+                            isPlexWorking = uiState.isPlexHomeServerPolling || uiState.plexHomeServerAuth != null,
                             error = uiState.homeServerError,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             onConnect = {
@@ -1249,6 +1262,10 @@ fun SettingsScreen(
                                 homeServerUsername = ""
                                 homeServerPassword = ""
                                 showHomeServerInput = true
+                            },
+                            onConnectPlex = {
+                                plexHomeServerUrl = ""
+                                showPlexHomeServerInput = true
                             },
                             onEditConnection = { connection ->
                                 homeServerUrl = connection.serverUrl
@@ -1394,17 +1411,17 @@ fun SettingsScreen(
                     InputField(
                         label = "Server URL",
                         value = homeServerUrl,
-                        placeholder = "http://server:8096 or http://plex:32400",
+                        placeholder = "http://server:8096 or http://server:32400",
                         onValueChange = { homeServerUrl = it }
                     ),
                     InputField(
                         label = "Username",
                         value = homeServerUsername,
-                        placeholder = "Optional for Plex token",
+                        placeholder = "Optional for token sign-in",
                         onValueChange = { homeServerUsername = it }
                     ),
                     InputField(
-                        label = "Password / Plex token",
+                        label = "Password / token",
                         value = homeServerPassword,
                         isSecret = true,
                         onValueChange = { homeServerPassword = it }
@@ -1424,6 +1441,28 @@ fun SettingsScreen(
                 onDismiss = {
                     homeServerPassword = ""
                     showHomeServerInput = false
+                }
+            )
+        }
+        if (showPlexHomeServerInput) {
+            InputModal(
+                title = "Connect with code",
+                fields = listOf(
+                    InputField(
+                        label = "Server URL",
+                        value = plexHomeServerUrl,
+                        placeholder = "http://server:32400",
+                        onValueChange = { plexHomeServerUrl = it }
+                    )
+                ),
+                onConfirm = {
+                    if (plexHomeServerUrl.isNotBlank()) {
+                        viewModel.startPlexHomeServerAuth(plexHomeServerUrl.trim())
+                        showPlexHomeServerInput = false
+                    }
+                },
+                onDismiss = {
+                    showPlexHomeServerInput = false
                 }
             )
         }
@@ -1685,6 +1724,16 @@ fun SettingsScreen(
                 verificationUrl = traktCode.verificationUrl,
                 userCode = traktCode.userCode,
                 onDismiss = { viewModel.cancelTraktAuth() }
+            )
+        }
+
+        uiState.plexHomeServerAuth?.let { plexAuth ->
+            TraktActivationModal(
+                title = "Connect with code",
+                instruction = "Scan the QR code or open the auth page and confirm this code",
+                verificationUrl = plexAuth.verificationUrl,
+                userCode = plexAuth.code,
+                onDismiss = { viewModel.cancelPlexHomeServerAuth() }
             )
         }
 
@@ -2724,7 +2773,9 @@ private fun CloudPairModal(
 private fun TraktActivationModal(
     verificationUrl: String,
     userCode: String,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    title: String = "Connect Trakt.tv",
+    instruction: String = "Go to $verificationUrl and enter this code"
 ) {
     val focusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
@@ -2771,13 +2822,13 @@ private fun TraktActivationModal(
                     }
             ) {
                 Text(
-                    text = "Connect Trakt.tv",
+                    text = title,
                     style = ArflixTypography.sectionTitle,
                     color = TextPrimary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Go to $verificationUrl and enter this code",
+                    text = instruction,
                     style = ArflixTypography.body,
                     color = TextSecondary
                 )
@@ -2865,6 +2916,7 @@ private fun MobileSettingsLayout(
     onAddCatalogClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
     onConnectHomeServerClick: () -> Unit,
+    onConnectPlexHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
     onAddCloudstreamRepoClick: () -> Unit
 ) {
@@ -2946,6 +2998,7 @@ private fun MobileSettingsLayout(
                 onAddCatalogClick = onAddCatalogClick,
                 onRenameCatalogClick = onRenameCatalogClick,
                 onConnectHomeServerClick = onConnectHomeServerClick,
+                onConnectPlexHomeServerClick = onConnectPlexHomeServerClick,
                 onAddCustomAddonClick = onAddCustomAddonClick,
                 onAddCloudstreamRepoClick = onAddCloudstreamRepoClick
             )
@@ -3106,6 +3159,7 @@ private fun MobileSettingsSubPage(
     onAddCatalogClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
     onConnectHomeServerClick: () -> Unit,
+    onConnectPlexHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
     onAddCloudstreamRepoClick: () -> Unit
 ) {
@@ -3382,9 +3436,11 @@ private fun MobileSettingsSubPage(
                 HomeServerSettings(
                     connections = uiState.homeServerConnections,
                     isWorking = uiState.isHomeServerConnecting,
+                    isPlexWorking = uiState.isPlexHomeServerPolling || uiState.plexHomeServerAuth != null,
                     error = uiState.homeServerError,
                     focusedIndex = -1,
                     onConnect = onConnectHomeServerClick,
+                    onConnectPlex = onConnectPlexHomeServerClick,
                     onEditConnection = { connection ->
                         onConnectHomeServerClick()
                     },
@@ -4516,9 +4572,11 @@ private fun AiKeyQrOverlay(
 private fun HomeServerSettings(
     connections: List<HomeServerConnection>,
     isWorking: Boolean,
+    isPlexWorking: Boolean,
     error: String?,
     focusedIndex: Int,
     onConnect: () -> Unit,
+    onConnectPlex: () -> Unit,
     onEditConnection: (HomeServerConnection) -> Unit,
     onTest: () -> Unit,
     onDisconnect: () -> Unit
@@ -4537,11 +4595,22 @@ private fun HomeServerSettings(
         SettingsRow(
             icon = Icons.Default.Cloud,
             title = "Add server",
-            subtitle = "Jellyfin, Emby, or Plex libraries as sources",
+            subtitle = "Personal media libraries as sources",
             value = if (isWorking) "Working" else if (hasConnections) "Add another" else "Connect",
             isFocused = focusedIndex == 0,
             onClick = onConnect,
             modifier = Modifier.settingsFocusSlot(0)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsActionRow(
+            title = "Connect with code",
+            description = "Sign in with a server code and use media libraries as sources",
+            actionLabel = if (isPlexWorking) "Waiting" else "Code",
+            isFocused = focusedIndex == 1,
+            onClick = onConnectPlex,
+            modifier = Modifier.settingsFocusSlot(1)
         )
 
         connections.forEachIndexed { index, connection ->
@@ -4557,14 +4626,14 @@ private fun HomeServerSettings(
                 title = connection.serverName.ifBlank { connection.serverUrl },
                 description = description,
                 actionLabel = "Change",
-                isFocused = focusedIndex == index + 1,
+                isFocused = focusedIndex == index + 2,
                 onClick = { onEditConnection(connection) },
-                modifier = Modifier.settingsFocusSlot(index + 1)
+                modifier = Modifier.settingsFocusSlot(index + 2)
             )
         }
 
-        val testIndex = connections.size + 1
-        val disconnectIndex = connections.size + 2
+        val testIndex = connections.size + 2
+        val disconnectIndex = connections.size + 3
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -4601,9 +4670,9 @@ private fun HomeServerSettings(
 
 private fun homeServerKindLabel(kind: HomeServerKind): String {
     return when (kind) {
-        HomeServerKind.JELLYFIN -> "Jellyfin"
-        HomeServerKind.EMBY -> "Emby"
-        HomeServerKind.PLEX -> "Plex"
+        HomeServerKind.JELLYFIN,
+        HomeServerKind.EMBY,
+        HomeServerKind.PLEX -> "Media Server"
         HomeServerKind.UNKNOWN -> ""
     }
 }

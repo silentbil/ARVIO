@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -67,6 +68,14 @@ data class HomeServerConnection(
 
 private data class HomeServerProfileConfig(
     val connections: List<HomeServerConnection> = emptyList()
+)
+
+data class PlexPinAuthSession(
+    val id: String = "",
+    val code: String = "",
+    val verificationUrl: String = "",
+    val expiresIn: Int = 600,
+    val interval: Int = 5
 )
 
 internal data class HomeServerCandidateInfo(
@@ -166,7 +175,7 @@ class HomeServerRepository @Inject constructor(
                 val serverUrl = normalizeServerUrl(rawUrl)
                 val trimmedUsername = username.trim()
                 require(serverUrl.isNotBlank()) { "Enter a valid server URL" }
-                require(password.isNotBlank()) { "Enter a password or Plex token" }
+                require(password.isNotBlank()) { "Enter a password or token" }
 
                 val publicInfo = fetchPublicInfo(serverUrl)
                 val detectedKind = publicInfo.serverKind
@@ -214,6 +223,67 @@ class HomeServerRepository @Inject constructor(
         val profileId = profileManager.getProfileId()
         context.settingsDataStore.edit { prefs ->
             prefs.remove(connectionKeyFor(profileId))
+        }
+    }
+
+    suspend fun startPlexPinAuth(): Result<PlexPinAuthSession> = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = "https://plex.tv/api/v2/pins".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.addQueryParameter("strong", "true")
+                ?.addQueryParameter("X-Plex-Client-Identifier", deviceId())
+                ?.addQueryParameter("X-Plex-Product", "ARVIO")
+                ?.build()
+                ?.toString()
+                ?: error("Invalid code sign-in URL")
+            val request = Request.Builder()
+                .url(url)
+                .post(ByteArray(0).toRequestBody(null))
+                .headers(plexPublicHeaders())
+                .build()
+            okHttpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    error("Code sign in failed (${response.code})")
+                }
+                val json = JsonParser().parse(body).asJsonObjectOrNull() ?: JsonObject()
+                val id = json.string("id").ifBlank { json.string("pinId") }
+                val code = json.string("code")
+                require(id.isNotBlank() && code.isNotBlank()) { "Server did not return an activation code" }
+                PlexPinAuthSession(
+                    id = id,
+                    code = code,
+                    verificationUrl = plexActivationUrl(code),
+                    expiresIn = json.int("expiresIn") ?: json.int("expires_in") ?: 600,
+                    interval = (json.int("interval") ?: 5).coerceIn(2, 15)
+                )
+            }
+        }
+    }
+
+    suspend fun pollPlexPinAuth(pinId: String): Result<String?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = "https://plex.tv/api/v2/pins/$pinId".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.addQueryParameter("X-Plex-Client-Identifier", deviceId())
+                ?.build()
+                ?.toString()
+                ?: error("Invalid code sign-in URL")
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .headers(plexPublicHeaders())
+                .build()
+            okHttpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    error("Code sign in polling failed (${response.code})")
+                }
+                val json = JsonParser().parse(body).asJsonObjectOrNull() ?: JsonObject()
+                json.string("authToken")
+                    .ifBlank { json.string("auth_token") }
+                    .takeIf { it.isNotBlank() }
+            }
         }
     }
 
@@ -387,6 +457,16 @@ class HomeServerRepository @Inject constructor(
         return if (token.isNullOrBlank()) base else "$base, Token=\"$token\""
     }
 
+    private fun plexPublicHeaders(): Headers = Headers.Builder()
+        .add("Accept", "application/json")
+        .add("User-Agent", "ARVIO/${BuildConfig.VERSION_NAME}")
+        .add("X-Plex-Client-Identifier", deviceId())
+        .add("X-Plex-Product", "ARVIO")
+        .add("X-Plex-Version", BuildConfig.VERSION_NAME)
+        .add("X-Plex-Device", "Android")
+        .add("X-Plex-Platform", "Android")
+        .build()
+
     private fun plexHeaders(token: String? = null): Map<String, String> = buildMap {
         put("Accept", "application/json")
         put("User-Agent", "ARVIO/${BuildConfig.VERSION_NAME}")
@@ -396,6 +476,22 @@ class HomeServerRepository @Inject constructor(
         put("X-Plex-Device", "Android")
         put("X-Plex-Platform", "Android")
         token?.takeIf { it.isNotBlank() }?.let { put("X-Plex-Token", it) }
+    }
+
+    private fun plexActivationUrl(code: String): String {
+        val contextProductKey = "context[device][product]"
+        return "https://app.plex.tv/auth".toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.fragment(
+                "!?" + listOf(
+                    "clientID=${deviceId()}",
+                    "code=$code",
+                    "$contextProductKey=ARVIO"
+                ).joinToString("&")
+            )
+            ?.build()
+            ?.toString()
+            ?: "https://app.plex.tv/auth"
     }
 
     private fun requestBuilder(url: String, connection: HomeServerConnection? = null): Request.Builder {
@@ -507,7 +603,7 @@ class HomeServerRepository @Inject constructor(
         return ServerInfo(
             serverName = plexName,
             serverId = plexId,
-            productName = if (plexId.isNotBlank() || plexIdentity?.contains("MediaContainer") == true) "Plex" else "",
+            productName = if (plexId.isNotBlank() || plexIdentity?.contains("MediaContainer") == true) "Media Server" else "",
             serverKind = if (plexId.isNotBlank() || plexIdentity?.contains("MediaContainer") == true) HomeServerKind.PLEX else HomeServerKind.UNKNOWN
         )
     }
@@ -519,7 +615,7 @@ class HomeServerRepository @Inject constructor(
             return ServerInfo(
                 serverName = identityName.ifBlank { connection.serverName },
                 serverId = identityId.ifBlank { connection.serverId },
-                productName = "Plex",
+                productName = "Media Server",
                 serverKind = HomeServerKind.PLEX
             )
         }
@@ -560,11 +656,11 @@ class HomeServerRepository @Inject constructor(
             serverKind = HomeServerKind.PLEX,
             accessToken = accountToken,
             userId = "plex",
-            userName = username.ifBlank { "Plex" }
+            userName = username.ifBlank { "Account" }
         )
         val identity = fetchSystemInfo(identityConnection)
         val userName = validatePlexAccount(accountToken)
-            .ifBlank { username.ifBlank { "Plex" } }
+            .ifBlank { username.ifBlank { "Account" } }
         val serverToken = resolvePlexServerToken(accountToken, identity.serverId)
             .ifBlank { accountToken }
         val serverConnection = identityConnection.copy(
@@ -574,7 +670,7 @@ class HomeServerRepository @Inject constructor(
             userName = userName
         )
         runCatching { fetchCollections(serverConnection) }.getOrElse {
-            error("Plex token could not access libraries")
+            error("Token could not access libraries")
         }
         return AuthResponse(
             accessToken = serverToken,
@@ -861,10 +957,6 @@ class HomeServerRepository @Inject constructor(
         itemTypes: String,
         query: Map<String, String?>
     ): List<HomeServerItem> {
-        if (query.containsKey("AnyProviderIdEquals")) {
-            return emptyList()
-        }
-        val searchTerm = query["SearchTerm"]?.takeIf { it.isNotBlank() } ?: return emptyList()
         val plexType = when (itemTypes.lowercase(Locale.US)) {
             "movie" -> "1"
             "series" -> "2"
@@ -873,6 +965,26 @@ class HomeServerRepository @Inject constructor(
         }
         val limit = query["Limit"]?.takeIf { it.isNotBlank() } ?: "25"
         val collections = eligibleCollections(connection, itemTypes)
+        query["AnyProviderIdEquals"]?.takeIf { it.isNotBlank() }?.let { providerId ->
+            val guidQueries = plexGuidQueries(providerId)
+            if (guidQueries.isNotEmpty()) {
+                val providerResults = guidQueries.flatMap { guid ->
+                    queryPlexByGuid(connection, collections, plexType, guid, limit)
+                }.distinctBy { it.id }
+                if (providerResults.isNotEmpty()) return providerResults
+            }
+            val providerSearchTerm = providerId.substringAfter('.', providerId)
+            val providerFallback = queryPlexSearch(connection, providerSearchTerm, plexType, limit)
+            if (providerFallback.isNotEmpty()) return providerFallback
+        }
+
+        val searchTerm = query["SearchTerm"]?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val globalResults = queryPlexSearch(connection, searchTerm, plexType, limit)
+            .filter { item -> itemBelongsToEnabledPlexCollection(item, collections) }
+        if (globalResults.isNotEmpty()) {
+            return filterPlexEpisodeNumbers(globalResults, query)
+        }
+
         val sectionResults = if (collections.isNotEmpty()) {
             collections.flatMap { collection ->
                 runCatching {
@@ -895,14 +1007,31 @@ class HomeServerRepository @Inject constructor(
             emptyList()
         }
         val results = sectionResults.ifEmpty {
+            queryPlexSearch(connection, searchTerm, plexType, limit)
+        }
+
+        return filterPlexEpisodeNumbers(results, query).distinctBy { it.id }
+    }
+
+    private fun queryPlexByGuid(
+        connection: HomeServerConnection,
+        collections: List<HomeServerCollection>,
+        plexType: String?,
+        guid: String,
+        limit: String
+    ): List<HomeServerItem> {
+        val targetCollections = collections.ifEmpty {
+            connection.collections.filter { it.enabled }
+        }
+        return targetCollections.flatMap { collection ->
             runCatching {
                 getJson(
                     buildUrl(
                         connection.serverUrl,
-                        "/search",
+                        "/library/sections/${collection.id}/all",
                         mapOf(
-                            "query" to searchTerm,
                             "type" to plexType,
+                            "guid" to guid,
                             "includeGuids" to "1",
                             "limit" to limit
                         )
@@ -911,7 +1040,35 @@ class HomeServerRepository @Inject constructor(
                 ).metadataItems(connection.serverKind)
             }.getOrDefault(emptyList())
         }
+    }
 
+    private fun queryPlexSearch(
+        connection: HomeServerConnection,
+        searchTerm: String,
+        plexType: String?,
+        limit: String
+    ): List<HomeServerItem> {
+        return runCatching {
+            getJson(
+                buildUrl(
+                    connection.serverUrl,
+                    "/search",
+                    mapOf(
+                        "query" to searchTerm,
+                        "type" to plexType,
+                        "includeGuids" to "1",
+                        "limit" to limit
+                    )
+                ),
+                connection
+            ).metadataItems(connection.serverKind)
+        }.getOrDefault(emptyList())
+    }
+
+    private fun filterPlexEpisodeNumbers(
+        results: List<HomeServerItem>,
+        query: Map<String, String?>
+    ): List<HomeServerItem> {
         val requestedSeason = query["ParentIndexNumber"]?.toIntOrNull()
         val requestedEpisode = query["IndexNumber"]?.toIntOrNull()
         return results
@@ -920,6 +1077,28 @@ class HomeServerRepository @Inject constructor(
                     (requestedEpisode == null || item.indexNumber == requestedEpisode)
             }
             .distinctBy { it.id }
+    }
+
+    private fun itemBelongsToEnabledPlexCollection(
+        item: HomeServerItem,
+        collections: List<HomeServerCollection>
+    ): Boolean {
+        if (collections.isEmpty()) return true
+        return item.librarySectionId.isBlank() || collections.any { it.id == item.librarySectionId }
+    }
+
+    private fun plexGuidQueries(providerId: String): List<String> {
+        val provider = providerId.substringBefore('.', missingDelimiterValue = "")
+            .lowercase(Locale.US)
+        val id = providerId.substringAfter('.', missingDelimiterValue = "")
+            .trim()
+        if (provider.isBlank() || id.isBlank()) return emptyList()
+        return when (provider) {
+            "imdb" -> listOf("imdb://$id")
+            "tmdb" -> listOf("tmdb://$id")
+            "tvdb" -> listOf("tvdb://$id")
+            else -> emptyList()
+        }
     }
 
     private fun eligibleCollections(connection: HomeServerConnection, itemTypes: String): List<HomeServerCollection> {
@@ -1063,9 +1242,9 @@ class HomeServerRepository @Inject constructor(
 
     private fun homeServerKindLabel(kind: HomeServerKind): String {
         return when (kind) {
-            HomeServerKind.PLEX -> "Plex"
-            HomeServerKind.JELLYFIN -> "Jellyfin"
-            HomeServerKind.EMBY -> "Emby"
+            HomeServerKind.PLEX,
+            HomeServerKind.JELLYFIN,
+            HomeServerKind.EMBY -> "Media Server"
             HomeServerKind.UNKNOWN -> ""
         }
     }
@@ -1165,6 +1344,7 @@ class HomeServerRepository @Inject constructor(
                 type = string("type"),
                 productionYear = int("year") ?: string("originallyAvailableAt").take(4).toIntOrNull(),
                 providerIds = providerIds,
+                librarySectionId = string("librarySectionID"),
                 indexNumber = int("index"),
                 parentIndexNumber = int("parentIndex"),
                 mediaSources = array("Media")
@@ -1183,6 +1363,7 @@ class HomeServerRepository @Inject constructor(
             type = string("Type"),
             productionYear = year,
             providerIds = providerIds,
+            librarySectionId = "",
             indexNumber = int("IndexNumber"),
             parentIndexNumber = int("ParentIndexNumber"),
             mediaSources = mediaSources()
@@ -1280,6 +1461,7 @@ class HomeServerRepository @Inject constructor(
         val type: String,
         val productionYear: Int?,
         val providerIds: Map<String, String>,
+        val librarySectionId: String,
         val indexNumber: Int?,
         val parentIndexNumber: Int?,
         val mediaSources: List<HomeServerMediaSource>

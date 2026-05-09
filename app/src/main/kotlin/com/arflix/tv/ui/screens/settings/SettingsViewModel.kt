@@ -30,6 +30,7 @@ import com.arflix.tv.data.repository.CollectionTemplateManifest
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerRepository
+import com.arflix.tv.data.repository.PlexPinAuthSession
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvPlaylistEntry
@@ -179,6 +180,8 @@ data class SettingsUiState(
     val homeServerConnections: List<HomeServerConnection> = emptyList(),
     val isHomeServerConnecting: Boolean = false,
     val homeServerError: String? = null,
+    val plexHomeServerAuth: PlexPinAuthSession? = null,
+    val isPlexHomeServerPolling: Boolean = false,
     // Content language (TMDB metadata)
     val contentLanguage: String = "en-US",
     // Device mode override
@@ -291,6 +294,8 @@ class SettingsViewModel @Inject constructor(
     private var lastObservedStalkerUrl: String = ""
 
     private var traktPollingJob: Job? = null
+    private var plexHomeServerPollingJob: Job? = null
+    private var plexHomeServerUrl: String? = null
     private var iptvLoadJob: Job? = null
     private var catalogSearchJob: Job? = null
     private var aiKeyServer: AiKeyConfigServer? = null
@@ -2242,6 +2247,7 @@ class SettingsViewModel @Inject constructor(
     fun connectHomeServer(serverUrl: String, username: String, password: String) {
         if (_uiState.value.isHomeServerConnecting) return
         viewModelScope.launch {
+            cancelPlexHomeServerAuth(updateState = false)
             _uiState.value = _uiState.value.copy(
                 isHomeServerConnecting = true,
                 homeServerError = null,
@@ -2268,6 +2274,134 @@ class SettingsViewModel @Inject constructor(
                     toastType = ToastType.ERROR
                 )
             }
+        }
+    }
+
+    fun startPlexHomeServerAuth(serverUrl: String) {
+        if (_uiState.value.isHomeServerConnecting || _uiState.value.isPlexHomeServerPolling) return
+        val trimmedUrl = serverUrl.trim()
+        if (trimmedUrl.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                homeServerError = "Enter a server URL",
+                toastMessage = "Enter a server URL",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+
+        viewModelScope.launch {
+            cancelPlexHomeServerAuth(updateState = false)
+            plexHomeServerUrl = trimmedUrl
+            _uiState.value = _uiState.value.copy(
+                isHomeServerConnecting = true,
+                homeServerError = null,
+                plexHomeServerAuth = null,
+                isPlexHomeServerPolling = false,
+                toastMessage = "Starting code sign in...",
+                toastType = ToastType.INFO
+            )
+            val result = homeServerRepository.startPlexPinAuth()
+            result.onSuccess { session ->
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    plexHomeServerAuth = session,
+                    isPlexHomeServerPolling = true,
+                    homeServerError = null,
+                    toastMessage = "Enter the code to connect",
+                    toastType = ToastType.INFO
+                )
+                startPlexHomeServerPolling(trimmedUrl, session)
+            }.onFailure { error ->
+                plexHomeServerUrl = null
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = false,
+                    plexHomeServerAuth = null,
+                    isPlexHomeServerPolling = false,
+                    homeServerError = error.message ?: "Code sign in failed",
+                    toastMessage = error.message ?: "Code sign in failed",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    private fun startPlexHomeServerPolling(serverUrl: String, session: PlexPinAuthSession) {
+        plexHomeServerPollingJob?.cancel()
+        plexHomeServerPollingJob = viewModelScope.launch {
+            val deadline = System.currentTimeMillis() + (session.expiresIn.coerceIn(60, 900) * 1000L)
+            var lastFailure: String? = null
+            while (System.currentTimeMillis() < deadline) {
+                delay(session.interval.coerceIn(2, 15) * 1000L)
+                val tokenResult = homeServerRepository.pollPlexPinAuth(session.id)
+                val accountToken = tokenResult.getOrElse { error ->
+                    lastFailure = error.message
+                    null
+                }
+                if (accountToken.isNullOrBlank()) {
+                    continue
+                }
+
+                _uiState.value = _uiState.value.copy(
+                    isHomeServerConnecting = true,
+                    toastMessage = "Connecting server...",
+                    toastType = ToastType.INFO
+                )
+                val connectionResult = homeServerRepository.connect(
+                    rawUrl = serverUrl,
+                    username = "",
+                    password = accountToken
+                )
+                connectionResult.onSuccess { connection ->
+                    val connections = homeServerRepository.currentConnections()
+                    plexHomeServerUrl = null
+                    _uiState.value = _uiState.value.copy(
+                        isHomeServerConnecting = false,
+                        homeServerConnection = connection,
+                        homeServerConnections = connections,
+                        plexHomeServerAuth = null,
+                        isPlexHomeServerPolling = false,
+                        homeServerError = null,
+                        toastMessage = "Server connected",
+                        toastType = ToastType.SUCCESS
+                    )
+                    syncLocalStateToCloud(silent = true)
+                    return@launch
+                }.onFailure { error ->
+                    plexHomeServerUrl = null
+                    _uiState.value = _uiState.value.copy(
+                        isHomeServerConnecting = false,
+                        plexHomeServerAuth = null,
+                        isPlexHomeServerPolling = false,
+                        homeServerError = error.message ?: "Server connection failed",
+                        toastMessage = error.message ?: "Server connection failed",
+                        toastType = ToastType.ERROR
+                    )
+                    return@launch
+                }
+            }
+
+            plexHomeServerUrl = null
+            _uiState.value = _uiState.value.copy(
+                isHomeServerConnecting = false,
+                plexHomeServerAuth = null,
+                isPlexHomeServerPolling = false,
+                homeServerError = lastFailure ?: "Activation code expired",
+                toastMessage = lastFailure ?: "Activation code expired",
+                toastType = ToastType.ERROR
+            )
+        }
+    }
+
+    fun cancelPlexHomeServerAuth(updateState: Boolean = true) {
+        plexHomeServerPollingJob?.cancel()
+        plexHomeServerPollingJob = null
+        plexHomeServerUrl = null
+        if (updateState) {
+            _uiState.value = _uiState.value.copy(
+                isHomeServerConnecting = false,
+                plexHomeServerAuth = null,
+                isPlexHomeServerPolling = false
+            )
         }
     }
 
@@ -2302,10 +2436,13 @@ class SettingsViewModel @Inject constructor(
 
     fun disconnectHomeServer() {
         viewModelScope.launch {
+            cancelPlexHomeServerAuth(updateState = false)
             homeServerRepository.disconnect()
             _uiState.value = _uiState.value.copy(
                 homeServerConnection = null,
                 homeServerConnections = emptyList(),
+                plexHomeServerAuth = null,
+                isPlexHomeServerPolling = false,
                 homeServerError = null,
                 toastMessage = "Home Server disconnected",
                 toastType = ToastType.INFO
@@ -2806,6 +2943,7 @@ class SettingsViewModel @Inject constructor(
         super.onCleared()
         traktPollingJob?.cancel()
         stopAiKeyServerInternal()
+        plexHomeServerPollingJob?.cancel()
     }
 }
 

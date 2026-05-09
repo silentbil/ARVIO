@@ -216,8 +216,8 @@ data class StremioStream(
         // Priority 1: behaviorHints.filename (most accurate)
         behaviorHints?.filename?.takeIf { it.isNotBlank() }?.let { return it }
 
-        // Priority 2: Check description for filename (Plexio format)
-        // Plexio puts filename in first line of description like "Movie Name (Year) - S01E01 [Quality]-Group.mkv"
+        // Priority 2: Check description for filename from provider-specific formats.
+        // Some providers put the filename in the first line of the description.
         description?.let { desc ->
             val firstLine = desc.split("\n").firstOrNull()?.trim() ?: ""
             // Check if it looks like a filename (contains extension or quality tags)
