@@ -609,6 +609,10 @@ fun DetailsScreen(
                                         }
                                         3 -> viewModel.toggleWatched(episodeIndex)
                                         4 -> viewModel.toggleWatchlist()
+                                        5 -> { // View Collection — scroll to and focus the collection row
+                                            focusedSection = FocusSection.COLLECTION
+                                            collectionIndex = 0
+                                        }
                                     }
                                 }
                                 FocusSection.EPISODES -> {
@@ -2008,6 +2012,9 @@ private fun DetailsContent(
             reviews = reviews,
             similar = similar,
             similarLogoUrls = similarLogoUrls,
+            collectionItems = collectionItems,
+            collectionName = collectionName,
+            collectionIndex = collectionIndex,
             focusedSection = focusedSection,
             focusSectionForUi = focusSectionForUi,
             episodeIndex = episodeIndex,
@@ -2025,7 +2032,8 @@ private fun DetailsContent(
             onSeasonClick = onSeasonClick,
             onEpisodeClick = onEpisodeClick,
             onCastClick = onCastClick,
-            onSimilarClick = onSimilarClick
+            onSimilarClick = onSimilarClick,
+            onCollectionClick = onCollectionClick
         )
     }
 }
