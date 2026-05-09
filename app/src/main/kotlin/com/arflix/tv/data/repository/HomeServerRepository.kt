@@ -58,6 +58,7 @@ data class HomeServerConnection(
     val userId: String = "",
     val userName: String = "",
     val accessToken: String = "",
+    val accountToken: String = "",
     val collections: List<HomeServerCollection> = emptyList(),
     val lastConnectedAt: Long = 0L
 ) {
@@ -163,6 +164,26 @@ class HomeServerRepository @Inject constructor(
         val sources: List<StreamSource>,
         val createdAtMs: Long
     )
+    private data class PlexResourceConnection(
+        val uri: String,
+        val local: Boolean,
+        val relay: Boolean
+    )
+
+    private data class PlexResourceDevice(
+        val name: String,
+        val product: String,
+        val provides: String,
+        val clientIdentifier: String,
+        val accessToken: String,
+        val owned: Boolean,
+        val connections: List<PlexResourceConnection>
+    ) {
+        val isServer: Boolean
+            get() = provides.split(',').any { it.trim().equals("server", ignoreCase = true) } ||
+                product.contains("server", ignoreCase = true)
+    }
+
     private val sourceCacheLock = Any()
     private val sourceCache = object : LinkedHashMap<String, CachedHomeServerSources>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedHomeServerSources>?): Boolean {
@@ -193,12 +214,19 @@ class HomeServerRepository @Inject constructor(
                 val detectedKind = publicInfo.serverKind
                     .takeUnless { it == HomeServerKind.UNKNOWN }
                     ?: detectServerKind(publicInfo.productName, publicInfo.serverName)
-                val auth = if (detectedKind == HomeServerKind.PLEX) {
-                    authenticatePlex(serverUrl, trimmedUsername, password)
-                } else {
-                    require(trimmedUsername.isNotBlank()) { "Enter a username" }
-                    authenticate(serverUrl, trimmedUsername, password)
+                if (detectedKind == HomeServerKind.PLEX) {
+                    val connection = buildPlexConnection(
+                        accountToken = password,
+                        preferredServerUrl = serverUrl,
+                        preferredUsername = trimmedUsername,
+                        preferredInfo = publicInfo
+                    )
+                    saveConnection(connection)
+                    return@runCatching connection
                 }
+
+                require(trimmedUsername.isNotBlank()) { "Enter a username" }
+                val auth = authenticate(serverUrl, trimmedUsername, password)
                 val connectionShell = HomeServerConnection(
                     enabled = true,
                     connectionId = createConnectionId(serverUrl, detectedKind, auth.userId.ifBlank { trimmedUsername }),
@@ -209,9 +237,24 @@ class HomeServerRepository @Inject constructor(
                     userId = auth.userId,
                     userName = auth.userName.ifBlank { trimmedUsername },
                     accessToken = auth.accessToken,
+                    accountToken = auth.accountToken,
                     lastConnectedAt = System.currentTimeMillis()
                 )
                 val connection = connectionShell.copy(collections = fetchCollections(connectionShell))
+                saveConnection(connection)
+                connection
+            }
+        }
+
+    suspend fun connectPlexAccount(accountToken: String, preferredServerUrl: String = ""): Result<HomeServerConnection> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val connection = buildPlexConnection(
+                    accountToken = accountToken,
+                    preferredServerUrl = preferredServerUrl,
+                    preferredUsername = "",
+                    preferredInfo = null
+                )
                 saveConnection(connection)
                 connection
             }
@@ -390,7 +433,12 @@ class HomeServerRepository @Inject constructor(
         val key = connectionIdentity(connection)
         saveConnections(
             existing
-                .filterNot { connectionIdentity(it) == key }
+                .filterNot {
+                    connectionIdentity(it) == key ||
+                        (connection.serverKind == it.serverKind &&
+                            connection.serverId.isNotBlank() &&
+                            connection.serverId == it.serverId)
+                }
                 .plus(connection)
         )
     }
@@ -446,6 +494,7 @@ class HomeServerRepository @Inject constructor(
             userId = userId.orEmpty(),
             userName = userName.orEmpty(),
             accessToken = accessToken.orEmpty(),
+            accountToken = accountToken.orEmpty(),
             collections = collections.orEmpty().map {
                 HomeServerCollection(
                     id = it.id.orEmpty(),
@@ -653,6 +702,12 @@ class HomeServerRepository @Inject constructor(
         return builder.build().toString()
     }
 
+    private fun Request.Builder.headersWith(headers: Headers): Request.Builder = apply {
+        for (index in 0 until headers.size) {
+            header(headers.name(index), headers.value(index))
+        }
+    }
+
     private fun getJson(url: String, connection: HomeServerConnection? = null): JsonObject {
         val request = requestBuilder(url, connection).get().build()
         okHttpClient.newCall(request).execute().use { response ->
@@ -751,38 +806,6 @@ class HomeServerRepository @Inject constructor(
         }
     }
 
-    private fun authenticatePlex(serverUrl: String, username: String, token: String): AuthResponse {
-        val accountToken = token.trim()
-        val identityConnection = HomeServerConnection(
-            serverUrl = serverUrl,
-            serverKind = HomeServerKind.PLEX,
-            accessToken = accountToken,
-            userId = "plex",
-            userName = username.ifBlank { "Account" }
-        )
-        val identity = fetchSystemInfo(identityConnection)
-        val userName = validatePlexAccount(accountToken)
-            .ifBlank { username.ifBlank { "Account" } }
-        val serverToken = resolvePlexServerToken(accountToken, identity.serverId)
-            .ifBlank { accountToken }
-        val serverConnection = identityConnection.copy(
-            accessToken = serverToken,
-            serverId = identity.serverId,
-            serverName = identity.serverName,
-            userName = userName
-        )
-        runCatching { fetchCollections(serverConnection) }.getOrElse {
-            error("Token could not access libraries")
-        }
-        return AuthResponse(
-            accessToken = serverToken,
-            serverId = identity.serverId,
-            serverName = identity.serverName,
-            userId = "plex",
-            userName = userName
-        )
-    }
-
     private fun validatePlexAccount(token: String): String {
         val request = Request.Builder()
             .url("https://plex.tv/api/v2/user")
@@ -799,35 +822,237 @@ class HomeServerRepository @Inject constructor(
         }.getOrDefault("")
     }
 
-    private fun resolvePlexServerToken(accountToken: String, serverId: String): String {
-        if (serverId.isBlank()) return ""
+    private fun buildPlexConnection(
+        accountToken: String,
+        preferredServerUrl: String,
+        preferredUsername: String,
+        preferredInfo: ServerInfo?
+    ): HomeServerConnection {
+        val trimmedAccountToken = accountToken.trim()
+        require(trimmedAccountToken.isNotBlank()) { "Missing account token" }
+
+        val normalizedPreferredUrl = normalizeServerUrl(preferredServerUrl)
+        val preferredIdentity = preferredInfo?.takeIf { it.serverId.isNotBlank() }
+            ?: normalizedPreferredUrl.takeIf { it.isNotBlank() }?.let { url ->
+                runCatching {
+                    fetchSystemInfo(
+                        HomeServerConnection(
+                            serverUrl = url,
+                            serverKind = HomeServerKind.PLEX,
+                            accessToken = trimmedAccountToken,
+                            accountToken = trimmedAccountToken,
+                            userId = "plex",
+                            userName = preferredUsername.ifBlank { "Account" }
+                        )
+                    )
+                }.getOrNull()
+            }
+        val accountName = validatePlexAccount(trimmedAccountToken)
+            .ifBlank { preferredUsername.ifBlank { "Account" } }
+        val resources = fetchPlexResources(trimmedAccountToken)
+        val targetDevice = selectPlexResourceDevice(
+            resources = resources,
+            preferredServerId = preferredIdentity?.serverId.orEmpty(),
+            preferredServerUrl = normalizedPreferredUrl
+        )
+        val targetServerId = targetDevice?.clientIdentifier
+            ?.ifBlank { preferredIdentity?.serverId.orEmpty() }
+            ?: preferredIdentity?.serverId.orEmpty()
+        val serverToken = targetDevice?.accessToken
+            ?.takeIf { it.isNotBlank() }
+            ?: resolvePlexServerToken(trimmedAccountToken, targetServerId)
+                .takeIf { it.isNotBlank() }
+            ?: trimmedAccountToken
+        val candidateUrls = plexCandidateServerUrls(normalizedPreferredUrl, targetDevice)
+        require(candidateUrls.isNotEmpty()) { "No reachable server URL found for this account" }
+
+        var lastError: Throwable? = null
+        candidateUrls.forEach { candidateUrl ->
+            val candidate = HomeServerConnection(
+                enabled = true,
+                connectionId = "",
+                serverUrl = candidateUrl,
+                serverName = targetDevice?.name.orEmpty().ifBlank { preferredIdentity?.serverName.orEmpty() },
+                serverKind = HomeServerKind.PLEX,
+                serverId = targetServerId,
+                userId = "plex",
+                userName = accountName,
+                accessToken = serverToken,
+                accountToken = trimmedAccountToken,
+                lastConnectedAt = System.currentTimeMillis()
+            )
+            val info = runCatching { fetchSystemInfo(candidate) }
+                .getOrElse { error ->
+                    lastError = error
+                    null
+                }
+                ?: return@forEach
+            val expectedServerId = targetServerId.ifBlank { preferredIdentity?.serverId.orEmpty() }
+            if (expectedServerId.isNotBlank() && info.serverId.isNotBlank() && expectedServerId != info.serverId) {
+                lastError = IllegalStateException("Server identity did not match the selected account server")
+                return@forEach
+            }
+            val shell = candidate.copy(
+                connectionId = createConnectionId(
+                    candidateUrl,
+                    HomeServerKind.PLEX,
+                    info.serverId.ifBlank { accountName }
+                ),
+                serverName = info.serverName.ifBlank { candidate.serverName.ifBlank { "Home Server" } },
+                serverId = info.serverId.ifBlank { candidate.serverId },
+                lastConnectedAt = System.currentTimeMillis()
+            )
+            val collections = runCatching { fetchCollections(shell) }
+                .getOrElse { error ->
+                    lastError = error
+                    emptyList()
+                }
+            if (collections.isNotEmpty()) {
+                return shell.copy(collections = collections)
+            }
+        }
+
+        val message = lastError?.message?.takeIf { it.isNotBlank() }
+        error(message ?: "No accessible libraries found for this account")
+    }
+
+    private fun fetchPlexResources(accountToken: String): List<PlexResourceDevice> {
         val url = "https://plex.tv/api/resources".toHttpUrlOrNull()
             ?.newBuilder()
+            ?.addQueryParameter("includeHttps", "1")
+            ?.addQueryParameter("includeRelay", "1")
             ?.addQueryParameter("X-Plex-Token", accountToken)
             ?.build()
             ?.toString()
-            ?: return ""
+            ?: return emptyList()
         val request = Request.Builder()
             .url(url)
+            .headersWith(plexPublicHeaders())
             .header("Accept", "application/xml")
             .header("X-Plex-Token", accountToken)
             .build()
         return runCatching {
             okHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use ""
-                val xml = response.body?.string().orEmpty()
-                val devicePattern = Regex("""<Device\b[^>]*>""")
-                devicePattern.findAll(xml)
-                    .map { it.value }
-                    .firstOrNull { it.xmlAttribute("clientIdentifier") == serverId }
-                    ?.xmlAttribute("accessToken")
-                    .orEmpty()
+                if (!response.isSuccessful) return@use emptyList()
+                parsePlexResourcesXml(response.body?.string().orEmpty())
             }
-        }.getOrDefault("")
+        }.getOrDefault(emptyList())
+    }
+
+    private fun parsePlexResourcesXml(xml: String): List<PlexResourceDevice> {
+        val devicePattern = Regex(
+            """<Device\b([^>]*)>(.*?)</Device>|<Device\b([^>]*)/>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        val connectionPattern = Regex("""<Connection\b([^>]*)/?\s*>""", RegexOption.IGNORE_CASE)
+        return devicePattern.findAll(xml)
+            .map { match ->
+                val attrs = match.groupValues.getOrNull(1).orEmpty()
+                    .ifBlank { match.groupValues.getOrNull(3).orEmpty() }
+                val body = match.groupValues.getOrNull(2).orEmpty()
+                PlexResourceDevice(
+                    name = attrs.xmlAttribute("name"),
+                    product = attrs.xmlAttribute("product"),
+                    provides = attrs.xmlAttribute("provides"),
+                    clientIdentifier = attrs.xmlAttribute("clientIdentifier"),
+                    accessToken = attrs.xmlAttribute("accessToken"),
+                    owned = attrs.xmlBooleanAttribute("owned"),
+                    connections = connectionPattern.findAll(body)
+                        .map { connection ->
+                            val connectionAttrs = connection.groupValues.getOrNull(1).orEmpty()
+                            PlexResourceConnection(
+                                uri = normalizeServerUrl(connectionAttrs.xmlAttribute("uri")),
+                                local = connectionAttrs.xmlBooleanAttribute("local"),
+                                relay = connectionAttrs.xmlBooleanAttribute("relay")
+                            )
+                        }
+                        .filter { it.uri.isNotBlank() }
+                        .distinctBy { it.uri.lowercase(Locale.US) }
+                        .toList()
+                )
+            }
+            .filter { it.isServer && it.clientIdentifier.isNotBlank() }
+            .toList()
+    }
+
+    private fun selectPlexResourceDevice(
+        resources: List<PlexResourceDevice>,
+        preferredServerId: String,
+        preferredServerUrl: String
+    ): PlexResourceDevice? {
+        if (resources.isEmpty()) return null
+        preferredServerId.takeIf { it.isNotBlank() }?.let { id ->
+            resources.firstOrNull { it.clientIdentifier == id }?.let { return it }
+        }
+        preferredServerUrl.takeIf { it.isNotBlank() }?.let { url ->
+            resources.firstOrNull { device ->
+                device.connections.any { sameServerEndpoint(it.uri, url) }
+            }?.let { return it }
+        }
+        resources.singleOrNull { it.accessToken.isNotBlank() }?.let { return it }
+        return resources
+            .filter { it.accessToken.isNotBlank() }
+            .sortedWith(
+                compareByDescending<PlexResourceDevice> { it.owned }
+                    .thenByDescending { it.connections.isNotEmpty() }
+            )
+            .firstOrNull()
+    }
+
+    private fun plexCandidateServerUrls(
+        preferredServerUrl: String,
+        device: PlexResourceDevice?
+    ): List<String> {
+        return buildList {
+            preferredServerUrl.takeIf { it.isNotBlank() }?.let { add(it) }
+            device?.connections
+                ?.sortedWith(
+                    compareByDescending<PlexResourceConnection> { it.local && !it.relay }
+                        .thenBy { it.relay }
+                        .thenByDescending { it.uri.startsWith("https://", ignoreCase = true) }
+                )
+                ?.forEach { connection -> add(connection.uri) }
+        }
+            .map { normalizeServerUrl(it) }
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase(Locale.US) }
+    }
+
+    private fun sameServerEndpoint(left: String, right: String): Boolean {
+        val leftUrl = left.toHttpUrlOrNull() ?: return false
+        val rightUrl = right.toHttpUrlOrNull() ?: return false
+        return leftUrl.host.equals(rightUrl.host, ignoreCase = true) && leftUrl.port == rightUrl.port
+    }
+
+    private fun resolvePlexServerToken(accountToken: String, serverId: String): String {
+        if (serverId.isBlank()) return ""
+        return fetchPlexResources(accountToken)
+            .firstOrNull { it.clientIdentifier == serverId }
+            ?.accessToken
+            .orEmpty()
     }
 
     private fun refreshConnection(connection: HomeServerConnection): HomeServerConnection {
         require(connection.isUsable) { "${connection.serverName.ifBlank { "Home Server" }} is disabled or incomplete" }
+        if (connection.serverKind == HomeServerKind.PLEX) {
+            val accountToken = connection.accountToken.ifBlank { connection.accessToken }
+            val refreshed = buildPlexConnection(
+                accountToken = accountToken,
+                preferredServerUrl = connection.serverUrl,
+                preferredUsername = connection.userName,
+                preferredInfo = ServerInfo(
+                    serverName = connection.serverName,
+                    serverId = connection.serverId,
+                    productName = "Media Server",
+                    serverKind = HomeServerKind.PLEX
+                )
+            )
+            return refreshed.copy(
+                enabled = connection.enabled,
+                connectionId = connection.connectionId.ifBlank { refreshed.connectionId },
+                collections = mergeCollectionStates(refreshed.collections, connection.collections)
+            )
+        }
         val info = fetchSystemInfo(connection)
         val kind = info.serverKind.takeUnless { it == HomeServerKind.UNKNOWN }
             ?: detectServerKind(info.productName, info.serverName).takeUnless { it == HomeServerKind.UNKNOWN }
@@ -839,6 +1064,16 @@ class HomeServerRepository @Inject constructor(
             lastConnectedAt = System.currentTimeMillis()
         )
         return shell.copy(collections = fetchCollections(shell).ifEmpty { connection.collections })
+    }
+
+    private fun mergeCollectionStates(
+        refreshed: List<HomeServerCollection>,
+        previous: List<HomeServerCollection>
+    ): List<HomeServerCollection> {
+        val previousById = previous.associateBy { it.id }
+        return refreshed.map { collection ->
+            collection.copy(enabled = previousById[collection.id]?.enabled ?: collection.enabled)
+        }
     }
 
     private fun fetchCollections(connection: HomeServerConnection): List<HomeServerCollection> {
@@ -1526,8 +1761,19 @@ class HomeServerRepository @Inject constructor(
 
     private fun String.xmlAttribute(name: String): String {
         val pattern = Regex("""\b${Regex.escape(name)}=["']([^"']*)["']""")
-        return pattern.find(this)?.groupValues?.getOrNull(1).orEmpty()
+        return pattern.find(this)?.groupValues?.getOrNull(1).orEmpty().xmlDecoded()
     }
+
+    private fun String.xmlBooleanAttribute(name: String): Boolean {
+        val value = xmlAttribute(name)
+        return value == "1" || value.equals("true", ignoreCase = true)
+    }
+
+    private fun String.xmlDecoded(): String = replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
 
     private fun parsePlexIdentity(body: String): Pair<String, String> {
         val container = runCatching {
@@ -1554,7 +1800,8 @@ class HomeServerRepository @Inject constructor(
         val serverId: String,
         val serverName: String,
         val userId: String,
-        val userName: String
+        val userName: String,
+        val accountToken: String = ""
     )
 
     private data class HomeServerItem(

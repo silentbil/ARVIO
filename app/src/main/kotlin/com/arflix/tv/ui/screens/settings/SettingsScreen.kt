@@ -1392,17 +1392,15 @@ fun SettingsScreen(
                 title = "Connect with code",
                 fields = listOf(
                     InputField(
-                        label = "Server URL",
+                        label = "Server URL (optional)",
                         value = plexHomeServerUrl,
-                        placeholder = "http://server:32400",
+                        placeholder = "Leave empty to discover automatically",
                         onValueChange = { plexHomeServerUrl = it }
                     )
                 ),
                 onConfirm = {
-                    if (plexHomeServerUrl.isNotBlank()) {
-                        viewModel.startPlexHomeServerAuth(plexHomeServerUrl.trim())
-                        showPlexHomeServerInput = false
-                    }
+                    viewModel.startPlexHomeServerAuth(plexHomeServerUrl.trim())
+                    showPlexHomeServerInput = false
                 },
                 onDismiss = {
                     showPlexHomeServerInput = false

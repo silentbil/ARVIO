@@ -2167,14 +2167,6 @@ class SettingsViewModel @Inject constructor(
     fun startPlexHomeServerAuth(serverUrl: String) {
         if (_uiState.value.isHomeServerConnecting || _uiState.value.isPlexHomeServerPolling) return
         val trimmedUrl = serverUrl.trim()
-        if (trimmedUrl.isBlank()) {
-            _uiState.value = _uiState.value.copy(
-                homeServerError = "Enter a server URL",
-                toastMessage = "Enter a server URL",
-                toastType = ToastType.ERROR
-            )
-            return
-        }
 
         viewModelScope.launch {
             cancelPlexHomeServerAuth(updateState = false)
@@ -2233,10 +2225,9 @@ class SettingsViewModel @Inject constructor(
                     toastMessage = "Connecting server...",
                     toastType = ToastType.INFO
                 )
-                val connectionResult = homeServerRepository.connect(
-                    rawUrl = serverUrl,
-                    username = "",
-                    password = accountToken
+                val connectionResult = homeServerRepository.connectPlexAccount(
+                    accountToken = accountToken,
+                    preferredServerUrl = serverUrl
                 )
                 connectionResult.onSuccess { connection ->
                     val connections = homeServerRepository.currentConnections()
