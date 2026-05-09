@@ -230,8 +230,8 @@
     <string name="ai_gemini_disclaimer">Requires a billing-enabled Google account. Cost: under $0.01 per movie</string>
     <string name="ai_key_not_set">Not set</string>
     <string name="ai_model_dialog_subtitle">Select the AI provider and model for subtitle translation</string>
-    <string name="ai_groq_model_note">Free tier: 1K RPM / 500K RPD · Default</string>
-    <string name="ai_gemini_model_note">Better quality · Free tier available</string>
+    <string name="ai_groq_model_note">Free tier: 30 RPM / 500K RPD</string>
+    <string name="ai_gemini_model_note">Better quality · Requires a billing-enabled Google account</string>
     <string name="ai_api_key_dialog_subtitle_groq">Enter your Groq API key</string>
     <string name="ai_api_key_dialog_subtitle_gemini">Enter your Gemini API key</string>
     <string name="ai_key_saved_title">API key saved</string>
