@@ -5577,6 +5577,7 @@ private fun sourceLabel(sourceType: CatalogSourceType): String {
         CatalogSourceType.MDBLIST -> "MDBList"
         CatalogSourceType.PREINSTALLED -> "Built-in"
         CatalogSourceType.ADDON -> "Addon"
+        CatalogSourceType.HOME_SERVER -> "Home Server"
     }
 }
 
@@ -5698,6 +5699,7 @@ private fun CatalogsSettings(
                     val addonLabel = catalog.addonName?.takeIf { it.isNotBlank() } ?: "Addon"
                     "From $addonLabel"
                 }
+                CatalogSourceType.HOME_SERVER -> "From Home Server"
                     else -> catalog.sourceUrl ?: "Custom catalog"
                 }
             }

@@ -6,7 +6,8 @@ enum class CatalogSourceType {
     PREINSTALLED,
     TRAKT,
     MDBLIST,
-    ADDON
+    ADDON,
+    HOME_SERVER
 }
 
 enum class CatalogKind {

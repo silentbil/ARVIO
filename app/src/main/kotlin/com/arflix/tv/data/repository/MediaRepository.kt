@@ -80,7 +80,8 @@ class MediaRepository @Inject constructor(
     private val traktRepository: TraktRepository,
     private val traktApi: TraktApi,
     private val okHttpClient: OkHttpClient,
-    private val streamRepository: StreamRepository
+    private val streamRepository: StreamRepository,
+    private val homeServerRepository: HomeServerRepository
 ) {
 
     data class CategoryPageResult(
@@ -1492,11 +1493,16 @@ class MediaRepository @Inject constructor(
             return@coroutineScope if (page.items.isEmpty()) null else Category(catalog.id, catalog.title, page.items)
         }
         val effectiveMaxItems = if (catalog.isTop10Catalog()) maxItems.coerceAtMost(10) else maxItems
+        if (catalog.sourceType == CatalogSourceType.HOME_SERVER) {
+            val page = loadHomeServerCatalogPage(catalog, offset = 0, limit = effectiveMaxItems)
+            return@coroutineScope if (page.items.isEmpty()) null else Category(catalog.id, catalog.title, page.items)
+        }
         val mediaRefs = when (catalog.sourceType) {
             CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
             CatalogSourceType.MDBLIST -> loadMdblistCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
             CatalogSourceType.ADDON -> loadAddonCatalogRefsPage(catalog, offset = 0, limit = effectiveMaxItems).refs
             CatalogSourceType.PREINSTALLED -> emptyList()
+            CatalogSourceType.HOME_SERVER -> emptyList()
         }
         if (mediaRefs.isEmpty()) return@coroutineScope null
 
@@ -1539,7 +1545,9 @@ class MediaRepository @Inject constructor(
 
         val pageRefs: List<Pair<MediaType, Int>>
         val hasMore: Boolean
-        if (catalog.sourceType == CatalogSourceType.ADDON) {
+        if (catalog.sourceType == CatalogSourceType.HOME_SERVER) {
+            return@coroutineScope loadHomeServerCatalogPage(catalog, offset, effectiveLimit)
+        } else if (catalog.sourceType == CatalogSourceType.ADDON) {
             val page = loadAddonCatalogRefsPage(catalog, offset, effectiveLimit)
             pageRefs = page.refs
             hasMore = page.hasMore && offset + pageRefs.size < rankedCatalogLimit
@@ -1549,6 +1557,7 @@ class MediaRepository @Inject constructor(
                 CatalogSourceType.MDBLIST -> loadMdblistCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
                 CatalogSourceType.ADDON -> emptyList()
                 CatalogSourceType.PREINSTALLED -> emptyList()
+                CatalogSourceType.HOME_SERVER -> emptyList()
             }.distinct()
 
             if (mediaRefs.isEmpty()) return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
@@ -1582,6 +1591,122 @@ class MediaRepository @Inject constructor(
             items = items,
             hasMore = hasMore
         )
+    }
+
+    private suspend fun loadHomeServerCatalogPage(
+        catalog: CatalogConfig,
+        offset: Int,
+        limit: Int
+    ): CategoryPageResult = coroutineScope {
+        val page = homeServerRepository.loadCatalogItems(
+            sourceRef = catalog.sourceRef,
+            offset = offset,
+            limit = limit
+        )
+        if (page.items.isEmpty()) {
+            return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)
+        }
+
+        val semaphore = Semaphore(4)
+        val orderedItems = page.items.map { serverItem ->
+            async {
+                semaphore.withPermit {
+                    runCatching { resolveHomeServerCatalogItem(serverItem) }.getOrNull()
+                }
+            }
+        }.mapNotNull { it.await() }
+
+        if (orderedItems.isNotEmpty()) {
+            cacheItems(orderedItems)
+        }
+        CategoryPageResult(
+            items = orderedItems.distinctBy { "${it.mediaType.name}_${it.id}" },
+            hasMore = page.hasMore
+        )
+    }
+
+    private suspend fun resolveHomeServerCatalogItem(item: HomeServerCatalogItem): MediaItem? {
+        val providers = item.providerIds.mapKeys { it.key.lowercase(Locale.US) }
+        providers["tmdb"]?.toIntOrNull()?.let { tmdbId ->
+            return runCatching {
+                when (item.mediaType) {
+                    MediaType.MOVIE -> getMovieDetails(tmdbId)
+                    MediaType.TV -> getTvDetails(tmdbId)
+                }
+            }.getOrNull()
+        }
+        providers["imdb"]?.takeIf { it.startsWith("tt", ignoreCase = true) }?.let { imdbId ->
+            resolveImdbToTmdbRef(imdbId, item.mediaType)?.let { (type, tmdbId) ->
+                return runCatching {
+                    when (type) {
+                        MediaType.MOVIE -> getMovieDetails(tmdbId)
+                        MediaType.TV -> getTvDetails(tmdbId)
+                    }
+                }.getOrNull()
+            }
+        }
+        return resolveHomeServerCatalogItemByTitle(item)
+    }
+
+    private suspend fun resolveHomeServerCatalogItemByTitle(item: HomeServerCatalogItem): MediaItem? {
+        val query = item.title.trim()
+        if (query.isBlank()) return null
+        val response = runCatching {
+            when (item.mediaType) {
+                MediaType.MOVIE -> tmdbApi.searchMovies(
+                    apiKey = apiKey,
+                    query = query,
+                    language = contentLanguage,
+                    primaryReleaseYear = item.year,
+                    year = item.year
+                )
+                MediaType.TV -> tmdbApi.searchTv(
+                    apiKey = apiKey,
+                    query = query,
+                    language = contentLanguage,
+                    firstAirDateYear = item.year
+                )
+            }
+        }.getOrNull() ?: return null
+
+        val requestedTitle = HomeServerMatcher.normalizeTitle(query)
+        val best = response.results
+            .filter { result ->
+                val resultType = when (result.mediaType) {
+                    "movie" -> MediaType.MOVIE
+                    "tv" -> MediaType.TV
+                    else -> item.mediaType
+                }
+                resultType == item.mediaType
+            }
+            .map { result ->
+                val title = result.title ?: result.name ?: result.originalTitle ?: result.originalName.orEmpty()
+                val normalized = HomeServerMatcher.normalizeTitle(title)
+                val dateYear = (result.releaseDate ?: result.firstAirDate).orEmpty().take(4).toIntOrNull()
+                val titleScore = when {
+                    requestedTitle.isNotBlank() && requestedTitle == normalized -> 100
+                    requestedTitle.isNotBlank() && (requestedTitle in normalized || normalized in requestedTitle) -> 45
+                    else -> 0
+                }
+                val yearScore = when {
+                    item.year == null || dateYear == null -> 0
+                    item.year == dateYear -> 30
+                    kotlin.math.abs(item.year - dateYear) <= 1 -> 12
+                    else -> -40
+                }
+                result to (titleScore + yearScore + result.popularity.toInt().coerceAtMost(30))
+            }
+            .maxByOrNull { (_, score) -> score }
+            ?.takeIf { (_, score) -> score >= 55 }
+            ?.first
+            ?: return null
+
+        return runCatching {
+            when (item.mediaType) {
+                MediaType.MOVIE -> getMovieDetails(best.id)
+                MediaType.TV -> getTvDetails(best.id)
+            }
+        }.getOrNull()
     }
 
     suspend fun loadCollectionCatalogPage(

@@ -2143,6 +2143,7 @@ class SettingsViewModel @Inject constructor(
             )
             val result = homeServerRepository.connect(serverUrl, username, password)
             result.onSuccess { connection ->
+                syncHomeServerCatalogsFromConnections()
                 val connections = homeServerRepository.currentConnections()
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,
@@ -2230,6 +2231,7 @@ class SettingsViewModel @Inject constructor(
                     preferredServerUrl = serverUrl
                 )
                 connectionResult.onSuccess { connection ->
+                    syncHomeServerCatalogsFromConnections()
                     val connections = homeServerRepository.currentConnections()
                     plexHomeServerUrl = null
                     _uiState.value = _uiState.value.copy(
@@ -2292,6 +2294,7 @@ class SettingsViewModel @Inject constructor(
             )
             val result = homeServerRepository.testConnections()
             result.onSuccess { connections ->
+                syncHomeServerCatalogsFromConnections()
                 _uiState.value = _uiState.value.copy(
                     isHomeServerConnecting = false,
                     homeServerConnection = connections.firstOrNull(),
@@ -2316,6 +2319,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             cancelPlexHomeServerAuth(updateState = false)
             homeServerRepository.disconnect()
+            catalogRepository.syncHomeServerCatalogs(emptyList())
             _uiState.value = _uiState.value.copy(
                 homeServerConnection = null,
                 homeServerConnections = emptyList(),
@@ -2327,6 +2331,11 @@ class SettingsViewModel @Inject constructor(
             )
             syncLocalStateToCloud(silent = true)
         }
+    }
+
+    private suspend fun syncHomeServerCatalogsFromConnections() {
+        val candidates = homeServerRepository.getCatalogCandidates()
+        catalogRepository.syncHomeServerCatalogs(candidates)
     }
 
     fun syncLocalStateToCloud(silent: Boolean = false, force: Boolean = false) {

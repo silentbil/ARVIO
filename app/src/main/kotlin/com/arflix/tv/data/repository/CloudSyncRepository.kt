@@ -411,6 +411,13 @@ class CloudSyncRepository @Inject constructor(
         }
         root.put("hiddenAddonByProfile", JSONObject(gson.toJson(hiddenAddonByProfile)))
 
+        val hiddenHomeServerByProfile = buildMap<String, List<String>> {
+            profiles.forEach { profile ->
+                put(profile.id, catalogRepository.getHiddenHomeServerCatalogIdsForProfile(profile.id))
+            }
+        }
+        root.put("hiddenHomeServerByProfile", JSONObject(gson.toJson(hiddenHomeServerByProfile)))
+
         // IPTV config per profile (including favorites)
         val iptvByProfile = buildMap<String, IptvCloudProfileState> {
             profiles.forEach { profile ->
@@ -772,6 +779,14 @@ class CloudSyncRepository @Inject constructor(
         }
 
         // ── IPTV config + favorites ──
+        root.optJSONObject("hiddenHomeServerByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+            val type = object : TypeToken<Map<String, List<String>>>() {}.type
+            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
+            map.forEach { (profileId, hidden) ->
+                catalogRepository.setHiddenHomeServerCatalogIdsForProfile(profileId, hidden)
+            }
+        }
+
         var importedActiveProfileIptv = false
         root.optJSONObject("iptvByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
             val type = object : TypeToken<Map<String, IptvCloudProfileState>>() {}.type

@@ -28,6 +28,7 @@ import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.CloudSyncStatus
 import com.arflix.tv.data.repository.CollectionTemplateManifest
 import com.arflix.tv.data.repository.WatchHistoryRepository
@@ -113,6 +114,7 @@ class HomeViewModel @Inject constructor(
     private val traktRepository: TraktRepository,
     private val traktSyncService: TraktSyncService,
     private val iptvRepository: IptvRepository,
+    private val homeServerRepository: HomeServerRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
     private val cloudSyncRepository: CloudSyncRepository,
@@ -1582,6 +1584,7 @@ class HomeViewModel @Inject constructor(
                         )
                         val addons = streamRepository.installedAddons.first()
                         catalogRepository.syncAddonCatalogs(addons)
+                        catalogRepository.syncHomeServerCatalogs(homeServerRepository.getCatalogCandidates())
                         // Ensure built-in preinstalled catalogs exist, then re-read
                         // the persisted catalog list so the returned value includes
                         // BOTH built-ins AND the addon catalogs just synced above.

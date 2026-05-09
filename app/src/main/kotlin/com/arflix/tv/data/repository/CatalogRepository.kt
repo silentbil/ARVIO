@@ -16,6 +16,7 @@ import com.arflix.tv.data.model.CollectionTileShape
 import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.CatalogValidationResult
 import com.arflix.tv.data.model.Category
+import com.arflix.tv.data.repository.HomeServerCatalogCandidate
 import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.ParsedCatalogUrl
@@ -77,6 +78,7 @@ class CatalogRepository @Inject constructor(
     private fun catalogsKey(profileId: String) = stringPreferencesKey("profile_${profileId}_catalogs_v1")
     private fun hiddenPreinstalledKey(profileId: String) = stringPreferencesKey("profile_${profileId}_hidden_preinstalled_catalogs_v2")
     private fun hiddenAddonKey(profileId: String) = stringPreferencesKey("profile_${profileId}_hidden_addon_catalogs_v1")
+    private fun hiddenHomeServerKey(profileId: String) = stringPreferencesKey("profile_${profileId}_hidden_home_server_catalogs_v1")
     private val legacyDefaultKey = stringPreferencesKey("profile_default_catalogs_v1")
     private val legacyGlobalKey = stringPreferencesKey("catalogs_v1")
     private val listType = object : TypeToken<List<CatalogConfig>>() {}.type
@@ -108,6 +110,19 @@ class CatalogRepository @Inject constructor(
         }
     }
 
+    private fun decodeHiddenHomeServer(profileId: String, prefs: Preferences): Set<String> {
+        val raw = prefs[hiddenHomeServerKey(profileId)]
+        if (raw.isNullOrBlank()) return emptySet()
+        return try {
+            (gson.fromJson<List<String>>(raw, hiddenListType) ?: emptyList())
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toSet()
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
+
     private suspend fun hidePreinstalledCatalog(profileId: String, catalogId: String) {
         val trimmed = catalogId.trim()
         if (trimmed.isBlank()) return
@@ -128,6 +143,17 @@ class CatalogRepository @Inject constructor(
             prefs[hiddenAddonKey(profileId)] = gson.toJson(hidden.toList())
         }
         invalidationBus.markDirty(CloudSyncScope.CATALOGS, profileId, "hide addon catalog")
+    }
+
+    private suspend fun hideHomeServerCatalog(profileId: String, catalogId: String) {
+        val trimmed = catalogId.trim()
+        if (trimmed.isBlank()) return
+        context.settingsDataStore.edit { prefs ->
+            val hidden = decodeHiddenHomeServer(profileId, prefs).toMutableSet()
+            hidden.add(trimmed)
+            prefs[hiddenHomeServerKey(profileId)] = gson.toJson(hidden.toList())
+        }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, profileId, "hide home server catalog")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -272,6 +298,25 @@ class CatalogRepository @Inject constructor(
             }
         }
         invalidationBus.markDirty(CloudSyncScope.CATALOGS, safeProfileId, "set hidden addon catalogs")
+    }
+
+    suspend fun getHiddenHomeServerCatalogIdsForProfile(profileId: String): List<String> {
+        val safeProfileId = profileId.trim().ifBlank { "default" }
+        val prefs = context.settingsDataStore.data.first()
+        return decodeHiddenHomeServer(safeProfileId, prefs).toList()
+    }
+
+    suspend fun setHiddenHomeServerCatalogIdsForProfile(profileId: String, ids: List<String>) {
+        val safeProfileId = profileId.trim().ifBlank { "default" }
+        val cleaned = ids.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        context.settingsDataStore.edit { prefs ->
+            if (cleaned.isEmpty()) {
+                prefs[hiddenHomeServerKey(safeProfileId)] = ""
+            } else {
+                prefs[hiddenHomeServerKey(safeProfileId)] = gson.toJson(cleaned)
+            }
+        }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, safeProfileId, "set hidden home server catalogs")
     }
 
     private suspend fun saveCatalogs(catalogs: List<CatalogConfig>) {
@@ -466,6 +511,62 @@ class CatalogRepository @Inject constructor(
         return changed
     }
 
+    suspend fun syncHomeServerCatalogs(candidates: List<HomeServerCatalogCandidate>): Boolean {
+        val profileId = activeProfileId()
+        val hiddenHomeServerIds = context.settingsDataStore.data
+            .first()
+            .let { prefs -> decodeHiddenHomeServer(profileId, prefs) }
+        val desiredCatalogs = candidates
+            .filter { it.sourceRef.isNotBlank() && it.title.isNotBlank() }
+            .map { candidate ->
+                val stableId = "home_server_${sha256Short(candidate.sourceRef)}"
+                CatalogConfig(
+                    id = stableId,
+                    title = candidate.title,
+                    sourceType = CatalogSourceType.HOME_SERVER,
+                    sourceRef = candidate.sourceRef,
+                    isPreinstalled = false
+                )
+            }
+            .filterNot { it.id in hiddenHomeServerIds }
+            .distinctBy { it.id }
+        val desiredById = desiredCatalogs.associateBy { it.id }
+
+        val current = getCatalogs().toMutableList()
+        var changed = false
+
+        val beforeRemovalSize = current.size
+        current.removeAll { cfg ->
+            cfg.sourceType == CatalogSourceType.HOME_SERVER && !desiredById.containsKey(cfg.id)
+        }
+        if (current.size != beforeRemovalSize) changed = true
+
+        current.indices.forEach { index ->
+            val existing = current[index]
+            val desired = desiredById[existing.id] ?: return@forEach
+            val merged = existing.copy(
+                sourceType = CatalogSourceType.HOME_SERVER,
+                sourceRef = desired.sourceRef,
+                sourceUrl = null,
+                isPreinstalled = false
+            )
+            if (merged != existing) {
+                current[index] = merged
+                changed = true
+            }
+        }
+
+        val existingIds = current.map { it.id }.toHashSet()
+        val missing = desiredCatalogs.filterNot { it.id in existingIds }
+        if (missing.isNotEmpty()) {
+            current.addAll(0, missing)
+            changed = true
+        }
+
+        if (changed) saveCatalogs(current)
+        return changed
+    }
+
     private fun buildAddonCatalogConfig(
         addon: Addon,
         catalog: AddonCatalog
@@ -633,6 +734,8 @@ class CatalogRepository @Inject constructor(
             // syncAddonCatalogs call, so the deletion won't stick unless we
             // record the id here.
             hideAddonCatalog(profileId, catalogId)
+        } else if (target.sourceType == CatalogSourceType.HOME_SERVER) {
+            hideHomeServerCatalog(profileId, catalogId)
         }
         current.removeAll { it.id == catalogId }
         saveCatalogs(current)
@@ -688,6 +791,7 @@ class CatalogRepository @Inject constructor(
             .map { cfg ->
                 val looksCustom = cfg.id.startsWith("custom_") ||
                     cfg.sourceType == CatalogSourceType.ADDON ||
+                    cfg.sourceType == CatalogSourceType.HOME_SERVER ||
                     !cfg.sourceUrl.isNullOrBlank() ||
                     !cfg.sourceRef.isNullOrBlank()
                 if (looksCustom) cfg.copy(isPreinstalled = false) else cfg
@@ -742,6 +846,7 @@ class CatalogRepository @Inject constructor(
             CatalogSourceType.MDBLIST -> resolveMdblistMetadata(url)
             CatalogSourceType.PREINSTALLED -> null
             CatalogSourceType.ADDON -> null
+            CatalogSourceType.HOME_SERVER -> null
         }
     }
 
@@ -770,6 +875,7 @@ class CatalogRepository @Inject constructor(
             )
             CatalogSourceType.PREINSTALLED -> null
             CatalogSourceType.ADDON -> null
+            CatalogSourceType.HOME_SERVER -> null
         }
     }
 
@@ -1049,6 +1155,7 @@ class CatalogRepository @Inject constructor(
         val normalized = raw.trim().uppercase()
         return when {
             // URL/ref evidence always wins over stale enum values from older builds.
+            sourceRef?.startsWith(HomeServerRepository.CATALOG_SOURCE_REF_PREFIX, ignoreCase = true) == true -> CatalogSourceType.HOME_SERVER
             sourceRef?.startsWith(ADDON_SOURCE_REF_PREFIX, ignoreCase = true) == true -> CatalogSourceType.ADDON
             sourceRef?.startsWith("trakt_", ignoreCase = true) == true -> CatalogSourceType.TRAKT
             sourceRef?.startsWith("mdblist", ignoreCase = true) == true -> CatalogSourceType.MDBLIST
@@ -1057,7 +1164,9 @@ class CatalogRepository @Inject constructor(
             normalized == CatalogSourceType.TRAKT.name -> CatalogSourceType.TRAKT
             normalized == CatalogSourceType.MDBLIST.name -> CatalogSourceType.MDBLIST
             normalized == CatalogSourceType.ADDON.name -> CatalogSourceType.ADDON
+            normalized == CatalogSourceType.HOME_SERVER.name -> CatalogSourceType.HOME_SERVER
             normalized == CatalogSourceType.PREINSTALLED.name -> CatalogSourceType.PREINSTALLED
+            normalized.contains("HOME_SERVER") || normalized.contains("HOME SERVER") -> CatalogSourceType.HOME_SERVER
             normalized.contains("ADDON") -> CatalogSourceType.ADDON
             normalized.contains("TRAKT") -> CatalogSourceType.TRAKT
             normalized.contains("MDB") || normalized.contains("MDL") -> CatalogSourceType.MDBLIST
@@ -1069,10 +1178,12 @@ class CatalogRepository @Inject constructor(
     private fun readCatalogsFromPrefs(profileId: String, prefs: Preferences): List<CatalogConfig> {
         val hiddenPreinstalled = decodeHiddenPreinstalled(profileId, prefs)
         val hiddenAddon = decodeHiddenAddon(profileId, prefs)
+        val hiddenHomeServer = decodeHiddenHomeServer(profileId, prefs)
 
         fun CatalogConfig.isHidden(): Boolean {
             if (isPreinstalledCatalog(this) && id in hiddenPreinstalled) return true
             if (sourceType == CatalogSourceType.ADDON && id in hiddenAddon) return true
+            if (sourceType == CatalogSourceType.HOME_SERVER && id in hiddenHomeServer) return true
             return false
         }
 

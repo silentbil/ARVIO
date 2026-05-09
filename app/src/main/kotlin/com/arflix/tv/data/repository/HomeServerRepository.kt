@@ -4,6 +4,7 @@ import android.content.Context
 import android.provider.Settings
 import androidx.datastore.preferences.core.edit
 import com.arflix.tv.BuildConfig
+import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.ProxyHeaders
 import com.arflix.tv.data.model.StreamBehaviorHints
 import com.arflix.tv.data.model.StreamSource
@@ -28,6 +29,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.URLDecoder
+import java.net.URLEncoder
 import java.text.Normalizer
 import java.util.Locale
 import javax.inject.Inject
@@ -77,6 +80,27 @@ data class PlexPinAuthSession(
     val verificationUrl: String = "",
     val expiresIn: Int = 600,
     val interval: Int = 5
+)
+
+data class HomeServerCatalogCandidate(
+    val title: String,
+    val sourceRef: String,
+    val serverName: String,
+    val collectionName: String,
+    val collectionType: String
+)
+
+data class HomeServerCatalogItem(
+    val id: String,
+    val title: String,
+    val mediaType: MediaType,
+    val year: Int?,
+    val providerIds: Map<String, String>
+)
+
+data class HomeServerCatalogPage(
+    val items: List<HomeServerCatalogItem>,
+    val hasMore: Boolean
 )
 
 internal data class HomeServerCandidateInfo(
@@ -154,8 +178,39 @@ class HomeServerRepository @Inject constructor(
         const val ADDON_ID = "home_server"
         const val ADDON_NAME = "Home Server"
         const val CONNECTION_KEY_NAME = "home_server_connection_v1"
+        const val CATALOG_SOURCE_REF_PREFIX = "home_server_catalog|"
         private const val SOURCE_CACHE_MAX_ENTRIES = 128
         private const val SOURCE_CACHE_TTL_MS = 30L * 60L * 1000L
+
+        fun catalogServerKey(connection: HomeServerConnection): String {
+            return connection.serverId.ifBlank { connection.connectionId }.ifBlank {
+                "${connection.serverKind.name}:${connection.serverUrl}"
+            }
+        }
+
+        fun buildCatalogSourceRef(connection: HomeServerConnection, collection: HomeServerCollection): String {
+            return CATALOG_SOURCE_REF_PREFIX +
+                listOf(
+                    catalogServerKey(connection),
+                    collection.id,
+                    collection.type
+                ).joinToString("|") { urlEncodeStatic(it) }
+        }
+
+        fun parseCatalogSourceRef(sourceRef: String?): Triple<String, String, String>? {
+            val value = sourceRef?.trim().orEmpty()
+            if (!value.startsWith(CATALOG_SOURCE_REF_PREFIX, ignoreCase = true)) return null
+            val parts = value.substring(CATALOG_SOURCE_REF_PREFIX.length).split("|")
+            if (parts.size < 2) return null
+            val serverKey = urlDecodeStatic(parts[0]).trim()
+            val collectionId = urlDecodeStatic(parts[1]).trim()
+            val collectionType = parts.getOrNull(2)?.let { urlDecodeStatic(it).trim() }.orEmpty()
+            if (serverKey.isBlank() || collectionId.isBlank()) return null
+            return Triple(serverKey, collectionId, collectionType)
+        }
+
+        private fun urlEncodeStatic(value: String): String = URLEncoder.encode(value, "UTF-8")
+        private fun urlDecodeStatic(value: String): String = URLDecoder.decode(value, "UTF-8")
     }
 
     private val gson = Gson()
@@ -354,6 +409,38 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun hasUsableConnections(): Boolean = currentConnections().any { it.isUsable }
+
+    suspend fun getCatalogCandidates(): List<HomeServerCatalogCandidate> = withContext(Dispatchers.IO) {
+        currentConnections()
+            .filter { it.isUsable }
+            .flatMap { connection ->
+                val libraryCandidates = connection.collections
+                    .filter { it.enabled && it.id.isNotBlank() }
+                    .map { collection -> connection.toCatalogCandidate(collection) }
+                val serverCollectionCandidates = runCatching {
+                    fetchServerCollectionCatalogs(connection)
+                }.getOrDefault(emptyList())
+                libraryCandidates + serverCollectionCandidates
+            }
+            .distinctBy { it.sourceRef }
+    }
+
+    suspend fun loadCatalogItems(
+        sourceRef: String?,
+        offset: Int,
+        limit: Int
+    ): HomeServerCatalogPage = withContext(Dispatchers.IO) {
+        if (limit <= 0 || offset < 0) return@withContext HomeServerCatalogPage(emptyList(), hasMore = false)
+        val parsed = parseCatalogSourceRef(sourceRef)
+            ?: return@withContext HomeServerCatalogPage(emptyList(), hasMore = false)
+        val (serverKey, collectionId, collectionType) = parsed
+        val connection = currentConnections()
+            .firstOrNull { it.isUsable && catalogServerKey(it) == serverKey }
+            ?: return@withContext HomeServerCatalogPage(emptyList(), hasMore = false)
+        runCatching {
+            loadConnectionCatalogItems(connection, collectionId, collectionType, offset, limit)
+        }.getOrDefault(HomeServerCatalogPage(emptyList(), hasMore = false))
+    }
 
     suspend fun resolveMovieSources(
         imdbId: String?,
@@ -1108,6 +1195,173 @@ class HomeServerRepository @Inject constructor(
             }
     }
 
+    private fun HomeServerConnection.toCatalogCandidate(collection: HomeServerCollection): HomeServerCatalogCandidate {
+        return HomeServerCatalogCandidate(
+            title = collection.name.ifBlank { serverName.ifBlank { "Home Server" } },
+            sourceRef = buildCatalogSourceRef(this, collection),
+            serverName = serverName.ifBlank { "Home Server" },
+            collectionName = collection.name,
+            collectionType = collection.type
+        )
+    }
+
+    private fun fetchServerCollectionCatalogs(connection: HomeServerConnection): List<HomeServerCatalogCandidate> {
+        return when (connection.serverKind) {
+            HomeServerKind.PLEX -> fetchPlexCollectionCatalogs(connection)
+            HomeServerKind.JELLYFIN,
+            HomeServerKind.EMBY -> fetchJellyfinCollectionCatalogs(connection)
+            HomeServerKind.UNKNOWN -> emptyList()
+        }
+    }
+
+    private fun fetchPlexCollectionCatalogs(connection: HomeServerConnection): List<HomeServerCatalogCandidate> {
+        return connection.collections
+            .filter { it.enabled && it.id.isNotBlank() }
+            .flatMap { library ->
+                runCatching {
+                    getJson(
+                        buildUrl(
+                            connection.serverUrl,
+                            "/library/sections/${library.id}/collections",
+                            mapOf(
+                                "includeGuids" to "1",
+                                "X-Plex-Container-Start" to "0",
+                                "X-Plex-Container-Size" to "100"
+                            )
+                        ),
+                        connection
+                    ).metadataItems(connection.serverKind)
+                        .mapNotNull { item ->
+                            val collectionId = item.id.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                            val collection = HomeServerCollection(
+                                id = "collection:${library.id}:$collectionId",
+                                name = item.name,
+                                type = "collection",
+                                enabled = true
+                            )
+                            connection.toCatalogCandidate(collection)
+                        }
+                }.getOrDefault(emptyList())
+            }
+    }
+
+    private fun fetchJellyfinCollectionCatalogs(connection: HomeServerConnection): List<HomeServerCatalogCandidate> {
+        val response = getJson(
+            buildUrl(
+                connection.serverUrl,
+                "/Users/${connection.userId}/Items",
+                mapOf(
+                    "Recursive" to "true",
+                    "IncludeItemTypes" to "BoxSet",
+                    "Fields" to itemFields(),
+                    "StartIndex" to "0",
+                    "Limit" to "100"
+                )
+            ),
+            connection
+        )
+        return response.items()
+            .mapNotNull { item ->
+                val id = item.id.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val collection = HomeServerCollection(
+                    id = "collection:$id",
+                    name = item.name,
+                    type = "collection",
+                    enabled = true
+                )
+                connection.toCatalogCandidate(collection)
+            }
+    }
+
+    private fun loadConnectionCatalogItems(
+        connection: HomeServerConnection,
+        collectionId: String,
+        collectionType: String,
+        offset: Int,
+        limit: Int
+    ): HomeServerCatalogPage {
+        return if (connection.serverKind == HomeServerKind.PLEX) {
+            loadPlexCatalogItems(connection, collectionId, collectionType, offset, limit)
+        } else {
+            loadJellyfinCatalogItems(connection, collectionId, offset, limit)
+        }
+    }
+
+    private fun loadPlexCatalogItems(
+        connection: HomeServerConnection,
+        collectionId: String,
+        collectionType: String,
+        offset: Int,
+        limit: Int
+    ): HomeServerCatalogPage {
+        val collectionParts = collectionId.split(":")
+        val path = if (collectionParts.firstOrNull() == "collection" && collectionParts.size >= 3) {
+            "/library/metadata/${collectionParts[2]}/children"
+        } else {
+            "/library/sections/$collectionId/all"
+        }
+        val plexType = when (collectionType.lowercase(Locale.US)) {
+            "movie", "movies" -> "1"
+            "show", "shows", "series", "tvshows" -> "2"
+            else -> null
+        }
+        val response = getJson(
+            buildUrl(
+                connection.serverUrl,
+                path,
+                mapOf(
+                    "type" to plexType,
+                    "includeGuids" to "1",
+                    "X-Plex-Container-Start" to offset.toString(),
+                    "X-Plex-Container-Size" to limit.toString()
+                )
+            ),
+            connection
+        )
+        val container = response.obj("MediaContainer")
+        val total = container?.int("totalSize")
+            ?: container?.int("size")
+            ?: response.metadataItems(connection.serverKind).size
+        val items = response.metadataItems(connection.serverKind)
+            .mapNotNull { it.toCatalogItem() }
+        return HomeServerCatalogPage(
+            items = items,
+            hasMore = offset + items.size < total
+        )
+    }
+
+    private fun loadJellyfinCatalogItems(
+        connection: HomeServerConnection,
+        collectionId: String,
+        offset: Int,
+        limit: Int
+    ): HomeServerCatalogPage {
+        val parentId = collectionId.removePrefix("collection:").trim()
+        val response = getJson(
+            buildUrl(
+                connection.serverUrl,
+                "/Users/${connection.userId}/Items",
+                mapOf(
+                    "ParentId" to parentId,
+                    "Recursive" to "true",
+                    "IncludeItemTypes" to "Movie,Series",
+                    "Fields" to itemFields(),
+                    "SortBy" to "SortName",
+                    "SortOrder" to "Ascending",
+                    "StartIndex" to offset.toString(),
+                    "Limit" to limit.toString()
+                )
+            ),
+            connection
+        )
+        val total = response.int("TotalRecordCount") ?: response.items().size
+        val items = response.items().mapNotNull { it.toCatalogItem() }
+        return HomeServerCatalogPage(
+            items = items,
+            hasMore = offset + items.size < total
+        )
+    }
+
     private fun findBestMovie(
         connection: HomeServerConnection,
         imdbId: String?,
@@ -1820,6 +2074,21 @@ class HomeServerRepository @Inject constructor(
             productionYear = productionYear,
             providerIds = providerIds
         )
+
+        fun toCatalogItem(): HomeServerCatalogItem? {
+            val mediaType = when (type.lowercase(Locale.US)) {
+                "movie" -> MediaType.MOVIE
+                "series", "show", "tv", "tvshow" -> MediaType.TV
+                else -> return null
+            }
+            return HomeServerCatalogItem(
+                id = id,
+                title = name,
+                mediaType = mediaType,
+                year = productionYear,
+                providerIds = providerIds.mapKeys { it.key.lowercase(Locale.US) }
+            )
+        }
     }
 
     private data class HomeServerMediaSource(
