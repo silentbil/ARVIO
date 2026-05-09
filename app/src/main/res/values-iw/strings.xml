@@ -183,8 +183,8 @@
     <string name="ai_api_key_desc">הזן ידנית את המפתח מגרוק או ג\'ימיני</string>
     <string name="ai_scan_qr_title">סרוק ברקוד להגדרת מפתח</string>
     <string name="ai_scan_qr_desc">פתח דפדפן בטלפון להזנה בקלות של המפתח</string>
-    <string name="ai_groq_disclaimer">Groq חינמי: ~500 בקשות ביום. מפתח ה-API מתחיל ב-gsk_</string>
-    <string name="ai_gemini_disclaimer">Gemini זמין בחינם. מפתח ה-API מתחיל ב-AIzaSy</string>
+    <string name="ai_groq_disclaimer">גרוק חינמי מאפשר עד 30 בקשות בדקה</string>
+    <string name="ai_gemini_disclaimer">דורש חשבון גוגל עם פרטי אשראי. עלות - פחות מסנט לסרט.</string>
     <string name="ai_key_not_set">לא מוגדר</string>
     <string name="ai_model_dialog_subtitle">בחר ספק ומודל AI לתרגום כתוביות</string>
     <string name="ai_groq_model_note">חינמי: 1K RPM / 500K RPD · ברירת מחדל</string>
