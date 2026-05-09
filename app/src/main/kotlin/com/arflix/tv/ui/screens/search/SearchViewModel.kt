@@ -170,17 +170,19 @@ class SearchViewModel @Inject constructor(
         releaseDateGte: String? = null, releaseDateLte: String? = null
     ): Category? {
         return try {
+            val movieGenre = genre
+            val tvGenre = mapMovieGenreToTvGenre(genre)
             val items = when (type) {
-                DiscoverType.MOVIES -> mediaRepository.discoverMovies(genre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte)
-                DiscoverType.TV_SHOWS -> mediaRepository.discoverTv(genre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte)
+                DiscoverType.MOVIES -> mediaRepository.discoverMovies(movieGenre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte)
+                DiscoverType.TV_SHOWS -> mediaRepository.discoverTv(tvGenre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte)
                 DiscoverType.ANIME -> {
-                    val animeGenre = if (genre != null) "16,$genre" else "16"
+                    val animeGenre = buildAnimeGenre(tvGenre)
                     mediaRepository.discoverTv(animeGenre, sort, minVotes, page, language = lang, keywords = "210024", airDateLte = releaseDateLte, airDateGte = releaseDateGte)
                 }
                 DiscoverType.ALL -> {
                     coroutineScope {
-                        val m = async { mediaRepository.discoverMovies(genre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte) }
-                        val t = async { mediaRepository.discoverTv(genre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte) }
+                        val m = async { mediaRepository.discoverMovies(movieGenre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte) }
+                        val t = async { mediaRepository.discoverTv(tvGenre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte) }
                         interleave(m.await(), t.await())
                     }
                 }
@@ -189,10 +191,27 @@ class SearchViewModel @Inject constructor(
         } catch (_: Exception) { null }
     }
 
+    private fun mapMovieGenreToTvGenre(genre: String?): String? = when (genre) {
+        "28" -> "10759"
+        "14", "878" -> "10765"
+        "10752" -> "10768"
+        else -> genre
+    }
+
+    private fun buildAnimeGenre(genre: String?): String = when (genre) {
+        null, "16" -> "16"
+        else -> "16,$genre"
+    }
+
     // ── Filters → reload discover rows ──────────────────────────────────
 
     fun selectType(type: DiscoverType) {
-        _uiState.value = _uiState.value.copy(selectedType = type, selectedGenre = null)
+        _uiState.value = _uiState.value.copy(
+            selectedType = type,
+            selectedGenre = null,
+            discoverCategories = EMPTY_CATEGORIES,
+            discoverLogoUrls = EMPTY_LOGO_URLS
+        )
         loadDiscoverRows()
     }
 
@@ -200,18 +219,28 @@ class SearchViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             selectedType = type,
             selectedGenre = genre,
-            selectedCountry = country
+            selectedCountry = country,
+            discoverCategories = EMPTY_CATEGORIES,
+            discoverLogoUrls = EMPTY_LOGO_URLS
         )
         loadDiscoverRows()
     }
 
     fun selectGenre(genre: Genre?) {
-        _uiState.value = _uiState.value.copy(selectedGenre = genre)
+        _uiState.value = _uiState.value.copy(
+            selectedGenre = genre,
+            discoverCategories = EMPTY_CATEGORIES,
+            discoverLogoUrls = EMPTY_LOGO_URLS
+        )
         loadDiscoverRows()
     }
 
     fun selectCountry(country: Country?) {
-        _uiState.value = _uiState.value.copy(selectedCountry = country)
+        _uiState.value = _uiState.value.copy(
+            selectedCountry = country,
+            discoverCategories = EMPTY_CATEGORIES,
+            discoverLogoUrls = EMPTY_LOGO_URLS
+        )
         loadDiscoverRows()
     }
 
@@ -305,7 +334,21 @@ class SearchViewModel @Inject constructor(
             try {
                 val items = withContext(Dispatchers.IO) {
                     if (sq.similarTo != null) { val r = mediaRepository.search(sq.similarTo); val m = r.firstOrNull(); if (m != null) mediaRepository.getSimilar(m.mediaType, m.id) else EMPTY_MEDIA_ITEMS }
-                    else when (sq.type) { DiscoverType.MOVIES -> mediaRepository.discoverMovies(sq.genreId, sq.sort, sq.minVotes, 1); DiscoverType.TV_SHOWS -> mediaRepository.discoverTv(sq.genreId, sq.sort, sq.minVotes, 1); DiscoverType.ANIME -> mediaRepository.discoverTv(if (sq.genreId != null) "16,${sq.genreId}" else "16", sq.sort, sq.minVotes, 1, keywords = "210024"); DiscoverType.ALL -> { coroutineScope { val a = async { mediaRepository.discoverMovies(sq.genreId, sq.sort, sq.minVotes, 1) }; val b = async { mediaRepository.discoverTv(sq.genreId, sq.sort, sq.minVotes, 1) }; interleave(a.await(), b.await()) } } }
+                    else {
+                        val tvGenre = mapMovieGenreToTvGenre(sq.genreId)
+                        when (sq.type) {
+                            DiscoverType.MOVIES -> mediaRepository.discoverMovies(sq.genreId, sq.sort, sq.minVotes, 1)
+                            DiscoverType.TV_SHOWS -> mediaRepository.discoverTv(tvGenre, sq.sort, sq.minVotes, 1)
+                            DiscoverType.ANIME -> mediaRepository.discoverTv(buildAnimeGenre(tvGenre), sq.sort, sq.minVotes, 1, keywords = "210024")
+                            DiscoverType.ALL -> {
+                                coroutineScope {
+                                    val a = async { mediaRepository.discoverMovies(sq.genreId, sq.sort, sq.minVotes, 1) }
+                                    val b = async { mediaRepository.discoverTv(tvGenre, sq.sort, sq.minVotes, 1) }
+                                    interleave(a.await(), b.await())
+                                }
+                            }
+                        }
+                    }
                 }
                 _uiState.value = _uiState.value.copy(isLoading = false, aiResults = if (sq.limit != null) items.take(sq.limit) else items)
             } catch (e: Exception) { _uiState.value = _uiState.value.copy(isLoading = false, error = e.message) }

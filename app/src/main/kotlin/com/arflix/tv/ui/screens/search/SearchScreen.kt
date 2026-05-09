@@ -260,6 +260,10 @@ fun SearchScreen(
         val maxItem = (activeCategories.getOrNull(currentRowIndex)?.items?.size ?: 1) - 1
         currentItemIndex = currentItemIndex.coerceIn(0, maxItem.coerceAtLeast(0))
     }
+    LaunchedEffect(uiState.selectedType, uiState.selectedGenre?.id, uiState.selectedCountry?.code) {
+        currentRowIndex = 0
+        currentItemIndex = 0
+    }
 
     // LaunchedEffect to restore RESULTS focus when results become available
     LaunchedEffect(activeCategories, hasAiResults) {
