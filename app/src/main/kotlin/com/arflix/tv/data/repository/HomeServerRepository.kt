@@ -1778,14 +1778,15 @@ class HomeServerRepository @Inject constructor(
             .mapNotNull { mediaSource ->
                 val url = mediaSource.playbackUrl(connection, item.id) ?: return@mapNotNull null
                 val quality = qualityLabel(mediaSource)
+                val serverLabel = connection.displayLabel()
                 val labelParts = listOfNotNull(
-                    connection.displayLabel(),
+                    serverLabel,
                     quality.takeIf { it.isNotBlank() },
                     mediaSource.container.takeIf { it.isNotBlank() }?.uppercase(Locale.US)
                 )
                 StreamSource(
                     source = labelParts.joinToString(" "),
-                    addonName = ADDON_NAME,
+                    addonName = serverLabel,
                     addonId = ADDON_ID,
                     quality = quality.ifBlank { "Unknown" },
                     size = formatBytes(mediaSource.sizeBytes),

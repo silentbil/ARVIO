@@ -135,7 +135,7 @@ fun StreamSelector(
         val baseNameById = LinkedHashMap<String, String>()
         streams.forEach { stream ->
             val baseName = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
-            val addonId = stream.addonId.ifBlank { baseName }
+            val addonId = sourceTabId(stream)
             baseNameById.putIfAbsent(addonId, baseName)
         }
         val nameCounts = baseNameById.values.groupingBy { it }.eachCount()
@@ -176,8 +176,7 @@ fun StreamSelector(
         } else {
             val selectedAddonId = addonTabs.getOrNull(selectedTabIndex - 1)?.id ?: ""
             sortedStreams.filter {
-                val addonId = it.addonId.ifBlank { it.addonName }
-                addonId == selectedAddonId
+                sourceTabId(it) == selectedAddonId
             }
         }
     }
@@ -186,8 +185,8 @@ fun StreamSelector(
     val groupedStreams = remember(filteredStreams) {
         val labelById = addonTabs.associateBy({ it.id }, { it.label })
         filteredStreams.groupBy {
-            val addonId = it.addonId.ifBlank { it.addonName }
-            labelById[addonId] ?: (it.addonName.split(" - ").firstOrNull()?.trim() ?: it.addonName)
+            val tabId = sourceTabId(it)
+            labelById[tabId] ?: (it.addonName.split(" - ").firstOrNull()?.trim() ?: it.addonName)
         }
     }
 
@@ -721,6 +720,15 @@ private val CH71_REGEX = Regex("""\b7[ .]?1\b""", RegexOption.IGNORE_CASE)
 private val CH51_REGEX = Regex("""\b5[ .]?1\b""", RegexOption.IGNORE_CASE)
 private val MULTI_AUDIO_REGEX = Regex("""\b(MULTI|DUAL[ .-]?AUDIO|MULTI[ .-]?AUDIO)\b""", RegexOption.IGNORE_CASE)
 private val LANGUAGE_HINT_REGEX = Regex("""\b(ENG|ENGLISH|HIN|HINDI|TAM|TAMIL|TEL|TELUGU|JPN|JAPANESE|KOR|KOREAN|SPA|SPANISH|FRE|FRENCH|GER|GERMAN|ITA|ITALIAN)\b""", RegexOption.IGNORE_CASE)
+
+private fun sourceTabId(stream: StreamSource): String {
+    val baseName = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
+    return if (stream.addonId == "home_server" && baseName.isNotBlank()) {
+        "${stream.addonId}:$baseName"
+    } else {
+        stream.addonId.ifBlank { baseName }
+    }
+}
 
 private fun presentSource(stream: StreamSource): SourcePresentation {
     val title = stream.behaviorHints?.filename?.takeIf { it.isNotBlank() } ?: stream.source

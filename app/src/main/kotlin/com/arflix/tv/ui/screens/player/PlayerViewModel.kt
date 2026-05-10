@@ -2147,14 +2147,22 @@ class PlayerViewModel @Inject constructor(
 
         val updated = (latest + validSources)
             .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+        val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
+        val sortedStreams = sortStreamsByQualityAndSize(updated, preferredLanguage)
+        val shouldAutoplayHomeServer = _uiState.value.selectedStreamUrl.isNullOrBlank() &&
+            latest.none { !isSupplementalStream(it) }
         _uiState.value = _uiState.value.copy(
-            streams = sortStreamsByQualityAndSize(
-                updated,
-                _uiState.value.preferredAudioLanguage.ifBlank { "en" }
-            ),
-            isLoadingStreams = false
+            streams = sortedStreams,
+            isLoadingStreams = false,
+            error = null,
+            isSetupError = false,
+            streamProgress = null,
+            streamLoadPhase = null
         )
-        prewarmTopStreams(_uiState.value.streams, _uiState.value.preferredAudioLanguage.ifBlank { "en" })
+        prewarmTopStreams(sortedStreams, preferredLanguage)
+        if (shouldAutoplayHomeServer) {
+            pickPreferredStream(sortedStreams, preferredLanguage)?.let { selectStream(it) }
+        }
     }
 
     private suspend fun appendVodSourceInBackground(
