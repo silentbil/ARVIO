@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import org.json.JSONObject
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -61,9 +62,13 @@ class ProfileAvatarImageManager @Inject constructor(
             val file = ProfileAvatarFiles.localFile(context, profile) ?: return@withContext
             if (file.exists() && file.length() > 0L) return@withContext
 
-            if (!inlineBase64.isNullOrBlank()) {
+            val resolvedInlineBase64 = inlineBase64
+                ?.takeIf { it.isNotBlank() }
+                ?: loadInlineAvatarFromCloud(profile.id)
+
+            if (!resolvedInlineBase64.isNullOrBlank()) {
                 runCatching {
-                    val bytes = Base64.decode(inlineBase64, Base64.NO_WRAP)
+                    val bytes = Base64.decode(resolvedInlineBase64, Base64.NO_WRAP)
                     file.writeBytes(bytes)
                     ProfileAvatarFiles.cleanupProfile(context, profile.id, keepVersion = profile.avatarImageVersion)
                 }.onSuccess { return@withContext }
@@ -75,6 +80,26 @@ class ProfileAvatarImageManager @Inject constructor(
                 ProfileAvatarFiles.cleanupProfile(context, profile.id, keepVersion = profile.avatarImageVersion)
             }
         }
+
+    fun buildInlineAvatarImagesJson(
+        profiles: List<Profile>,
+        existingImagesById: JSONObject? = null
+    ): JSONObject {
+        val result = JSONObject()
+        profiles
+            .filter { it.avatarImageVersion > 0L }
+            .forEach { profile ->
+                val localImage = readInlineBase64(profile)
+                val preservedImage = existingImagesById
+                    ?.optString(profile.id)
+                    ?.takeIf { it.isNotBlank() }
+                val image = localImage ?: preservedImage
+                if (!image.isNullOrBlank()) {
+                    result.put(profile.id, image)
+                }
+            }
+        return result
+    }
 
     fun readInlineBase64(profile: Profile): String? {
         val file = ProfileAvatarFiles.localFile(context, profile) ?: return null
@@ -163,6 +188,19 @@ class ProfileAvatarImageManager @Inject constructor(
                 }
             }
         }
+
+    private suspend fun loadInlineAvatarFromCloud(profileId: String): String? {
+        return authRepository.loadAccountSyncPayload().getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { payload ->
+                runCatching {
+                    JSONObject(payload)
+                        .optJSONObject("profileAvatarImagesById")
+                        ?.optString(profileId)
+                        ?.takeIf { it.isNotBlank() }
+                }.getOrNull()
+            }
+    }
 
     private companion object {
         const val BUCKET = "profile-avatars"

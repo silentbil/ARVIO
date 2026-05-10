@@ -187,15 +187,13 @@ class ProfileRepository @Inject constructor(
         authRepository.mutateAccountSyncPayload { root ->
             root.put("activeProfileId", activeProfileId ?: JSONObject.NULL)
             root.put("profiles", JSONArray(gson.toJson(profiles)))
-            val avatarImagesById = profiles
-                .filter { it.avatarImageVersion > 0L }
-                .mapNotNull { profile ->
-                    profileAvatarImageManager.readInlineBase64(profile)?.let { profile.id to it }
-                }
-                .toMap()
-            if (avatarImagesById.isNotEmpty()) {
-                root.put("profileAvatarImagesById", JSONObject(gson.toJson(avatarImagesById)))
-            }
+            root.put(
+                "profileAvatarImagesById",
+                profileAvatarImageManager.buildInlineAvatarImagesJson(
+                    profiles,
+                    root.optJSONObject("profileAvatarImagesById")
+                )
+            )
             root.put("userId", userId)
         }
     }

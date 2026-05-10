@@ -332,15 +332,18 @@ class CloudSyncRepository @Inject constructor(
 
         root.put("activeProfileId", profileRepository.getActiveProfileId() ?: JSONObject.NULL)
         root.put("profiles", JSONArray(gson.toJson(profiles)))
-        val avatarImagesById = profiles
-            .filter { it.avatarImageVersion > 0L }
-            .mapNotNull { profile ->
-                profileAvatarImageManager.readInlineBase64(profile)?.let { profile.id to it }
+        val existingAvatarImagesById = authRepository.loadAccountSyncPayload()
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { payload ->
+                runCatching {
+                    JSONObject(payload).optJSONObject("profileAvatarImagesById")
+                }.getOrNull()
             }
-            .toMap()
-        if (avatarImagesById.isNotEmpty()) {
-            root.put("profileAvatarImagesById", JSONObject(gson.toJson(avatarImagesById)))
-        }
+        root.put(
+            "profileAvatarImagesById",
+            profileAvatarImageManager.buildInlineAvatarImagesJson(profiles, existingAvatarImagesById)
+        )
         root.put("profileSettingsById", JSONObject(gson.toJson(profileSettingsById)))
 
         // Trakt tokens per profile
