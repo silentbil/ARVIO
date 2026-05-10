@@ -27,6 +27,8 @@ import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.weightedSubtitleScore
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey as globalStringPreferencesKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -88,7 +90,15 @@ data class PlayerUiState(
     val streamProgress: Float? = null,
     // Human-readable phase label for the loading UI (e.g. "Searching 3/8
     // sources"). Null when progress isn't meaningful.
-    val streamLoadPhase: String? = null
+    val streamLoadPhase: String? = null,
+    // True while AI subtitle translation is active for this playback session
+    val isAiTranslating: Boolean = false,
+    // True when AI translation is available (settings enabled + source track exists), even if not currently active
+    val isAiAvailable: Boolean = false,
+    // Language name being translated into (e.g. "Hebrew") when AI is available
+    val aiTargetLanguageName: String = "",
+    // Non-null while an AI translation API error toast should be visible
+    val aiErrorToast: String? = null
 )
 
 @HiltViewModel
@@ -132,6 +142,52 @@ class PlayerViewModel @Inject constructor(
     private var lastIsPlaying: Boolean = false
     private var hasMarkedWatched: Boolean = false
     private var hasManualSubtitleSelection: Boolean = false
+
+    // AI subtitle settings (read once per video load)
+    private var aiSubtitleEnabled = false
+    private var aiSubtitleAutoSelect = false
+    private var aiApiKey = ""
+    private var aiModel = SubtitleAiModel.GROQ_LLAMA_70B
+    private var aiRemoveHearingImpaired = true
+
+    // Global AI subtitle DataStore keys (device-wide, not profile-scoped)
+    private val aiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
+    private val aiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
+    private val aiApiKeyKey = globalStringPreferencesKey("subtitle_ai_api_key")
+    private val aiModelKey = globalStringPreferencesKey("subtitle_ai_model")
+    private val aiRemoveHearingImpairedKey = booleanPreferencesKey("subtitle_remove_hearing_impaired")
+
+    private val _isTranslatingLive = MutableStateFlow(false)
+    val isTranslatingLive: kotlinx.coroutines.flow.StateFlow<Boolean> = _isTranslatingLive.asStateFlow()
+
+    // True after the first API error toast has been shown for the current AI session.
+    // Reset each time AI translation is (re-)activated so the user sees one toast per session.
+    private var aiErrorToastShown = false
+    // The source subtitle used for AI translation — retained so the user can re-activate AI after switching away.
+    private var aiSourceSubtitle: Subtitle? = null
+
+    val translationManager: SubtitleTranslationManager = SubtitleTranslationManager(
+        service = SubtitleTranslationService(
+            apiKeyProvider = { aiApiKey },
+            modelProvider = { aiModel }
+        ),
+        targetLanguage = "",
+        scope = viewModelScope
+    ).also { mgr ->
+        mgr.onTranslatingChanged = { isTranslating -> _isTranslatingLive.value = isTranslating }
+        mgr.onBatchResult = { success, errorMessage ->
+            if (!success && !aiErrorToastShown) {
+                aiErrorToastShown = true
+                val msg = when {
+                    errorMessage == "API key missing" -> "AI subtitles: no API key set. Add it in Settings → General."
+                    errorMessage == "RATE_LIMITED"    -> "AI subtitles: rate limit hit — translation paused."
+                    errorMessage?.startsWith("HTTP 401") == true -> "AI subtitles: invalid API key."
+                    else -> "AI subtitles: translation error — ${errorMessage.orEmpty()}"
+                }
+                _uiState.value = _uiState.value.copy(aiErrorToast = msg)
+            }
+        }
+    }
 
     // Skip intro
     private var skipIntervals: List<SkipInterval> = emptyList()
@@ -201,6 +257,13 @@ class PlayerViewModel @Inject constructor(
         focusedStreamPrewarmJob?.cancel()
         streamSelectionJob?.cancel()
         hasManualSubtitleSelection = false
+        aiSourceSubtitle = null
+        _uiState.value = _uiState.value.copy(
+            selectedSubtitle = null,
+            isAiTranslating = false,
+            isAiAvailable = false,
+            aiTargetLanguageName = ""
+        )
         lastTopPrewarmKey = ""
         skipIntervalsJob?.cancel()
         currentImdbId = providedImdbId
@@ -244,6 +307,20 @@ class PlayerViewModel @Inject constructor(
                 .let { if (isSubtitleDisabledPreference(it)) "" else it }
             val secondarySub = prefs[secondarySubtitleKey()]?.trim().orEmpty()
                 .let { if (isSubtitleDisabledPreference(it)) "" else it }
+
+            // Load AI subtitle settings
+            aiSubtitleEnabled = prefs[aiEnabledKey] ?: false
+            aiSubtitleAutoSelect = prefs[aiAutoSelectKey] ?: false
+            aiApiKey = prefs[aiApiKeyKey] ?: ""
+            aiModel = runCatching {
+                SubtitleAiModel.valueOf(prefs[aiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)
+            }.getOrDefault(SubtitleAiModel.GROQ_LLAMA_70B)
+            aiRemoveHearingImpaired = prefs[aiRemoveHearingImpairedKey] ?: true
+            translationManager.updateService(apiKey = aiApiKey, model = aiModel)
+            translationManager.removeHearingImpaired = aiRemoveHearingImpaired
+            translationManager.isEnabled = false
+            translationManager.reset()
+
             _uiState.value = PlayerUiState(
                 isLoading = true,
                 isLoadingStreams = true,
@@ -832,8 +909,10 @@ class PlayerViewModel @Inject constructor(
             return false
         }
 
+        // Always keep embedded subtitles — they are needed as AI translation sources
+        // and represent tracks the device actually has, not fetched addons.
         val combined = subs.filter { sub ->
-            targetLanguages.any { lang -> matchesLang(sub, lang) }
+            sub.isEmbedded || targetLanguages.any { lang -> matchesLang(sub, lang) }
         }.distinctBy { it.id }
         return combined.ifEmpty { subs }
     }
@@ -853,41 +932,25 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun scheduleSubtitleSelection(fallbackLanguage: String?) {
-        if (hasManualSubtitleSelection) {
-            if (BuildConfig.DEBUG) {
-                Log.d("SubSel", "scheduleSubtitleSelection: skipped - manual selection is locked")
-            }
-            return
-        }
+        if (hasManualSubtitleSelection) return
         val currentSel = _uiState.value.selectedSubtitle
-        if (BuildConfig.DEBUG) {
-            Log.d("SubSel", "scheduleSubtitleSelection: currentSel=${currentSel?.label}|embedded=${currentSel?.isEmbedded}")
-        }
-        if (currentSel?.isEmbedded == true) {
-            if (BuildConfig.DEBUG) {
-                Log.d("SubSel", "scheduleSubtitleSelection: skipped - embedded already selected")
-            }
-            return
-        }
         subtitleSelectionJob?.cancel()
         subtitleSelectionJob = viewModelScope.launch {
             val preferred = getDefaultSubtitle()
-            val subs = _uiState.value.subtitles
-            if (BuildConfig.DEBUG) {
-                Log.d("SubSel", "scheduleSubtitleSelection: preferred=$preferred fallback=$fallbackLanguage totalSubs=${subs.size}")
-                subs.forEachIndexed { i, s -> Log.d("SubSel", "  sub[$i] lang=${s.lang} label=${s.label} embedded=${s.isEmbedded} group=${s.groupIndex} track=${s.trackIndex}") }
+            // Skip only if the already-selected embedded is in the preferred language — if it's
+            // a fallback-language track (e.g. English selected while waiting for Hebrew), let
+            // applyPreferredSubtitle decide whether to upgrade to the preferred language.
+            if (currentSel?.isEmbedded == true &&
+                normalizeLanguage(currentSel.lang) == normalizeLanguage(preferred)) {
+                return@launch
             }
+            val subs = _uiState.value.subtitles
             applyPreferredSubtitle(preferred, subs, fallbackLanguage)
         }
     }
 
     private fun applyPreferredSubtitle(preference: String, subtitles: List<Subtitle>, fallbackLanguage: String?) {
-        if (hasManualSubtitleSelection) {
-            if (BuildConfig.DEBUG) {
-                Log.d("SubSel", "applyPreferredSubtitle: skipped - manual selection is locked")
-            }
-            return
-        }
+        if (hasManualSubtitleSelection) return
         if (isSubtitleDisabledPreference(preference)) {
             _uiState.value = _uiState.value.copy(selectedSubtitle = null)
             return
@@ -917,55 +980,166 @@ class PlayerViewModel @Inject constructor(
             }.filter { it.isNotBlank() }.toSet()
         }
 
-        fun bestMatch(target: String): Subtitle? {
-            val byToken = subtitles.filter { sub -> subtitleTokens(sub).contains(target) }
-            if (BuildConfig.DEBUG) Log.d("SubSel", "bestMatch($target): byToken=${byToken.size}")
-            val candidates = byToken.ifEmpty {
-                val fallback = subtitles.filter { sub ->
-                    sub.label.lowercase().contains(target) || sub.lang.lowercase().contains(target)
+        fun bestMatch(target: String, pool: List<Subtitle> = subtitles): Subtitle? {
+            val byToken = pool.filter { sub -> subtitleTokens(sub).contains(target) }
+            // Drop candidates whose label explicitly names a different language — catches scrambled
+            // MKV metadata where the lang code is wrong (e.g. lang='he' label='Japanese').
+            // A label is "known" when normalizeLanguage maps it to something different from its own
+            // lowercased form (e.g. "Japanese" → "ja"); unknown labels like "SDH" are never excluded.
+            val labelConsistent = byToken.filter { sub ->
+                val labelLang = normalizeLanguage(sub.label)
+                val labelMappedToKnown = sub.label.isNotBlank() && labelLang != sub.label.lowercase().trim()
+                !labelMappedToKnown || labelLang == target
+            }
+            val candidates = when {
+                labelConsistent.isNotEmpty() -> labelConsistent
+                byToken.isEmpty() -> {
+                    pool.filter { sub ->
+                        sub.label.lowercase().contains(target) || sub.lang.lowercase().contains(target)
+                    }
                 }
-                if (BuildConfig.DEBUG) Log.d("SubSel", "bestMatch($target): byToken empty, contains fallback=${fallback.size}")
-                fallback
+                else -> emptyList()
             }
-            if (candidates.isEmpty()) {
-                if (BuildConfig.DEBUG) Log.d("SubSel", "bestMatch($target): no candidates")
-                return null
-            }
+            if (candidates.isEmpty()) return null
             val sorted = candidates.sortedWith(
                 compareByDescending<Subtitle> { if (it.isEmbedded) 1 else 0 }
                     .thenByDescending { matchScore(it) }
                     .thenBy { it.groupIndex ?: Int.MAX_VALUE }
                     .thenBy { it.trackIndex ?: Int.MAX_VALUE }
             )
-            if (BuildConfig.DEBUG) {
-                sorted.forEachIndexed { i, s ->
-                    Log.d("SubSel", "  candidate[$i] lang=${s.lang} label=${s.label} score=${matchScore(s)} embedded=${s.isEmbedded} tokens=${subtitleTokens(s)}")
-                }
-                Log.d("SubSel", "bestMatch($target): picking [0] ${sorted.first().label}")
-            }
             return sorted.first()
         }
 
-        if (BuildConfig.DEBUG) Log.d("SubSel", "applyPreferredSubtitle: pref=$preference normalizedPref=$normalizedPref fallback=$fallbackLanguage streamSrc=$streamSrc")
-        val match = bestMatch(normalizedPref)
-            ?: normalizedFallback?.let {
-                if (BuildConfig.DEBUG) Log.d("SubSel", "applyPreferredSubtitle: no pref match, trying fallback $it")
-                bestMatch(it)
-            }
+        // When AI is active, only an embedded built-in subtitle suppresses AI.
+        // External addon subtitles (WIZDOM, KTUVIT, etc.) do not count — AI takes priority over them.
+        val aiModeActive = aiSubtitleEnabled && aiSubtitleAutoSelect && normalizedPref.isNotBlank()
+        // AI enabled regardless of auto-select — used to expose the AI option in the picker
+        val aiEnabledForLanguage = aiSubtitleEnabled && normalizedPref.isNotBlank()
+        val embeddedOnly = subtitles.filter { it.isEmbedded }
 
-        if (match != null) {
+        // In AI mode, only the user's preferred language embedded sub suppresses AI.
+        // A fallback-language embedded sub (e.g. English) is the AI source, not a replacement.
+        val embeddedPrefMatch = bestMatch(normalizedPref, embeddedOnly)
+        val embeddedFallbackMatch = if (!aiEnabledForLanguage && embeddedPrefMatch == null && normalizedFallback != null)
+            bestMatch(normalizedFallback, embeddedOnly) else null
+        val embeddedMatch = embeddedPrefMatch ?: embeddedFallbackMatch
+
+        if (embeddedMatch != null) {
             val current = _uiState.value.selectedSubtitle
-            if (BuildConfig.DEBUG) Log.d("SubSel", "applyPreferredSubtitle: match=${match.label} current=${current?.label}|embedded=${current?.isEmbedded}")
-            if (current == null || !(current.isEmbedded && !match.isEmbedded)) {
-                if (BuildConfig.DEBUG) Log.d("SubSel", "applyPreferredSubtitle: SELECTING ${match.label}")
-                _uiState.value = _uiState.value.copy(selectedSubtitle = match)
+            val isFallback = embeddedPrefMatch == null
+            // Never auto-select a fallback-language embedded track — it would immediately block
+            // the preferred language from being selected when it arrives later (scheduleSubtitleSelection
+            // bails early if any embedded is already selected, and shouldReapply ignores lang changes).
+            if (!isFallback) {
+                translationManager.isEnabled = false
+                aiSourceSubtitle = null
+                _uiState.value = _uiState.value.copy(selectedSubtitle = embeddedMatch, isAiTranslating = false, isAiAvailable = false, aiTargetLanguageName = "")
+            }
+        } else if (aiModeActive) {
+            // No embedded preferred-language subtitle → activate AI (addon subs are ignored)
+            val source = findAiSourceSubtitle(subtitles)
+            if (source != null) {
+                val targetLangName = languageCodeToName(normalizedPref)
+                aiSourceSubtitle = source
+                translationManager.targetLanguage = targetLangName
+                translationManager.isEnabled = true
+                translationManager.reset()
+                aiErrorToastShown = false
+                _uiState.value = _uiState.value.copy(selectedSubtitle = source, isAiTranslating = true, isAiAvailable = true, aiTargetLanguageName = targetLangName, aiErrorToast = null)
             } else {
-                if (BuildConfig.DEBUG) {
-                    Log.d("SubSel", "applyPreferredSubtitle: skipped - embedded already selected")
+                // No embedded source to translate from — fall back to best external match
+                val externalMatch = bestMatch(normalizedPref)
+                    ?: normalizedFallback?.let { bestMatch(it) }
+                if (externalMatch != null) {
+                    val current = _uiState.value.selectedSubtitle
+                    if (current == null || !(current.isEmbedded && !externalMatch.isEmbedded)) {
+                        translationManager.isEnabled = false
+                        aiSourceSubtitle = null
+                        _uiState.value = _uiState.value.copy(selectedSubtitle = externalMatch, isAiTranslating = false, isAiAvailable = false, aiTargetLanguageName = "")
+                    }
                 }
             }
         } else {
-            if (BuildConfig.DEBUG) Log.d("SubSel", "applyPreferredSubtitle: no match found")
+            // AI enabled but auto-select off — expose AI option in picker without activating it
+            if (aiEnabledForLanguage) {
+                val source = findAiSourceSubtitle(subtitles)
+                if (source != null) {
+                    aiSourceSubtitle = source
+                    val targetLangName = languageCodeToName(normalizedPref)
+                    translationManager.targetLanguage = targetLangName
+                    _uiState.value = _uiState.value.copy(isAiAvailable = true, aiTargetLanguageName = targetLangName)
+                }
+            }
+            // Pick best external match in preferred language
+            val externalMatch = bestMatch(normalizedPref)
+                ?: normalizedFallback?.let { bestMatch(it) }
+            if (externalMatch != null) {
+                val current = _uiState.value.selectedSubtitle
+                if (current == null || !(current.isEmbedded && !externalMatch.isEmbedded)) {
+                    translationManager.isEnabled = false
+                    if (aiEnabledForLanguage) {
+                        // Keep AI available in picker — user can still activate it manually
+                        _uiState.value = _uiState.value.copy(selectedSubtitle = externalMatch, isAiTranslating = false)
+                    } else {
+                        aiSourceSubtitle = null
+                        _uiState.value = _uiState.value.copy(selectedSubtitle = externalMatch, isAiTranslating = false, isAiAvailable = false, aiTargetLanguageName = "")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun findAiSourceSubtitle(subtitles: List<Subtitle>): Subtitle? {
+        // Prefer English embedded > any embedded with lang > any embedded > any subtitle
+        return subtitles.firstOrNull { it.isEmbedded && normalizeLanguage(it.lang) == "en" }
+            ?: subtitles.firstOrNull { it.isEmbedded && it.lang.isNotBlank() }
+            ?: subtitles.firstOrNull { it.isEmbedded }
+            ?: subtitles.firstOrNull()
+    }
+
+    private fun languageCodeToName(code: String): String {
+        return when (code.lowercase().trim()) {
+            "he", "hebrew", "iw" -> "Hebrew"
+            "ar", "arabic" -> "Arabic"
+            "fa", "persian", "farsi" -> "Persian"
+            "ur", "urdu" -> "Urdu"
+            "yi", "yiddish" -> "Yiddish"
+            "ru", "russian" -> "Russian"
+            "zh", "chinese" -> "Chinese"
+            "ja", "japanese" -> "Japanese"
+            "ko", "korean" -> "Korean"
+            "fr", "french" -> "French"
+            "de", "german" -> "German"
+            "es", "spanish" -> "Spanish"
+            "it", "italian" -> "Italian"
+            "pt", "portuguese" -> "Portuguese"
+            "pt-br", "pob" -> "Brazilian Portuguese"
+            "nl", "dutch" -> "Dutch"
+            "pl", "polish" -> "Polish"
+            "tr", "turkish" -> "Turkish"
+            "sv", "swedish" -> "Swedish"
+            "no", "norwegian" -> "Norwegian"
+            "da", "danish" -> "Danish"
+            "fi", "finnish" -> "Finnish"
+            "el", "greek" -> "Greek"
+            "cs", "czech" -> "Czech"
+            "hu", "hungarian" -> "Hungarian"
+            "ro", "romanian" -> "Romanian"
+            "th", "thai" -> "Thai"
+            "vi", "vietnamese" -> "Vietnamese"
+            "id", "indonesian" -> "Indonesian"
+            "hi", "hindi" -> "Hindi"
+            "bn", "bengali" -> "Bengali"
+            "bg", "bulgarian" -> "Bulgarian"
+            "hr", "croatian" -> "Croatian"
+            "sr", "serbian" -> "Serbian"
+            "sk", "slovak" -> "Slovak"
+            "sl", "slovenian" -> "Slovenian"
+            "lt", "lithuanian" -> "Lithuanian"
+            "et", "estonian" -> "Estonian"
+            "uk", "ukrainian" -> "Ukrainian"
+            "en", "english" -> "English"
+            else -> code.replaceFirstChar { it.uppercase() }
         }
     }
 
@@ -1504,9 +1678,6 @@ class PlayerViewModel @Inject constructor(
             )
 
             // Re-run subtitle selection now that streamSrc is known — scores are now meaningful
-            if (BuildConfig.DEBUG) {
-                Log.d("SubSel", "selectStream: resolvedStream.source=${resolvedStream.source} stateSource=${_uiState.value.selectedStream?.source}")
-            }
             scheduleSubtitleSelection(currentOriginalLanguage)
 
             // Refresh subtitles with stream-specific hints (videoHash/videoSize) for better matching,
@@ -1618,8 +1789,16 @@ class PlayerViewModel @Inject constructor(
                 !subtitle.isEmbedded && subtitle.url.isNotBlank() && subtitle.id !in trackBackedIds
             }
 
+            // Preserve existing embedded subs when playerTextTracks has none — ExoPlayer fires
+            // onTracksChanged with an empty list during MediaItem rebuilds (e.g. when switching
+            // to an external subtitle), then fires again with the full track list. Without this,
+            // embedded tracks disappear permanently if the second callback never fires or arrives late.
+            val existingEmbedded = current.filter { it.isEmbedded }
+            val newEmbedded = playerTextTracks.filter { it.isEmbedded }
+            val effectiveEmbedded = newEmbedded.ifEmpty { existingEmbedded }
+
             // Embedded subtitles first, then external/addon subtitles
-            val merged = (playerTextTracks + unresolvedExternal)
+            val merged = (effectiveEmbedded + playerTextTracks.filter { !it.isEmbedded } + unresolvedExternal)
                 .distinctBy { subtitle ->
                     val normalizedId = subtitle.id.trim()
                     if (normalizedId.isNotBlank()) normalizedId
@@ -1644,6 +1823,12 @@ class PlayerViewModel @Inject constructor(
             val resolvedSelected = if (selected != null) {
                 finalList.firstOrNull { it.id == selected.id }
                     ?: finalList.firstOrNull { selected.url.isNotBlank() && it.url == selected.url }
+                    // After MediaItem rebuild groupIndex can change, making generated IDs stale.
+                    // Fall back to lang+label match for embedded subs so the nonce-based
+                    // LaunchedEffect fires with the freshly-indexed version.
+                    ?: if (selected.isEmbedded) finalList.firstOrNull {
+                        it.isEmbedded && it.lang == selected.lang && it.label == selected.label
+                    } else null
                     ?: selected
             } else {
                 null
@@ -1655,22 +1840,31 @@ class PlayerViewModel @Inject constructor(
             )
 
             val currentSel = _uiState.value.selectedSubtitle
+            val preferred = getDefaultSubtitle()
+            val normalizedPref = normalizeLanguage(preferred)
             val shouldReapply = when {
                 currentSel == null -> true
+                // AI is active (source track is embedded): re-check any time embedded tracks arrive
+                // so a preferred-language built-in that arrives late can displace the AI source.
+                _uiState.value.isAiTranslating && finalList.any { it.isEmbedded } -> true
                 !currentSel.isEmbedded ->
                     // Non-embedded: re-apply if an embedded in the same lang just arrived
                     finalList.any { sub -> sub.isEmbedded && normalizeLanguage(sub.lang) == normalizeLanguage(currentSel.lang) }
                 else ->
-                    // Embedded: re-apply if an earlier-indexed embedded in the same lang arrived
+                    // Embedded: re-apply if preferred-lang embedded arrived and current is a different
+                    // (fallback) language, or if earlier-indexed same-lang embedded arrived.
                     finalList.any { sub ->
-                        sub.isEmbedded &&
-                        normalizeLanguage(sub.lang) == normalizeLanguage(currentSel.lang) &&
-                        (sub.groupIndex ?: Int.MAX_VALUE) < (currentSel.groupIndex ?: Int.MAX_VALUE)
+                        sub.isEmbedded && (
+                            (normalizedPref.isNotBlank() &&
+                                normalizeLanguage(sub.lang) == normalizedPref &&
+                                normalizeLanguage(currentSel.lang) != normalizedPref) ||
+                            (normalizeLanguage(sub.lang) == normalizeLanguage(currentSel.lang) &&
+                                (sub.groupIndex ?: Int.MAX_VALUE) < (currentSel.groupIndex ?: Int.MAX_VALUE))
+                        )
                     }
             }
             if (shouldReapply) {
                 subtitleSelectionJob?.cancel()
-                val preferred = getDefaultSubtitle()
                 applyPreferredSubtitle(preferred, finalList, currentOriginalLanguage)
             }
         }
@@ -1679,20 +1873,48 @@ class PlayerViewModel @Inject constructor(
     fun selectSubtitle(subtitle: Subtitle) {
         hasManualSubtitleSelection = true
         subtitleSelectionJob?.cancel()
+        translationManager.isEnabled = false
+        // Keep isAiAvailable/aiTargetLanguageName so the AI entry stays in the menu for re-selection
         _uiState.value = _uiState.value.copy(
             selectedSubtitle = subtitle,
+            isAiTranslating = false,
             subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
         )
         recordSubtitleUsage(subtitle)
     }
 
+    fun activateAiSubtitle() {
+        val source = aiSourceSubtitle ?: return
+        hasManualSubtitleSelection = true
+        val targetLangName = _uiState.value.aiTargetLanguageName
+        if (targetLangName.isNotBlank()) translationManager.targetLanguage = targetLangName
+        translationManager.isEnabled = true
+        translationManager.reset()
+        aiErrorToastShown = false
+        _uiState.value = _uiState.value.copy(
+            selectedSubtitle = source,
+            isAiTranslating = true,
+            isAiAvailable = true,
+            aiErrorToast = null
+        )
+    }
+
     fun disableSubtitles() {
         hasManualSubtitleSelection = true
         subtitleSelectionJob?.cancel()
+        translationManager.isEnabled = false
+        aiSourceSubtitle = null
         _uiState.value = _uiState.value.copy(
             selectedSubtitle = null,
+            isAiTranslating = false,
+            isAiAvailable = false,
+            aiTargetLanguageName = "",
             subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
         )
+    }
+
+    fun dismissAiErrorToast() {
+        _uiState.value = _uiState.value.copy(aiErrorToast = null)
     }
 
     private fun recordSubtitleUsage(subtitle: Subtitle) {
@@ -2281,9 +2503,6 @@ class PlayerViewModel @Inject constructor(
             )
             // Re-run subtitle selection if stream source just became known
             if (prevSource.isBlank() && newSource.isNotBlank()) {
-                if (BuildConfig.DEBUG) {
-                    Log.d("SubSel", "auto-stream-select: source became known=$newSource, re-running selection")
-                }
                 scheduleSubtitleSelection(currentOriginalLanguage)
             }
         } catch (_: Exception) {

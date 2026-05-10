@@ -28,8 +28,7 @@ android {
         applicationId = "com.arvio.tv"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
-        // Lower minSdk to maximize compatibility and avoid "There was a problem parsing the package".
-        minSdk = 21
+        minSdk = 23
         targetSdk = 35
         versionCode = 261
         versionName = "1.9.92"
@@ -232,8 +231,8 @@ dependencies {
     implementation("androidx.leanback:leanback:1.1.0-rc02")
     implementation("androidx.tvprovider:tvprovider:1.1.0")
 
-    // ExoPlayer / Media3 for video playback - version 1.3.1 for latest codec support
-    val media3Version = "1.3.1"
+    // ExoPlayer / Media3 for video playback
+    val media3Version = "1.9.0"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
@@ -245,7 +244,7 @@ dependencies {
     // Keep this only in the sideload build. The Play Store build must comply
     // with 16 KB memory page support, and the current prebuilt native library
     // (libffmpegJNI.so) is the likely source of the Play Console warning.
-    add("sideloadImplementation", "org.jellyfin.media3:media3-ffmpeg-decoder:1.3.1+2")
+    add("sideloadImplementation", "org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
 
     // Networking - Retrofit + OkHttp
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
@@ -313,6 +312,9 @@ dependencies {
     implementation("io.sentry:sentry-android:8.40.0")
 
     baselineProfile(project(":benchmark"))
+
+    // NanoHTTPD – lightweight HTTP server for QR-based AI key setup
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 
     // Unit Testing
     testImplementation("junit:junit:4.13.2")

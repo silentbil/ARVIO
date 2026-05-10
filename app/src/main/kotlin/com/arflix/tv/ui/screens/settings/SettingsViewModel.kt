@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.settings
 
 import android.content.Context
+import android.graphics.Bitmap
 import coil.Coil
 import com.arflix.tv.BuildConfig
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -8,6 +9,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.arflix.tv.server.AiKeyConfigServer
+import com.arflix.tv.ui.screens.player.SubtitleAiModel
+import com.arflix.tv.util.DeviceIpAddress
+import com.arflix.tv.util.QrCodeGenerator
 import com.arflix.tv.data.api.TraktDeviceCode
 import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.CatalogConfig
@@ -77,6 +82,13 @@ import javax.inject.Inject
 enum class ToastType {
     SUCCESS, ERROR, INFO
 }
+
+data class AiKeyServerState(
+    val isActive: Boolean = false,
+    val serverUrl: String? = null,
+    val qrBitmap: Bitmap? = null,
+    val keyReceived: Boolean = false
+)
 
 data class SettingsUiState(
     val defaultSubtitle: String = "Off",
@@ -186,7 +198,14 @@ data class SettingsUiState(
     val qualityFilterPresetLabel: String = "OFF",
     // Toast
     val toastMessage: String? = null,
-    val toastType: ToastType = ToastType.INFO
+    val toastType: ToastType = ToastType.INFO,
+    // AI Subtitles
+    val subtitleAiEnabled: Boolean = false,
+    val subtitleAiAutoSelect: Boolean = false,
+    val subtitleAiApiKey: String = "",
+    val subtitleAiModel: SubtitleAiModel = SubtitleAiModel.GROQ_LLAMA_70B,
+    val subtitleRemoveHearingImpaired: Boolean = true,
+    val aiKeyServerState: AiKeyServerState = AiKeyServerState()
 )
 
 @HiltViewModel
@@ -262,6 +281,13 @@ class SettingsViewModel @Inject constructor(
     private val dnsProviderKey = stringPreferencesKey(OkHttpProvider.DNS_PROVIDER_PREF_KEY)
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("include_specials")
     private val qualityFiltersKey = stringPreferencesKey("quality_filters")
+
+    // Global (non-profile-scoped) AI subtitle settings — device-wide, not per-profile
+    private val subtitleAiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
+    private val subtitleAiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
+    private val subtitleAiApiKeyKey = stringPreferencesKey("subtitle_ai_api_key")
+    private val subtitleAiModelKey = stringPreferencesKey("subtitle_ai_model")
+    private val subtitleRemoveHearingImpairedKey = booleanPreferencesKey("subtitle_remove_hearing_impaired")
     private fun includeSpecialsKeyFor(profileId: String) = profileManager.profileBooleanKeyFor(profileId, "include_specials")
     private val gson = Gson()
     private var lastObservedIptvM3u: String = ""
@@ -273,6 +299,7 @@ class SettingsViewModel @Inject constructor(
     private var plexHomeServerDisplayName: String? = null
     private var iptvLoadJob: Job? = null
     private var catalogSearchJob: Job? = null
+    private var aiKeyServer: AiKeyConfigServer? = null
     private var lastCloudSyncedUserId: String? = null
     private var cloudDeviceCode: String? = null
     private var cloudUserCode: String? = null
@@ -416,6 +443,14 @@ class SettingsViewModel @Inject constructor(
                 }
             }.getOrDefault(emptyList())
 
+            val subtitleAiEnabled = prefs[subtitleAiEnabledKey] ?: false
+            val subtitleAiAutoSelect = prefs[subtitleAiAutoSelectKey] ?: false
+            val subtitleAiApiKey = prefs[subtitleAiApiKeyKey] ?: ""
+            val subtitleAiModel = runCatching {
+                SubtitleAiModel.valueOf(prefs[subtitleAiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)
+            }.getOrDefault(SubtitleAiModel.GROQ_LLAMA_70B)
+            val subtitleRemoveHearingImpaired = prefs[subtitleRemoveHearingImpairedKey] ?: true
+
             // Check auth statuses
             val authState = authRepository.authState.first()
             val isLoggedIn = authState is AuthState.Authenticated
@@ -472,7 +507,12 @@ class SettingsViewModel @Inject constructor(
                 clockFormat = clockFormat,
                 focusBorderColor = focusBorderColor,
                 qualityFilters = qualityFilters,
-                qualityFilterPresetLabel = detectQualityFilterPreset(qualityFilters).label
+                qualityFilterPresetLabel = detectQualityFilterPreset(qualityFilters).label,
+                subtitleAiEnabled = subtitleAiEnabled,
+                subtitleAiAutoSelect = subtitleAiAutoSelect,
+                subtitleAiApiKey = subtitleAiApiKey,
+                subtitleAiModel = subtitleAiModel,
+                subtitleRemoveHearingImpaired = subtitleRemoveHearingImpaired
             )
         }
     }
@@ -1083,6 +1123,79 @@ class SettingsViewModel @Inject constructor(
     fun cycleSubtitleStyle() {
         val next = when (_uiState.value.subtitleStyle) { "Bold" -> "Normal"; "Normal" -> "Background"; else -> "Bold" }
         viewModelScope.launch { context.settingsDataStore.edit { it[subtitleStyleKey()] = next }; _uiState.value = _uiState.value.copy(subtitleStyle = next); syncLocalStateToCloud(silent = true) }
+    }
+
+    // ── AI Subtitles ──────────────────────────────────────────────────────────
+
+    fun setSubtitleAiEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleAiEnabledKey] = enabled }
+            _uiState.value = _uiState.value.copy(subtitleAiEnabled = enabled)
+        }
+    }
+
+    fun setSubtitleAiAutoSelect(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleAiAutoSelectKey] = enabled }
+            _uiState.value = _uiState.value.copy(subtitleAiAutoSelect = enabled)
+        }
+    }
+
+    fun setSubtitleRemoveHearingImpaired(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleRemoveHearingImpairedKey] = enabled }
+            _uiState.value = _uiState.value.copy(subtitleRemoveHearingImpaired = enabled)
+        }
+    }
+
+    fun saveSubtitleAiApiKey(key: String) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleAiApiKeyKey] = key.trim() }
+            _uiState.value = _uiState.value.copy(subtitleAiApiKey = key.trim())
+        }
+    }
+
+    fun setSubtitleAiModel(model: SubtitleAiModel) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleAiModelKey] = model.name }
+            _uiState.value = _uiState.value.copy(subtitleAiModel = model)
+        }
+    }
+
+    fun startAiKeyServer() {
+        viewModelScope.launch {
+            stopAiKeyServerInternal()
+            val server = AiKeyConfigServer.startOnAvailablePort(
+                onKeyReceived = { key ->
+                    viewModelScope.launch {
+                        saveSubtitleAiApiKey(key)
+                        _uiState.value = _uiState.value.copy(
+                            aiKeyServerState = _uiState.value.aiKeyServerState.copy(keyReceived = true)
+                        )
+                        kotlinx.coroutines.delay(2500)
+                        stopAiKeyServerInternal()
+                        _uiState.value = _uiState.value.copy(aiKeyServerState = AiKeyServerState())
+                    }
+                }
+            ) ?: return@launch
+            aiKeyServer = server
+            val ip = DeviceIpAddress.get(context) ?: "device-ip"
+            val url = "http://$ip:${server.listeningPort}"
+            val qr = runCatching { QrCodeGenerator.generate(url, 512) }.getOrNull()
+            _uiState.value = _uiState.value.copy(
+                aiKeyServerState = AiKeyServerState(isActive = true, serverUrl = url, qrBitmap = qr)
+            )
+        }
+    }
+
+    fun stopAiKeyServer() {
+        stopAiKeyServerInternal()
+        _uiState.value = _uiState.value.copy(aiKeyServerState = AiKeyServerState())
+    }
+
+    private fun stopAiKeyServerInternal() {
+        aiKeyServer?.stop()
+        aiKeyServer = null
     }
 
     private fun normalizeDnsProviderValue(raw: String?): String {
@@ -2837,6 +2950,7 @@ class SettingsViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         traktPollingJob?.cancel()
+        stopAiKeyServerInternal()
         plexHomeServerPollingJob?.cancel()
     }
 }

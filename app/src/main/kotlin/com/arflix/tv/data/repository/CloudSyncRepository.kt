@@ -195,6 +195,13 @@ class CloudSyncRepository @Inject constructor(
     private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
     private fun subtitleSettingsUpdatedAtKey() = profileManager.profileStringKey("subtitle_settings_updated_at")
 
+    // Global AI subtitle keys (non-profile-scoped, device-wide)
+    private val subtitleAiEnabledKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_enabled")
+    private val subtitleAiAutoSelectKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_auto_select")
+    private val subtitleAiApiKeyKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_api_key")
+    private val subtitleAiModelKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_model")
+    private val subtitleRemoveHearingImpairedKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_remove_hearing_impaired")
+
     // Active-profile key shortcuts (used for legacy flat fields in snapshot)
     private fun defaultSubtitleKey() = profileManager.profileStringKey("default_subtitle")
     private fun defaultAudioLanguageKey() = profileManager.profileStringKey("default_audio_language")
@@ -315,6 +322,13 @@ class CloudSyncRepository @Inject constructor(
         root.put("subtitleUsageJson", prefs[subtitleUsageKey()] ?: "")
         root.put("subtitleSettingsUpdatedAt", prefs[subtitleSettingsUpdatedAtKey()]?.toLongOrNull() ?: 0L)
         root.put("skipProfileSelection", prefs[SKIP_PROFILE_SELECTION_KEY] ?: false)
+
+        // Global AI subtitle settings (non-profile-scoped)
+        root.put("subtitleAiEnabled", prefs[subtitleAiEnabledKey] ?: false)
+        root.put("subtitleAiAutoSelect", prefs[subtitleAiAutoSelectKey] ?: false)
+        root.put("subtitleAiApiKey", prefs[subtitleAiApiKeyKey] ?: "")
+        root.put("subtitleAiModel", prefs[subtitleAiModelKey] ?: "GROQ_LLAMA_70B")
+        root.put("subtitleRemoveHearingImpaired", prefs[subtitleRemoveHearingImpairedKey] ?: true)
 
         root.put("activeProfileId", profileRepository.getActiveProfileId() ?: JSONObject.NULL)
         root.put("profiles", JSONArray(gson.toJson(profiles)))
@@ -672,6 +686,20 @@ class CloudSyncRepository @Inject constructor(
         if (root.has("skipProfileSelection")) {
             context.settingsDataStore.edit { prefs ->
                 prefs[SKIP_PROFILE_SELECTION_KEY] = root.optBoolean("skipProfileSelection", false)
+            }
+        }
+
+        // Global AI subtitle settings
+        val hasAiSettings = root.has("subtitleAiEnabled") || root.has("subtitleAiApiKey")
+        if (hasAiSettings) {
+            context.settingsDataStore.edit { prefs ->
+                prefs[subtitleAiEnabledKey] = root.optBoolean("subtitleAiEnabled", false)
+                prefs[subtitleAiAutoSelectKey] = root.optBoolean("subtitleAiAutoSelect", false)
+                val apiKey = root.optString("subtitleAiApiKey", "")
+                if (apiKey.isNotBlank()) prefs[subtitleAiApiKeyKey] = apiKey
+                val model = root.optString("subtitleAiModel", "GROQ_LLAMA_70B")
+                if (model.isNotBlank()) prefs[subtitleAiModelKey] = model
+                prefs[subtitleRemoveHearingImpairedKey] = root.optBoolean("subtitleRemoveHearingImpaired", true)
             }
         }
         if (preservedNewerLocalSubtitle) {

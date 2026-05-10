@@ -208,6 +208,33 @@
     <string name="enter_pin_to_unlock">Enter PIN to unlock</string>
     <string name="set_profile_pin">Set Profile PIN</string>
     <string name="done">Done</string>
+    <string name="save">Save</string>
     <string name="connect_to_cloud">Connect to ARVIO Cloud</string>
     <string name="view_collection">View Collection</string>
+
+    <!-- AI Subtitles -->
+    <string name="ai_subtitles_section">AI Subtitles</string>
+    <string name="ai_subtitle_translation_title">AI Subtitle Translation</string>
+    <string name="ai_subtitle_translation_desc">Translate subtitles in real time using Groq or Gemini</string>
+    <string name="ai_model_title">AI Model</string>
+    <string name="ai_model_desc">Select translation provider and model</string>
+    <string name="ai_auto_select_title">Auto-Select AI Translation</string>
+    <string name="ai_auto_select_desc">Automatically activate AI when any built in language is available</string>
+    <string name="ai_remove_hi_title">Remove Hearing Impaired Text</string>
+    <string name="ai_remove_hi_desc">Strip [bracketed] hearing-impaired markers before translation</string>
+    <string name="ai_api_key_title">API Key</string>
+    <string name="ai_api_key_desc">Enter your Groq or Gemini API key manually</string>
+    <string name="ai_scan_qr_title">Scan QR Code to Set Key</string>
+    <string name="ai_scan_qr_desc">Open a browser on your phone to enter the API key</string>
+    <string name="ai_groq_disclaimer">Groq free tier: ~30 requests/min_</string>
+    <string name="ai_gemini_disclaimer">Requires a billing-enabled Google account. Cost: under $0.01 per movie</string>
+    <string name="ai_key_not_set">Not set</string>
+    <string name="ai_model_dialog_subtitle">Select the AI provider and model for subtitle translation</string>
+    <string name="ai_groq_model_note">Free tier: 30 RPM / 500K RPD</string>
+    <string name="ai_gemini_model_note">Better quality · Requires a billing-enabled Google account</string>
+    <string name="ai_api_key_dialog_subtitle_groq">Enter your Groq API key</string>
+    <string name="ai_api_key_dialog_subtitle_gemini">Enter your Gemini API key</string>
+    <string name="ai_key_saved_title">API key saved</string>
+    <string name="ai_key_saved_subtitle">AI translation is ready to use</string>
+    <string name="ai_qr_scan_hint">Scan with your phone — choose Groq or Gemini</string>
 </resources>
