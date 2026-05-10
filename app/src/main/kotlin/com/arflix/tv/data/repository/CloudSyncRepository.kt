@@ -561,6 +561,11 @@ class CloudSyncRepository @Inject constructor(
                     profiles.any { it.id == localActiveId }
                 ) localActiveId else activeProfileId
                 profileRepository.replaceProfilesFromCloud(profiles, effectiveActiveId)
+                val effectiveProfile = profiles.firstOrNull { it.id == effectiveActiveId }
+                if (effectiveProfile != null) {
+                    profileManager.setCurrentProfileId(effectiveProfile.id)
+                    profileManager.setCurrentProfileName(effectiveProfile.name)
+                }
             }
         }
 

@@ -852,6 +852,8 @@ class HomeViewModel @Inject constructor(
     private fun resetProfileRuntimeState(profileId: String) {
         loadHomeJob?.cancel()
         refreshContinueWatchingJob?.cancel()
+        cwFetchJob?.cancel()
+        cwFetchJob = null
         watchedBadgesJob?.cancel()
         preloadCategoryPriorityJob?.cancel()
         preloadCategoryJobs.values.forEach { it.cancel() }
@@ -1510,6 +1512,12 @@ class HomeViewModel @Inject constructor(
                 publishContinueWatching(fresh)
             }
         }
+    }
+
+    private fun restartContinueWatchingFetch() {
+        cwFetchJob?.cancel()
+        cwFetchJob = null
+        launchContinueWatchingFetch()
     }
 
     private suspend fun publishContinueWatching(items: List<ContinueWatchingItem>) {
@@ -2595,10 +2603,16 @@ class HomeViewModel @Inject constructor(
             }
             result.onSuccess { restoreResult ->
                 if (restoreResult == CloudSyncRepository.RestoreResult.RESTORED) {
+                    val profileId = profileManager.getProfileIdSync().ifBlank { "default" }
+                    if (activeRuntimeProfileId != null && activeRuntimeProfileId != profileId) {
+                        resetProfileRuntimeState(profileId)
+                    }
                     // Cloud state was applied — reload home data so catalog changes,
                     // addon changes, and settings from the other device take effect
                     // immediately without waiting for the observeCatalogs flow.
                     loadHomeData()
+                    refreshContinueWatchingOnly(force = true)
+                    restartContinueWatchingFetch()
                 }
             }.onFailure {
                 android.util.Log.w("HomeViewModel", "ON_RESUME cloud pull failed: ${it.message}")
