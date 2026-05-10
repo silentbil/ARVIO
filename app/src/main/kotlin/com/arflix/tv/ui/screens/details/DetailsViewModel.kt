@@ -1950,7 +1950,8 @@ class DetailsViewModel @Inject constructor(
                     episode = resumeCandidate.episode,
                     progress = resumeCandidate.progress / 100f,
                     positionSeconds = resumeCandidate.resumePositionSeconds,
-                    durationSeconds = resumeCandidate.durationSeconds
+                    durationSeconds = resumeCandidate.durationSeconds,
+                    allowProgressDerivedResume = !resumeCandidate.isUpNext
                 ).dropIfWatchedEpisode()
             } else null
 
@@ -2013,7 +2014,8 @@ class DetailsViewModel @Inject constructor(
         episode: Int?,
         progress: Float,
         positionSeconds: Long,
-        durationSeconds: Long
+        durationSeconds: Long,
+        allowProgressDerivedResume: Boolean = true
     ): ResumeInfo? {
         val normalizedDuration = if (durationSeconds > 86_400L) durationSeconds / 1000L else durationSeconds
         val normalizedPosition = if (positionSeconds > 86_400L) positionSeconds / 1000L else positionSeconds
@@ -2046,7 +2048,8 @@ class DetailsViewModel @Inject constructor(
 
         var seconds = when {
             normalizedPosition > 0 -> normalizedPosition
-            normalizedDuration > 0 && normalizedProgress > 0f -> (normalizedDuration * normalizedProgress).toLong()
+            allowProgressDerivedResume && normalizedDuration > 0 && normalizedProgress > 0f ->
+                (normalizedDuration * normalizedProgress).toLong()
             else -> 0L
         }
         if (normalizedDuration > 0L && seconds > 0L) {
