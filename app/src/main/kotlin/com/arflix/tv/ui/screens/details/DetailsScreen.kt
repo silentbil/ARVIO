@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.details
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -3265,7 +3266,7 @@ private fun EpisodeCard(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(
-                        if (isSpoilerBlurred) Modifier.blur(20.dp) else Modifier
+                        if (isSpoilerBlurred && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(20.dp) else Modifier
                     )
             )
 
@@ -3283,6 +3284,21 @@ private fun EpisodeCard(
                         )
                     )
             )
+
+            if (isSpoilerBlurred && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.85f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Spoiler",
+                        style = ArvioSkin.typography.caption.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White.copy(alpha = 0.6f)
+                    )
+                }
+            }
 
             Row(
                 modifier = Modifier
