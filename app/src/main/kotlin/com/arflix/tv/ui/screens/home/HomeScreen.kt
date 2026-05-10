@@ -288,6 +288,13 @@ private fun homeRowItemKey(item: MediaItem): String {
     return "${item.mediaType.name}-${item.id}$episodeSuffix"
 }
 
+private data class HomeFocusedHeroSnapshot(
+    val rowIndex: Int,
+    val itemIndex: Int,
+    val focusedItemKey: String,
+    val heroItemKey: String
+)
+
 private fun preferredHomeStartRowIndex(categories: List<Category>): Int {
     val realContentIndex = categories.indexOfFirst { category ->
         !category.id.startsWith("collection_row_") && category.items.any { !it.isPlaceholder }
@@ -566,6 +573,7 @@ fun HomeScreen(
     val displayHeroLogo = uiState.heroLogoUrl ?: preloadedHeroLogoUrl
     val displayHeroOverview = uiState.heroOverviewOverride
     val latestDisplayCategories by rememberUpdatedState(displayCategories)
+    val latestDisplayHeroItem by rememberUpdatedState(displayHeroItem)
 
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -681,23 +689,29 @@ fun HomeScreen(
                 .getOrNull(focusState.currentRowIndex)
                 ?.items
                 ?.getOrNull(focusState.currentItemIndex)
-            Triple(
-                focusState.currentRowIndex,
-                focusState.currentItemIndex,
+            HomeFocusedHeroSnapshot(
+                rowIndex = focusState.currentRowIndex,
+                itemIndex = focusState.currentItemIndex,
                 // Include the exact focused item key so async row updates, especially
                 // Continue Watching reloads, cannot leave the hero bound to an old
                 // first-row fallback while the visual focus is on another card.
-                focusedItem?.let { homeRowItemKey(it) }.orEmpty()
+                focusedItemKey = focusedItem?.let { homeRowItemKey(it) }.orEmpty(),
+                // Also include the current hero key. Background home/CW refreshes can
+                // republish the initial row-0 hero without changing focus indices; this
+                // forces the watcher to restore the actually focused card.
+                heroItemKey = latestDisplayHeroItem?.let { homeRowItemKey(it) }.orEmpty()
             )
         }
             .distinctUntilChanged()
-            .collectLatest { (rowIndex, itemIndex, _) ->
+            .collectLatest { focusSnapshot ->
                 val categoriesSnapshot = latestDisplayCategories
                 if (categoriesSnapshot.isEmpty() || focusState.isSidebarFocused) return@collectLatest
-                val newHeroItem = categoriesSnapshot
-                    .getOrNull(rowIndex)
+                if (focusSnapshot.focusedItemKey.isBlank()) return@collectLatest
+                if (focusSnapshot.focusedItemKey == focusSnapshot.heroItemKey) return@collectLatest
+                categoriesSnapshot
+                    .getOrNull(focusSnapshot.rowIndex)
                     ?.items
-                    ?.getOrNull(itemIndex)
+                    ?.getOrNull(focusSnapshot.itemIndex)
                     ?: return@collectLatest
 
                 val now = SystemClock.elapsedRealtime()
@@ -705,17 +719,23 @@ fun HomeScreen(
                 if (isFastScrolling) {
                     delay(360L)
                     if (
-                        focusState.currentRowIndex != rowIndex ||
-                        focusState.currentItemIndex != itemIndex ||
+                        focusState.currentRowIndex != focusSnapshot.rowIndex ||
+                        focusState.currentItemIndex != focusSnapshot.itemIndex ||
                         focusState.isSidebarFocused
                     ) {
                         return@collectLatest
                     }
                 }
-                viewModel.onFocusChanged(rowIndex, itemIndex, shouldPrefetch = true)
-                if (newHeroItem != null) {
-                    viewModel.updateHeroItem(newHeroItem)
+                val latestFocusedItem = latestDisplayCategories
+                    .getOrNull(focusSnapshot.rowIndex)
+                    ?.items
+                    ?.getOrNull(focusSnapshot.itemIndex)
+                    ?: return@collectLatest
+                if (homeRowItemKey(latestFocusedItem) != focusSnapshot.focusedItemKey) {
+                    return@collectLatest
                 }
+                viewModel.onFocusChanged(focusSnapshot.rowIndex, focusSnapshot.itemIndex, shouldPrefetch = true)
+                viewModel.updateHeroItem(latestFocusedItem)
             }
     }
 
