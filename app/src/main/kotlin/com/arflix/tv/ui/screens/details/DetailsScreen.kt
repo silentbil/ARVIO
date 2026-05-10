@@ -1736,10 +1736,15 @@ private fun DetailsContent(
         val heroStartPadding = 36.dp
         val heroEndPadding = 400.dp
         val configuration = LocalConfiguration.current
-        // 260.dp minimum accommodates poster cards (126dp wide × 3/2 aspect ratio =
-        // 189dp image + ~36dp title/subtitle + 36dp focus bleed = ~261dp) plus the
-        // section title (~24dp), keeping the stack low without clipping.
-        val contentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(260.dp, 330.dp)
+        val hasPosterDetailRails = usePosterCards && (collectionItems.isNotEmpty() || similar.isNotEmpty())
+        // Poster details rails need extra vertical room for two title lines,
+        // subtitle text, and focus bleed; otherwise the title block clips.
+        val minContentRowHeight = if (hasPosterDetailRails) 322.dp else 260.dp
+        val maxContentRowHeight = if (hasPosterDetailRails) 350.dp else 330.dp
+        val contentRowHeight = (configuration.screenHeightDp * 0.34f).dp.coerceIn(
+            minimumValue = minContentRowHeight,
+            maximumValue = maxContentRowHeight
+        )
         val contentRowBottomPadding = 0.dp
         val contentRowTopPadding = contentRowHeight + contentRowBottomPadding
         val buttonsBottomPadding = contentRowTopPadding - 4.dp
