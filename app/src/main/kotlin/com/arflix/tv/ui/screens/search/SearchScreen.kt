@@ -428,10 +428,7 @@ fun SearchScreen(
                             else when (topBarFocusedItem(sidebarFocusIndex, hasProfile)) { SidebarItem.SEARCH -> Unit; SidebarItem.HOME -> onNavigateToHome(); SidebarItem.WATCHLIST -> onNavigateToWatchlist(); SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings(); null -> Unit }
                             true
                         }
-                        FocusZone.SEARCH_INPUT -> {
-                            isSearchEditing = true
-                            true
-                        }
+                        FocusZone.SEARCH_INPUT -> false
                         FocusZone.FILTERS -> {
                             quickFilters.getOrNull(focusedFilterIndex)?.onSelect?.invoke()
                             true
@@ -654,7 +651,6 @@ private fun SearchInputBar(
                 when (event.key) {
                     Key.DirectionUp -> { onMoveUp(); true }
                     Key.DirectionDown -> { onMoveDown(); true }
-                    Key.Enter, Key.DirectionCenter -> { onStartEditing(); true }
                     else -> false
                 }
             }
