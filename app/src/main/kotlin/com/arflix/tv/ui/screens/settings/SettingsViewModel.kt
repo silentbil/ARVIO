@@ -1131,6 +1131,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[subtitleAiEnabledKey] = enabled }
             _uiState.value = _uiState.value.copy(subtitleAiEnabled = enabled)
+            syncLocalStateToCloud(silent = true)
         }
     }
 
@@ -1138,6 +1139,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[subtitleAiAutoSelectKey] = enabled }
             _uiState.value = _uiState.value.copy(subtitleAiAutoSelect = enabled)
+            syncLocalStateToCloud(silent = true)
         }
     }
 
@@ -1145,6 +1147,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[subtitleRemoveHearingImpairedKey] = enabled }
             _uiState.value = _uiState.value.copy(subtitleRemoveHearingImpaired = enabled)
+            syncLocalStateToCloud(silent = true)
         }
     }
 
@@ -1152,6 +1155,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[subtitleAiApiKeyKey] = key.trim() }
             _uiState.value = _uiState.value.copy(subtitleAiApiKey = key.trim())
+            syncLocalStateToCloud(silent = true)
         }
     }
 
@@ -1159,6 +1163,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[subtitleAiModelKey] = model.name }
             _uiState.value = _uiState.value.copy(subtitleAiModel = model)
+            syncLocalStateToCloud(silent = true)
         }
     }
 

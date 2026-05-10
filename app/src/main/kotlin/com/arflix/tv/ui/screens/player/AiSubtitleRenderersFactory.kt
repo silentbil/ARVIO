@@ -71,7 +71,7 @@ private class TranslatingTextOutput(
 
         // Fire once when the first non-empty cue arrives while TextRenderer.render() is on the
         // call stack — the cue buffer is populated at that moment, enabling lookahead.
-        if (!hasFiredFirstCue && cues.isNotEmpty()) {
+        if (!hasFiredFirstCue && cues.isNotEmpty() && manager.isEnabled) {
             hasFiredFirstCue = true
             onFirstCueOnPlaybackThread?.invoke()
             onFirstCueOnPlaybackThread = null
