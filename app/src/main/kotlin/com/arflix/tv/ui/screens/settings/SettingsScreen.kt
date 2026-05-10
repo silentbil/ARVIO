@@ -574,6 +574,9 @@ fun SettingsScreen(
         showDnsProviderPicker ||
         showContentLanguagePicker ||
         showUiModeWarningDialog ||
+        showAiModelDialog ||
+        showAiApiKeyDialog ||
+        uiState.aiKeyServerState.isActive ||
         uiState.showCloudPairDialog ||
         uiState.showCloudEmailPasswordDialog ||
         uiState.traktCode != null ||
@@ -1001,6 +1004,9 @@ fun SettingsScreen(
                 openDnsProviderPicker = openDnsProviderPicker,
                 openUiModeWarningDialog = openUiModeWarningDialog,
                 openQualityFiltersModal = { showQualityFiltersModal = true },
+                onSubtitleAiModelClick = { showAiModelDialog = true },
+                onSubtitleAiApiKeyClick = { showAiApiKeyDialog = true },
+                onSubtitleAiQrClick = { viewModel.startAiKeyServer() },
                 onAddIptvClick = { editingIptvIndex = -1; showIptvInput = true },
                 onEditIptvClick = { idx -> editingIptvIndex = idx; showIptvInput = true },
                 onAddCatalogClick = { showCatalogInput = true },
@@ -1722,6 +1728,38 @@ fun SettingsScreen(
                     showContentLanguagePicker = false
                 },
                 onDismiss = { showContentLanguagePicker = false }
+            )
+        }
+
+        if (isTouchDevice && showAiModelDialog) {
+            AiModelDialog(
+                currentModel = uiState.subtitleAiModel,
+                onModelSelected = { model ->
+                    viewModel.setSubtitleAiModel(model)
+                    showAiModelDialog = false
+                },
+                onDismiss = { showAiModelDialog = false }
+            )
+        }
+
+        if (isTouchDevice && showAiApiKeyDialog) {
+            AiApiKeyDialog(
+                currentKey = uiState.subtitleAiApiKey,
+                model = uiState.subtitleAiModel,
+                onSave = { key ->
+                    viewModel.saveSubtitleAiApiKey(key)
+                    showAiApiKeyDialog = false
+                },
+                onDismiss = { showAiApiKeyDialog = false }
+            )
+        }
+
+        if (isTouchDevice && uiState.aiKeyServerState.isActive) {
+            AiKeyQrOverlay(
+                qrBitmap = uiState.aiKeyServerState.qrBitmap,
+                serverUrl = uiState.aiKeyServerState.serverUrl,
+                keyReceived = uiState.aiKeyServerState.keyReceived,
+                onClose = { viewModel.stopAiKeyServer() }
             )
         }
 
@@ -2939,6 +2977,9 @@ private fun MobileSettingsLayout(
     openDnsProviderPicker: () -> Unit,
     openUiModeWarningDialog: () -> Unit,
     openQualityFiltersModal: () -> Unit,
+    onSubtitleAiModelClick: () -> Unit,
+    onSubtitleAiApiKeyClick: () -> Unit,
+    onSubtitleAiQrClick: () -> Unit,
     onAddIptvClick: () -> Unit,
     onEditIptvClick: (Int) -> Unit,
     onAddCatalogClick: () -> Unit,
@@ -3021,6 +3062,9 @@ private fun MobileSettingsLayout(
                 openDnsProviderPicker = openDnsProviderPicker,
                 openUiModeWarningDialog = openUiModeWarningDialog,
                 openQualityFiltersModal = openQualityFiltersModal,
+                onSubtitleAiModelClick = onSubtitleAiModelClick,
+                onSubtitleAiApiKeyClick = onSubtitleAiApiKeyClick,
+                onSubtitleAiQrClick = onSubtitleAiQrClick,
                 onAddIptvClick = onAddIptvClick,
                 onEditIptvClick = onEditIptvClick,
                 onAddCatalogClick = onAddCatalogClick,
@@ -3182,6 +3226,9 @@ private fun MobileSettingsSubPage(
     openDnsProviderPicker: () -> Unit,
     openUiModeWarningDialog: () -> Unit,
     openQualityFiltersModal: () -> Unit,
+    onSubtitleAiModelClick: () -> Unit,
+    onSubtitleAiApiKeyClick: () -> Unit,
+    onSubtitleAiQrClick: () -> Unit,
     onAddIptvClick: () -> Unit,
     onEditIptvClick: (Int) -> Unit,
     onAddCatalogClick: () -> Unit,
@@ -3310,6 +3357,73 @@ private fun MobileSettingsSubPage(
                         showDivider = false,
                         onClick = { viewModel.setFilterSubtitlesByLanguage(!uiState.filterSubtitlesByLanguage) }
                     )
+                }
+                MobileSettingsCategory(title = stringResource(R.string.ai_subtitles_section)) {
+                    MobileSettingsRow(
+                        icon = Icons.Default.AutoAwesome,
+                        title = stringResource(R.string.ai_subtitle_translation_title),
+                        subtitle = stringResource(R.string.ai_subtitle_translation_desc),
+                        value = if (uiState.subtitleAiEnabled) "On" else "Off",
+                        isFocused = false,
+                        onClick = { viewModel.setSubtitleAiEnabled(!uiState.subtitleAiEnabled) }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.AutoAwesome,
+                        title = stringResource(R.string.ai_model_title),
+                        subtitle = stringResource(R.string.ai_model_desc),
+                        value = when (uiState.subtitleAiModel) {
+                            com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq - Llama 3.3 70B"
+                            com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 2.5 Flash"
+                        },
+                        isFocused = false,
+                        onClick = onSubtitleAiModelClick
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.AutoAwesome,
+                        title = stringResource(R.string.ai_auto_select_title),
+                        subtitle = stringResource(R.string.ai_auto_select_desc),
+                        value = if (uiState.subtitleAiAutoSelect) "On" else "Off",
+                        isFocused = false,
+                        onClick = { viewModel.setSubtitleAiAutoSelect(!uiState.subtitleAiAutoSelect) }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Subtitles,
+                        title = stringResource(R.string.ai_remove_hi_title),
+                        subtitle = stringResource(R.string.ai_remove_hi_desc),
+                        value = if (uiState.subtitleRemoveHearingImpaired) "On" else "Off",
+                        isFocused = false,
+                        onClick = { viewModel.setSubtitleRemoveHearingImpaired(!uiState.subtitleRemoveHearingImpaired) }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.VpnKey,
+                        title = stringResource(R.string.ai_api_key_title),
+                        subtitle = stringResource(R.string.ai_api_key_desc),
+                        value = maskAiApiKey(uiState.subtitleAiApiKey, stringResource(R.string.ai_key_not_set)),
+                        isFocused = false,
+                        onClick = onSubtitleAiApiKeyClick
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.QrCode,
+                        title = stringResource(R.string.ai_scan_qr_title),
+                        subtitle = stringResource(R.string.ai_scan_qr_desc),
+                        value = "",
+                        isFocused = false,
+                        showDivider = false,
+                        onClick = onSubtitleAiQrClick
+                    )
+                    if (uiState.subtitleAiEnabled) {
+                        Text(
+                            text = when (uiState.subtitleAiModel) {
+                                com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B ->
+                                    stringResource(R.string.ai_groq_disclaimer)
+                                com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 ->
+                                    stringResource(R.string.ai_gemini_disclaimer)
+                            },
+                            style = ArflixTypography.caption.copy(fontSize = 11.sp),
+                            color = TextSecondary.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                        )
+                    }
                 }
                 MobileSettingsCategory(title = "AUDIO") {
                     MobileSettingsRow(
@@ -4370,6 +4484,7 @@ private fun AiModelDialog(
     onModelSelected: (com.arflix.tv.ui.screens.player.SubtitleAiModel) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val isMobile = LocalDeviceType.current.isTouchDevice()
     val options = listOf(
         Triple(com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B, "Groq – Llama 3.3 70B", stringResource(R.string.ai_groq_model_note)),
         Triple(com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25, "Google – Gemini 2.5 Flash", stringResource(R.string.ai_gemini_model_note))
@@ -4378,10 +4493,14 @@ private fun AiModelDialog(
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Box(
             modifier = Modifier
+                .then(
+                    if (isMobile) Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    else Modifier.width(480.dp)
+                )
                 .clip(RoundedCornerShape(16.dp))
                 .background(BackgroundElevated)
         ) {
-            Column(modifier = Modifier.width(480.dp).padding(24.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
                 Text(
                     text = stringResource(R.string.ai_model_title),
                     style = ArflixTypography.sectionTitle,
@@ -4439,6 +4558,7 @@ private fun AiApiKeyDialog(
     onDismiss: () -> Unit,
     model: com.arflix.tv.ui.screens.player.SubtitleAiModel = com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B
 ) {
+    val isMobile = LocalDeviceType.current.isTouchDevice()
     var value by remember(currentKey) { mutableStateOf(currentKey) }
     val inputFocusRequester = remember { FocusRequester() }
     val placeholder = when (model) {
@@ -4453,10 +4573,14 @@ private fun AiApiKeyDialog(
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Box(
             modifier = Modifier
+                .then(
+                    if (isMobile) Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    else Modifier.width(520.dp)
+                )
                 .clip(RoundedCornerShape(16.dp))
                 .background(BackgroundElevated)
         ) {
-            Column(modifier = Modifier.width(520.dp).padding(24.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
                 Text(text = stringResource(R.string.ai_api_key_title), style = ArflixTypography.sectionTitle, color = TextPrimary)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
