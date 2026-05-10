@@ -2137,29 +2137,23 @@ private fun DetailsTvRows(
             return@LaunchedEffect
         }
 
-        val layoutInfo = contentScrollState.layoutInfo
-        val targetVisible = layoutInfo.visibleItemsInfo.any { itemInfo ->
-            itemInfo.index == targetIndex &&
-                itemInfo.offset >= layoutInfo.viewportStartOffset &&
-                itemInfo.offset + itemInfo.size <= layoutInfo.viewportEndOffset
-        }
-        if (targetVisible) {
+        val targetAligned = firstVisible == targetIndex &&
+            contentScrollState.firstVisibleItemScrollOffset == 0
+        if (targetAligned) {
             detailsStackOffsetPx.stop()
             detailsStackOffsetPx.snapTo(0f)
             return@LaunchedEffect
         }
 
-        if (firstVisible != targetIndex) {
-            val direction = if (targetIndex > firstVisible) 1f else -1f
-            val travelPx = with(density) { 96.dp.toPx() }
-            detailsStackOffsetPx.stop()
-            detailsStackOffsetPx.snapTo(direction * travelPx)
-            contentScrollState.scrollToItem(targetIndex)
-            detailsStackOffsetPx.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
-            )
-        }
+        val direction = if (targetIndex > firstVisible) 1f else -1f
+        val travelPx = with(density) { 96.dp.toPx() }
+        detailsStackOffsetPx.stop()
+        detailsStackOffsetPx.snapTo(direction * travelPx)
+        contentScrollState.scrollToItem(targetIndex, 0)
+        detailsStackOffsetPx.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
+        )
     }
 
     val contentStartPadding = 12.dp
