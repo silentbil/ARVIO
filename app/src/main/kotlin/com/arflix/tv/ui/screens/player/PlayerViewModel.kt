@@ -1633,6 +1633,10 @@ class PlayerViewModel @Inject constructor(
                 val isP2p = !stream.infoHash.isNullOrBlank() ||
                     (stream.url?.trim()?.startsWith("magnet:", ignoreCase = true) == true)
                 _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    isLoadingStreams = false,
+                    streamProgress = null,
+                    streamLoadPhase = null,
                     error = if (isP2p) {
                         "P2P stream requires TorrServer. Install TorrServer and set its URL in Settings > Addons."
                     } else {
@@ -1675,7 +1679,10 @@ class PlayerViewModel @Inject constructor(
                 selectedStreamUrl = url,
                 savedPosition = requestedResumePosition ?: _uiState.value.savedPosition,
                 streamSelectionNonce = _uiState.value.streamSelectionNonce + 1,
+                isLoading = false,
                 isLoadingStreams = false,
+                streamProgress = null,
+                streamLoadPhase = null,
                 error = null,
                 isSetupError = false
             )
@@ -1779,7 +1786,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun reportPlaybackError(message: String) {
-        _uiState.value = _uiState.value.copy(error = message)
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            isLoadingStreams = false,
+            streamProgress = null,
+            streamLoadPhase = null,
+            error = message
+        )
     }
 
     fun updatePlayerTextTracks(playerTextTracks: List<Subtitle>) {
@@ -2432,7 +2445,29 @@ class PlayerViewModel @Inject constructor(
         }
 
         val validVodSources = vodSources.filter { !it.url.isNullOrBlank() }
-        if (validVodSources.isEmpty()) return
+        if (validVodSources.isEmpty()) {
+            val state = _uiState.value
+            when {
+                state.streams.isNotEmpty() -> {
+                    _uiState.value = state.copy(
+                        isLoadingStreams = false,
+                        streamProgress = null,
+                        streamLoadPhase = null
+                    )
+                }
+                state.selectedStreamUrl.isNullOrBlank() -> {
+                    _uiState.value = state.copy(
+                        isLoading = false,
+                        isLoadingStreams = false,
+                        streamProgress = null,
+                        streamLoadPhase = null,
+                        error = state.error ?: "No streams found for this content. Try another source or check your configured sources.",
+                        isSetupError = false
+                    )
+                }
+            }
+            return
+        }
         val latest = _uiState.value.streams
 
         val updated = (latest + validVodSources)
@@ -2441,7 +2476,9 @@ class PlayerViewModel @Inject constructor(
             streams = updated,
             isLoadingStreams = false,
             error = null,
-            isSetupError = false
+            isSetupError = false,
+            streamProgress = null,
+            streamLoadPhase = null
         )
         prewarmTopStreams(updated, _uiState.value.preferredAudioLanguage.ifBlank { "en" })
     }

@@ -1421,8 +1421,8 @@ class IptvRepository @Inject constructor(
         xtreamSeriesEpisodeInFlight = emptyMap()
         cacheOwnerProfileId = null
         cacheOwnerConfigSig = null
-        // Clear disk-cached VOD/series catalogs
-        runCatching { xtreamDiskCacheDir().deleteRecursively() }
+        // Keep disk VOD/series catalogs. They are credential-keyed and TTL checked;
+        // deleting them during a generic refresh can race with playback source resolution.
     }
 
     private fun ensureCacheOwnership(profileId: String, config: IptvConfig) {
@@ -2937,12 +2937,18 @@ class IptvRepository @Inject constructor(
 
     private fun <T> writeDiskCache(file: File, savedAtMs: Long, items: List<T>) {
         runCatching {
-            java.io.FileOutputStream(file).use { fos ->
+            file.parentFile?.mkdirs()
+            val tmpFile = File(file.parentFile, "${file.name}.tmp")
+            java.io.FileOutputStream(tmpFile).use { fos ->
                 java.io.BufferedWriter(java.io.OutputStreamWriter(fos, StandardCharsets.UTF_8)).use { writer ->
                     gson.toJson(XtreamDiskCache(savedAtMs, items), writer)
                     writer.flush()
                 }
                 runCatching { fos.fd.sync() }  // Best-effort flush to disk; may fail on emulator
+            }
+            if (!tmpFile.renameTo(file)) {
+                tmpFile.copyTo(file, overwrite = true)
+                tmpFile.delete()
             }
             System.err.println("[VOD-Cache] Wrote disk cache: ${file.name} (${file.length() / 1024}KB), exists=${file.exists()}")
         }.onFailure { e ->
