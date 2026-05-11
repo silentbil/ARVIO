@@ -2116,6 +2116,19 @@ private fun DetailsTvRows(
             FocusSection.SIMILAR -> similarIdx
         }
         if (targetIndex < 0) return@LaunchedEffect
+        val firstFocusableRailIndex = listOf(
+            seasonsIdx,
+            episodesIdx,
+            castIdx,
+            reviewsIdx,
+            collectionIdx,
+            similarIdx
+        ).firstOrNull { it >= 0 } ?: -1
+        val targetScrollIndex = if (targetIndex == firstFocusableRailIndex && targetIndex > 0) {
+            0
+        } else {
+            targetIndex
+        }
 
         val firstVisible = contentScrollState.firstVisibleItemIndex
         val topClusterMaxIndex = maxOf(episodesIdx, seasonsIdx, 0)
@@ -2137,7 +2150,7 @@ private fun DetailsTvRows(
             return@LaunchedEffect
         }
 
-        val targetAligned = firstVisible == targetIndex &&
+        val targetAligned = firstVisible == targetScrollIndex &&
             contentScrollState.firstVisibleItemScrollOffset == 0
         if (targetAligned) {
             detailsStackOffsetPx.stop()
@@ -2145,11 +2158,11 @@ private fun DetailsTvRows(
             return@LaunchedEffect
         }
 
-        val direction = if (targetIndex > firstVisible) 1f else -1f
+        val direction = if (targetScrollIndex > firstVisible) 1f else -1f
         val travelPx = with(density) { 96.dp.toPx() }
         detailsStackOffsetPx.stop()
         detailsStackOffsetPx.snapTo(direction * travelPx)
-        contentScrollState.scrollToItem(targetIndex, 0)
+        contentScrollState.scrollToItem(targetScrollIndex, 0)
         detailsStackOffsetPx.animateTo(
             targetValue = 0f,
             animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
