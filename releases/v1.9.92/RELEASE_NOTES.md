@@ -1,4 +1,4 @@
-# ARVIO Beta v1.9.92
+# ARVIO v1.9.92
 
 ## Home server sources and catalogs
 - Added Home Server source support for user-owned Jellyfin, Emby, and Plex libraries.
