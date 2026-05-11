@@ -7,8 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.1.0" apply false
     id("org.jetbrains.kotlin.plugin.serialization") version "2.1.0" apply false
     // Kotlin 2.0+: Compose compiler is a dedicated Gradle plugin; version
-    // must track Kotlin. 2.1.0 adds the `SpillingKt` coroutine helper that
-    // modern CloudStream `.cs3` plugins link against.
+    // must track Kotlin.
     id("org.jetbrains.kotlin.plugin.compose") version "2.1.0" apply false
     id("com.google.devtools.ksp") version "2.1.0-1.0.29" apply false
     id("com.google.dagger.hilt.android") version "2.54" apply false

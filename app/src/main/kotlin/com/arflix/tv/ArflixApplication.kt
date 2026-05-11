@@ -82,14 +82,7 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         // a single volatile assignment.
         OkHttpProvider.init(this)
 
-        // Defer both the OkHttpClient lazy build AND the CloudStream HTTP
-        // bridge to IO. Accessing OkHttpProvider.client triggers a ~tens-of-ms
-        // disk-cache probe (File(cacheDir, "http_cache")); keeping that off
-        // the main thread trims cold-start jank on first frame. Plugins loaded
-        // later acquire the client through the same lazy path, so ordering is
-        // preserved without blocking here.
-        //
-        // Initialize global DNS provider from DataStore before network calls
+        // Initialize global DNS provider from DataStore before network calls.
         appScope.launch(Dispatchers.IO) {
             val prefs = settingsDataStore.data.first()
             val dnsKey = androidx.datastore.preferences.core.stringPreferencesKey(OkHttpProvider.DNS_PROVIDER_PREF_KEY)
@@ -97,9 +90,6 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             val provider = OkHttpProvider.parseDnsProvider(dnsPref)
             OkHttpProvider.setDnsProvider(provider)
 
-            runCatching {
-                com.arflix.tv.cloudstream.initCloudstream(OkHttpProvider.client)
-            }
             runCatching { OkHttpProvider.dns.lookup("image.tmdb.org") }
         }
 

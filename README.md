@@ -95,8 +95,8 @@ adb install -r app/build/outputs/apk/sideload/debug/app-sideload-debug.apk
 
 Build variants:
 
-- `play`: Play Store build, self-update and CloudStream runtime disabled.
-- `sideload`: Direct APK build, self-update and CloudStream runtime enabled.
+- `play`: Play Store build, self-update disabled.
+- `sideload`: Direct APK build, self-update enabled.
 - `debug`: development build.
 - `staging`: release-like build signed with the debug keystore for upgrade testing.
 - `release`: production build. Use a private release keystore for distribution.

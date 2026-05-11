@@ -10,21 +10,17 @@ import org.junit.Test
 
 class AddonRuntimeAggregatorTest {
     @Test
-    fun `resolveMovieStreams aggregates stremio and cloudstream runtime output`() = runTest {
+    fun `resolveMovieStreams uses installed addon runtime output`() = runTest {
         val aggregator = AddonRuntimeAggregator(
             addonRuntimes = mapOf(
                 RuntimeKind.STREMIO to FakeRuntime(
                     movieStreams = listOf(testStream("stremio.stream", "stremio.addon"))
-                ),
-                RuntimeKind.CLOUDSTREAM to FakeRuntime(
-                    movieStreams = listOf(testStream("cloud.stream", "cloud.addon"))
                 )
             )
         )
 
         val streams = aggregator.resolveMovieStreams(
             stremioAddons = listOf(testAddon("stremio.addon", RuntimeKind.STREMIO)),
-            cloudstreamAddons = listOf(testAddon("cloud.addon", RuntimeKind.CLOUDSTREAM)),
             request = MovieRuntimeRequest(
                 imdbId = "tt1234567",
                 title = "Movie",
@@ -32,8 +28,8 @@ class AddonRuntimeAggregatorTest {
             )
         )
 
-        assertEquals(2, streams.size)
-        assertEquals(listOf("stremio.stream", "cloud.stream"), streams.map { it.source })
+        assertEquals(1, streams.size)
+        assertEquals(listOf("stremio.stream"), streams.map { it.source })
     }
 
     private class FakeRuntime(

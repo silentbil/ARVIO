@@ -143,9 +143,7 @@
     <string name="networks">Networks</string>
     <string name="featured">Featured</string>
     <string name="trending_in_shows">Trending Shows</string>
-    <string name="cloudstream">Cloudstream</string>
     <string name="add_addon">Add Addon</string>
-    <string name="add_cloudstream_repo">Add Cloudstream Repository</string>
     <string name="trakt_account">Trakt Account</string>
     <string name="cloud_account">Cloud Account</string>
     <string name="force_cloud_sync">Force Cloud Sync</string>

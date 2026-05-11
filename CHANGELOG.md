@@ -72,16 +72,10 @@ All notable changes to this project are documented in this file.
 - Fixed multiple focus cropping and blinking issues without lowering artwork quality or removing video previews.
 
 ### Playback and source loading
-- Improved source discovery speed and reliability for CloudStream, HTTP, VOD, IPTV VOD, and debrid sources.
+- Improved source discovery speed and reliability for HTTP, VOD, IPTV VOD, and debrid sources.
 - Restored and improved MP4/service video playback behavior.
 - Improved autoplay selection so higher-quality and larger sources are preferred while keeping startup faster.
 - Added frame-rate matching before playback to reduce stutter.
-
-### CloudStream and addon compatibility
-- CloudStream support is still in the early stages and may not work with every extension yet.
-- Expanded CloudStream and community addon support.
-- Improved extractor and runtime handling so more addons appear correctly in sources and are playable.
-- Improved source matching for movies and series.
 
 ### Trakt, watchlist, and continue watching
 - Reworked Trakt watchlist ordering and matching so items better follow the newest-added order from Trakt.
@@ -121,7 +115,7 @@ Thank you to everyone who helped with this release, including:
 ### Sources
 - Metadata and discovery: TMDB, IMDb metadata/logo assets, Trakt.
 - Sync/auth: Supabase and ARVIO Cloud.
-- Playback/addons: IPTV M3U/Xtream/Stalker sources, Stremio-compatible addons, CloudStream/community HTTP sources.
+- Playback/addons: IPTV M3U/Xtream/Stalker sources, Stremio-compatible addons, and community HTTP sources.
 - Smoothness references: Android TV device traces and public Android TV performance research.
 
 ## [1.9.8] - 2026-04-10

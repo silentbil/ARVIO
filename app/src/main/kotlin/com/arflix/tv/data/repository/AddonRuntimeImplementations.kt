@@ -31,36 +31,3 @@ class StremioAddonRuntime(
             .flatten()
     }
 }
-
-class CloudstreamAddonRuntime(
-    private val providerRuntime: CloudstreamProviderRuntime
-) : AddonRuntime {
-    override val kind: RuntimeKind = RuntimeKind.CLOUDSTREAM
-
-    override suspend fun resolveMovieStreams(
-        addons: List<Addon>,
-        request: MovieRuntimeRequest
-    ): List<StreamSource> {
-        return providerRuntime.resolveMovieStreams(
-            addons = addons,
-            imdbId = request.imdbId,
-            title = request.title,
-            year = request.year
-        )
-    }
-
-    override suspend fun resolveEpisodeStreams(
-        addons: List<Addon>,
-        request: EpisodeRuntimeRequest
-    ): List<StreamSource> {
-        return providerRuntime.resolveEpisodeStreams(
-            addons = addons,
-            imdbId = request.imdbId,
-            title = request.title,
-            year = null,
-            season = request.season,
-            episode = request.episode,
-            airDate = request.airDate
-        )
-    }
-}

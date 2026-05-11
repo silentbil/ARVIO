@@ -1348,31 +1348,15 @@ class DetailsViewModel @Inject constructor(
                         .filter { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
                     val enabledStreamingAddons = enabledAddons.size
                     val stremioCount = enabledAddons.count { it.runtimeKind == com.arflix.tv.data.model.RuntimeKind.STREMIO }
-                    val cloudstreamCount = enabledAddons.count { it.runtimeKind == com.arflix.tv.data.model.RuntimeKind.CLOUDSTREAM }
                     val enabledAddonNames = enabledAddons.take(4).joinToString(",") { it.name }
-                    val cloudstreamEnabledAddons = enabledAddons
-                        .filter { it.runtimeKind == com.arflix.tv.data.model.RuntimeKind.CLOUDSTREAM }
-                    val cloudstreamUsableArtifacts = cloudstreamEnabledAddons
-                        .count { !it.installedArtifactPath.isNullOrBlank() }
-                    val cloudstreamMissingArtifacts = cloudstreamEnabledAddons.size - cloudstreamUsableArtifacts
                     Log.d(
                         TAG,
                         "[MovieSources] enabledStreamingAddons=$enabledStreamingAddons requestId=$requestId mediaId=$requestMediaId"
                     )
                     Log.d(
                         TAG,
-                        "[MovieSources] addonBreakdown stremio=$stremioCount cloudstream=$cloudstreamCount names=$enabledAddonNames"
+                        "[MovieSources] addonBreakdown stremio=$stremioCount names=$enabledAddonNames"
                     )
-                    Log.d(
-                        TAG,
-                        "[MovieSources] cloudstreamArtifacts usable=$cloudstreamUsableArtifacts missing=$cloudstreamMissingArtifacts"
-                    )
-                    if (cloudstreamCount > 0 && cloudstreamUsableArtifacts == 0) {
-                        Log.w(
-                            TAG,
-                            "[MovieSources] cloudstream addon enabled but no installed artifact path found. Reinstall the plugin in Settings > Addons."
-                        )
-                    }
                     if (enabledStreamingAddons == 0) {
                         Log.w(
                             TAG,

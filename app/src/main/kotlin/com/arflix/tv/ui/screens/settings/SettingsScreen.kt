@@ -140,12 +140,8 @@ import com.arflix.tv.data.model.CatalogKind
 import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.QualityFilterConfig
 import com.arflix.tv.data.model.RuntimeKind
-import com.arflix.tv.data.model.CloudstreamPluginIndexEntry
-import com.arflix.tv.data.model.CloudstreamRepositoryManifest
 import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerKind
-import com.arflix.tv.data.repository.StreamRepository
-import com.arflix.tv.data.repository.CloudstreamRepositoryRecord
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.ui.components.CatalogueRowLayoutToggleButton
@@ -167,17 +163,6 @@ import com.arflix.tv.ui.theme.TextSecondary
 import kotlin.math.abs
 import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
-
-internal fun cloudstreamPluginUnsupportedLabel(
-    pluginApiVersion: Int,
-    supportedApiVersion: Int
-): String? {
-    return if (StreamRepository.isCloudstreamPluginApiVersionSupported(pluginApiVersion, supportedApiVersion)) {
-        null
-    } else {
-        "Unsupported API v$pluginApiVersion (app supports up to v$supportedApiVersion)"
-    }
-}
 
 /**
  * Per-section registry of [BringIntoViewRequester]s keyed by the row's
@@ -278,8 +263,6 @@ fun SettingsScreen(
     // Input modal states
     var showCustomAddonInput by remember { mutableStateOf(false) }
     var customAddonUrl by remember { mutableStateOf("") }
-    var showCloudstreamRepoInput by remember { mutableStateOf(false) }
-    var cloudstreamRepoUrl by remember { mutableStateOf("") }
     var showIptvInput by remember { mutableStateOf(false) }
     var editingIptvIndex by remember { mutableIntStateOf(-1) }
     var iptvEditName by remember { mutableStateOf("") }
@@ -321,19 +304,13 @@ fun SettingsScreen(
     val stremioAddons = remember(uiState.addons) {
         uiState.addons.filter { it.runtimeKind == RuntimeKind.STREMIO }
     }
-    val cloudstreamPlugins = remember(uiState.addons) {
-        uiState.addons.filter { it.runtimeKind == RuntimeKind.CLOUDSTREAM }
-    }
-    val sections = remember(uiState.cloudstreamEnabled) {
+    val sections = remember {
         buildList {
             add("general")
             add("iptv")
             add("home_server")
             add("catalogs")
             add("stremio")
-            if (uiState.cloudstreamEnabled) {
-                add("cloudstream")
-            }
             add("accounts")
         }
     }
@@ -344,7 +321,6 @@ fun SettingsScreen(
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
-            "cloudstream" -> cloudstreamPlugins.size + uiState.cloudstreamRepositories.size // plugins + repos + add button
             "accounts" -> 3 // Cloud + Trakt + Force Sync + App Update
             else -> 0
         }
@@ -481,7 +457,6 @@ fun SettingsScreen(
         activeZone,
         uiState.catalogs.size,
         uiState.addons.size,
-        uiState.cloudstreamRepositories.size,
         focusTracker.requesters[contentFocusIndex]
     ) {
         if (activeZone != Zone.CONTENT) return@LaunchedEffect
@@ -562,7 +537,6 @@ fun SettingsScreen(
 
     val hasBlockingModal =
         showCustomAddonInput ||
-        showCloudstreamRepoInput ||
         showIptvInput ||
         showHomeServerInput ||
         showPlexHomeServerInput ||
@@ -582,8 +556,7 @@ fun SettingsScreen(
         uiState.traktCode != null ||
         uiState.plexHomeServerAuth != null ||
         uiState.showAppUpdateDialog ||
-        uiState.showUnknownSourcesDialog ||
-        (uiState.pendingCloudstreamManifest != null && uiState.pendingCloudstreamRepoUrl != null)
+        uiState.showUnknownSourcesDialog
 
     Box(
         modifier = Modifier
@@ -598,8 +571,6 @@ fun SettingsScreen(
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
                     val focusedStremioAddon = stremioAddons.getOrNull(contentFocusIndex)
-                    val repoOffset = (contentFocusIndex - cloudstreamPlugins.size).takeIf { it >= 0 } ?: -1
-                    val focusedCloudstreamRepo = uiState.cloudstreamRepositories.getOrNull(repoOffset)
                     val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
                         !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
                     } ?: false
@@ -621,11 +592,6 @@ fun SettingsScreen(
                             when (activeZone) {
                                 Zone.CONTENT -> {
                                     if (currentSection == "stremio" && contentFocusIndex < stremioAddons.size && addonActionIndex > 0) {
-                                        addonActionIndex = 0
-                                    } else if (currentSection == "cloudstream" &&
-                                        contentFocusIndex in 0 until (cloudstreamPlugins.size + uiState.cloudstreamRepositories.size) &&
-                                        addonActionIndex > 0
-                                    ) {
                                         addonActionIndex = 0
                                     } else if (currentSection == "iptv" && contentFocusIndex in 1..uiState.iptvPlaylists.size && iptvActionIndex > 0) {
                                         iptvActionIndex--
@@ -667,11 +633,6 @@ fun SettingsScreen(
                                         contentFocusIndex in 0 until stremioAddons.size &&
                                         addonActionIndex < 1 &&
                                         focusedStremioAddonCanDelete
-                                    ) {
-                                        addonActionIndex = 1
-                                    } else if (currentSection == "cloudstream" &&
-                                        contentFocusIndex in 0 until (cloudstreamPlugins.size + uiState.cloudstreamRepositories.size) &&
-                                        addonActionIndex < 1
                                     ) {
                                         addonActionIndex = 1
                                     } else if (currentSection == "iptv" && contentFocusIndex in 1..uiState.iptvPlaylists.size && iptvActionIndex < 4) {
@@ -913,39 +874,6 @@ fun SettingsScreen(
                                                 }
                                             }
                                         }
-                                        "cloudstream" -> {
-                                            when {
-                                                contentFocusIndex in 0 until cloudstreamPlugins.size -> {
-                                                    val plugin = cloudstreamPlugins[contentFocusIndex]
-                                                    if (addonActionIndex == 0) {
-                                                        viewModel.toggleAddon(plugin.id)
-                                                    } else {
-                                                        viewModel.removeAddon(plugin.id)
-                                                        addonActionIndex = 0
-                                                        if (contentFocusIndex >= cloudstreamPlugins.size && contentFocusIndex > 0) {
-                                                            contentFocusIndex--
-                                                        }
-                                                    }
-                                                }
-                                                contentFocusIndex in cloudstreamPlugins.size until (cloudstreamPlugins.size + uiState.cloudstreamRepositories.size) -> {
-                                                    val repo = focusedCloudstreamRepo
-                                                    if (repo != null) {
-                                                        if (addonActionIndex == 0) {
-                                                            viewModel.addCloudstreamRepository(repo.url)
-                                                        } else {
-                                                            viewModel.removeCloudstreamRepository(repo.url)
-                                                            addonActionIndex = 0
-                                                            if (contentFocusIndex > 0) {
-                                                                contentFocusIndex--
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                else -> {
-                                                    showCloudstreamRepoInput = true
-                                                }
-                                            }
-                                        }
                                         "accounts" -> {
                                             when (contentFocusIndex) {
                                                 0 -> {
@@ -995,7 +923,6 @@ fun SettingsScreen(
                 uiState = uiState,
                 viewModel = viewModel,
                 stremioAddons = stremioAddons,
-                cloudstreamPlugins = cloudstreamPlugins,
                 onSwitchProfile = onSwitchProfile,
                 openContentLanguagePicker = openContentLanguagePicker,
                 openSubtitlePicker = openSubtitlePicker,
@@ -1028,8 +955,7 @@ fun SettingsScreen(
                     plexHomeServerUrl = ""
                     showPlexHomeServerInput = true
                 },
-                onAddCustomAddonClick = { showCustomAddonInput = true },
-                onAddCloudstreamRepoClick = { showCloudstreamRepoInput = true }
+                onAddCustomAddonClick = { showCustomAddonInput = true }
             )
         } else {
             AppTopBar(
@@ -1075,7 +1001,6 @@ fun SettingsScreen(
                                     "home_server" -> Icons.Default.Cloud
                                     "catalogs" -> Icons.Default.Widgets
                                     "stremio" -> Icons.Default.Widgets
-                                    "cloudstream" -> Icons.Default.Cloud
                                     "accounts" -> Icons.Default.Person
                                     else -> Icons.Default.Settings
                                 },
@@ -1085,7 +1010,6 @@ fun SettingsScreen(
                                     "home_server" -> "Home Server"
                                     "catalogs" -> stringResource(R.string.catalogs)
                                     "stremio" -> stringResource(R.string.addons)
-                                    "cloudstream" -> stringResource(R.string.cloudstream)
                                     "accounts" -> stringResource(R.string.accounts)
                                     else -> section.replaceFirstChar { it.uppercase() }
                                 },
@@ -1314,17 +1238,6 @@ fun SettingsScreen(
                             onDeleteAddon = { viewModel.removeAddon(it) },
                             onAddCustomAddon = { showCustomAddonInput = true }
                         )
-                        "cloudstream" -> CloudstreamSettings(
-                            plugins = cloudstreamPlugins,
-                            repositories = uiState.cloudstreamRepositories,
-                            focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
-                            focusedActionIndex = addonActionIndex,
-                            onTogglePlugin = { viewModel.toggleAddon(it) },
-                            onRemovePlugin = { viewModel.removeAddon(it) },
-                            onConfigureRepo = { viewModel.addCloudstreamRepository(it) },
-                            onDeleteRepo = { viewModel.removeCloudstreamRepository(it) },
-                            onAddRepository = { showCloudstreamRepoInput = true }
-                        )
                         "accounts" -> AccountsSettings(
                             isCloudAuthenticated = uiState.isLoggedIn,
                             cloudEmail = uiState.accountEmail,
@@ -1384,42 +1297,6 @@ fun SettingsScreen(
             )
         }
 
-
-        if (showCloudstreamRepoInput) {
-            InputModal(
-                title = stringResource(R.string.add_cloudstream_repo),
-                fields = listOf(
-                    InputField(label = "Repository URL", value = cloudstreamRepoUrl, onValueChange = { cloudstreamRepoUrl = it })
-                ),
-                onConfirm = {
-                    if (cloudstreamRepoUrl.isNotBlank()) {
-                        viewModel.addCloudstreamRepository(cloudstreamRepoUrl.trim())
-                        cloudstreamRepoUrl = ""
-                        showCloudstreamRepoInput = false
-                    }
-                },
-                onDismiss = {
-                    cloudstreamRepoUrl = ""
-                    showCloudstreamRepoInput = false
-                }
-            )
-        }
-
-        val pendingCloudstreamManifest = uiState.pendingCloudstreamManifest
-        val pendingCloudstreamRepoUrl = uiState.pendingCloudstreamRepoUrl
-        if (pendingCloudstreamManifest != null && pendingCloudstreamRepoUrl != null) {
-            CloudstreamPluginPickerModal(
-                manifest = pendingCloudstreamManifest,
-                repoUrl = pendingCloudstreamRepoUrl,
-                plugins = uiState.pendingCloudstreamPlugins,
-                installedPlugins = cloudstreamPlugins,
-                supportedApiVersion = uiState.cloudstreamSupportedApiVersion,
-                onInstall = { viewModel.installCloudstreamPlugin(it) },
-                onToggleInstalledPlugin = { viewModel.toggleAddon(it) },
-                onRemoveInstalledPlugin = { viewModel.removeAddon(it) },
-                onDismiss = { viewModel.dismissCloudstreamPluginPicker() }
-            )
-        }
         if (showHomeServerInput) {
             InputModal(
                 title = "Home Server",
@@ -2968,7 +2845,6 @@ private fun MobileSettingsLayout(
     uiState: SettingsUiState,
     viewModel: SettingsViewModel,
     stremioAddons: List<com.arflix.tv.data.model.Addon>,
-    cloudstreamPlugins: List<com.arflix.tv.data.model.Addon>,
     onSwitchProfile: () -> Unit,
     openContentLanguagePicker: () -> Unit,
     openSubtitlePicker: () -> Unit,
@@ -2986,8 +2862,7 @@ private fun MobileSettingsLayout(
     onRenameCatalogClick: (CatalogConfig) -> Unit,
     onConnectHomeServerClick: () -> Unit,
     onConnectPlexHomeServerClick: () -> Unit,
-    onAddCustomAddonClick: () -> Unit,
-    onAddCloudstreamRepoClick: () -> Unit
+    onAddCustomAddonClick: () -> Unit
 ) {
     BackHandler(enabled = page != "MAIN") {
         onNavigate("MAIN")
@@ -3058,7 +2933,6 @@ private fun MobileSettingsLayout(
                 uiState = uiState,
                 viewModel = viewModel,
                 stremioAddons = stremioAddons,
-                cloudstreamPlugins = cloudstreamPlugins,
                 openDnsProviderPicker = openDnsProviderPicker,
                 openUiModeWarningDialog = openUiModeWarningDialog,
                 openQualityFiltersModal = openQualityFiltersModal,
@@ -3071,8 +2945,7 @@ private fun MobileSettingsLayout(
                 onRenameCatalogClick = onRenameCatalogClick,
                 onConnectHomeServerClick = onConnectHomeServerClick,
                 onConnectPlexHomeServerClick = onConnectPlexHomeServerClick,
-                onAddCustomAddonClick = onAddCustomAddonClick,
-                onAddCloudstreamRepoClick = onAddCloudstreamRepoClick
+                onAddCustomAddonClick = onAddCustomAddonClick
             )
         }
     }
@@ -3222,7 +3095,6 @@ private fun MobileSettingsSubPage(
     uiState: SettingsUiState,
     viewModel: SettingsViewModel,
     stremioAddons: List<com.arflix.tv.data.model.Addon>,
-    cloudstreamPlugins: List<com.arflix.tv.data.model.Addon>,
     openDnsProviderPicker: () -> Unit,
     openUiModeWarningDialog: () -> Unit,
     openQualityFiltersModal: () -> Unit,
@@ -3235,8 +3107,7 @@ private fun MobileSettingsSubPage(
     onRenameCatalogClick: (CatalogConfig) -> Unit,
     onConnectHomeServerClick: () -> Unit,
     onConnectPlexHomeServerClick: () -> Unit,
-    onAddCustomAddonClick: () -> Unit,
-    onAddCloudstreamRepoClick: () -> Unit
+    onAddCustomAddonClick: () -> Unit
 ) {
     val scrollState = rememberScrollState()
     Column(
@@ -3502,20 +3373,6 @@ private fun MobileSettingsSubPage(
                     onDeleteAddon = { viewModel.removeAddon(it) },
                     onAddCustomAddon = onAddCustomAddonClick
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                if (uiState.cloudstreamEnabled) {
-                    CloudstreamSettings(
-                        plugins = cloudstreamPlugins,
-                        repositories = uiState.cloudstreamRepositories,
-                        focusedIndex = -1,
-                        focusedActionIndex = 0,
-                        onTogglePlugin = { viewModel.toggleAddon(it) },
-                        onRemovePlugin = { viewModel.removeAddon(it) },
-                        onConfigureRepo = { viewModel.addCloudstreamRepository(it) },
-                        onDeleteRepo = { viewModel.removeCloudstreamRepository(it) },
-                        onAddRepository = onAddCloudstreamRepoClick
-                    )
-                }
             }
             "Catalogs" -> {
                 CatalogsSettings(
@@ -6522,215 +6379,38 @@ private fun StremioAddonsSettings(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun CloudstreamSettings(
-    plugins: List<com.arflix.tv.data.model.Addon> = emptyList(),
-    repositories: List<CloudstreamRepositoryRecord> = emptyList(),
-    focusedIndex: Int = -1,
-    focusedActionIndex: Int = 0,
-    onTogglePlugin: (String) -> Unit = {},
-    onRemovePlugin: (String) -> Unit = {},
-    onConfigureRepo: (String) -> Unit = {},
-    onDeleteRepo: (String) -> Unit = {},
-    onAddRepository: () -> Unit = {}
-) {
-    val enabledPluginCount = remember(plugins) { plugins.count { it.isEnabled } }
-    Column {
-        Text(
-            text = "CLOUDSTREAM",
-            style = ArflixTypography.caption.copy(fontSize = 12.sp, letterSpacing = 1.sp),
-            color = TextSecondary,
-            modifier = Modifier.padding(bottom = 10.dp)
-        )
-
-        Text(
-            text = "Add a repository, browse plugins, install what you want, then use it from Sources on movies and series.",
-            style = ArflixTypography.body,
-            color = TextSecondary,
-            modifier = Modifier.padding(bottom = 18.dp)
-        )
-
-        if (plugins.isNotEmpty() || repositories.isNotEmpty()) {
-            Text(
-                text = buildString {
-                    append("${plugins.size} installed")
-                    append(" • ")
-                    append("$enabledPluginCount enabled")
-                    if (repositories.isNotEmpty()) {
-                        append(" • ")
-                        append("${repositories.size} repos")
-                    }
-                },
-                style = ArflixTypography.caption,
-                color = TextSecondary,
-                modifier = Modifier.padding(bottom = 14.dp)
-            )
-        }
-
-        if (plugins.isEmpty() && repositories.isEmpty()) {
-            Text(
-                text = "No Cloudstream plugins or repositories configured",
-                style = ArflixTypography.body,
-                color = TextSecondary
-            )
-        } else {
-            val extensions = plugins.filter { it.repoUrl.isNullOrBlank() }
-            val repoPlugins = plugins.filter { !it.repoUrl.isNullOrBlank() }
-
-            if (extensions.isNotEmpty()) {
-                Text(
-                    text = "Extensions",
-                    style = ArflixTypography.caption,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(bottom = 10.dp)
-                )
-                extensions.forEachIndexed { index, plugin ->
-                    CloudstreamInstalledPluginRow(
-                        addon = plugin,
-                        isFocused = focusedIndex == index,
-                        focusedAction = if (focusedIndex == index) focusedActionIndex else -1,
-                        onToggle = { onTogglePlugin(plugin.id) },
-                        onDelete = { onRemovePlugin(plugin.id) },
-                        modifier = Modifier.settingsFocusSlot(index)
-                    )
-                    if (index < extensions.size - 1) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-                }
-            }
-
-            if (repoPlugins.isNotEmpty()) {
-                if (extensions.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(18.dp))
-                }
-                Text(
-                    text = "Installed Plugins",
-                    style = ArflixTypography.caption,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(bottom = 10.dp)
-                )
-                repoPlugins.forEachIndexed { index, plugin ->
-                    val rowIndex = extensions.size + index
-                    CloudstreamInstalledPluginRow(
-                        addon = plugin,
-                        isFocused = focusedIndex == rowIndex,
-                        focusedAction = if (focusedIndex == rowIndex) focusedActionIndex else -1,
-                        onToggle = { onTogglePlugin(plugin.id) },
-                        onDelete = { onRemovePlugin(plugin.id) },
-                        modifier = Modifier.settingsFocusSlot(rowIndex)
-                    )
-                    if (index < repoPlugins.size - 1) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-                }
-            }
-
-            if (repositories.isNotEmpty()) {
-                if (plugins.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(18.dp))
-                }
-                Text(
-                    text = "Repositories",
-                    style = ArflixTypography.caption,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(bottom = 10.dp)
-                )
-                repositories.forEachIndexed { index, repo ->
-                    val rowIndex = plugins.size + index
-                    val installedForRepo = plugins.count { it.repoUrl.equals(repo.url, ignoreCase = true) }
-                    val enabledForRepo = plugins.count {
-                        it.repoUrl.equals(repo.url, ignoreCase = true) && it.isEnabled
-                    }
-                    CloudstreamRepositoryRow(
-                        repository = repo,
-                        installedPluginCount = installedForRepo,
-                        enabledPluginCount = enabledForRepo,
-                        isFocused = focusedIndex == rowIndex,
-                        focusedAction = if (focusedIndex == rowIndex) focusedActionIndex else -1,
-                        onConfigure = { onConfigureRepo(repo.url) },
-                        onDelete = { onDeleteRepo(repo.url) },
-                        modifier = Modifier.settingsFocusSlot(rowIndex)
-                    )
-                    if (index < repositories.size - 1) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        val addRowIndex = plugins.size + repositories.size
-        Row(
-            modifier = Modifier
-                .settingsFocusSlot(addRowIndex)
-                .fillMaxWidth()
-                .clickable(onClick = onAddRepository)
-                .background(
-                    if (focusedIndex == addRowIndex) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
-                    RoundedCornerShape(12.dp)
-                )
-                .border(
-                    width = if (focusedIndex == addRowIndex) 2.dp else 0.dp,
-                    color = if (focusedIndex == addRowIndex) Pink else Color.Transparent,
-                    shape = RoundedCornerShape(12.dp)
-                )
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Cloud,
-                contentDescription = null,
-                tint = Pink,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = "Add Repository",
-                style = ArflixTypography.button,
-                color = Pink
-            )
-        }
-    }
-}
-
-@Composable
-private fun CloudstreamStatusChip(
+private fun AddonStatusChip(
     text: String,
     background: Color,
-    textColor: Color,
-    modifier: Modifier = Modifier
+    textColor: Color
 ) {
     Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(background)
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+        modifier = Modifier
+            .background(background, RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
-            style = ArflixTypography.caption,
+            style = ArflixTypography.caption.copy(fontSize = 11.sp),
             color = textColor,
             maxLines = 1
         )
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun AddonRow(
     addon: com.arflix.tv.data.model.Addon,
     isFocused: Boolean,
-    focusedAction: Int = -1, // 0 = toggle, 1 = delete
+    focusedAction: Int = -1,
     canDelete: Boolean = true,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val canToggle = true
-    val isToggleFocused = canToggle && isFocused && focusedAction == 0
+    val isToggleFocused = isFocused && focusedAction == 0
     val isDeleteFocused = canDelete && isFocused && focusedAction == 1
     val isEnabled = addon.isEnabled
 
@@ -6788,18 +6468,14 @@ private fun AddonRow(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CloudstreamStatusChip(
+                    AddonStatusChip(
                         text = "Installed",
                         background = Color(0xFF2563EB).copy(alpha = 0.18f),
                         textColor = Color(0xFF93C5FD)
                     )
-                    CloudstreamStatusChip(
+                    AddonStatusChip(
                         text = if (isEnabled) "Enabled" else "Disabled",
-                        background = if (isEnabled) {
-                            SuccessGreen.copy(alpha = 0.18f)
-                        } else {
-                            Color.White.copy(alpha = 0.08f)
-                        },
+                        background = if (isEnabled) SuccessGreen.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.08f),
                         textColor = if (isEnabled) SuccessGreen else TextSecondary
                     )
                 }
@@ -6810,7 +6486,6 @@ private fun AddonRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Toggle indicator with focus highlight
             Box(
                 modifier = Modifier
                     .border(
@@ -6863,631 +6538,6 @@ private fun AddonRow(
                         contentDescription = "Delete addon",
                         tint = if (isDeleteFocused) Color.White else TextSecondary,
                         modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun CloudstreamInstalledPluginRow(
-    addon: com.arflix.tv.data.model.Addon,
-    isFocused: Boolean,
-    focusedAction: Int = -1,
-    onToggle: () -> Unit,
-    onDelete: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val isToggleFocused = isFocused && focusedAction == 0
-    val isDeleteFocused = isFocused && focusedAction == 1
-    val isEnabled = addon.isEnabled
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable { onToggle() }
-            .background(
-                if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
-                RoundedCornerShape(12.dp)
-            )
-            .border(
-                width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) Pink else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
-            )
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(Color(0xFF2563EB).copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Cloud,
-                    contentDescription = null,
-                    tint = Color(0xFF60A5FA),
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column {
-                Text(
-                    text = addon.name,
-                    style = ArflixTypography.cardTitle,
-                    color = TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                val subtitle = buildString {
-                    if (!addon.repoUrl.isNullOrBlank()) {
-                        append(addon.repoUrl)
-                    }
-                    if (addon.pluginVersionCode != null) {
-                        if (isNotEmpty()) append(" • ")
-                        append("v")
-                        append(addon.pluginVersionCode)
-                    }
-                }
-                Text(
-                    text = subtitle.ifBlank { addon.description },
-                    style = ArflixTypography.caption,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .border(
-                        width = if (isToggleFocused) 2.dp else 0.dp,
-                        color = if (isToggleFocused) Color.White else Color.Transparent,
-                        shape = RoundedCornerShape(13.dp)
-                    )
-                    .padding(2.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(48.dp)
-                        .height(26.dp)
-                        .background(
-                            color = if (isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(13.dp)
-                        )
-                        .padding(3.dp),
-                    contentAlignment = if (isEnabled) Alignment.CenterEnd else Alignment.CenterStart
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .background(
-                                color = Color.White,
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                    )
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clickable { onDelete() }
-                    .background(
-                        color = if (isDeleteFocused) Color(0xFFEF4444) else Color.White.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .border(
-                        width = if (isDeleteFocused) 2.dp else 0.dp,
-                        color = if (isDeleteFocused) Color.White else Color.Transparent,
-                        shape = RoundedCornerShape(8.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete plugin",
-                    tint = if (isDeleteFocused) Color.White else TextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun CloudstreamRepositoryRow(
-    repository: CloudstreamRepositoryRecord,
-    installedPluginCount: Int,
-    enabledPluginCount: Int,
-    isFocused: Boolean,
-    focusedAction: Int = -1,
-    onConfigure: () -> Unit,
-    onDelete: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val isConfigureFocused = isFocused && focusedAction == 0
-    val isDeleteFocused = isFocused && focusedAction == 1
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable { onConfigure() }
-            .background(
-                if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
-                RoundedCornerShape(12.dp)
-            )
-            .border(
-                width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) Pink else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
-            )
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(Color(0xFF2563EB).copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Cloud,
-                    contentDescription = null,
-                    tint = Color(0xFF60A5FA),
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column {
-                Text(
-                    text = repository.name,
-                    style = ArflixTypography.cardTitle,
-                    color = TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = repository.description ?: repository.url,
-                    style = ArflixTypography.caption,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CloudstreamStatusChip(
-                        text = if (installedPluginCount == 1) {
-                            "1 plugin installed"
-                        } else {
-                            "$installedPluginCount plugins installed"
-                        },
-                        background = Color(0xFF2563EB).copy(alpha = 0.18f),
-                        textColor = Color(0xFF93C5FD)
-                    )
-                    if (installedPluginCount > 0) {
-                        CloudstreamStatusChip(
-                            text = "$enabledPluginCount enabled",
-                            background = if (enabledPluginCount > 0) {
-                                SuccessGreen.copy(alpha = 0.18f)
-                            } else {
-                                Color.White.copy(alpha = 0.08f)
-                            },
-                            textColor = if (enabledPluginCount > 0) SuccessGreen else TextSecondary
-                        )
-                    }
-                }
-            }
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                    .background(
-                        color = if (isConfigureFocused) SuccessGreen else Color.White.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .border(
-                        width = if (isConfigureFocused) 2.dp else 0.dp,
-                        color = if (isConfigureFocused) Color.White else Color.Transparent,
-                        shape = RoundedCornerShape(8.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Browse repository plugins",
-                    tint = if (isConfigureFocused) Color.White else TextSecondary,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clickable { onDelete() }
-                    .background(
-                        color = if (isDeleteFocused) Color(0xFFEF4444) else Color.White.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .border(
-                        width = if (isDeleteFocused) 2.dp else 0.dp,
-                        color = if (isDeleteFocused) Color.White else Color.Transparent,
-                        shape = RoundedCornerShape(8.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete repository",
-                    tint = if (isDeleteFocused) Color.White else TextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun CloudstreamPluginPickerModal(
-    manifest: CloudstreamRepositoryManifest,
-    repoUrl: String,
-    plugins: List<CloudstreamPluginIndexEntry>,
-    installedPlugins: List<com.arflix.tv.data.model.Addon>,
-    supportedApiVersion: Int,
-    onInstall: (CloudstreamPluginIndexEntry) -> Unit,
-    onToggleInstalledPlugin: (String) -> Unit,
-    onRemoveInstalledPlugin: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var focusedIndex by remember { mutableIntStateOf(0) }
-    var focusedAction by remember { mutableIntStateOf(0) } // 0 = primary action, 1 = remove
-    val listState = rememberLazyListState()
-    val modalFocusRequester = remember { FocusRequester() }
-    val installedAddonFor: (CloudstreamPluginIndexEntry) -> com.arflix.tv.data.model.Addon? = { plugin ->
-        installedPlugins.firstOrNull {
-            it.runtimeKind == RuntimeKind.CLOUDSTREAM &&
-                it.internalName == plugin.internalName &&
-                it.repoUrl.equals(repoUrl, ignoreCase = true)
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        modalFocusRequester.requestFocus()
-    }
-
-    LaunchedEffect(focusedIndex, plugins.size) {
-        if (plugins.isNotEmpty()) {
-            val targetIndex = focusedIndex.coerceIn(0, plugins.lastIndex)
-            listState.animateScrollToItem(targetIndex)
-        }
-    }
-
-    LaunchedEffect(plugins.size) {
-        if (plugins.isEmpty()) {
-            focusedIndex = 0
-            focusedAction = 0
-        } else if (focusedIndex > plugins.lastIndex) {
-            focusedIndex = plugins.lastIndex
-            focusedAction = 0
-        }
-    }
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false
-        )
-    ) {
-        ModalScrim(onDismiss = onDismiss) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth(if (LocalDeviceType.current.isTouchDevice()) 0.94f else 0.8f)
-                    .widthIn(max = 860.dp)
-                    .background(BackgroundElevated, RoundedCornerShape(16.dp))
-                    .padding(24.dp)
-                    .focusRequester(modalFocusRequester)
-                    .focusable()
-                    .onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        when (event.key) {
-                            Key.Back, Key.Escape -> {
-                                onDismiss()
-                                true
-                            }
-                            Key.DirectionUp -> {
-                                focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
-                                val selected = plugins.getOrNull(focusedIndex)
-                                if (selected == null || installedAddonFor(selected) == null) {
-                                    focusedAction = 0
-                                }
-                                true
-                            }
-                            Key.DirectionDown -> {
-                                focusedIndex = (focusedIndex + 1).coerceAtMost(plugins.lastIndex.coerceAtLeast(0))
-                                val selected = plugins.getOrNull(focusedIndex)
-                                if (selected == null || installedAddonFor(selected) == null) {
-                                    focusedAction = 0
-                                }
-                                true
-                            }
-                            Key.DirectionLeft -> {
-                                if (focusedAction > 0) {
-                                    focusedAction = 0
-                                }
-                                true
-                            }
-                            Key.DirectionRight -> {
-                                val selected = plugins.getOrNull(focusedIndex)
-                                if (selected != null && installedAddonFor(selected) != null) {
-                                    focusedAction = 1
-                                }
-                                true
-                            }
-                            Key.Enter, Key.DirectionCenter -> {
-                                plugins.getOrNull(focusedIndex)?.let { selected ->
-                                    val installedAddon = installedAddonFor(selected)
-                                    if (!StreamRepository.isCloudstreamPluginApiVersionSupported(selected.apiVersion, supportedApiVersion)) {
-                                        return@let
-                                    }
-                                    if (focusedAction == 1 && installedAddon != null) {
-                                        onRemoveInstalledPlugin(installedAddon.id)
-                                        return@let
-                                    }
-                                    if (installedAddon == null) {
-                                        onInstall(selected)
-                                    } else {
-                                        val hasUpdate = selected.version > (installedAddon.pluginVersionCode ?: Int.MIN_VALUE)
-                                        if (hasUpdate) {
-                                            onInstall(selected)
-                                        } else {
-                                            onToggleInstalledPlugin(installedAddon.id)
-                                        }
-                                    }
-                                }
-                                true
-                            }
-                            else -> false
-                        }
-                    }
-            ) {
-                Text(
-                    text = "Install Cloudstream Plugins",
-                    style = ArflixTypography.sectionTitle,
-                    color = TextPrimary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "${manifest.name} • ${plugins.size} plugins",
-                    style = ArflixTypography.body,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = repoUrl,
-                    style = ArflixTypography.caption,
-                    color = TextSecondary.copy(alpha = 0.7f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(20.dp))
-                Text(
-                    text = "Installed plugins stay visible here after install. Use Install, Enable/Disable, or Remove per plugin.",
-                    style = ArflixTypography.caption,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
-                if (plugins.isEmpty()) {
-                    Text(
-                        text = "This repository did not expose any installable plugins.",
-                        style = ArflixTypography.body,
-                        color = TextSecondary
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .arvioDpadFocusGroup()
-                            .heightIn(max = 420.dp),
-                        state = listState,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        itemsIndexed(plugins) { index, plugin ->
-                            val isFocused = focusedIndex == index
-                            val installedAddon = installedAddonFor(plugin)
-                            val isSupported = StreamRepository.isCloudstreamPluginApiVersionSupported(
-                                plugin.apiVersion,
-                                supportedApiVersion
-                            )
-                            val unsupportedLabel = cloudstreamPluginUnsupportedLabel(plugin.apiVersion, supportedApiVersion)
-                            val hasUpdate = installedAddon != null && plugin.version > (installedAddon.pluginVersionCode ?: Int.MIN_VALUE)
-                            val isPrimaryFocused = isFocused && focusedAction == 0
-                            val isRemoveFocused = isFocused && focusedAction == 1 && installedAddon != null
-                            val primaryActionLabel = when {
-                                !isSupported -> "Unsupported"
-                                installedAddon == null -> "Install"
-                                hasUpdate -> "Update"
-                                installedAddon.isEnabled -> "Disable"
-                                else -> "Enable"
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable(enabled = isSupported) {
-                                        focusedIndex = index
-                                        focusedAction = 0
-                                        if (installedAddon == null || hasUpdate) {
-                                            onInstall(plugin)
-                                        } else {
-                                            onToggleInstalledPlugin(installedAddon.id)
-                                        }
-                                    }
-                                    .background(
-                                        if (isFocused) {
-                                            Color.White.copy(alpha = 0.1f)
-                                        } else {
-                                            appBackgroundDark().copy(alpha = if (isSupported) 0.35f else 0.2f)
-                                        },
-                                        RoundedCornerShape(12.dp)
-                                    )
-                                    .border(
-                                        width = if (isFocused) 2.dp else 1.dp,
-                                        color = if (isFocused) {
-                                            if (isSupported) Pink else Color(0xFFF59E0B)
-                                        } else {
-                                            Color.White.copy(alpha = 0.08f)
-                                        },
-                                        shape = RoundedCornerShape(12.dp)
-                                    )
-                                    .padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = plugin.name,
-                                        style = ArflixTypography.cardTitle,
-                                        color = TextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = plugin.description ?: plugin.internalName,
-                                        style = ArflixTypography.caption,
-                                        color = if (isSupported) TextSecondary else Color(0xFFFCD34D),
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    if (!isSupported) {
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = unsupportedLabel.orEmpty(),
-                                            style = ArflixTypography.caption,
-                                            color = Color(0xFFF59E0B),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    if (installedAddon != null) {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            CloudstreamStatusChip(
-                                                text = "Installed",
-                                                background = Color(0xFF2563EB).copy(alpha = 0.18f),
-                                                textColor = Color(0xFF93C5FD)
-                                            )
-                                            CloudstreamStatusChip(
-                                                text = if (installedAddon.isEnabled) "Enabled" else "Disabled",
-                                                background = if (installedAddon.isEnabled) {
-                                                    SuccessGreen.copy(alpha = 0.18f)
-                                                } else {
-                                                    Color.White.copy(alpha = 0.08f)
-                                                },
-                                                textColor = if (installedAddon.isEnabled) SuccessGreen else TextSecondary
-                                            )
-                                            if (hasUpdate) {
-                                                CloudstreamStatusChip(
-                                                    text = "Update available",
-                                                    background = Pink.copy(alpha = 0.18f),
-                                                    textColor = Pink
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = "v${plugin.version}",
-                                        style = ArflixTypography.caption,
-                                        color = TextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(
-                                                if (isPrimaryFocused && isSupported) SuccessGreen.copy(alpha = 0.25f)
-                                                else Color.Transparent
-                                            )
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = primaryActionLabel,
-                                            style = ArflixTypography.caption,
-                                            color = if (isSupported) SuccessGreen else Color(0xFFF59E0B)
-                                        )
-                                    }
-                                    if (installedAddon != null) {
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(
-                                                    if (isRemoveFocused) Color(0xFFEF4444).copy(alpha = 0.35f)
-                                                    else Color(0xFFEF4444).copy(alpha = 0.18f)
-                                                )
-                                                .clickable {
-                                                    focusedIndex = index
-                                                    focusedAction = 1
-                                                    onRemoveInstalledPlugin(installedAddon.id)
-                                                }
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = "Remove",
-                                                style = ArflixTypography.caption,
-                                                color = Color(0xFFFCA5A5)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.White.copy(alpha = 0.08f))
-                        .clickable { onDismiss() }
-                        .padding(vertical = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Close",
-                        style = ArflixTypography.button,
-                        color = TextPrimary
                     )
                 }
             }

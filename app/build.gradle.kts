@@ -53,12 +53,10 @@ android {
         create("play") {
             dimension = "distribution"
             buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "false")
-            buildConfigField("Boolean", "CLOUDSTREAM_ENABLED", "false")
         }
         create("sideload") {
             dimension = "distribution"
             buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "true")
-            buildConfigField("Boolean", "CLOUDSTREAM_ENABLED", "false")
         }
     }
 
@@ -253,16 +251,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // CloudStream plugin runtime dependencies. NiceHttp (the HTTP client
-    // real CloudStream providers import as `com.lagradost.nicehttp.Requests`)
-    // is re-implemented in-tree at app/src/sideload/kotlin/com/lagradost/
-    // nicehttp/ over the existing OkHttp dependency — upstream NiceHttp
-    // binaries ship pre-compiled against newer Kotlin stdlibs than this
-    // project supports. Jackson is used by MainAPIKt.getMapper(); jsoup
-    // parses provider HTML for simple plugins.
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.3")
+    // HTML parsing for catalog discovery.
     implementation("org.jsoup:jsoup:1.17.2")
-    implementation("me.xdrop:fuzzywuzzy:1.4.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

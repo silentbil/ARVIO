@@ -435,7 +435,6 @@ object AppTranslations {
         "Iptv" to "IPTV",
         "Catalogs" to catalogs,
         "Stremio" to "Addons",
-        "Cloudstream" to "Cloudstream",
         "Accounts" to accounts,
         "MY WATCHLIST" to watchlist.uppercase(Locale.ROOT),
         "Your watchlist is empty" to emptyWatchlist,

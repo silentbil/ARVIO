@@ -61,19 +61,6 @@ class CloudSyncRepository @Inject constructor(
         return merged.values.toList()
     }
 
-    private fun mergeRepositoriesForSharedRestore(
-        repositoryLists: Iterable<List<CloudstreamRepositoryRecord>>
-    ): List<CloudstreamRepositoryRecord> {
-        val merged = LinkedHashMap<String, CloudstreamRepositoryRecord>()
-        repositoryLists.flatten().forEach { repository ->
-            val url = repository.url.trim()
-            if (url.isNotBlank()) {
-                merged.putIfAbsent(url.lowercase(), repository.copy(url = url))
-            }
-        }
-        return merged.values.toList()
-    }
-
     /**
      * Serializes push/pull so they can never overlap. Without this, a manual
      * Save in Settings that coincides with a realtime pull (or a startup pull
@@ -381,27 +368,13 @@ class CloudSyncRepository @Inject constructor(
 
         // Addons are shared account state. Keep the per-profile payload shape
         // for older clients, but each profile receives the same shared list.
-        val sharedAddons = sanitizeAddonsForCloudSync(streamRepository.installedAddons.first())
+        val sharedAddons = streamRepository.installedAddons.first()
         val addonsByProfile = buildMap<String, List<Addon>> {
             profiles.forEach { profile ->
                 put(profile.id, sharedAddons)
             }
         }
         root.put("addonsByProfile", JSONObject(gson.toJson(addonsByProfile)))
-
-        val sharedCloudstreamRepositories = mergeCloudstreamRepositoriesFromAddons(
-            streamRepository.cloudstreamRepositories.first(),
-            sharedAddons
-        )
-        val cloudstreamRepositoriesByProfile = buildMap<String, List<CloudstreamRepositoryRecord>> {
-            profiles.forEach { profile ->
-                put(profile.id, sharedCloudstreamRepositories)
-            }
-        }
-        root.put(
-            "cloudstreamRepositoriesByProfile",
-            JSONObject(gson.toJson(cloudstreamRepositoriesByProfile))
-        )
 
         // Catalogs per profile
         val catalogsByProfile = buildMap<String, List<CatalogConfig>> {
@@ -739,30 +712,6 @@ class CloudSyncRepository @Inject constructor(
                 val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
                 if (addons.isNotEmpty()) {
                     streamRepository.replaceSharedAddonsFromCloud(addons)
-                }
-            }
-        }
-
-        root.optJSONObject("cloudstreamRepositoriesByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = object : TypeToken<Map<String, List<CloudstreamRepositoryRecord>>>() {}.type
-            val map: Map<String, List<CloudstreamRepositoryRecord>> = gson.fromJson(json, type) ?: emptyMap()
-            val merged = mergeCloudstreamRepositoriesFromAddons(
-                mergeRepositoriesForSharedRestore(map.values),
-                emptyList()
-            )
-            if (merged.isNotEmpty()) {
-                streamRepository.replaceSharedCloudstreamRepositoriesFromCloud(merged)
-            }
-        } ?: run {
-            root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-                val type = object : TypeToken<Map<String, List<Addon>>>() {}.type
-                val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
-                val recoveredRepositories = mergeCloudstreamRepositoriesFromAddons(
-                    emptyList(),
-                    mergeAddonsForSharedRestore(map.values)
-                )
-                if (recoveredRepositories.isNotEmpty()) {
-                    streamRepository.replaceSharedCloudstreamRepositoriesFromCloud(recoveredRepositories)
                 }
             }
         }

@@ -267,13 +267,7 @@ data class Addon(
     val url: String? = null,
     val logo: String? = null,
     val manifest: AddonManifest? = null,           // Full manifest for advanced filtering
-    val transportUrl: String? = null,              // Base URL for API calls (without manifest.json)
-    val internalName: String? = null,
-    val repoUrl: String? = null,
-    val pluginPackageUrl: String? = null,
-    val pluginVersionCode: Int? = null,
-    val apiVersion: Int? = null,
-    val installedArtifactPath: String? = null
+    val transportUrl: String? = null               // Base URL for API calls (without manifest.json)
 )
 
 enum class AddonType {
@@ -281,46 +275,12 @@ enum class AddonType {
 }
 
 enum class RuntimeKind {
-    STREMIO,
-    CLOUDSTREAM
+    STREMIO
 }
 
 enum class AddonInstallSource {
-    DIRECT_URL,
-    CLOUDSTREAM_REPOSITORY
+    DIRECT_URL
 }
-
-data class CloudstreamRepositoryManifest(
-    val name: String,
-    val description: String? = null,
-    val manifestVersion: Int,
-    val pluginLists: List<String> = emptyList(),
-    val iconUrl: String? = null
-) : Serializable
-
-data class CloudstreamPluginIndexEntry(
-    val url: String,
-    val status: Int,
-    val version: Int,
-    val apiVersion: Int,
-    val name: String,
-    val internalName: String,
-    val authors: List<String> = emptyList(),
-    val description: String? = null,
-    val repositoryUrl: String? = null,
-    val tvTypes: List<String>? = null,
-    val language: String? = null,
-    val iconUrl: String? = null,
-    val fileSize: Long? = null
-) : Serializable
-
-data class CloudstreamInstalledPlugin(
-    val repoUrl: String,
-    val manifest: CloudstreamRepositoryManifest,
-    val plugin: CloudstreamPluginIndexEntry,
-    val localFilePath: String? = null,
-    val isUpdateAvailable: Boolean = false
-) : Serializable
 
 /**
  * Stream fetch result with addon info for callback-based fetching

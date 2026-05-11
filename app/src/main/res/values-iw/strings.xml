@@ -93,9 +93,7 @@
     <string name="networks">רשתות</string>
     <string name="featured">נבחרים</string>
     <string name="trending_in_shows">סדרות פופולריות</string>
-    <string name="cloudstream">Cloudstream</string>
     <string name="add_addon">הוסף תוסף</string>
-    <string name="add_cloudstream_repo">הוסף מאגר Cloudstream</string>
     <string name="trakt_account">חשבון Trakt</string>
     <string name="cloud_account">חשבון ענן</string>
     <string name="force_cloud_sync">סנכרון ענן מאולץ</string>

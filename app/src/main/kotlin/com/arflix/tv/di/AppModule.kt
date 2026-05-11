@@ -150,7 +150,4 @@ object AppModule {
     fun provideJikanApi(@Named("jikan") retrofit: Retrofit): com.arflix.tv.data.api.JikanApi {
         return retrofit.create(com.arflix.tv.data.api.JikanApi::class.java)
     }
-
-    // CloudstreamProviderRuntime is @Singleton @Inject — Hilt constructs it
-    // directly, no @Provides needed.
 }
