@@ -1589,33 +1589,17 @@ class StreamRepository @Inject constructor(
         timeoutMs: Long = 15_000L
     ): List<StreamSource> = withContext(Dispatchers.IO) {
         withTimeoutOrNull(timeoutMs.coerceIn(500L, 90_000L)) {
-            val iptvDeferred = async {
-                runCatching {
-                    iptvRepository.findMovieVodSources(
-                        title = title,
-                        year = year,
-                        imdbId = imdbId,
-                        tmdbId = tmdbId,
-                        allowNetwork = true
-                    )
-                }.onFailure { e ->
-                    System.err.println("[VOD] resolveMovieVodSources failed: ${e.message}")
-                }.getOrDefault(emptyList())
-            }
-            val homeServerDeferred = async {
-                runCatching {
-                    homeServerRepository.resolveMovieSources(
-                        imdbId = imdbId,
-                        title = title,
-                        year = year,
-                        tmdbId = tmdbId
-                    )
-                }.onFailure { e ->
-                    System.err.println("[HomeServer] resolveMovieSources failed: ${e.message}")
-                }.getOrDefault(emptyList())
-            }
-            (iptvDeferred.await() + homeServerDeferred.await())
-                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+            runCatching {
+                iptvRepository.findMovieVodSources(
+                    title = title,
+                    year = year,
+                    imdbId = imdbId,
+                    tmdbId = tmdbId,
+                    allowNetwork = true
+                )
+            }.onFailure { e ->
+                System.err.println("[VOD] resolveMovieVodSources failed: ${e.message}")
+            }.getOrDefault(emptyList())
         }.orEmpty()
     }
 
@@ -1963,36 +1947,18 @@ class StreamRepository @Inject constructor(
         timeoutMs: Long = 45_000L
     ): List<StreamSource> = withContext(Dispatchers.IO) {
         withTimeoutOrNull(timeoutMs.coerceIn(500L, 90_000L)) {
-            val iptvDeferred = async {
-                runCatching {
-                    iptvRepository.findEpisodeVodSources(
-                        title = title,
-                        season = season,
-                        episode = episode,
-                        imdbId = imdbId,
-                        tmdbId = tmdbId,
-                        allowNetwork = true
-                    )
-                }.onFailure { e ->
-                    System.err.println("[VOD] resolveEpisodeVodSources failed: ${e.message}")
-                }.getOrDefault(emptyList())
-            }
-            val homeServerDeferred = async {
-                runCatching {
-                    homeServerRepository.resolveEpisodeSources(
-                        imdbId = imdbId,
-                        title = title,
-                        season = season,
-                        episode = episode,
-                        tmdbId = tmdbId,
-                        tvdbId = tvdbId
-                    )
-                }.onFailure { e ->
-                    System.err.println("[HomeServer] resolveEpisodeSources failed: ${e.message}")
-                }.getOrDefault(emptyList())
-            }
-            (iptvDeferred.await() + homeServerDeferred.await())
-                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+            runCatching {
+                iptvRepository.findEpisodeVodSources(
+                    title = title,
+                    season = season,
+                    episode = episode,
+                    imdbId = imdbId,
+                    tmdbId = tmdbId,
+                    allowNetwork = true
+                )
+            }.onFailure { e ->
+                System.err.println("[VOD] resolveEpisodeVodSources failed: ${e.message}")
+            }.getOrDefault(emptyList())
         }.orEmpty()
     }
 

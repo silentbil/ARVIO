@@ -1937,9 +1937,9 @@ class IptvRepository @Inject constructor(
                 System.currentTimeMillis() - cached.savedAtMs < resolvedTtlMs
             }
             if (!allowNetwork && cachedResolved != null) {
-                System.err.println("[VOD-Resolver] Hit resolved cache (method=${cachedResolved.method}, streamId=${cachedResolved.streamId}) in ${System.currentTimeMillis() - resolveStart}ms")
-                return listOf(cachedResolved)
+                System.err.println("[VOD-Resolver] Hit resolved cache candidate (method=${cachedResolved.method}, streamId=${cachedResolved.streamId}) in ${System.currentTimeMillis() - resolveStart}ms")
             }
+            var bindingResolved = emptyList<ResolverCachedResolvedEpisode>()
 
             val bindingKeys = buildSeriesBindingKeys(
                 providerKey = providerKey,
@@ -1980,9 +1980,17 @@ class IptvRepository @Inject constructor(
                     writeResolved(cacheKey, best)
                     writeSeriesBinding(bindingKeys, boundSeriesId)
                     System.err.println("[VOD-Resolver] Resolved ${resolved.size} variants via binding in ${System.currentTimeMillis() - resolveStart}ms")
-                    return resolved
+                    if (!allowNetwork) {
+                        return resolved
+                    }
+                    bindingResolved = resolved
+                } else {
+                    System.err.println("[VOD-Resolver] Binding didn't match S${season}E${episode}")
                 }
-                System.err.println("[VOD-Resolver] Binding didn't match S${season}E${episode}")
+            }
+
+            if (!allowNetwork && cachedResolved != null) {
+                return listOf(cachedResolved)
             }
 
             System.err.println("[VOD-Resolver] Loading catalog...")
@@ -1991,7 +1999,7 @@ class IptvRepository @Inject constructor(
             System.err.println("[VOD-Resolver] loadCatalog took ${System.currentTimeMillis() - catalogStart}ms, entries=${catalog.entries.size}")
             if (catalog.entries.isEmpty()) {
                 System.err.println("[VOD-Resolver] Empty catalog, returning null")
-                return cachedResolved?.let { listOf(it) } ?: emptyList()
+                return bindingResolved.ifEmpty { cachedResolved?.let { listOf(it) } ?: emptyList() }
             }
 
             val candidateStart = System.currentTimeMillis()
@@ -1999,16 +2007,18 @@ class IptvRepository @Inject constructor(
             System.err.println("[VOD-Resolver] buildCandidates took ${System.currentTimeMillis() - candidateStart}ms, found ${candidates.size} candidates")
             if (candidates.isEmpty()) {
                 System.err.println("[VOD-Resolver] No candidates, returning null after ${System.currentTimeMillis() - resolveStart}ms")
-                return cachedResolved?.let { listOf(it) } ?: emptyList()
+                return bindingResolved.ifEmpty { cachedResolved?.let { listOf(it) } ?: emptyList() }
             }
-            val probeList = if (
-                candidates.first().method == "tmdb_id" ||
-                candidates.first().method == "imdb_id" ||
-                candidates.first().method == "title_canonical"
-            ) {
-                candidates.take(1)
+            fun ResolverCandidate.isStrongIdentityMatch(): Boolean {
+                return method == "tmdb_id" || method == "imdb_id" || method == "title_canonical"
+            }
+            val probeList = if (candidates.first().isStrongIdentityMatch()) {
+                candidates
+                    .filter { it.isStrongIdentityMatch() && it.confidence >= 0.90f }
+                    .take(8)
+                    .ifEmpty { candidates.take(1) }
             } else {
-                candidates.take(2)
+                candidates.take(4)
             }
             System.err.println("[VOD-Resolver] Probing ${probeList.size} candidates: ${probeList.map { "${it.entry.name}(${it.method},${it.confidence})" }}")
 
@@ -2028,10 +2038,10 @@ class IptvRepository @Inject constructor(
             System.err.println("[VOD-Resolver] Probing took ${System.currentTimeMillis() - probeStart}ms, hits=${hits.size}")
             if (hits.isEmpty()) {
                 System.err.println("[VOD-Resolver] No hits, returning null after ${System.currentTimeMillis() - resolveStart}ms")
-                return cachedResolved?.let { listOf(it) } ?: emptyList()
+                return bindingResolved.ifEmpty { cachedResolved?.let { listOf(it) } ?: emptyList() }
             }
 
-            val resolved = hits
+            val probedResolved = hits
                 .sortedWith(
                     compareByDescending<Triple<ResolverCandidate, XtreamSeriesEpisode, Int>> {
                         it.first.confidence * 1000f + it.third + vodQualityRank(it.second.title)
@@ -2049,6 +2059,13 @@ class IptvRepository @Inject constructor(
                         savedAtMs = System.currentTimeMillis()
                     )
                 }
+            val resolved = (probedResolved + bindingResolved)
+                .distinctBy { it.streamId }
+                .sortedWith(
+                    compareByDescending<ResolverCachedResolvedEpisode> {
+                        it.confidence * 1000f + vodQualityRank(it.title.orEmpty())
+                    }.thenBy { it.streamId }
+                )
             val best = resolved.firstOrNull() ?: return cachedResolved?.let { listOf(it) } ?: emptyList()
             writeResolved(cacheKey, best)
             writeSeriesBinding(bindingKeys, best.seriesId)
@@ -2633,8 +2650,24 @@ class IptvRepository @Inject constructor(
                 }
             }
 
+            val cachedSeriesSources = seriesResolver.resolveEpisodeVariants(
+                providerKey = providerKey,
+                creds = creds,
+                showTitle = title,
+                season = season,
+                episode = episode,
+                tmdbId = tmdbId,
+                imdbId = imdbId,
+                year = parseYear(title),
+                allowNetwork = false
+            ).toSeriesVodSources()
+
             if (!allowNetwork) {
-                val seriesSources = seriesResolver.resolveEpisodeVariants(
+                return@withContext sortVodSources(cachedSeriesSources)
+            }
+
+            val networkSeriesSources = withTimeoutOrNull(3_500L) {
+                seriesResolver.resolveEpisodeVariants(
                     providerKey = providerKey,
                     creds = creds,
                     showTitle = title,
@@ -2643,51 +2676,25 @@ class IptvRepository @Inject constructor(
                     tmdbId = tmdbId,
                     imdbId = imdbId,
                     year = parseYear(title),
-                    allowNetwork = false
+                    allowNetwork = true
                 ).toSeriesVodSources()
-                return@withContext sortVodSources(seriesSources)
+            }.orEmpty()
+            if (networkSeriesSources.isNotEmpty()) {
+                return@withContext sortVodSources(networkSeriesSources)
             }
 
-            coroutineScope {
-                val vodCatalogDeferred = async {
-                    findEpisodeVodFromVodCatalogFallbackSources(
-                        creds = creds,
-                        title = title,
-                        season = season,
-                        episode = episode,
-                        normalizedImdb = normalizedImdb,
-                        normalizedTmdb = normalizedTmdb,
-                        allowNetwork = true
-                    )
-                }
-                val seriesDeferred = async {
-                    seriesResolver.resolveEpisodeVariants(
-                        providerKey = providerKey,
-                        creds = creds,
-                        showTitle = title,
-                        season = season,
-                        episode = episode,
-                        tmdbId = tmdbId,
-                        imdbId = imdbId,
-                        year = parseYear(title),
-                        allowNetwork = true
-                    ).toSeriesVodSources()
-                }
-
-                val quickVodCatalogSources = vodCatalogDeferred.awaitWithin(3_500L).orEmpty()
-                if (quickVodCatalogSources.isNotEmpty()) {
-                    seriesDeferred.cancel()
-                    return@coroutineScope quickVodCatalogSources
-                }
-
-                val quickSeriesSources = seriesDeferred.awaitWithin(4_500L).orEmpty()
-                val finalVodCatalogSources = if (vodCatalogDeferred.isCompleted) {
-                    vodCatalogDeferred.awaitSafely().orEmpty()
-                } else {
-                    vodCatalogDeferred.awaitWithin(2_000L).orEmpty()
-                }
-                sortVodSources(finalVodCatalogSources + quickSeriesSources)
-            }
+            val vodCatalogSources = withTimeoutOrNull(3_000L) {
+                findEpisodeVodFromVodCatalogFallbackSources(
+                    creds = creds,
+                    title = title,
+                    season = season,
+                    episode = episode,
+                    normalizedImdb = normalizedImdb,
+                    normalizedTmdb = normalizedTmdb,
+                    allowNetwork = true
+                )
+            }.orEmpty()
+            return@withContext sortVodSources(vodCatalogSources + cachedSeriesSources)
         }
     }
 

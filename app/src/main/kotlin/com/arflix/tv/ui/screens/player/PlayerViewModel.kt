@@ -37,6 +37,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -256,13 +257,21 @@ class PlayerViewModel @Inject constructor(
         streamPrewarmJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
         streamSelectionJob?.cancel()
+        playbackErrorReportJob?.cancel()
+        primaryStreamResolutionFinal = false
         hasManualSubtitleSelection = false
         aiSourceSubtitle = null
         _uiState.value = _uiState.value.copy(
+            isLoading = true,
+            isLoadingStreams = false,
             selectedSubtitle = null,
             isAiTranslating = false,
             isAiAvailable = false,
-            aiTargetLanguageName = ""
+            aiTargetLanguageName = "",
+            streamProgress = null,
+            streamLoadPhase = null,
+            error = null,
+            isSetupError = false
         )
         lastTopPrewarmKey = ""
         skipIntervalsJob?.cancel()
@@ -577,6 +586,9 @@ class PlayerViewModel @Inject constructor(
                 var isFirstEmission = true
 
                 progressiveFlow.collect { progressive ->
+                    if (progressive.isFinal) {
+                        primaryStreamResolutionFinal = true
+                    }
                     val allStreams = progressive.streams
                         .filter { stream ->
                             val u = stream.url?.trim().orEmpty()
@@ -590,7 +602,14 @@ class PlayerViewModel @Inject constructor(
                     )
                     lastMergedStreams = mergedStreams
 
-                    val errorMessage = if (progressive.isFinal && mergedStreams.isEmpty() && !hasHomeServerConnections) {
+                    val supplementalSourcesStillLoading =
+                        homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
+                    val errorMessage = if (
+                        progressive.isFinal &&
+                        mergedStreams.isEmpty() &&
+                        !hasHomeServerConnections &&
+                        !supplementalSourcesStillLoading
+                    ) {
                         if (streamingAddonCount == 0) {
                             "No streaming addons configured.\n\nGo to Settings \u2192 Addons to add a streaming addon, then come back and try again."
                         } else {
@@ -614,11 +633,16 @@ class PlayerViewModel @Inject constructor(
 
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        isLoadingStreams = mergedStreams.isEmpty() && (!progressive.isFinal || hasHomeServerConnections),
+                        isLoadingStreams = mergedStreams.isEmpty() &&
+                            (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
                         streams = mergedStreams,
                         subtitles = filteredSubtitles,
                         error = errorMessage,
-                        isSetupError = progressive.isFinal && mergedStreams.isEmpty() && streamingAddonCount == 0 && !hasHomeServerConnections,
+                        isSetupError = progressive.isFinal &&
+                            mergedStreams.isEmpty() &&
+                            streamingAddonCount == 0 &&
+                            !hasHomeServerConnections &&
+                            !supplementalSourcesStillLoading,
                         streamProgress = if (progressive.isFinal) null else progressFraction,
                         streamLoadPhase = phaseLabel
                     )
@@ -1207,6 +1231,16 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onPlaybackStarted(startupMs: Long, startupRetries: Int, autoFailovers: Int) {
+        playbackErrorReportJob?.cancel()
+        if (_uiState.value.error != null) {
+            _uiState.value = _uiState.value.copy(
+                isLoading = false,
+                isLoadingStreams = false,
+                streamProgress = null,
+                streamLoadPhase = null,
+                error = null
+            )
+        }
         val addonId = _uiState.value.selectedStream?.addonId?.trim()
             .takeUnless { it.isNullOrBlank() }
             ?: currentPreferredAddonId.orEmpty()
@@ -1620,6 +1654,7 @@ class PlayerViewModel @Inject constructor(
      */
     fun selectStream(stream: StreamSource, resumePositionMs: Long? = null) {
         streamSelectionJob?.cancel()
+        playbackErrorReportJob?.cancel()
         streamSelectionJob = viewModelScope.launch {
             val selectionStartMs = System.currentTimeMillis()
             val requestedResumePosition = resumePositionMs?.coerceAtLeast(0L)
@@ -1786,13 +1821,26 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun reportPlaybackError(message: String) {
-        _uiState.value = _uiState.value.copy(
-            isLoading = false,
-            isLoadingStreams = false,
-            streamProgress = null,
-            streamLoadPhase = null,
-            error = message
-        )
+        playbackErrorReportJob?.cancel()
+        val errorSelectionNonce = _uiState.value.streamSelectionNonce
+        val errorSelectedUrl = _uiState.value.selectedStreamUrl
+        playbackErrorReportJob = viewModelScope.launch {
+            delay(1_200L)
+            val latest = _uiState.value
+            if (
+                latest.streamSelectionNonce != errorSelectionNonce ||
+                latest.selectedStreamUrl != errorSelectedUrl
+            ) {
+                return@launch
+            }
+            _uiState.value = _uiState.value.copy(
+                isLoading = false,
+                isLoadingStreams = false,
+                streamProgress = null,
+                streamLoadPhase = null,
+                error = message
+            )
+        }
     }
 
     fun updatePlayerTextTracks(playerTextTracks: List<Subtitle>) {
@@ -2346,7 +2394,36 @@ class PlayerViewModel @Inject constructor(
     private var streamPrewarmJob: Job? = null
     private var focusedStreamPrewarmJob: Job? = null
     private var streamSelectionJob: Job? = null
+    private var playbackErrorReportJob: Job? = null
+    private var primaryStreamResolutionFinal: Boolean = false
     private var lastTopPrewarmKey: String = ""
+
+    private fun finishSupplementalSourceLookupIfReady(currentJob: Job?, errorMessage: String) {
+        val state = _uiState.value
+        if (state.streams.isNotEmpty() || !state.selectedStreamUrl.isNullOrBlank()) {
+            _uiState.value = state.copy(
+                isLoading = false,
+                isLoadingStreams = false,
+                streamProgress = null,
+                streamLoadPhase = null
+            )
+            return
+        }
+
+        val otherSupplementalStillLoading =
+            (homeServerAppendJob != null && homeServerAppendJob !== currentJob && homeServerAppendJob?.isActive == true) ||
+                (vodAppendJob != null && vodAppendJob !== currentJob && vodAppendJob?.isActive == true)
+        if (primaryStreamResolutionFinal && !otherSupplementalStillLoading) {
+            _uiState.value = state.copy(
+                isLoading = false,
+                isLoadingStreams = false,
+                streamProgress = null,
+                streamLoadPhase = null,
+                error = state.error ?: errorMessage,
+                isSetupError = false
+            )
+        }
+    }
 
     private suspend fun appendHomeServerSourcesInBackground(
         mediaType: MediaType,
@@ -2381,15 +2458,10 @@ class PlayerViewModel @Inject constructor(
 
         val validSources = sources.filter { !it.url.isNullOrBlank() }
         if (validSources.isEmpty()) {
-            if (_uiState.value.selectedStreamUrl.isNullOrBlank() && _uiState.value.streams.isEmpty()) {
-                _uiState.value = _uiState.value.copy(
-                    isLoadingStreams = false,
-                    error = "No streams found for this content. The configured media servers may not have this title.",
-                    isSetupError = false,
-                    streamProgress = null,
-                    streamLoadPhase = null
-                )
-            }
+            finishSupplementalSourceLookupIfReady(
+                currentJob = currentCoroutineContext()[Job],
+                errorMessage = "No streams found for this content. The configured media servers may not have this title."
+            )
             return
         }
         val latest = _uiState.value.streams
@@ -2446,26 +2518,10 @@ class PlayerViewModel @Inject constructor(
 
         val validVodSources = vodSources.filter { !it.url.isNullOrBlank() }
         if (validVodSources.isEmpty()) {
-            val state = _uiState.value
-            when {
-                state.streams.isNotEmpty() -> {
-                    _uiState.value = state.copy(
-                        isLoadingStreams = false,
-                        streamProgress = null,
-                        streamLoadPhase = null
-                    )
-                }
-                state.selectedStreamUrl.isNullOrBlank() -> {
-                    _uiState.value = state.copy(
-                        isLoading = false,
-                        isLoadingStreams = false,
-                        streamProgress = null,
-                        streamLoadPhase = null,
-                        error = state.error ?: "No streams found for this content. Try another source or check your configured sources.",
-                        isSetupError = false
-                    )
-                }
-            }
+            finishSupplementalSourceLookupIfReady(
+                currentJob = currentCoroutineContext()[Job],
+                errorMessage = "No streams found for this content. Try another source or check your configured sources."
+            )
             return
         }
         val latest = _uiState.value.streams

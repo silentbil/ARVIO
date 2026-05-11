@@ -276,6 +276,32 @@ private fun localizedCategoryTitle(category: Category): String = when (category.
     else                       -> category.title
 }
 
+private fun deduplicateHomeCategories(categories: List<Category>): List<Category> {
+    if (categories.size < 2) return categories
+    val byId = LinkedHashMap<String, Category>(categories.size)
+    categories.forEach { category ->
+        val existing = byId[category.id]
+        byId[category.id] = when {
+            existing == null -> category
+            category.id == "continue_watching" -> chooseContinueWatchingCategory(existing, category)
+            existing.items.isEmpty() && category.items.isNotEmpty() -> category
+            else -> existing
+        }
+    }
+    return byId.values.toList()
+}
+
+private fun chooseContinueWatchingCategory(first: Category, second: Category): Category {
+    val firstHasRealItems = first.items.any { !it.isPlaceholder }
+    val secondHasRealItems = second.items.any { !it.isPlaceholder }
+    return when {
+        secondHasRealItems && !firstHasRealItems -> second
+        firstHasRealItems && !secondHasRealItems -> first
+        second.items.size > first.items.size -> second
+        else -> first
+    }
+}
+
 private fun getFocusedItem(categories: List<Category>, rowIndex: Int, itemIndex: Int): MediaItem? {
     val row = categories.getOrNull(rowIndex)
     return row?.items?.getOrNull(itemIndex)
@@ -563,10 +589,13 @@ fun HomeScreen(
         }
     }
 
-    val displayCategories = if (uiState.categories.isNotEmpty()) {
+    val rawDisplayCategories = if (uiState.categories.isNotEmpty()) {
         uiState.categories
     } else {
         preloadedCategories
+    }
+    val displayCategories = remember(rawDisplayCategories) {
+        deduplicateHomeCategories(rawDisplayCategories)
     }
     val displayHeroItem = uiState.heroItem ?: preloadedHeroItem
         ?: displayCategories.firstOrNull()?.items?.firstOrNull()

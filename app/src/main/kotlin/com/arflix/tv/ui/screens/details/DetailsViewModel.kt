@@ -1397,8 +1397,11 @@ class DetailsViewModel @Inject constructor(
                         )
                         val addonCount = streamRepository.installedAddons.first()
                             .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                        val supplementalSourcesStillLoading =
+                            homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                         _uiState.value = _uiState.value.copy(
-                            isLoadingStreams = mergedStreams.isEmpty() && (!progressive.isFinal || hasHomeServerConnections),
+                            isLoadingStreams = mergedStreams.isEmpty() &&
+                                (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
                             streams = mergedStreams,
                             subtitles = progressive.subtitles,
                             hasStreamingAddons = addonCount > 0 || hasHomeServerConnections
@@ -1448,8 +1451,11 @@ class DetailsViewModel @Inject constructor(
                         )
                         val addonCount = streamRepository.installedAddons.first()
                             .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                        val supplementalSourcesStillLoading =
+                            homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                         _uiState.value = _uiState.value.copy(
-                            isLoadingStreams = mergedStreams.isEmpty() && (!progressive.isFinal || hasHomeServerConnections),
+                            isLoadingStreams = mergedStreams.isEmpty() &&
+                                (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
                             streams = mergedStreams,
                             subtitles = progressive.subtitles,
                             hasStreamingAddons = addonCount > 0 || hasHomeServerConnections
@@ -2196,7 +2202,7 @@ class DetailsViewModel @Inject constructor(
         }
         val validSources = sources.filter { !it.url.isNullOrBlank() }
         if (validSources.isEmpty()) {
-            if (_uiState.value.streams.isEmpty()) {
+            if (_uiState.value.streams.isEmpty() && vodAppendJob?.isActive != true) {
                 _uiState.value = _uiState.value.copy(isLoadingStreams = false)
             }
             return
@@ -2236,7 +2242,7 @@ class DetailsViewModel @Inject constructor(
         }
         val itemTitle = _uiState.value.item?.title.orEmpty()
 
-        val vodSources = if (currentMediaType == MediaType.MOVIE) {
+        val vodSources = if (requestMediaType == MediaType.MOVIE) {
             streamRepository.resolveMovieVodSources(
                 imdbId = imdbId,
                 title = itemTitle,
