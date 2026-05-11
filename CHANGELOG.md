@@ -38,6 +38,7 @@ All notable changes to this project are documented in this file.
 - Refreshed Continue Watching after cloud restore so cloud login restores visible progress sooner.
 - Added synced custom profile avatars and fixed avatar preservation during cloud sync.
 - Fixed season unwatch and batch season-watch behavior to avoid unnecessary duplicate Trakt writes.
+- Fixed Trakt-connected watchlist add/remove failures after token refresh by using the secured Trakt auth proxy.
 
 ### Player, subtitles, and accessibility
 - Fixed remote selection for the next-episode prompt and routed up-next remote keys correctly.

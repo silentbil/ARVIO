@@ -26,6 +26,12 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import retrofit2.HttpException
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
@@ -59,6 +65,8 @@ class TraktSyncService @Inject constructor(
     private val gson = Gson()
     private val clientId = Constants.TRAKT_CLIENT_ID
     private val clientSecret = Constants.TRAKT_CLIENT_SECRET
+    private val authHttpClient by lazy { OkHttpClient() }
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     // Sync progress state
     private val _syncProgress = MutableStateFlow(SyncProgress())
@@ -1829,18 +1837,67 @@ class TraktSyncService @Inject constructor(
         }
 
         return try {
-            val newToken = traktApi.refreshToken(
-                RefreshTokenRequest(
-                    refreshToken = refreshToken,
-                    clientId = clientId,
-                    clientSecret = clientSecret
-                )
-            )
+            val newToken = refreshTraktToken(refreshToken)
             saveToken(newToken)
             newToken.accessToken
         } catch (e: Exception) {
             null
         }
+    }
+
+    private suspend fun refreshTraktToken(refreshToken: String): TraktToken {
+        return if (clientSecret.isBlank()) {
+            refreshTraktTokenViaProxy(refreshToken)
+        } else {
+            runCatching {
+                traktApi.refreshToken(
+                    RefreshTokenRequest(
+                        refreshToken = refreshToken,
+                        clientId = clientId,
+                        clientSecret = clientSecret
+                    )
+                )
+            }.getOrElse {
+                refreshTraktTokenViaProxy(refreshToken)
+            }
+        }
+    }
+
+    private suspend fun refreshTraktTokenViaProxy(refreshToken: String): TraktToken = withContext(Dispatchers.IO) {
+        val url = Constants.TRAKT_PROXY_URL.toHttpUrl().newBuilder()
+            .addQueryParameter("path", "/oauth/token")
+            .addQueryParameter("method", "POST")
+            .build()
+        val payload = JSONObject()
+            .put("refresh_token", refreshToken)
+            .put("grant_type", "refresh_token")
+            .toString()
+        val request = Request.Builder()
+            .url(url)
+            .header("apikey", Constants.SUPABASE_ANON_KEY)
+            .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
+            .post(payload.toRequestBody(jsonMediaType))
+            .build()
+
+        authHttpClient.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException(parseTraktProxyError(responseBody, "Trakt token refresh failed"))
+            }
+            gson.fromJson(responseBody, TraktToken::class.java)
+                ?: throw IllegalStateException("Trakt token refresh response was empty")
+        }
+    }
+
+    private fun parseTraktProxyError(body: String, fallback: String): String {
+        return runCatching {
+            val json = JSONObject(body)
+            json.optString("error_description").ifBlank {
+                json.optString("error").ifBlank {
+                    json.optString("message").ifBlank { fallback }
+                }
+            }
+        }.getOrDefault(fallback)
     }
 
     private suspend fun saveToken(token: TraktToken) {
