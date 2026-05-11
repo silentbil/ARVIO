@@ -34,6 +34,7 @@
 - Fixed stale/revoked Trakt tokens blocking reconnect, watchlist updates, and Continue Watching refresh.
 - Fixed cloud sync re-saving stale Trakt tokens after they were cleared locally.
 - Fixed Trakt proxy allowlist coverage for sync-state and scrobble endpoints.
+- Fixed Trakt activation polling so the normal pending state no longer appears as "Trakt token request failed".
 
 ## Player, subtitles, and accessibility
 - Fixed remote selection for the next-episode prompt and routed up-next remote keys correctly.

@@ -209,7 +209,9 @@ serve(async (req) => {
 
     // Try to parse response body, handling empty or invalid JSON
     const responseText = await response.text()
-    if (responseText && contentType?.includes('application/json')) {
+    if (!responseText && path.includes('/oauth/device/token') && response.status === 400) {
+      data = { error: 'authorization_pending', status: response.status }
+    } else if (responseText && contentType?.includes('application/json')) {
       try {
         data = JSON.parse(responseText)
       } catch {

@@ -256,7 +256,15 @@ class TraktRepository @Inject constructor(
         watchlistHttpClient.newCall(request).execute().use { response ->
             val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IllegalStateException(parseTraktProxyError(responseBody, "Trakt token request failed"))
+                val error = parseTraktProxyError(responseBody, "Trakt token request failed")
+                if (
+                    path == "/oauth/device/token" &&
+                    response.code == 400 &&
+                    (error == "Trakt token request failed" || responseBody.contains("\"status\":400"))
+                ) {
+                    throw IllegalStateException("authorization_pending")
+                }
+                throw IllegalStateException(error)
             }
             gson.fromJson(responseBody, TraktToken::class.java)
                 ?: throw IllegalStateException("Trakt token response was empty")
