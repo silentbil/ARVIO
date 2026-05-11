@@ -177,11 +177,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun isActionableMediaItem(item: MediaItem): Boolean {
-        val result = item.id > 0 && !item.isPlaceholder && !isCollectionItem(item)
-        if (!result) {
-            android.util.Log.d("HeroDebug", "isActionableMediaItem: FALSE for ${item.title} (id=${item.id}, placeholder=${item.isPlaceholder}, isCollection=${isCollectionItem(item)})")
-        }
-        return result
+        // Non-actionable items are expected during filtering: invalid IDs cannot be opened,
+        // placeholders are synthetic UI entries, and collection tiles use their own handling.
+        return item.id > 0 && !item.isPlaceholder && !isCollectionItem(item)
     }
 
     private fun continueWatchingKey(mediaType: MediaType, id: Int): String {
