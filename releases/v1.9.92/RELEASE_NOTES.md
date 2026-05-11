@@ -30,6 +30,7 @@
 - Added synced custom profile avatars and fixed avatar preservation during cloud sync.
 - Fixed season unwatch and batch season-watch behavior to avoid unnecessary duplicate Trakt writes.
 - Fixed Trakt-connected watchlist add/remove failures after token refresh by using the secured Trakt auth proxy.
+- Restored optional release-secret wiring for Trakt auth while keeping the secured proxy fallback for builds without a local secret.
 
 ## Player, subtitles, and accessibility
 - Fixed remote selection for the next-episode prompt and routed up-next remote keys correctly.
