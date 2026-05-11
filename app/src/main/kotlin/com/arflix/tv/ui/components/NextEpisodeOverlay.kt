@@ -74,13 +74,23 @@ fun NextEpisodeOverlay(
     episodeNumber: Int,
     episodeImage: String?,
     countdownSeconds: Int = 10,
+    focusedButtonOverride: Int? = null,
+    onFocusedButtonChange: ((Int) -> Unit)? = null,
     onPlayNext: () -> Unit,
     onCancel: () -> Unit
 ) {
-    var focusedButton by remember(isVisible) { mutableIntStateOf(0) } // 0 = play, 1 = cancel
+    var internalFocusedButton by remember(isVisible) { mutableIntStateOf(0) } // 0 = play, 1 = cancel
     var countdown by remember(isVisible) { mutableIntStateOf(countdownSeconds) }
     var progress by remember(isVisible) { mutableFloatStateOf(1f) }
     val overlayFocusRequester = remember { FocusRequester() }
+    val focusedButton = focusedButtonOverride ?: internalFocusedButton
+    fun updateFocusedButton(value: Int) {
+        val clamped = value.coerceIn(0, 1)
+        if (focusedButtonOverride == null) {
+            internalFocusedButton = clamped
+        }
+        onFocusedButtonChange?.invoke(clamped)
+    }
 
     LaunchedEffect(isVisible) {
         if (isVisible) {
@@ -121,11 +131,11 @@ fun NextEpisodeOverlay(
                                 true
                             }
                             Key.DirectionLeft -> {
-                                if (focusedButton > 0) focusedButton--
+                                updateFocusedButton(focusedButton - 1)
                                 true
                             }
                             Key.DirectionRight -> {
-                                if (focusedButton < 1) focusedButton++
+                                updateFocusedButton(focusedButton + 1)
                                 true
                             }
                             Key.Enter, Key.DirectionCenter -> {

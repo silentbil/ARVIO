@@ -295,6 +295,7 @@ fun PlayerScreen(
     var pendingNextAddonId by remember { mutableStateOf<String?>(null) }
     var pendingNextSourceName by remember { mutableStateOf<String?>(null) }
     var pendingNextBingeGroup by remember { mutableStateOf<String?>(null) }
+    var nextEpisodePromptButton by remember { mutableIntStateOf(0) } // 0 = next, 1 = cancel
     var playerResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var subtitleMenuIndex by remember { mutableIntStateOf(0) }
     var subtitleMenuTab by remember { mutableIntStateOf(0) } // 0 = Subtitles, 1 = Audio
@@ -1422,6 +1423,7 @@ fun PlayerScreen(
                     pendingNextAddonId = selected?.addonId?.takeIf { it.isNotBlank() }
                     pendingNextSourceName = selected?.source?.takeIf { it.isNotBlank() }
                     pendingNextBingeGroup = selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                    nextEpisodePromptButton = 0
                     showNextEpisodePrompt = true
                 }
             }
@@ -1679,6 +1681,37 @@ fun PlayerScreen(
                             }
                         }
                         else -> Unit // fall through to normal handling
+                    }
+
+                    if (showNextEpisodePrompt) {
+                        return@onKeyEvent when (event.key) {
+                            Key.DirectionLeft -> {
+                                nextEpisodePromptButton = 0
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                nextEpisodePromptButton = 1
+                                true
+                            }
+                            Key.Enter, Key.DirectionCenter -> {
+                                showNextEpisodePrompt = false
+                                if (nextEpisodePromptButton == 0) {
+                                    onPlayNext(
+                                        pendingNextSeason,
+                                        pendingNextEpisode,
+                                        pendingNextAddonId,
+                                        pendingNextSourceName,
+                                        pendingNextBingeGroup
+                                    )
+                                }
+                                true
+                            }
+                            Key.Back, Key.Escape -> {
+                                showNextEpisodePrompt = false
+                                true
+                            }
+                            else -> true
+                        }
                     }
 
                     if ((event.key == Key.Back || event.key == Key.Escape) &&
@@ -2632,6 +2665,8 @@ fun PlayerScreen(
             episodeNumber = pendingNextEpisode,
             episodeImage = uiState.backdropUrl,
             countdownSeconds = 10,
+            focusedButtonOverride = nextEpisodePromptButton,
+            onFocusedButtonChange = { nextEpisodePromptButton = it },
             onPlayNext = {
                 showNextEpisodePrompt = false
                 onPlayNext(
