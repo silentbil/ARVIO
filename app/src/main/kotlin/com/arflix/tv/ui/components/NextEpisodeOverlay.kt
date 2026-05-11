@@ -7,6 +7,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,12 +37,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,6 +80,13 @@ fun NextEpisodeOverlay(
     var focusedButton by remember(isVisible) { mutableIntStateOf(0) } // 0 = play, 1 = cancel
     var countdown by remember(isVisible) { mutableIntStateOf(countdownSeconds) }
     var progress by remember(isVisible) { mutableFloatStateOf(1f) }
+    val overlayFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(isVisible) {
+        if (isVisible) {
+            runCatching { overlayFocusRequester.requestFocus() }
+        }
+    }
     
     // Countdown timer
     LaunchedEffect(isVisible) {
@@ -101,7 +111,9 @@ fun NextEpisodeOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .onKeyEvent { event ->
+                .focusRequester(overlayFocusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown) {
                         when (event.key) {
                             Key.Back, Key.Escape -> {
