@@ -1314,6 +1314,7 @@ class DetailsViewModel @Inject constructor(
                 val item = _uiState.value.item
                 val genreIds = item?.genreIds ?: emptyList()
                 val originalLanguage = item?.originalLanguage
+                val hasHomeServerConnections = streamRepository.hasHomeServerConnections()
                 // Start VOD append in background - runs parallel to addon stream fetch
                 homeServerAppendJob = viewModelScope.launch {
                     appendHomeServerSourcesInBackground(
@@ -1389,7 +1390,8 @@ class DetailsViewModel @Inject constructor(
                             streams = emptyList(),
                             subtitles = emptyList(),
                             hasStreamingAddons = streamRepository.installedAddons.first()
-                                .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE } > 0
+                                .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE } > 0 ||
+                                hasHomeServerConnections
                         )
                         return@launch
                     }
@@ -1412,10 +1414,10 @@ class DetailsViewModel @Inject constructor(
                         val addonCount = streamRepository.installedAddons.first()
                             .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
                         _uiState.value = _uiState.value.copy(
-                            isLoadingStreams = !progressive.isFinal && mergedStreams.isEmpty(),
+                            isLoadingStreams = mergedStreams.isEmpty() && (!progressive.isFinal || hasHomeServerConnections),
                             streams = mergedStreams,
                             subtitles = progressive.subtitles,
-                            hasStreamingAddons = addonCount > 0
+                            hasStreamingAddons = addonCount > 0 || hasHomeServerConnections
                         )
                         prewarmVisibleStreams(mergedStreams)
                         if (progressive.isFinal) {
@@ -1433,7 +1435,8 @@ class DetailsViewModel @Inject constructor(
                             streams = emptyList(),
                             subtitles = emptyList(),
                             hasStreamingAddons = streamRepository.installedAddons.first()
-                                .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE } > 0
+                                .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE } > 0 ||
+                                hasHomeServerConnections
                         )
                         return@launch
                     }
@@ -1462,10 +1465,10 @@ class DetailsViewModel @Inject constructor(
                         val addonCount = streamRepository.installedAddons.first()
                             .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
                         _uiState.value = _uiState.value.copy(
-                            isLoadingStreams = !progressive.isFinal && mergedStreams.isEmpty(),
+                            isLoadingStreams = mergedStreams.isEmpty() && (!progressive.isFinal || hasHomeServerConnections),
                             streams = mergedStreams,
                             subtitles = progressive.subtitles,
-                            hasStreamingAddons = addonCount > 0
+                            hasStreamingAddons = addonCount > 0 || hasHomeServerConnections
                         )
                         prewarmVisibleStreams(mergedStreams)
                     }
@@ -2208,7 +2211,12 @@ class DetailsViewModel @Inject constructor(
             )
         }
         val validSources = sources.filter { !it.url.isNullOrBlank() }
-        if (validSources.isEmpty()) return
+        if (validSources.isEmpty()) {
+            if (_uiState.value.streams.isEmpty()) {
+                _uiState.value = _uiState.value.copy(isLoadingStreams = false)
+            }
+            return
+        }
         val latest = _uiState.value.streams
         if (requestId != loadStreamsRequestId ||
             currentMediaType != requestMediaType ||

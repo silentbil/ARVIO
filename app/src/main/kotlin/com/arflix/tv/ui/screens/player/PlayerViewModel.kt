@@ -590,7 +590,7 @@ class PlayerViewModel @Inject constructor(
                     )
                     lastMergedStreams = mergedStreams
 
-                    val errorMessage = if (progressive.isFinal && mergedStreams.isEmpty()) {
+                    val errorMessage = if (progressive.isFinal && mergedStreams.isEmpty() && !hasHomeServerConnections) {
                         if (streamingAddonCount == 0) {
                             "No streaming addons configured.\n\nGo to Settings \u2192 Addons to add a streaming addon, then come back and try again."
                         } else {
@@ -614,11 +614,11 @@ class PlayerViewModel @Inject constructor(
 
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        isLoadingStreams = !progressive.isFinal && mergedStreams.isEmpty(),
+                        isLoadingStreams = mergedStreams.isEmpty() && (!progressive.isFinal || hasHomeServerConnections),
                         streams = mergedStreams,
                         subtitles = filteredSubtitles,
                         error = errorMessage,
-                        isSetupError = progressive.isFinal && mergedStreams.isEmpty() && streamingAddonCount == 0,
+                        isSetupError = progressive.isFinal && mergedStreams.isEmpty() && streamingAddonCount == 0 && !hasHomeServerConnections,
                         streamProgress = if (progressive.isFinal) null else progressFraction,
                         streamLoadPhase = phaseLabel
                     )
@@ -1674,7 +1674,10 @@ class PlayerViewModel @Inject constructor(
                 selectedStream = resolvedStream,
                 selectedStreamUrl = url,
                 savedPosition = requestedResumePosition ?: _uiState.value.savedPosition,
-                streamSelectionNonce = _uiState.value.streamSelectionNonce + 1
+                streamSelectionNonce = _uiState.value.streamSelectionNonce + 1,
+                isLoadingStreams = false,
+                error = null,
+                isSetupError = false
             )
 
             // Re-run subtitle selection now that streamSrc is known — scores are now meaningful
@@ -2364,15 +2367,25 @@ class PlayerViewModel @Inject constructor(
         }
 
         val validSources = sources.filter { !it.url.isNullOrBlank() }
-        if (validSources.isEmpty()) return
+        if (validSources.isEmpty()) {
+            if (_uiState.value.selectedStreamUrl.isNullOrBlank() && _uiState.value.streams.isEmpty()) {
+                _uiState.value = _uiState.value.copy(
+                    isLoadingStreams = false,
+                    error = "No streams found for this content. The configured media servers may not have this title.",
+                    isSetupError = false,
+                    streamProgress = null,
+                    streamLoadPhase = null
+                )
+            }
+            return
+        }
         val latest = _uiState.value.streams
 
         val updated = (latest + validSources)
             .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
         val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
         val sortedStreams = sortStreamsByQualityAndSize(updated, preferredLanguage)
-        val shouldAutoplayHomeServer = _uiState.value.selectedStreamUrl.isNullOrBlank() &&
-            latest.none { !isSupplementalStream(it) }
+        val shouldAutoplayHomeServer = _uiState.value.selectedStreamUrl.isNullOrBlank()
         _uiState.value = _uiState.value.copy(
             streams = sortedStreams,
             isLoadingStreams = false,
@@ -2426,7 +2439,9 @@ class PlayerViewModel @Inject constructor(
             .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
         _uiState.value = _uiState.value.copy(
             streams = updated,
-            isLoadingStreams = false
+            isLoadingStreams = false,
+            error = null,
+            isSetupError = false
         )
         prewarmTopStreams(updated, _uiState.value.preferredAudioLanguage.ifBlank { "en" })
     }

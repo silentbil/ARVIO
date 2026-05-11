@@ -1741,38 +1741,41 @@ class HomeServerRepository @Inject constructor(
         item: HomeServerItem
     ): List<StreamSource> {
         val sources = if (connection.serverKind == HomeServerKind.PLEX) {
-            item.mediaSources.ifEmpty {
-                runCatching {
-                    getJson(
-                        buildUrl(
-                            connection.serverUrl,
-                            "/library/metadata/${item.id}",
-                            mapOf("includeGuids" to "1")
-                        ),
-                        connection
-                    ).metadataItems(connection.serverKind).firstOrNull()?.mediaSources.orEmpty()
-                }.getOrDefault(emptyList())
-            }
+            val refreshedSources = runCatching {
+                getJson(
+                    buildUrl(
+                        connection.serverUrl,
+                        "/library/metadata/${item.id}",
+                        mapOf(
+                            "includeGuids" to "1",
+                            "includeMedia" to "1"
+                        )
+                    ),
+                    connection
+                ).metadataItems(connection.serverKind).firstOrNull()?.mediaSources.orEmpty()
+            }.getOrDefault(emptyList())
+            (refreshedSources + item.mediaSources)
+                .distinctBy { it.identityKey() }
         } else {
-            item.mediaSources.ifEmpty {
-                runCatching {
-                    postJson(
-                        buildUrl(
-                            connection.serverUrl,
-                            "/Items/${item.id}/PlaybackInfo",
-                            mapOf(
-                                "UserId" to connection.userId,
-                                "StartTimeTicks" to "0",
-                                "IsPlayback" to "true",
-                                "AutoOpenLiveStream" to "true",
-                                "MaxStreamingBitrate" to "2147483647"
-                            )
-                        ),
-                        JsonObject(),
-                        connection
-                    ).mediaSources()
-                }.getOrDefault(emptyList())
-            }
+            val playbackInfoSources = runCatching {
+                postJson(
+                    buildUrl(
+                        connection.serverUrl,
+                        "/Items/${item.id}/PlaybackInfo",
+                        mapOf(
+                            "UserId" to connection.userId,
+                            "StartTimeTicks" to "0",
+                            "IsPlayback" to "true",
+                            "AutoOpenLiveStream" to "true",
+                            "MaxStreamingBitrate" to "2147483647"
+                        )
+                    ),
+                    JsonObject(),
+                    connection
+                ).mediaSources()
+            }.getOrDefault(emptyList())
+            (playbackInfoSources + item.mediaSources)
+                .distinctBy { it.identityKey() }
         }
         return sources
             .mapNotNull { mediaSource ->
@@ -1803,6 +1806,14 @@ class HomeServerRepository @Inject constructor(
             .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
             .sortedWith(compareByDescending<StreamSource> { qualityRank(it.quality) }
                 .thenByDescending { it.sizeBytes ?: 0L })
+    }
+
+    private fun HomeServerMediaSource.identityKey(): String {
+        return id.takeIf { it.isNotBlank() }
+            ?: key.takeIf { it.isNotBlank() }
+            ?: path.takeIf { it.isNotBlank() }
+            ?: name.takeIf { it.isNotBlank() }
+            ?: "$container|$sizeBytes|$videoWidth|$videoHeight"
     }
 
     private fun HomeServerMediaSource.playbackUrl(connection: HomeServerConnection, itemId: String): String? {
