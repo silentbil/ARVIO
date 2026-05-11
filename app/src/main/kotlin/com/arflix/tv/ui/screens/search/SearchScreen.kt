@@ -158,6 +158,7 @@ fun SearchScreen(
     var focusedFilterIndex by remember { mutableIntStateOf(0) }
     var resultsLastNavEventTime by remember { mutableLongStateOf(0L) }
     var isSearchEditing by remember { mutableStateOf(false) }
+    var searchEditRequestNonce by remember { mutableIntStateOf(0) }
 
     val searchFocusRequester = remember { FocusRequester() }
     val textInputFocusRequester = remember { FocusRequester() }
@@ -282,7 +283,7 @@ fun SearchScreen(
         if (!isTouchDevice) runCatching { searchFocusRequester.requestFocus() }
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
     }
-    LaunchedEffect(isSearchEditing) {
+    LaunchedEffect(isSearchEditing, searchEditRequestNonce) {
         if (isSearchEditing) {
             runCatching { textInputFocusRequester.requestFocus() }
             keyboardController?.show()
@@ -315,6 +316,8 @@ fun SearchScreen(
                     FocusZone.FILTERS -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.SEARCH_INPUT -> {
                         // Always progress toward sidebar so repeated Back presses can exit Search.
+                        isSearchEditing = false
+                        keyboardController?.hide()
                         focusZone = FocusZone.SIDEBAR
                         true
                     }
@@ -322,7 +325,12 @@ fun SearchScreen(
                 }
                 Key.DirectionUp -> when (focusZone) {
                     FocusZone.SIDEBAR -> true
-                    FocusZone.SEARCH_INPUT -> { focusZone = FocusZone.SIDEBAR; true }
+                    FocusZone.SEARCH_INPUT -> {
+                        isSearchEditing = false
+                        keyboardController?.hide()
+                        focusZone = FocusZone.SIDEBAR
+                        true
+                    }
                     FocusZone.FILTERS -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
@@ -344,6 +352,8 @@ fun SearchScreen(
                 Key.DirectionDown -> when (focusZone) {
                     FocusZone.SIDEBAR -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.SEARCH_INPUT -> {
+                        isSearchEditing = false
+                        keyboardController?.hide()
                         if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
                             focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
@@ -428,7 +438,12 @@ fun SearchScreen(
                             else when (topBarFocusedItem(sidebarFocusIndex, hasProfile)) { SidebarItem.SEARCH -> Unit; SidebarItem.HOME -> onNavigateToHome(); SidebarItem.WATCHLIST -> onNavigateToWatchlist(); SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings(); null -> Unit }
                             true
                         }
-                        FocusZone.SEARCH_INPUT -> false
+                        FocusZone.SEARCH_INPUT -> {
+                            focusZone = FocusZone.SEARCH_INPUT
+                            isSearchEditing = true
+                            searchEditRequestNonce++
+                            true
+                        }
                         FocusZone.FILTERS -> {
                             quickFilters.getOrNull(focusedFilterIndex)?.onSelect?.invoke()
                             true
@@ -487,11 +502,16 @@ fun SearchScreen(
                     onStartEditing = {
                         focusZone = FocusZone.SEARCH_INPUT
                         isSearchEditing = true
+                        searchEditRequestNonce++
                     },
                     onMoveUp = {
+                        isSearchEditing = false
+                        keyboardController?.hide()
                         focusZone = FocusZone.SIDEBAR
                     },
                     onMoveDown = {
+                        isSearchEditing = false
+                        keyboardController?.hide()
                         if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
                             focusedFilterIndex = 0
@@ -651,6 +671,7 @@ private fun SearchInputBar(
                 when (event.key) {
                     Key.DirectionUp -> { onMoveUp(); true }
                     Key.DirectionDown -> { onMoveDown(); true }
+                    Key.Enter, Key.DirectionCenter -> { onStartEditing(); true }
                     else -> false
                 }
             }
@@ -663,6 +684,7 @@ private fun SearchInputBar(
         glowAlpha = 0.22f,
         focusedScale = 1f,
         pressedScale = 0.985f,
+        useSystemFocusForVisuals = false,
         isFocusedOverride = isFocused,
         onClick = onStartEditing,
         onFocusChanged = { if (it) onFocused() else onFocusLost() }
@@ -759,6 +781,7 @@ private fun DiscoverFilterStrip(
                 isVisuallyFocused = !isTouchDevice && focusZone == FocusZone.FILTERS && focusedFilterIndex == index,
                 modifier = if (index == 0) Modifier.focusRequester(filtersFocusRequester) else Modifier,
                 onFocused = { onFocused(index) },
+                useSystemFocusForVisuals = isTouchDevice,
                 onSelect = filter.onSelect
             )
         }
@@ -773,10 +796,11 @@ private fun GlowChip(
     isVisuallyFocused: Boolean = false,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit = {},
+    useSystemFocusForVisuals: Boolean = true,
     onSelect: () -> Unit
 ) {
     var systemFocused by remember { mutableStateOf(false) }
-    val focused = isVisuallyFocused || systemFocused
+    val focused = isVisuallyFocused || (useSystemFocusForVisuals && systemFocused)
     val active = focused || isSelected
     val chipShape = RoundedCornerShape(7.dp)
     val backgroundColor = when {

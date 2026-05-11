@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 fun Modifier.arvioFocusable(
     enabled: Boolean = true,
     enableSystemFocus: Boolean = true,
+    useSystemFocusForVisuals: Boolean = true,
     isFocusedOverride: Boolean = false,
     shape: Shape,
     focusedScale: Float,
@@ -59,7 +60,7 @@ fun Modifier.arvioFocusable(
     val isPressed by interactionSource.collectIsPressedAsState()
 
     var isFocused by remember { mutableStateOf(false) }
-    val visualFocused = isFocusedOverride || isFocused
+    val visualFocused = isFocusedOverride || (useSystemFocusForVisuals && isFocused)
     val targetScale = when {
         isPressed -> pressedScale
         visualFocused -> focusedScale
@@ -217,6 +218,7 @@ fun ArvioFocusableSurface(
     animateFocus: Boolean = true,
     enabled: Boolean = true,
     enableSystemFocus: Boolean = true,
+    useSystemFocusForVisuals: Boolean = true,
     isFocusedOverride: Boolean = false,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
@@ -224,13 +226,14 @@ fun ArvioFocusableSurface(
     content: @Composable BoxScope.(isFocused: Boolean) -> Unit,
 ) {
     var isFocused by remember { mutableStateOf(false) }
-    val visualFocused = isFocusedOverride || isFocused
+    val visualFocused = isFocusedOverride || (useSystemFocusForVisuals && isFocused)
 
     Box(
         modifier = modifier
             .arvioFocusable(
                 enabled = enabled,
                 enableSystemFocus = enableSystemFocus,
+                useSystemFocusForVisuals = useSystemFocusForVisuals,
                 isFocusedOverride = isFocusedOverride,
                 shape = shape,
                 focusedScale = focusedScale,
