@@ -177,10 +177,11 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun isActionableMediaItem(item: MediaItem): Boolean {
-        // Synthetic collection tiles (Netflix/Disney/HBO service cards) carry
-        // a hash-based id in MediaItem.id that is not a real TMDB id — treating
-        // them as actionable triggers TMDB /images 404s in the logo preloader.
-        return item.id > 0 && !item.isPlaceholder && !isCollectionItem(item)
+        val result = item.id > 0 && !item.isPlaceholder && !isCollectionItem(item)
+        if (!result) {
+            android.util.Log.d("HeroDebug", "isActionableMediaItem: FALSE for ${item.title} (id=${item.id}, placeholder=${item.isPlaceholder}, isCollection=${isCollectionItem(item)})")
+        }
+        return result
     }
 
     private fun continueWatchingKey(mediaType: MediaType, id: Int): String {
@@ -1922,7 +1923,28 @@ class HomeViewModel @Inject constructor(
                 // Launch the independent CW fetch
                 launchContinueWatchingFetch()
 
-                val heroItem = chooseInitialHero(categories)
+                // DEV-NOTE: Preservation during reload is critical.  During catalog-triggered
+                // reloads, chooseInitialHero picks the first Continue Watching row item, which
+                // unconditionally overwrites whatever item the user is currently focused on.
+                // The hero-update LaunchedEffect in HomeScreen.kt attempts to correct this, but
+                // the key-based guard at line ~734 can bail out early if the categories were
+                // rebuilt and the item at the focused position now has a different instance key.
+                // Result: the hero gets permanently stuck on the first CW item.
+                val heroItem = if (_uiState.value.heroItem != null) {
+                    val currentHero = _uiState.value.heroItem!!
+                    // Preserve current hero during reload.  Try to find it in the fresh
+                    // categories; if the same id/mediaType still exists, use the fresh
+                    // instance to ensure reference consistency.  If not found, keep the
+                    // old hero — it's still valid UI and the hero-update LaunchedEffect
+                    // will correct it when the user moves focus.
+                    categories.asSequence()
+                        .flatMap { it.items.asSequence() }
+                        .firstOrNull { it.id == currentHero.id && it.mediaType == currentHero.mediaType }
+                        ?: currentHero
+                } else {
+                    chooseInitialHero(categories)
+                }
+                android.util.Log.d("HeroDebug", "loadHomeData: heroItem=${heroItem?.title} (id=${heroItem?.id}), preserved=${_uiState.value.heroItem != null}, prevHero=${_uiState.value.heroItem?.title}")
 
                 // Preload logos for the first visible rows so card overlays appear immediately.
                 // Skip IPTV items — their channel logo is already in item.image.
@@ -1961,6 +1983,8 @@ class HomeViewModel @Inject constructor(
                                 batchLimit = if (isLowRamDevice) 4 else 6
                             )
                         }
+                        val previousHero = _uiState.value.heroItem
+                        android.util.Log.d("HeroDebug", "loadHomeData: PUBLISHING heroItem=${heroItem?.title} (prev=${previousHero?.title}), overwriting previous hero")
                         _uiState.value = _uiState.value.copy(
                             isLoading = _uiState.value.isLoading,
                             categories = categories,
@@ -3006,6 +3030,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun updateHeroItem(item: MediaItem) {
+        android.util.Log.d("HeroDebug", "updateHeroItem called: title=${item.title}, id=${item.id}, type=${item.mediaType}, isCollection=${isCollectionItem(item)}, isActionable=${isActionableMediaItem(item)}")
         if (isCollectionItem(item)) {
             if (item.isPlaceholder) return
             heroUpdateJob?.cancel()
@@ -3110,9 +3135,11 @@ class HomeViewModel @Inject constructor(
             currentState.heroLogoUrl == logoUrl &&
             !currentState.isHeroTransitioning
         ) {
+            android.util.Log.d("HeroDebug", "performHeroUpdate: SKIP - already showing ${item.title}")
             return
         }
 
+        android.util.Log.d("HeroDebug", "performHeroUpdate: SETTING hero from ${currentHero?.title} to ${item.title}")
         // Save previous hero for crossfade animation, clear trailer for new hero
         _uiState.value = currentState.copy(
             previousHeroItem = currentState.heroItem,
