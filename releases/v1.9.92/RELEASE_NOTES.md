@@ -32,6 +32,7 @@
 - Fixed Trakt-connected watchlist add/remove failures after token refresh by using the secured Trakt auth proxy.
 - Restored optional release-secret wiring for Trakt auth while keeping the secured proxy fallback for builds without a local secret.
 - Fixed stale/revoked Trakt tokens blocking reconnect, watchlist updates, and Continue Watching refresh.
+- Fixed cloud sync re-saving stale Trakt tokens after they were cleared locally.
 - Fixed Trakt proxy allowlist coverage for sync-state and scrobble endpoints.
 
 ## Player, subtitles, and accessibility

@@ -333,6 +333,10 @@ class CloudSyncRepository @Inject constructor(
         )
         root.put("profileSettingsById", JSONObject(gson.toJson(profileSettingsById)))
 
+        // Validate active Trakt auth before exporting so revoked tokens do not
+        // get written back to cloud and restored on the next launch.
+        runCatching { traktRepository.hasTrakt() }
+
         // Trakt tokens per profile
         val traktTokens = traktRepository.exportTokensForProfiles(profiles.map { it.id })
         root.put("traktTokens", JSONObject(gson.toJson(traktTokens)))
@@ -438,7 +442,7 @@ class CloudSyncRepository @Inject constructor(
         root.put("iptvFavoriteChannels", JSONArray(gson.toJson(iptvRepository.observeFavoriteChannels().first())))
 
         // Informational
-        val isTraktLinked = traktRepository.isAuthenticated.first()
+        val isTraktLinked = traktRepository.hasTrakt()
         root.put("traktLinked", isTraktLinked)
         root.put("traktExpiration", JSONObject.NULL)
 
@@ -869,7 +873,7 @@ class CloudSyncRepository @Inject constructor(
                 }
             }
 
-            val isActiveProfileTrakt = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+            val isActiveProfileTrakt = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
             val activeProfileId = profileManager.getProfileIdSync().ifBlank { null }
             if (isActiveProfileTrakt && activeProfileId != null) {
                 traktProfiles.add(activeProfileId)
