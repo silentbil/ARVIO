@@ -20,8 +20,10 @@ const ALLOWED_PATHS = [
   '/tv/',
   '/search/',
   '/discover/',
+  '/find/',
   '/genre/',
   '/person/',
+  '/collection/',
   '/watch/providers',
   '/configuration',
 ]

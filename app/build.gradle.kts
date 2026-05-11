@@ -104,7 +104,6 @@ android {
 
             // Build config fields for release
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "true")
-            buildConfigField("Boolean", "ENABLE_ANALYTICS", "true")
         }
 
         debug {
@@ -115,7 +114,6 @@ android {
 
             // Build config fields for debug
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "false")
-            buildConfigField("Boolean", "ENABLE_ANALYTICS", "false")
         }
 
         // Staging build type: release-grade optimizations but signed with the
@@ -130,7 +128,6 @@ android {
             isJniDebuggable = false
 
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "true")
-            buildConfigField("Boolean", "ENABLE_ANALYTICS", "false")
         }
     }
 
@@ -295,7 +292,6 @@ dependencies {
     // Firebase Crashlytics - optional, works when google-services.json is present
     implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
     implementation("com.google.firebase:firebase-crashlytics-ktx")
-    implementation("com.google.firebase:firebase-analytics-ktx")
 
     // Sentry crash reporting. Runtime initialization is gated by BuildConfig.ENABLE_CRASH_REPORTING
     // and SENTRY_DSN from secrets.properties/secrets.defaults.properties.
@@ -353,6 +349,8 @@ val validateReleaseSupabaseSecrets = tasks.register("validateReleaseSupabaseSecr
     doLast {
         val supabaseUrl = localSecretValue("SUPABASE_URL")
         val supabaseAnonKey = localSecretValue("SUPABASE_ANON_KEY")
+        val tmdbApiKey = localSecretValue("TMDB_API_KEY")
+        val traktClientId = localSecretValue("TRAKT_CLIENT_ID")
         require(
             supabaseUrl.startsWith("https://") &&
                 supabaseUrl.endsWith(".supabase.co") &&
@@ -365,6 +363,18 @@ val validateReleaseSupabaseSecrets = tasks.register("validateReleaseSupabaseSecr
                 !supabaseAnonKey.equals("your-supabase-anon-key", ignoreCase = true)
         ) {
             "Release builds require a real SUPABASE_ANON_KEY in secrets.properties, Gradle properties, or the environment."
+        }
+        require(
+            tmdbApiKey.length > 20 &&
+                !tmdbApiKey.equals("your-tmdb-api-key", ignoreCase = true)
+        ) {
+            "Release builds require a real TMDB_API_KEY in secrets.properties, Gradle properties, or the environment."
+        }
+        require(
+            traktClientId.length > 20 &&
+                !traktClientId.equals("your-trakt-client-id", ignoreCase = true)
+        ) {
+            "Release builds require a real TRAKT_CLIENT_ID in secrets.properties, Gradle properties, or the environment."
         }
     }
 }

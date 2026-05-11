@@ -1,5 +1,8 @@
 package com.arflix.tv.ui.screens.settings
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.os.SystemClock
@@ -183,6 +186,17 @@ private class SettingsFocusTracker {
 
 private val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null }
 
+private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete-account"
+
+private fun openExternalUrl(context: Context, url: String) {
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+}
+
 /**
  * Attach to the outermost modifier of a focusable settings row so that when
  * it gains focus the scroll container brings it fully into view. Pass the
@@ -321,7 +335,7 @@ fun SettingsScreen(
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
-            "accounts" -> 3 // Cloud + Trakt + Force Sync + App Update
+            "accounts" -> 4 // Cloud + Trakt + Force Sync + App Update + Privacy/Data
             else -> 0
         }
     }
@@ -1268,7 +1282,8 @@ fun SettingsScreen(
                             onForceCloudSync = { viewModel.forceCloudSyncNow() },
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
-                            onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() }
+                            onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
+                            onOpenDataDeletion = { openExternalUrl(context, ACCOUNT_DELETION_URL) }
                         )
                     }
                   }
@@ -1300,6 +1315,7 @@ fun SettingsScreen(
         if (showHomeServerInput) {
             InputModal(
                 title = "Home Server",
+                supportingText = "Use HTTPS where possible. HTTP server URLs are allowed for local networks but are not encrypted.",
                 fields = listOf(
                     InputField(
                         label = "Server name",
@@ -1349,6 +1365,7 @@ fun SettingsScreen(
         if (showPlexHomeServerInput) {
             InputModal(
                 title = "Connect with code",
+                supportingText = "Use HTTPS where possible. HTTP server URLs are allowed for local networks but are not encrypted.",
                 fields = listOf(
                     InputField(
                         label = "Server name",
@@ -6571,7 +6588,8 @@ private fun AccountsSettings(
     onForceCloudSync: () -> Unit,
     onSwitchProfile: () -> Unit,
     onCheckUpdates: () -> Unit,
-    onInstallUpdate: () -> Unit
+    onInstallUpdate: () -> Unit,
+    onOpenDataDeletion: () -> Unit
 ) {
     Column {
         Text(
@@ -6655,6 +6673,17 @@ private fun AccountsSettings(
                 if (downloadedApkPath != null) onInstallUpdate() else onCheckUpdates()
             },
             modifier = Modifier.settingsFocusSlot(3)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsActionRow(
+            title = "Privacy and data deletion",
+            description = "Open privacy and ARVIO Cloud account deletion instructions",
+            actionLabel = "OPEN",
+            isFocused = focusedIndex == 4,
+            onClick = onOpenDataDeletion,
+            modifier = Modifier.settingsFocusSlot(4)
         )
     }
 }
@@ -7239,6 +7268,7 @@ private fun InputModalLegacy(
 @Composable
 private fun InputModal(
     title: String,
+    supportingText: String? = null,
     fields: List<InputField>,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
@@ -7421,8 +7451,17 @@ private fun InputModal(
                     text = "Use D-pad to move, press OK to edit a field",
                     style = ArflixTypography.caption,
                     color = TextSecondary.copy(alpha = 0.75f),
-                    modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
+                    modifier = Modifier.padding(top = 2.dp, bottom = if (supportingText == null) 12.dp else 4.dp)
                 )
+                if (supportingText != null) {
+                    Text(
+                        text = supportingText,
+                        style = ArflixTypography.caption,
+                        color = TextSecondary.copy(alpha = 0.68f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                }
 
                 Column(
                     modifier = Modifier
