@@ -444,7 +444,7 @@ class SettingsViewModel @Inject constructor(
             val authState = authRepository.authState.first()
             val isLoggedIn = authState is AuthState.Authenticated
             val accountEmail = (authState as? AuthState.Authenticated)?.email
-            val isTrakt = traktRepository.isAuthenticated.first()
+            val isTrakt = traktRepository.hasTrakt()
 
             // Get Trakt expiration if authenticated
             var traktExpiration: String? = null
@@ -2701,6 +2701,7 @@ class SettingsViewModel @Inject constructor(
             )
 
             try {
+                traktRepository.logout()
                 val deviceCode = withContext(Dispatchers.IO) {
                     traktRepository.getDeviceCode()
                 }

@@ -92,7 +92,7 @@ class WatchlistViewModel @Inject constructor(
             if (watchlistRepository.getCachedItems().isEmpty()) {
                 runCatching { cloudSyncRepository.pullFromCloud() }
             }
-            val traktConnected = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
             if (traktConnected) {
                 val cachedItems = (watchlistRepository.getCachedItems().ifEmpty {
                     watchlistRepository.getWatchlistItems()
@@ -146,7 +146,7 @@ class WatchlistViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true)
             try {
                 val syncedFromTrakt = syncTraktWatchlistSuspend()
-                val traktConnected = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
                 if (!syncedFromTrakt && !traktConnected) {
                     val items = watchlistRepository.refreshWatchlistItems().watchlistDisplayOrder()
                     _uiState.value = _uiState.value.copy(
@@ -179,7 +179,7 @@ class WatchlistViewModel @Inject constructor(
     fun removeFromWatchlist(item: MediaItem) {
         viewModelScope.launch {
             try {
-                val traktConnected = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
                 if (traktConnected && !traktRepository.removeFromWatchlist(item.mediaType, item.id)) {
                     throw IllegalStateException("Failed to remove from Trakt watchlist")
                 }

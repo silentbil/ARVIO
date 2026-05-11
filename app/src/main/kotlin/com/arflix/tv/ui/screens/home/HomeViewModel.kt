@@ -3474,7 +3474,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val isInWatchlist = watchlistRepository.isInWatchlist(item.mediaType, item.id)
-                val traktConnected = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
                 if (isInWatchlist) {
                     if (traktConnected && !traktRepository.removeFromWatchlist(item.mediaType, item.id)) {
                         throw IllegalStateException("Failed to remove from Trakt watchlist")

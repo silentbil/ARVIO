@@ -222,6 +222,25 @@ class TraktRepository @Inject constructor(
         }
     }
 
+    private fun isPermanentTokenRefreshFailure(e: Throwable): Boolean {
+        val message = e.message?.lowercase().orEmpty()
+        return message.contains("invalid_grant") ||
+            message.contains("authorization grant is invalid") ||
+            message.contains("expired") ||
+            message.contains("revoked") ||
+            message.contains("issued to another client")
+    }
+
+    private suspend fun clearInvalidTraktToken() {
+        context.traktDataStore.edit { prefs ->
+            prefs.remove(accessTokenKey())
+            prefs.remove(refreshTokenKey())
+            prefs.remove(expiresAtKey())
+        }
+        tokenRefreshBackoffUntilMs = 0L
+        clearProfileScopedMemoryCaches(clearPreloaded = false)
+    }
+
     private suspend fun requestTraktTokenViaProxy(path: String, payload: JSONObject): TraktToken = withContext(Dispatchers.IO) {
         val url = Constants.TRAKT_PROXY_URL.toHttpUrl().newBuilder()
             .addQueryParameter("path", path)
@@ -325,10 +344,17 @@ class TraktRepository @Inject constructor(
                     usableExistingToken()
                 } else {
                     System.err.println("TraktRepo: token refresh failed: HTTP $code")
+                    if (code == 400 || code == 401 || code == 403) {
+                        clearInvalidTraktToken()
+                    }
                     null
                 }
             } catch (e: Exception) {
                 System.err.println("TraktRepo: token refresh failed: ${e.message}")
+                if (isPermanentTokenRefreshFailure(e)) {
+                    clearInvalidTraktToken()
+                    return@withLock null
+                }
                 tokenRefreshBackoffUntilMs = System.currentTimeMillis() + TOKEN_REFRESH_RETRY_BACKOFF_MS
                 usableExistingToken()
             }

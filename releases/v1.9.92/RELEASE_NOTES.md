@@ -31,6 +31,8 @@
 - Fixed season unwatch and batch season-watch behavior to avoid unnecessary duplicate Trakt writes.
 - Fixed Trakt-connected watchlist add/remove failures after token refresh by using the secured Trakt auth proxy.
 - Restored optional release-secret wiring for Trakt auth while keeping the secured proxy fallback for builds without a local secret.
+- Fixed stale/revoked Trakt tokens blocking reconnect, watchlist updates, and Continue Watching refresh.
+- Fixed Trakt proxy allowlist coverage for sync-state and scrobble endpoints.
 
 ## Player, subtitles, and accessibility
 - Fixed remote selection for the next-episode prompt and routed up-next remote keys correctly.

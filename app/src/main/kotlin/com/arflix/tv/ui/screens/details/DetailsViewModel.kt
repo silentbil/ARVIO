@@ -924,7 +924,7 @@ class DetailsViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                val traktConnected = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
                 if (newInWatchlist) {
                     if (traktConnected && !traktRepository.addToWatchlist(currentMediaType, currentMediaId)) {
                         throw IllegalStateException("Failed to add to Trakt watchlist")
