@@ -2645,7 +2645,7 @@ private fun DetailsCollectionRail(
     Column {
         val displayName = collectionName ?: stringResource(R.string.more_like_this)
         Text(
-            text = "$displayName Collection",
+            text = displayName,
             style = ArvioSkin.typography.sectionTitle.copy(
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold
