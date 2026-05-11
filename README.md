@@ -2,7 +2,7 @@
 
 ARVIO is an Android media hub for TV, phone, and tablet form factors. This repository is maintained as a source-code and development mirror for the Android application.
 
-The app provides a media browser, player shell, profile support, optional cloud sync, IPTV playlist support, catalog configuration, and integrations with user-configured services. ARVIO does not host, store, sell, or distribute movies, series, live TV channels, playlists, streams, or other third-party media.
+The app provides a media browser, player shell, profile support, optional cloud sync, IPTV playlist support, catalog configuration, home-server integrations, and integrations with user-configured sources. ARVIO does not host, store, sell, or distribute movies, series, live TV channels, playlists, streams, or other third-party media.
 
 ## Repository Purpose
 
@@ -19,20 +19,30 @@ It is not intended as an advertising page, download landing page, or content dis
 ## Features
 
 - Android TV, Fire TV, phone, and tablet UI
-- Media browsing with TMDB metadata
-- IPTV M3U/Xtream playlist support
-- Optional ARVIO Cloud profile/settings sync
-- Optional Trakt.tv integration per profile
-- Watchlist and continue-watching state
-- Subtitle and audio track selection
-- User-configured addon/source support
-- ExoPlayer/Media3 playback with broad codec support
+- TMDB-powered movie, series, cast, collection, franchise, and metadata browsing
+- IPTV M3U/Xtream playlist support with provider categories, favorites, hidden categories, EPG, and mobile/tablet fullscreen playback
+- Optional ARVIO Cloud sync for profiles, settings, catalogs, IPTV state, watch state, and custom profile avatars
+- Optional per-profile Trakt.tv integration for watchlist, history, progress, and continue watching
+- Catalog management with manual URLs and public Trakt/MDBList list discovery
+- Home-server source and catalog support for user-owned Jellyfin, Emby, and Plex libraries
+- Third-party addon support for user-configured sources
+- Watchlist and continue-watching state with profile isolation
+- Subtitle and audio track selection, subtitle language filtering, and AI subtitle tools
+- Profile PINs and custom profile avatars
+- ExoPlayer/Media3 playback with TV remote, mobile, and tablet controls
+
+## Recent Highlights
+
+Recent 1.9.91 and 1.9.92 work focused on IPTV category handling, large-list TV navigation, watchlist and continue-watching reliability, catalog discovery, home-server sources/catalogs, profile avatar sync, mobile layout fixes, player navigation, and Play/GitHub policy cleanup.
+
+For full release history, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Availability
 
 ARVIO is available on Google Play:
 
 [<img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="160">](https://play.google.com/store/apps/details?id=com.arvio.tv)
+
 ## Screenshots
 
 | Home | Details |
@@ -56,6 +66,10 @@ This repository does not include hosted media content, bundled playlists, IPTV c
 Users are solely responsible for their usage and must comply with applicable local laws. If you believe content accessed through an external source violates copyright law, contact the actual file host, service provider, or source maintainer. The ARVIO repository and developers cannot remove content hosted by third parties.
 
 Contributors should not submit copyrighted media, credentials, private keys, access tokens, or links intended to enable unauthorized access to content.
+
+## Cloud Sync
+
+ARVIO Cloud is optional. When enabled, it can sync profiles, settings, catalogs, IPTV state, watch progress, watchlist state, and profile avatars across devices. See [PRIVACY.md](PRIVACY.md) for details and account deletion instructions.
 
 ## Build And Run
 
