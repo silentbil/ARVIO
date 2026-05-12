@@ -74,11 +74,12 @@ class TraktRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val traktApi: TraktApi,
     private val tmdbApi: TmdbApi,
+    private val okHttpClient: OkHttpClient,
     private val syncServiceProvider: Provider<TraktSyncService>,
     private val profileManager: ProfileManager
 ) {
     private val gson = Gson()
-    private val watchlistHttpClient by lazy { OkHttpClient() }
+    private val watchlistHttpClient by lazy { okHttpClient }
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     // Lazy sync service to avoid circular dependency

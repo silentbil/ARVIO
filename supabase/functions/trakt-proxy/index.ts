@@ -30,6 +30,7 @@ const ALLOWED_PATHS = [
   '/scrobble/',
   '/movies/',
   '/shows/',
+  '/lists/',
   '/search/',
   '/calendars/',
 ]
@@ -225,8 +226,13 @@ serve(async (req) => {
       headers: {
         ...corsHeaders,
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
         'X-RateLimit-Limit': String(RATE_LIMIT),
         'X-RateLimit-Remaining': String(rateCheck.remaining),
+        'X-Pagination-Page': response.headers.get('X-Pagination-Page') ?? '',
+        'X-Pagination-Limit': response.headers.get('X-Pagination-Limit') ?? '',
+        'X-Pagination-Page-Count': response.headers.get('X-Pagination-Page-Count') ?? '',
+        'X-Pagination-Item-Count': response.headers.get('X-Pagination-Item-Count') ?? '',
       },
       status: response.status,
     })

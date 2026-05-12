@@ -349,8 +349,6 @@ val validateReleaseSupabaseSecrets = tasks.register("validateReleaseSupabaseSecr
     doLast {
         val supabaseUrl = localSecretValue("SUPABASE_URL")
         val supabaseAnonKey = localSecretValue("SUPABASE_ANON_KEY")
-        val tmdbApiKey = localSecretValue("TMDB_API_KEY")
-        val traktClientId = localSecretValue("TRAKT_CLIENT_ID")
         require(
             supabaseUrl.startsWith("https://") &&
                 supabaseUrl.endsWith(".supabase.co") &&
@@ -363,18 +361,6 @@ val validateReleaseSupabaseSecrets = tasks.register("validateReleaseSupabaseSecr
                 !supabaseAnonKey.equals("your-supabase-anon-key", ignoreCase = true)
         ) {
             "Release builds require a real SUPABASE_ANON_KEY in secrets.properties, Gradle properties, or the environment."
-        }
-        require(
-            tmdbApiKey.length > 20 &&
-                !tmdbApiKey.equals("your-tmdb-api-key", ignoreCase = true)
-        ) {
-            "Release builds require a real TMDB_API_KEY in secrets.properties, Gradle properties, or the environment."
-        }
-        require(
-            traktClientId.length > 20 &&
-                !traktClientId.equals("your-trakt-client-id", ignoreCase = true)
-        ) {
-            "Release builds require a real TRAKT_CLIENT_ID in secrets.properties, Gradle properties, or the environment."
         }
     }
 }

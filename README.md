@@ -125,6 +125,13 @@ cp secrets.defaults.properties secrets.properties
 
 `secrets.properties` is ignored and must not be committed.
 
+TMDB and Trakt credentials are not committed to the repository. When a valid
+Supabase config is present, app requests are routed through the tracked
+`tmdb-proxy` and `trakt-proxy` Edge Functions, where those credentials should be
+stored as Supabase function secrets. Forks that do not use those proxy functions
+can still add their own local `TMDB_API_KEY`, `TRAKT_CLIENT_ID`, and
+`TRAKT_CLIENT_SECRET` values in `secrets.properties` for direct local testing.
+
 For signed release builds, copy the keystore template and fill in local signing values:
 
 ```bash

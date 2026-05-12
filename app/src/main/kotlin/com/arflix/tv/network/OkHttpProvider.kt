@@ -184,8 +184,9 @@ object OkHttpProvider {
         }
 
         val builder = OkHttpClient.Builder()
-            // Direct API calls; TMDB/Trakt credentials come from ignored local
-            // secrets or CI environment values, not from committed source.
+            // TMDB/Trakt calls are proxied when Supabase proxy config is present.
+            // Contributors can still use direct calls with their own local keys.
+            .addInterceptor(ApiProxyInterceptor())
             .addInterceptor(loggingInterceptor)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)

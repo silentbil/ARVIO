@@ -1,7 +1,7 @@
 package com.arflix.tv.network
 
 import com.arflix.tv.util.Constants
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
@@ -16,17 +16,19 @@ class ApiProxyInterceptor : Interceptor {
         val originalRequest = chain.request()
         val originalUrl = originalRequest.url
 
-        val host = originalUrl.host
+        if (!hasProxyConfig()) {
+            return chain.proceed(originalRequest)
+        }
 
-        return when {
-            host.contains("themoviedb.org") -> {
+        return when (originalUrl.host) {
+            "api.themoviedb.org" -> {
                 // Route TMDB requests through proxy
-                val proxyRequest = rewriteForTmdbProxy(originalRequest)
+                val proxyRequest = rewriteForTmdbProxy(originalRequest) ?: originalRequest
                 chain.proceed(proxyRequest)
             }
-            host.contains("trakt.tv") -> {
+            "api.trakt.tv" -> {
                 // Route Trakt requests through proxy
-                val proxyRequest = rewriteForTraktProxy(originalRequest)
+                val proxyRequest = rewriteForTraktProxy(originalRequest) ?: originalRequest
                 chain.proceed(proxyRequest)
             }
             else -> {
@@ -36,7 +38,7 @@ class ApiProxyInterceptor : Interceptor {
         }
     }
 
-    private fun rewriteForTmdbProxy(originalRequest: Request): Request {
+    private fun rewriteForTmdbProxy(originalRequest: Request): Request? {
         val originalUrl = originalRequest.url
 
         // Extract the path and remove /3 prefix (proxy adds it)
@@ -44,7 +46,7 @@ class ApiProxyInterceptor : Interceptor {
         val path = originalUrl.encodedPath.let { if (it.startsWith("/3/")) it.removePrefix("/3") else it }
 
         // Build proxy URL with path parameter
-        val proxyUrlBuilder = Constants.TMDB_PROXY_URL.toHttpUrl().newBuilder()
+        val proxyUrlBuilder = (Constants.TMDB_PROXY_URL.toHttpUrlOrNull() ?: return null).newBuilder()
             .addQueryParameter("path", path)
 
         // Forward all original query parameters except api_key
@@ -64,14 +66,14 @@ class ApiProxyInterceptor : Interceptor {
             .build()
     }
 
-    private fun rewriteForTraktProxy(originalRequest: Request): Request {
+    private fun rewriteForTraktProxy(originalRequest: Request): Request? {
         val originalUrl = originalRequest.url
 
         // Extract the path
         val path = originalUrl.encodedPath
 
         // Build proxy URL with path and method parameters
-        val proxyUrlBuilder = Constants.TRAKT_PROXY_URL.toHttpUrl().newBuilder()
+        val proxyUrlBuilder = (Constants.TRAKT_PROXY_URL.toHttpUrlOrNull() ?: return null).newBuilder()
             .addQueryParameter("path", path)
             .addQueryParameter("method", originalRequest.method)
 
@@ -91,6 +93,7 @@ class ApiProxyInterceptor : Interceptor {
             .url(proxyUrlBuilder.build())
             .header("apikey", Constants.SUPABASE_ANON_KEY)
             .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
+            .header("Cache-Control", "no-store")
 
         // Forward user token in custom header
         if (!userToken.isNullOrEmpty()) {
@@ -102,5 +105,14 @@ class ApiProxyInterceptor : Interceptor {
         requestBuilder.removeHeader("trakt-api-version")
 
         return requestBuilder.build()
+    }
+
+    private fun hasProxyConfig(): Boolean {
+        val supabaseUrl = Constants.SUPABASE_URL.trim()
+        val anonKey = Constants.SUPABASE_ANON_KEY.trim()
+        return supabaseUrl.startsWith("https://") &&
+            !supabaseUrl.contains("your-project", ignoreCase = true) &&
+            anonKey.length > 40 &&
+            !anonKey.startsWith("your-", ignoreCase = true)
     }
 }
