@@ -1,0 +1,43 @@
+name: Build Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: build-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Verify build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Prepare local properties
+        env:
+          LOCAL_PROPERTIES_BASE64: ${{ secrets.LOCAL_PROPERTIES_BASE64 }}
+        run: |
+          if [ -n "$LOCAL_PROPERTIES_BASE64" ]; then
+            printf '%s' "$LOCAL_PROPERTIES_BASE64" | base64 --decode > local.properties
+          fi
+
+      - name: Create CI keystore
+        run: |
+          keytool -genkeypair -keystore arvio.jks -alias arvio \
+            -keyalg RSA -keysize 2048 -validity 1 \
+            -dname "CN=CI" -storepass 815787 -keypass 815787
+
+      - name: Build
+        run: ./gradlew assembleSideloadDebug --no-daemon
