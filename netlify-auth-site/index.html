@@ -538,6 +538,57 @@
       forgotBtn.disabled = on;
     }
 
+    const EMAIL_RE = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,63}$/i;
+    const BLOCKED_EMAIL_DOMAINS = new Set([
+      "example.com",
+      "example.net",
+      "example.org",
+      "invalid",
+      "localhost",
+      "mailinator.com",
+      "guerrillamail.com",
+      "guerrillamail.net",
+      "10minutemail.com",
+      "tempmail.com",
+      "temp-mail.org",
+      "yopmail.com"
+    ]);
+    const EMAIL_SEND_COOLDOWN_MS = 60 * 1000;
+
+    function normalizeEmail(value) {
+      return String(value || "").trim().toLowerCase();
+    }
+
+    function validateEmail(value, rejectDisposable = true) {
+      const email = normalizeEmail(value);
+      if (!email) return "Email is required.";
+      if (email.length > 254 || !EMAIL_RE.test(email)) return "Enter a valid email address.";
+      const [localPart, domain = ""] = email.split("@");
+      if (!localPart || !domain) return "Use a real email address.";
+      if (rejectDisposable && BLOCKED_EMAIL_DOMAINS.has(domain)) return "Use a real email address.";
+      if (rejectDisposable && (domain.endsWith(".invalid") || domain.endsWith(".test") || domain.endsWith(".local"))) {
+        return "Use a real email address.";
+      }
+      if (domain.split(".").some(part => !part)) return "Enter a valid email address.";
+      return "";
+    }
+
+    function requireValidEmail(value, rejectDisposable = true) {
+      const message = validateEmail(value, rejectDisposable);
+      if (message) throw new Error(message);
+      return normalizeEmail(value);
+    }
+
+    function enforceEmailSendCooldown(action, email) {
+      const key = `arvio:${action}:${normalizeEmail(email)}`;
+      const last = Number(window.localStorage.getItem(key) || "0");
+      const remaining = EMAIL_SEND_COOLDOWN_MS - (Date.now() - last);
+      if (remaining > 0) {
+        throw new Error(`Please wait ${Math.ceil(remaining / 1000)}s before requesting another email.`);
+      }
+      window.localStorage.setItem(key, String(Date.now()));
+    }
+
     function applyRecoveryModeUi() {
       subtitleEl.textContent = "Set a new password for your account.";
       pairBox.style.display = "none";
@@ -582,13 +633,14 @@
 
     async function approveTvViaServer(email, password) {
       if (!pairCode) return;
+      const normalizedEmail = requireValidEmail(email, false);
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/tv-auth-web`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "signin",
           code: pairCode,
-          email: email.trim().toLowerCase(),
+          email: normalizedEmail,
           password
         })
       });
@@ -598,13 +650,15 @@
 
     async function signUpAndPairViaServer(email, password) {
       if (!pairCode) return;
+      const normalizedEmail = requireValidEmail(email);
+      enforceEmailSendCooldown("signup", normalizedEmail);
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/tv-auth-web`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "signup",
           code: pairCode,
-          email: email.trim().toLowerCase(),
+          email: normalizedEmail,
           password
         })
       });
@@ -613,18 +667,20 @@
     }
 
     async function signInEmail() {
-      const email = emailEl.value.trim().toLowerCase();
+      const email = requireValidEmail(emailEl.value, false);
       const password = passEl.value;
-      if (!email || !password) throw new Error("Email and password are required.");
+      if (!password) throw new Error("Password is required.");
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       return { email, password };
     }
 
     async function signUpEmail() {
-      const email = emailEl.value.trim().toLowerCase();
+      const email = requireValidEmail(emailEl.value);
       const password = passEl.value;
-      if (!email || !password) throw new Error("Email and password are required.");
+      if (!password) throw new Error("Password is required.");
+      if (password.length < 6) throw new Error("Password must be at least 6 characters.");
+      enforceEmailSendCooldown("signup", email);
       const { error } = await supabase.auth.signUp({ email, password });
       if (error) throw error;
 
@@ -636,8 +692,8 @@
     }
 
     async function sendPasswordReset() {
-      const email = emailEl.value.trim().toLowerCase();
-      if (!email) throw new Error("Enter your email first.");
+      const email = requireValidEmail(emailEl.value);
+      enforceEmailSendCooldown("reset", email);
       const redirectTo = "https://auth.arvio.tv/?mode=recovery";
       const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
       if (error) throw error;
@@ -675,9 +731,10 @@
     signUpBtn.onclick = async () => {
       try {
         setBusy(true);
-        const email = emailEl.value.trim().toLowerCase();
+        const email = requireValidEmail(emailEl.value);
         const password = passEl.value;
-        if (!email || !password) throw new Error("Email and password are required.");
+        if (!password) throw new Error("Password is required.");
+        if (password.length < 6) throw new Error("Password must be at least 6 characters.");
 
         if (pairCode) {
           setStatus("Creating account and pairing TV...");
@@ -692,7 +749,7 @@
         try {
           await approveTvIfNeeded();
         } catch (_pairErr) {
-          await approveTvViaServer(emailEl.value, passEl.value);
+          await approveTvViaServer(email, password);
         }
         setStatus(pairCode ? "Account created and TV paired. Redirecting..." : "Account created. Redirecting...", "ok");
         setTimeout(() => { window.location.href = "https://arvio.tv"; }, 1200);

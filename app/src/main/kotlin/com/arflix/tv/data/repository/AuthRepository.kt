@@ -13,6 +13,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.AuthEmailValidator
 import com.arflix.tv.util.authDataStore
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.hash
@@ -259,11 +260,16 @@ class AuthRepository @Inject constructor(
      * Sign in with email and password
      */
     suspend fun signIn(email: String, password: String): Result<Unit> {
+        val normalizedEmail = AuthEmailValidator.normalize(email)
+        AuthEmailValidator.validate(normalizedEmail, rejectDisposable = false)?.let { message ->
+            _authState.value = AuthState.Error(message)
+            return Result.failure(Exception(message))
+        }
         return try {
             _authState.value = AuthState.Loading
 
             supabase.auth.signInWith(Email) {
-                this.email = email
+                this.email = normalizedEmail
                 this.password = password
             }
 
@@ -276,11 +282,11 @@ class AuthRepository @Inject constructor(
                 // Load or create profile
                 var profile = loadUserProfile(user.id)
                 if (profile == null) {
-                    profile = createDefaultProfile(user.id, user.email ?: email)
+                    profile = createDefaultProfile(user.id, user.email ?: normalizedEmail)
                 }
 
                 _userProfile.value = profile
-                _authState.value = AuthState.Authenticated(user.id, user.email ?: email, profile)
+                _authState.value = AuthState.Authenticated(user.id, user.email ?: normalizedEmail, profile)
                 Result.success(Unit)
             } else {
                 val message = safeErrorMessage(null, "Sign in failed")
@@ -298,11 +304,16 @@ class AuthRepository @Inject constructor(
      * Sign up with email and password
      */
     suspend fun signUp(email: String, password: String): Result<Unit> {
+        val normalizedEmail = AuthEmailValidator.normalize(email)
+        AuthEmailValidator.validate(normalizedEmail)?.let { message ->
+            _authState.value = AuthState.Error(message)
+            return Result.failure(Exception(message))
+        }
         return try {
             _authState.value = AuthState.Loading
             
             supabase.auth.signUpWith(Email) {
-                this.email = email
+                this.email = normalizedEmail
                 this.password = password
             }
             
@@ -313,9 +324,9 @@ class AuthRepository @Inject constructor(
                 storeSession(session)
                 
                 // Create profile
-                val profile = createDefaultProfile(user.id, user.email ?: email)
+                val profile = createDefaultProfile(user.id, user.email ?: normalizedEmail)
                 _userProfile.value = profile
-                _authState.value = AuthState.Authenticated(user.id, user.email ?: email, profile)
+                _authState.value = AuthState.Authenticated(user.id, user.email ?: normalizedEmail, profile)
                 Result.success(Unit)
             } else {
                 // Account created but needs email verification

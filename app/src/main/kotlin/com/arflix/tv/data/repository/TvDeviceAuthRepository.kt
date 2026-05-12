@@ -1,6 +1,7 @@
 ﻿package com.arflix.tv.data.repository
 
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.AuthEmailValidator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -121,11 +122,16 @@ class TvDeviceAuthRepository @Inject constructor(
         password: String,
         intent: String
     ): Result<TvDeviceAuthCompleteResult> {
+        val normalizedEmail = AuthEmailValidator.normalize(email)
+        val isSignup = intent.equals("signup", ignoreCase = true)
+        AuthEmailValidator.validate(normalizedEmail, rejectDisposable = isSignup)?.let { message ->
+            return Result.failure(IllegalArgumentException(message))
+        }
         return withContext(Dispatchers.IO) {
             runCatching {
                 val payload = JSONObject()
                     .put("code", userCode)
-                    .put("email", email.trim().lowercase())
+                    .put("email", normalizedEmail)
                     .put("password", password)
                     .put("intent", intent)
                     .toString()

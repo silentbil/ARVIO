@@ -8,6 +8,7 @@ import com.arflix.tv.data.repository.AuthRepository
 import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.util.AuthEmailValidator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +31,7 @@ class LoginViewModel @Inject constructor(
     private val streamRepository: StreamRepository,
     private val cloudSyncRepository: CloudSyncRepository
 ) : ViewModel() {
+    private var lastSignUpAttemptMs: Long = 0L
     
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
@@ -44,15 +46,20 @@ class LoginViewModel @Inject constructor(
     }
     
     fun signIn(email: String, password: String) {
-        if (email.isBlank() || password.isBlank()) {
-            _uiState.update { it.copy(error = "Please enter email and password") }
+        val normalizedEmail = AuthEmailValidator.normalize(email)
+        AuthEmailValidator.validate(normalizedEmail, rejectDisposable = false)?.let { message ->
+            _uiState.update { it.copy(error = message) }
+            return
+        }
+        if (password.isBlank()) {
+            _uiState.update { it.copy(error = "Please enter your password") }
             return
         }
 
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            val result = authRepository.signIn(email, password)
+            val result = authRepository.signIn(normalizedEmail, password)
 
             // Full cloud restore after successful login — not just addons.
             // The previous flow only called syncAddonsFromCloud(), so catalogs,
@@ -75,8 +82,13 @@ class LoginViewModel @Inject constructor(
     }
     
     fun signUp(email: String, password: String) {
-        if (email.isBlank() || password.isBlank()) {
-            _uiState.update { it.copy(error = "Please enter email and password") }
+        val normalizedEmail = AuthEmailValidator.normalize(email)
+        AuthEmailValidator.validate(normalizedEmail)?.let { message ->
+            _uiState.update { it.copy(error = message) }
+            return
+        }
+        if (password.isBlank()) {
+            _uiState.update { it.copy(error = "Please enter your password") }
             return
         }
 
@@ -84,11 +96,19 @@ class LoginViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Password must be at least 6 characters") }
             return
         }
+        val now = System.currentTimeMillis()
+        val remainingCooldownMs = 60_000L - (now - lastSignUpAttemptMs)
+        if (remainingCooldownMs > 0L) {
+            val seconds = ((remainingCooldownMs + 999L) / 1000L).coerceAtLeast(1L)
+            _uiState.update { it.copy(error = "Please wait ${seconds}s before creating another account") }
+            return
+        }
+        lastSignUpAttemptMs = now
 
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            val result = authRepository.signUp(email, password)
+            val result = authRepository.signUp(normalizedEmail, password)
 
             _uiState.update { state ->
                 state.copy(

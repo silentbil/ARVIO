@@ -54,6 +54,7 @@ import com.arflix.tv.updater.AppUpdate
 import com.arflix.tv.updater.AppUpdateRepository
 import com.arflix.tv.updater.UpdatePreferences
 import com.arflix.tv.updater.VersionUtils
+import com.arflix.tv.util.AuthEmailValidator
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
@@ -1922,10 +1923,10 @@ class SettingsViewModel @Inject constructor(
         password: String,
         createAccount: Boolean
     ) {
-        val trimmedEmail = email.trim()
-        if (trimmedEmail.isBlank()) {
+        val trimmedEmail = AuthEmailValidator.normalize(email)
+        AuthEmailValidator.validate(trimmedEmail, rejectDisposable = createAccount)?.let { message ->
             _uiState.value = _uiState.value.copy(
-                toastMessage = "Email is required",
+                toastMessage = message,
                 toastType = ToastType.ERROR
             )
             return

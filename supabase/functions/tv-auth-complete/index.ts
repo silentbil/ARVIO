@@ -6,6 +6,48 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
+const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,63}$/i
+const blockedEmailDomains = new Set([
+  "example.com",
+  "example.net",
+  "example.org",
+  "invalid",
+  "localhost",
+  "mailinator.com",
+  "guerrillamail.com",
+  "guerrillamail.net",
+  "10minutemail.com",
+  "tempmail.com",
+  "temp-mail.org",
+  "yopmail.com",
+])
+const emailSendCooldownMs = 60 * 1000
+const emailSendAttempts = new Map<string, number>()
+
+function validateEmail(email: string, rejectDisposable = true): string | null {
+  if (!email) return "Email is required"
+  if (email.length > 254 || !emailRegex.test(email)) return "Enter a valid email address"
+  const [localPart, domain = ""] = email.split("@")
+  if (!localPart || !domain) return "Use a real email address"
+  if (rejectDisposable && blockedEmailDomains.has(domain)) return "Use a real email address"
+  if (rejectDisposable && (domain.endsWith(".invalid") || domain.endsWith(".test") || domain.endsWith(".local"))) {
+    return "Use a real email address"
+  }
+  if (domain.split(".").some((part) => !part)) return "Enter a valid email address"
+  return null
+}
+
+function enforceEmailSendCooldown(action: string, email: string): string | null {
+  const key = `${action}:${email}`
+  const last = emailSendAttempts.get(key) ?? 0
+  const remaining = emailSendCooldownMs - (Date.now() - last)
+  if (remaining > 0) {
+    return `Please wait ${Math.ceil(remaining / 1000)}s before requesting another email.`
+  }
+  emailSendAttempts.set(key, Date.now())
+  return null
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
@@ -57,6 +99,24 @@ serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
+    }
+
+    const emailError = validateEmail(email, intent === "signup")
+    if (emailError) {
+      return new Response(JSON.stringify({ error: emailError }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+
+    if (intent === "signup") {
+      const cooldownError = enforceEmailSendCooldown("signup", email)
+      if (cooldownError) {
+        return new Response(JSON.stringify({ error: cooldownError }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
     }
 
     const sessionQuery = await fetch(
