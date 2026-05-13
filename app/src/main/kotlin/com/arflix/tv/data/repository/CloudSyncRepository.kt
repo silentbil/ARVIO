@@ -592,19 +592,43 @@ class CloudSyncRepository @Inject constructor(
             val profiles: List<Profile> = gson.fromJson(json, type) ?: emptyList()
             val activeProfileId = root.optString("activeProfileId").ifBlank { null }
             if (profiles.isNotEmpty()) {
-                profiles.forEach { profile ->
+                val localProfilesById = profileRepository.getProfiles().associateBy { it.id }
+                val fallbackAvatarVersion = root.optLong("updatedAt", System.currentTimeMillis())
+                    .takeIf { it > 0L }
+                    ?: System.currentTimeMillis()
+                val restoredProfiles = profiles.map { profile ->
                     val inlineAvatar = avatarImagesById
                         ?.optString(profile.id)
                         ?.takeIf { it.isNotBlank() }
-                    profileAvatarImageManager.restoreAvatarIfNeeded(profile, inlineAvatar)
+                    val localProfile = localProfilesById[profile.id]
+                    val profileWithAvatarState = when {
+                        profile.avatarImageVersion > 0L -> profile
+                        localProfile != null && localProfile.avatarImageVersion > 0L -> {
+                            profile.copy(
+                                avatarId = 0,
+                                avatarImageVersion = localProfile.avatarImageVersion,
+                                avatarImageStoragePath = localProfile.avatarImageStoragePath
+                            )
+                        }
+                        !inlineAvatar.isNullOrBlank() -> {
+                            profile.copy(
+                                avatarId = 0,
+                                avatarImageVersion = fallbackAvatarVersion,
+                                avatarImageStoragePath = null
+                            )
+                        }
+                        else -> profile
+                    }
+                    profileAvatarImageManager.restoreAvatarIfNeeded(profileWithAvatarState, inlineAvatar)
+                    profileWithAvatarState
                 }
                 // Preserve local active profile if it exists in cloud set
                 val localActiveId = profileRepository.getActiveProfileId()
                 val effectiveActiveId = if (localActiveId != null &&
-                    profiles.any { it.id == localActiveId }
+                    restoredProfiles.any { it.id == localActiveId }
                 ) localActiveId else activeProfileId
-                profileRepository.replaceProfilesFromCloud(profiles, effectiveActiveId)
-                val effectiveProfile = profiles.firstOrNull { it.id == effectiveActiveId }
+                profileRepository.replaceProfilesFromCloud(restoredProfiles, effectiveActiveId)
+                val effectiveProfile = restoredProfiles.firstOrNull { it.id == effectiveActiveId }
                 if (effectiveProfile != null) {
                     profileManager.setCurrentProfileId(effectiveProfile.id)
                     profileManager.setCurrentProfileName(effectiveProfile.name)

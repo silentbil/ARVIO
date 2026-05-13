@@ -55,7 +55,10 @@ class ProfileAvatarImageManager @Inject constructor(
     suspend fun restoreAvatarIfNeeded(profile: Profile, inlineBase64: String? = null) =
         withContext(Dispatchers.IO) {
             if (profile.avatarImageVersion <= 0L) {
-                ProfileAvatarFiles.cleanupProfile(context, profile.id)
+                // Avatar removal is handled explicitly by profile edit/delete.
+                // Do not delete files during cloud restore: stale/older clients can
+                // send profile objects without custom-avatar fields and would wipe
+                // the cached photo before a newer payload can restore it.
                 return@withContext
             }
 

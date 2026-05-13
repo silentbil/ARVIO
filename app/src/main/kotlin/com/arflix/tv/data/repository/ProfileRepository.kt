@@ -165,12 +165,30 @@ class ProfileRepository @Inject constructor(
         profiles: List<Profile>,
         activeProfileId: String?
     ) {
+        val localProfilesById = getProfiles().associateBy { it.id }
+        val mergedProfiles = profiles.map { cloudProfile ->
+            val localProfile = localProfilesById[cloudProfile.id]
+            if (
+                localProfile != null &&
+                localProfile.avatarImageVersion > 0L &&
+                cloudProfile.avatarImageVersion <= 0L
+            ) {
+                cloudProfile.copy(
+                    avatarId = 0,
+                    avatarImageVersion = localProfile.avatarImageVersion,
+                    avatarImageStoragePath = localProfile.avatarImageStoragePath
+                )
+            } else {
+                cloudProfile
+            }
+        }
+
         context.profilesDataStore.edit { prefs ->
-            prefs[PROFILES_KEY] = gson.toJson(profiles)
-            if (!activeProfileId.isNullOrBlank() && profiles.any { it.id == activeProfileId }) {
+            prefs[PROFILES_KEY] = gson.toJson(mergedProfiles)
+            if (!activeProfileId.isNullOrBlank() && mergedProfiles.any { it.id == activeProfileId }) {
                 prefs[ACTIVE_PROFILE_KEY] = activeProfileId
-            } else if (profiles.isNotEmpty()) {
-                prefs[ACTIVE_PROFILE_KEY] = profiles.first().id
+            } else if (mergedProfiles.isNotEmpty()) {
+                prefs[ACTIVE_PROFILE_KEY] = mergedProfiles.first().id
             } else {
                 prefs.remove(ACTIVE_PROFILE_KEY)
             }
