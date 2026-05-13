@@ -59,9 +59,7 @@ import androidx.tv.material3.Text
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.ui.components.ProfileAvatarVisual
 import com.arflix.tv.ui.components.Toast
-import com.arflix.tv.ui.theme.BackgroundGradientCenter
-import com.arflix.tv.ui.theme.BackgroundGradientEnd
-import com.arflix.tv.ui.theme.BackgroundGradientStart
+import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.util.LocalDeviceType
 import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
@@ -145,15 +143,7 @@ fun ProfileSelectionScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        BackgroundGradientStart,
-                        BackgroundGradientCenter,
-                        BackgroundGradientEnd
-                    )
-                )
-            ),
+            .background(appBackgroundDark()),
         contentAlignment = Alignment.Center
     ) {
         Column(
