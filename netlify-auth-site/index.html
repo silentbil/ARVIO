@@ -652,18 +652,50 @@
       if (!pairCode) return;
       const normalizedEmail = requireValidEmail(email);
       enforceEmailSendCooldown("signup", normalizedEmail);
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/tv-auth-web`, {
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/tv-auth-complete`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
         body: JSON.stringify({
-          action: "signup",
           code: pairCode,
+          email: normalizedEmail,
+          password,
+          intent: "signup"
+        })
+      });
+      const json = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(json.error || "Account creation or TV pairing failed");
+    }
+
+    async function createAccountViaServer(email, password) {
+      const normalizedEmail = requireValidEmail(email);
+      enforceEmailSendCooldown("signup", normalizedEmail);
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/cloud-auth-email`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
           email: normalizedEmail,
           password
         })
       });
       const json = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(json.error || "Account creation or TV pairing failed");
+      if (!resp.ok) throw new Error(json.error || "Account creation failed");
+      if (!json.access_token || !json.refresh_token) {
+        throw new Error("Account created but sign-in response was incomplete.");
+      }
+      const { error } = await supabase.auth.setSession({
+        access_token: json.access_token,
+        refresh_token: json.refresh_token
+      });
+      if (error) throw error;
+      return normalizedEmail;
     }
 
     async function signInEmail() {
@@ -680,15 +712,7 @@
       const password = passEl.value;
       if (!password) throw new Error("Password is required.");
       if (password.length < 6) throw new Error("Password must be at least 6 characters.");
-      enforceEmailSendCooldown("signup", email);
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) throw error;
-
-      // Try immediate sign-in when email confirmations are disabled.
-      const login = await supabase.auth.signInWithPassword({ email, password });
-      if (login.error && !String(login.error.message || "").toLowerCase().includes("email")) {
-        throw login.error;
-      }
+      await createAccountViaServer(email, password);
     }
 
     async function sendPasswordReset() {

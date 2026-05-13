@@ -53,6 +53,10 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.datetime.Clock
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Provider
@@ -123,10 +127,12 @@ sealed class AuthState {
 @Singleton
 class AuthRepository @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val okHttpClient: OkHttpClient,
     private val traktRepositoryProvider: Provider<TraktRepository>,
     private val cloudSyncRepositoryProvider: Provider<CloudSyncRepository>
 ) {
     private val TAG = "AuthRepository"
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val accountSyncMutationMutex = Mutex()
     private val ACCOUNT_SYNC_PAYLOAD_KEY = "accountSyncPayload"
     private val ACCOUNT_SYNC_UPDATED_AT_KEY = "accountSyncUpdatedAt"
@@ -311,33 +317,51 @@ class AuthRepository @Inject constructor(
         }
         return try {
             _authState.value = AuthState.Loading
-            
-            supabase.auth.signUpWith(Email) {
-                this.email = normalizedEmail
-                this.password = password
-            }
-            
-            val session = supabase.auth.currentSessionOrNull()
-            val user = session?.user
-            
-            if (user != null) {
-                storeSession(session)
-                
-                // Create profile
-                val profile = createDefaultProfile(user.id, user.email ?: normalizedEmail)
-                _userProfile.value = profile
-                _authState.value = AuthState.Authenticated(user.id, user.email ?: normalizedEmail, profile)
-                Result.success(Unit)
-            } else {
-                // Account created but needs email verification
-                val message = "Please check your email to verify your account"
-                _authState.value = AuthState.Error(message)
-                Result.failure(Exception(message))
-            }
+
+            val tokens = createCloudAccountSession(normalizedEmail, password)
+            signInWithSessionTokens(tokens.accessToken, tokens.refreshToken)
         } catch (e: Exception) {
             val message = safeErrorMessage(e, "Sign up failed")
             _authState.value = AuthState.Error(message)
             Result.failure(Exception(message))
+        }
+    }
+
+    private data class CloudAccountSession(
+        val accessToken: String,
+        val refreshToken: String
+    )
+
+    private suspend fun createCloudAccountSession(email: String, password: String): CloudAccountSession {
+        return withContext(Dispatchers.IO) {
+            val payload = JSONObject()
+                .put("email", email)
+                .put("password", password)
+                .toString()
+
+            val request = Request.Builder()
+                .url(Constants.CLOUD_AUTH_EMAIL_URL)
+                .header("apikey", Constants.SUPABASE_ANON_KEY)
+                .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
+                .post(payload.toRequestBody(jsonMediaType))
+                .build()
+
+            okHttpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(body) }.getOrNull()
+                if (!response.isSuccessful) {
+                    val message = json?.optString("error")?.takeIf { it.isNotBlank() }
+                        ?: "Unable to create account"
+                    throw IllegalStateException(message)
+                }
+
+                val accessToken = json?.optString("access_token").orEmpty()
+                val refreshToken = json?.optString("refresh_token").orEmpty()
+                if (accessToken.isBlank() || refreshToken.isBlank()) {
+                    throw IllegalStateException("Auth response incomplete")
+                }
+                CloudAccountSession(accessToken, refreshToken)
+            }
         }
     }
 

@@ -48,6 +48,39 @@ function enforceEmailSendCooldown(action: string, email: string): string | null 
   return null
 }
 
+async function createConfirmedUser(
+  supabaseUrl: string,
+  serviceRole: string,
+  email: string,
+  password: string,
+): Promise<Response> {
+  return fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: {
+      apikey: serviceRole,
+      Authorization: `Bearer ${serviceRole}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        provider: "email",
+      },
+    }),
+  })
+}
+
+function parseAuthError(raw: string): string {
+  try {
+    const json = JSON.parse(raw)
+    return String(json.error_description || json.msg || json.message || json.error || raw)
+  } catch {
+    return raw
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
@@ -152,19 +185,22 @@ serve(async (req) => {
     }
 
     if (intent === "signup") {
-      const signupResp = await fetch(`${supabaseUrl}/auth/v1/signup`, {
-        method: "POST",
-        headers: {
-          apikey: anonKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      })
+      const signupResp = await createConfirmedUser(supabaseUrl, serviceRole, email, password)
       if (!signupResp.ok) {
-        return new Response(JSON.stringify({ error: "Unable to create account" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        })
+        const signupText = await signupResp.text()
+        const signupError = parseAuthError(signupText).toLowerCase()
+        const alreadyExists = signupResp.status === 422 ||
+          signupResp.status === 409 ||
+          signupError.includes("already") ||
+          signupError.includes("registered") ||
+          signupError.includes("exists")
+
+        if (!alreadyExists) {
+          return new Response(JSON.stringify({ error: "Unable to create account" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          })
+        }
       }
     }
 
