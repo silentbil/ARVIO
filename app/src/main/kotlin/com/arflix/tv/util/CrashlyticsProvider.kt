@@ -82,7 +82,12 @@ object CrashlyticsProvider : AppLogger.CrashContextProvider {
     }
 
     override fun log(message: String) {
-        // Intentionally disabled: no breadcrumb logging.
+        if (!isInitialized) return
+        try {
+            FirebaseCrashlytics.getInstance().log(message.take(500))
+        } catch (e: Exception) {
+            // Ignore - Crashlytics not available
+        }
     }
 
     override fun recordException(throwable: Throwable) {

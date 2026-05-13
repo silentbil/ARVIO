@@ -2,7 +2,9 @@ package com.arflix.tv.util
 
 import android.content.Context
 import com.arflix.tv.BuildConfig
+import io.sentry.Breadcrumb
 import io.sentry.Sentry
+import io.sentry.SentryLevel
 import io.sentry.android.core.SentryAndroid
 import io.sentry.protocol.User
 
@@ -73,7 +75,14 @@ object SentryCrashReporter : AppLogger.CrashContextProvider {
     }
 
     override fun log(message: String) {
-        // Intentionally disabled: avoid sending breadcrumb text that may contain user data.
+        if (!isInitialized) return
+        val breadcrumb = Breadcrumb().apply {
+            setCategory("arvio")
+            setType("diagnostic")
+            setMessage(message.take(500))
+            setLevel(SentryLevel.INFO)
+        }
+        Sentry.addBreadcrumb(breadcrumb)
     }
 
     override fun recordException(throwable: Throwable) {

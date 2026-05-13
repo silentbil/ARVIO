@@ -272,6 +272,7 @@ class AuthRepository @Inject constructor(
             return Result.failure(Exception(message))
         }
         return try {
+            AppLogger.breadcrumb("Auth", "email_sign_in_start")
             _authState.value = AuthState.Loading
 
             supabase.auth.signInWith(Email) {
@@ -293,15 +294,18 @@ class AuthRepository @Inject constructor(
 
                 _userProfile.value = profile
                 _authState.value = AuthState.Authenticated(user.id, user.email ?: normalizedEmail, profile)
+                AppLogger.breadcrumb("Auth", "email_sign_in_success")
                 Result.success(Unit)
             } else {
                 val message = safeErrorMessage(null, "Sign in failed")
                 _authState.value = AuthState.Error(message)
+                AppLogger.breadcrumb("Auth", "email_sign_in_no_session", severity = "warning")
                 Result.failure(Exception(message))
             }
         } catch (e: Exception) {
             val message = safeErrorMessage(e, "Sign in failed")
             _authState.value = AuthState.Error(message)
+            AppLogger.breadcrumb("Auth", "email_sign_in_failed ${e::class.java.simpleName}", severity = "warning")
             Result.failure(Exception(message))
         }
     }
@@ -316,13 +320,26 @@ class AuthRepository @Inject constructor(
             return Result.failure(Exception(message))
         }
         return try {
+            AppLogger.breadcrumb("Auth", "email_sign_up_start")
             _authState.value = AuthState.Loading
 
             val tokens = createCloudAccountSession(normalizedEmail, password)
-            signInWithSessionTokens(tokens.accessToken, tokens.refreshToken)
+            signInWithSessionTokens(tokens.accessToken, tokens.refreshToken).also {
+                if (it.isSuccess) {
+                    AppLogger.breadcrumb("Auth", "email_sign_up_success")
+                }
+            }
         } catch (e: Exception) {
             val message = safeErrorMessage(e, "Sign up failed")
             _authState.value = AuthState.Error(message)
+            AppLogger.recordException(
+                throwable = e,
+                context = mapOf(
+                    "error_area" to "Auth",
+                    "auth_flow" to "email_sign_up",
+                    "auth_error" to message
+                )
+            )
             Result.failure(Exception(message))
         }
     }
@@ -408,14 +425,24 @@ class AuthRepository @Inject constructor(
                     resolvedEmail ?: profile.email,
                     profile
                 )
+                AppLogger.breadcrumb("Auth", "session_import_success")
                 Result.success(Unit)
             } else {
                 _authState.value = AuthState.Error("Failed to import auth session")
+                AppLogger.breadcrumb("Auth", "session_import_missing_user", severity = "warning")
                 Result.failure(Exception("Failed to import auth session"))
             }
         } catch (e: Exception) {
             val message = safeErrorMessage(e, "Sign in failed")
             _authState.value = AuthState.Error(message)
+            AppLogger.recordException(
+                throwable = e,
+                context = mapOf(
+                    "error_area" to "Auth",
+                    "auth_flow" to "session_import",
+                    "auth_error" to message
+                )
+            )
             Result.failure(Exception(message))
         }
     }

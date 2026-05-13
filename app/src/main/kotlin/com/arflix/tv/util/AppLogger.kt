@@ -20,6 +20,7 @@ import java.security.MessageDigest
  */
 object AppLogger {
     private var crashContextProvider: CrashContextProvider? = null
+    private const val MAX_DIAGNOSTIC_LENGTH = 500
 
     /**
      * Interface for crash reporting integration.
@@ -64,15 +65,44 @@ object AppLogger {
      * Warning log - kept in release for diagnostics.
      */
     fun w(tag: String, message: String, throwable: Throwable? = null) {
-        // Intentionally no-op: app logging disabled for production.
+        breadcrumb(tag, message, severity = "warning")
+        throwable?.let {
+            recordException(
+                throwable = it,
+                context = mapOf(
+                    "error_area" to safeTag(tag),
+                    "error_severity" to "warning"
+                )
+            )
+        }
     }
 
     /**
      * Error log - kept in release, also sent to crash reporter.
      */
     fun e(tag: String, message: String, throwable: Throwable? = null) {
-        // Intentionally avoid breadcrumb logging.
-        throwable?.let { crashContextProvider?.recordException(it) }
+        breadcrumb(tag, message, severity = "error")
+        throwable?.let {
+            recordException(
+                throwable = it,
+                context = mapOf(
+                    "error_area" to safeTag(tag),
+                    "error_severity" to "error"
+                )
+            )
+        }
+    }
+
+    /**
+     * Add a privacy-safe diagnostic breadcrumb for Sentry/Crashlytics.
+     *
+     * Use this for app state transitions and recoverable failures, not for raw
+     * user input, stream URLs, account tokens, or provider response bodies.
+     */
+    fun breadcrumb(tag: String, message: String, severity: String = "info") {
+        val safeMessage = "${safeTag(tag)}[$severity]: ${sanitize(message)}"
+            .take(MAX_DIAGNOSTIC_LENGTH)
+        crashContextProvider?.log(safeMessage)
     }
 
     // ============================================
@@ -107,8 +137,13 @@ object AppLogger {
      * Record a non-fatal exception for crash reporting.
      */
     fun recordException(throwable: Throwable, context: Map<String, String> = emptyMap()) {
+        breadcrumb(
+            tag = "exception",
+            message = throwable::class.java.simpleName,
+            severity = "error"
+        )
         context.forEach { (key, value) ->
-            crashContextProvider?.setCustomKey(key, sanitize(value))
+            crashContextProvider?.setCustomKey(safeTag(key), sanitize(value))
         }
         crashContextProvider?.recordException(throwable)
     }
@@ -118,6 +153,10 @@ object AppLogger {
     // ============================================
 
     private val EMAIL_PATTERN = Regex("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}")
+    private val URL_PATTERN = Regex("\\b(?:https?|wss?|ftp|file|content)://[^\\s\"'<>]+", RegexOption.IGNORE_CASE)
+    private val MAGNET_PATTERN = Regex("\\bmagnet:\\?[^\\s\"'<>]+", RegexOption.IGNORE_CASE)
+    private val JWT_PATTERN = Regex("\\b[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\b")
+    private val IPV4_PATTERN = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
     private val TOKEN_PATTERN = Regex("(token|jwt|bearer|api[_-]?key|secret)[\"':\\s=]+([a-zA-Z0-9._-]{20,})", RegexOption.IGNORE_CASE)
     private val LONG_HEX_PATTERN = Regex("[a-fA-F0-9]{32,}")
 
@@ -126,6 +165,11 @@ object AppLogger {
      */
     private fun sanitize(message: String): String {
         var result = message
+
+        result = URL_PATTERN.replace(result, "[URL]")
+        result = MAGNET_PATTERN.replace(result, "[MAGNET]")
+        result = JWT_PATTERN.replace(result, "[TOKEN]")
+        result = IPV4_PATTERN.replace(result, "[IP]")
 
         // Mask emails: user@example.com -> u***@***.com
         result = EMAIL_PATTERN.replace(result) { match ->
@@ -153,7 +197,14 @@ object AppLogger {
             if (hex.length > 8) "${hex.take(8)}..." else hex
         }
 
-        return result
+        return result.take(MAX_DIAGNOSTIC_LENGTH)
+    }
+
+    private fun safeTag(tag: String): String {
+        return tag
+            .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            .take(40)
+            .ifBlank { "app" }
     }
 
 }
