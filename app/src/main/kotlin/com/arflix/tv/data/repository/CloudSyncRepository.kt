@@ -12,6 +12,7 @@ import com.arflix.tv.ui.components.catalogueRowLayoutPreferencePrefixFor
 import com.arflix.tv.ui.components.normalizeCardLayoutMode
 import com.arflix.tv.ui.components.profileCatalogueRowLayoutModeKey
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
@@ -49,6 +50,13 @@ class CloudSyncRepository @Inject constructor(
     private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
+
+    private fun payloadSizeBucket(payload: String): String = when {
+        payload.length < 10_000 -> "lt_10kb"
+        payload.length < 100_000 -> "lt_100kb"
+        payload.length < 1_000_000 -> "lt_1mb"
+        else -> "gte_1mb"
+    }
 
     private fun mergeAddonsForSharedRestore(addonLists: Iterable<List<Addon>>): List<Addon> {
         val merged = LinkedHashMap<String, Addon>()
@@ -455,21 +463,48 @@ class CloudSyncRepository @Inject constructor(
 
     suspend fun pushToCloud(): Result<Unit> = cloudSyncMutex.withLock {
         if (authRepository.getCurrentUserId().isNullOrBlank()) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "push_skipped_not_logged_in dirty=$isPushDirty",
+                severity = "warning"
+            )
             return@withLock Result.failure(IllegalStateException("Not logged in"))
         }
         val payload = runCatching { buildCloudSnapshotJson() }.getOrElse {
             isPushDirty = true
+            AppLogger.recordException(
+                throwable = it,
+                context = mapOf(
+                    "error_area" to "CloudSync",
+                    "cloud_flow" to "push_build_payload",
+                    "dirty" to isPushDirty.toString()
+                )
+            )
             return@withLock Result.failure(it)
         }
         val result = authRepository.saveAccountSyncPayload(payload)
         if (result.isSuccess) {
             isPushDirty = false
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "push_success size=${payloadSizeBucket(payload)}",
+                severity = "info"
+            )
             onPushCompleted?.invoke()
         } else {
             // Mark dirty so the next ON_RESUME or periodic sync retries the push.
             // Without this, a single network hiccup would permanently diverge the
             // cloud state until the user explicitly changes another setting.
             isPushDirty = true
+            AppLogger.recordException(
+                throwable = result.exceptionOrNull() ?: IllegalStateException("Cloud push failed"),
+                context = mapOf(
+                    "error_area" to "CloudSync",
+                    "cloud_flow" to "push_save_payload",
+                    "dirty" to isPushDirty.toString(),
+                    "payload_size" to payloadSizeBucket(payload)
+                )
+            )
         }
         result
     }
@@ -484,19 +519,50 @@ class CloudSyncRepository @Inject constructor(
      */
     suspend fun pullFromCloud(): RestoreResult = cloudSyncMutex.withLock {
         val payloadResult = authRepository.loadAccountSyncPayload()
-        if (payloadResult.isFailure) return@withLock RestoreResult.FAILED
+        if (payloadResult.isFailure) {
+            AppLogger.recordException(
+                throwable = payloadResult.exceptionOrNull() ?: IllegalStateException("Cloud pull failed"),
+                context = mapOf(
+                    "error_area" to "CloudSync",
+                    "cloud_flow" to "pull_load_payload"
+                )
+            )
+            return@withLock RestoreResult.FAILED
+        }
 
         val payload = payloadResult.getOrNull().orEmpty()
-        if (payload.isBlank()) return@withLock RestoreResult.NO_BACKUP
+        if (payload.isBlank()) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_no_backup",
+                severity = "info"
+            )
+            return@withLock RestoreResult.NO_BACKUP
+        }
 
         runCatching {
             invalidationBus.suppressDuringRemoteApply {
                 applyCloudPayload(payload)
             }
         }.fold(
-            onSuccess = { RestoreResult.RESTORED },
+            onSuccess = {
+                AppLogger.breadcrumb(
+                    tag = "CloudSync",
+                    message = "pull_restored size=${payloadSizeBucket(payload)}",
+                    severity = "info"
+                )
+                RestoreResult.RESTORED
+            },
             onFailure = { e ->
                 System.err.println("[CLOUD-SYNC] pullFromCloud failed: ${e.message}")
+                AppLogger.recordException(
+                    throwable = e,
+                    context = mapOf(
+                        "error_area" to "CloudSync",
+                        "cloud_flow" to "pull_apply_payload",
+                        "payload_size" to payloadSizeBucket(payload)
+                    )
+                )
                 RestoreResult.FAILED
             }
         )

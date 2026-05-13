@@ -24,6 +24,7 @@ import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchHistoryEntry
 import com.arflix.tv.data.repository.WatchHistoryRepository
+import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.weightedSubtitleScore
@@ -223,6 +224,44 @@ class PlayerViewModel @Inject constructor(
         "pt-br", "pob"
     )
 
+    private fun playbackMsBucket(ms: Long): String = when {
+        ms < 500L -> "lt_500ms"
+        ms < 1_500L -> "lt_1500ms"
+        ms < 5_000L -> "lt_5s"
+        ms < 15_000L -> "lt_15s"
+        else -> "gte_15s"
+    }
+
+    private fun streamKind(stream: StreamSource?): String {
+        val source = stream ?: return "none"
+        val addonId = source.addonId
+        val url = source.url?.trim().orEmpty()
+        return when {
+            addonId == HomeServerRepository.ADDON_ID -> "home_server"
+            addonId == "iptv_xtream_vod" -> "iptv_vod"
+            url.startsWith("magnet:", ignoreCase = true) || !source.infoHash.isNullOrBlank() -> "p2p"
+            url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true) -> "http"
+            else -> "unknown"
+        }
+    }
+
+    private fun playbackDiagnosticContext(
+        phase: String,
+        stream: StreamSource? = _uiState.value.selectedStream,
+        extra: Map<String, String> = emptyMap()
+    ): Map<String, String> = mutableMapOf(
+        "error_area" to "PlayerViewModel",
+        "playback_phase" to phase,
+        "media_type" to currentMediaType.name.lowercase(),
+        "has_season" to (currentSeason != null).toString(),
+        "has_episode" to (currentEpisode != null).toString(),
+        "source_kind" to streamKind(stream),
+        "addon_id" to (stream?.addonId?.ifBlank { "unknown" } ?: "none"),
+        "quality" to (stream?.quality?.ifBlank { "unknown" } ?: "none"),
+        "stream_count" to _uiState.value.streams.size.toString(),
+        "has_selected_url" to (!_uiState.value.selectedStreamUrl.isNullOrBlank()).toString()
+    ).apply { putAll(extra) }
+
     fun loadMedia(
         mediaType: MediaType,
         mediaId: Int,
@@ -373,6 +412,14 @@ class PlayerViewModel @Inject constructor(
                 val resolvedProvidedUrl = resolvedProvidedStream?.url ?: if (isMagnet) null else providedStreamUrl
 
                 if (resolvedProvidedUrl.isNullOrBlank()) {
+                    AppLogger.recordException(
+                        throwable = IllegalStateException("Provided playback URL could not be resolved"),
+                        context = playbackDiagnosticContext(
+                            phase = "provided_stream_unresolved",
+                            stream = providedStream,
+                            extra = mapOf("provided_was_magnet" to isMagnet.toString())
+                        )
+                    )
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         isLoadingStreams = false,
@@ -496,6 +543,10 @@ class PlayerViewModel @Inject constructor(
                     imdbId = externalIds.imdbId
                 }
                 if (imdbId.isNullOrBlank()) {
+                    AppLogger.recordException(
+                        throwable = IllegalStateException("Playback IMDB ID missing"),
+                        context = playbackDiagnosticContext("missing_imdb_id")
+                    )
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         isLoadingStreams = false,
@@ -584,6 +635,7 @@ class PlayerViewModel @Inject constructor(
                 var autoplayDeferredJob: Job? = null
                 var lastMergedStreams: List<StreamSource> = emptyList()
                 var isFirstEmission = true
+                var sourceEmptyReported = false
 
                 progressiveFlow.collect { progressive ->
                     if (progressive.isFinal) {
@@ -616,6 +668,23 @@ class PlayerViewModel @Inject constructor(
                             "No streams found for this content. The addons may not have sources for this title."
                         }
                     } else null
+                    if (errorMessage != null && !sourceEmptyReported) {
+                        sourceEmptyReported = true
+                        AppLogger.recordException(
+                            throwable = IllegalStateException("Playback source list empty"),
+                            context = playbackDiagnosticContext(
+                                phase = "source_list_empty",
+                                stream = null,
+                                extra = mapOf(
+                                    "streaming_addon_count" to streamingAddonCount.toString(),
+                                    "has_home_server_connections" to hasHomeServerConnections.toString(),
+                                    "completed_addons" to progressive.completedAddons.toString(),
+                                    "total_addons" to progressive.totalAddons.toString(),
+                                    "supplemental_loading" to supplementalSourcesStillLoading.toString()
+                                )
+                            )
+                        )
+                    }
 
                     val total = progressive.totalAddons.coerceAtLeast(1)
                     val completed = progressive.completedAddons.coerceIn(0, total)
@@ -756,6 +825,10 @@ class PlayerViewModel @Inject constructor(
                 }
 
             } catch (e: Exception) {
+                AppLogger.recordException(
+                    throwable = e,
+                    context = playbackDiagnosticContext("load_media_exception")
+                )
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isLoadingStreams = false,
@@ -1253,6 +1326,11 @@ class PlayerViewModel @Inject constructor(
                 "source=${_uiState.value.selectedStream?.source ?: currentPreferredSourceName ?: "unknown"} " +
                 "startupMs=$startupMs retries=$startupRetries failovers=$autoFailovers"
         )
+        AppLogger.breadcrumb(
+            tag = "Playback",
+            message = "started kind=${streamKind(_uiState.value.selectedStream)} addon=${addonId.ifBlank { "unknown" }} startup=${playbackMsBucket(startupMs)} retries=$startupRetries failovers=$autoFailovers",
+            severity = "info"
+        )
         viewModelScope.launch {
             _uiState.value.selectedStream?.let { stream ->
                 streamRepository.notePlaybackHostSuccess(stream)
@@ -1280,6 +1358,13 @@ class PlayerViewModel @Inject constructor(
             streamRepository.noteAddonPlaybackFailure(addonId)
         }
         streamRepository.notePlaybackHostFailure(_uiState.value.selectedStream, "exo_playback_failure")
+        AppLogger.recordException(
+            throwable = IllegalStateException("Selected stream playback failed"),
+            context = playbackDiagnosticContext(
+                phase = "selected_stream_playback_failure",
+                extra = mapOf("addon_id" to addonId.ifBlank { "unknown" })
+            )
+        )
         viewModelScope.launch {
             playbackTelemetryRepository.recordPlaybackFailure()
         }
@@ -1659,14 +1744,29 @@ class PlayerViewModel @Inject constructor(
             val selectionStartMs = System.currentTimeMillis()
             val requestedResumePosition = resumePositionMs?.coerceAtLeast(0L)
             val selectedOriginal = stream
-            val resolvedStream = runCatching {
+            val resolvedResult = runCatching {
                 streamRepository.resolveStreamForPlayback(stream)
-            }.getOrNull() ?: stream
+            }
+            resolvedResult.onFailure { error ->
+                AppLogger.recordException(
+                    throwable = error,
+                    context = playbackDiagnosticContext("manual_stream_resolve_exception", stream)
+                )
+            }
+            val resolvedStream = resolvedResult.getOrNull() ?: stream
             val resolveMs = System.currentTimeMillis() - selectionStartMs
             val url = resolvedStream.url
             if (url.isNullOrBlank()) {
                 val isP2p = !stream.infoHash.isNullOrBlank() ||
                     (stream.url?.trim()?.startsWith("magnet:", ignoreCase = true) == true)
+                AppLogger.recordException(
+                    throwable = IllegalStateException("Selected stream has no playable URL"),
+                    context = playbackDiagnosticContext(
+                        phase = "selected_stream_url_missing",
+                        stream = stream,
+                        extra = mapOf("is_p2p" to isP2p.toString())
+                    )
+                )
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isLoadingStreams = false,
@@ -1683,6 +1783,11 @@ class PlayerViewModel @Inject constructor(
             Log.i(
                 TAG,
                 "Selected stream resolvedMs=$resolveMs addon=${resolvedStream.addonId} quality=${resolvedStream.quality} size=${resolvedStream.size} cached=${resolvedStream.behaviorHints?.cached == true} host=${runCatching { java.net.URI(url).host }.getOrNull().orEmpty()}"
+            )
+            AppLogger.breadcrumb(
+                tag = "Playback",
+                message = "stream_selected kind=${streamKind(resolvedStream)} addon=${resolvedStream.addonId.ifBlank { "unknown" }} quality=${resolvedStream.quality.ifBlank { "unknown" }} resolve=${playbackMsBucket(resolveMs)} cached=${resolvedStream.behaviorHints?.cached == true}",
+                severity = "info"
             )
 
             // Start playback immediately with the resolved URL.
@@ -1839,6 +1944,13 @@ class PlayerViewModel @Inject constructor(
                 streamProgress = null,
                 streamLoadPhase = null,
                 error = message
+            )
+            AppLogger.recordException(
+                throwable = IllegalStateException("Playback error displayed"),
+                context = playbackDiagnosticContext(
+                    phase = "playback_error_displayed",
+                    extra = mapOf("playback_error_message" to message)
+                )
             )
         }
     }

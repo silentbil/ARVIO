@@ -23,6 +23,7 @@ import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.util.AnimeMapper
+import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
@@ -1141,6 +1142,26 @@ class StreamRepository @Inject constructor(
         }
     }
 
+    private fun latencyBucket(ms: Long): String = when {
+        ms < 500L -> "lt_500ms"
+        ms < 2_000L -> "lt_2s"
+        ms < 5_000L -> "lt_5s"
+        ms < 15_000L -> "lt_15s"
+        else -> "gte_15s"
+    }
+
+    private fun sourceKind(stream: StreamSource): String {
+        val addonId = stream.addonId.lowercase(Locale.US)
+        val url = stream.url?.trim().orEmpty()
+        return when {
+            addonId == HomeServerRepository.ADDON_ID -> "home_server"
+            addonId == "iptv_xtream_vod" -> "iptv_vod"
+            url.startsWith("magnet:", ignoreCase = true) || !stream.infoHash.isNullOrBlank() -> "p2p"
+            url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true) -> "http"
+            else -> "unknown"
+        }
+    }
+
     private suspend fun fetchMovieStreamsFromAddon(
         addon: Addon,
         imdbId: String,
@@ -1192,6 +1213,11 @@ class StreamRepository @Inject constructor(
                 TAG,
                 "[StreamFetch][Movie] timeout addon=${addon.name} addonId=${addon.id} elapsedMs=${System.currentTimeMillis() - startedAt}"
             )
+            AppLogger.breadcrumb(
+                tag = "Sources",
+                message = "addon_movie_timeout addon=${addon.id} latency=${latencyBucket(System.currentTimeMillis() - startedAt)}",
+                severity = "warning"
+            )
             recordAddonFetchOutcome(
                 addonId = addon.id,
                 success = false,
@@ -1202,6 +1228,11 @@ class StreamRepository @Inject constructor(
             Log.w(
                 TAG,
                 "[StreamFetch][Movie] failure addon=${addon.name} addonId=${addon.id} elapsedMs=${System.currentTimeMillis() - startedAt} error=${error.toShortLogMessage()}"
+            )
+            AppLogger.breadcrumb(
+                tag = "Sources",
+                message = "addon_movie_failed addon=${addon.id} error=${error::class.java.simpleName} latency=${latencyBucket(System.currentTimeMillis() - startedAt)}",
+                severity = "warning"
             )
             recordAddonFetchOutcome(
                 addonId = addon.id,
@@ -1310,6 +1341,11 @@ class StreamRepository @Inject constructor(
                             TAG,
                             "[StreamFetch][Episode] kitsu fallback failure addon=${addon.name} addonId=${addon.id} error=${fallbackError.toShortLogMessage()}"
                         )
+                        AppLogger.breadcrumb(
+                            tag = "Sources",
+                            message = "episode_kitsu_fallback_failed addon=${addon.id} error=${fallbackError::class.java.simpleName}",
+                            severity = "warning"
+                        )
                     }
                 }
 
@@ -1356,6 +1392,11 @@ class StreamRepository @Inject constructor(
                             TAG,
                             "[StreamFetch][Episode] airDate failure addon=${addon.name} addonId=${addon.id} error=${airDateError.toShortLogMessage()}"
                         )
+                        AppLogger.breadcrumb(
+                            tag = "Sources",
+                            message = "episode_airdate_fallback_failed addon=${addon.id} error=${airDateError::class.java.simpleName}",
+                            severity = "warning"
+                        )
                     }
                 }
 
@@ -1371,6 +1412,11 @@ class StreamRepository @Inject constructor(
                 TAG,
                 "[StreamFetch][Episode] timeout addon=${addon.name} addonId=${addon.id} elapsedMs=${System.currentTimeMillis() - startedAt}"
             )
+            AppLogger.breadcrumb(
+                tag = "Sources",
+                message = "addon_episode_timeout addon=${addon.id} latency=${latencyBucket(System.currentTimeMillis() - startedAt)}",
+                severity = "warning"
+            )
             recordAddonFetchOutcome(
                 addonId = addon.id,
                 success = false,
@@ -1381,6 +1427,11 @@ class StreamRepository @Inject constructor(
             Log.w(
                 TAG,
                 "[StreamFetch][Episode] failure addon=${addon.name} addonId=${addon.id} elapsedMs=${System.currentTimeMillis() - startedAt} error=${error.toShortLogMessage()}"
+            )
+            AppLogger.breadcrumb(
+                tag = "Sources",
+                message = "addon_episode_failed addon=${addon.id} error=${error::class.java.simpleName} latency=${latencyBucket(System.currentTimeMillis() - startedAt)}",
+                severity = "warning"
             )
             recordAddonFetchOutcome(
                 addonId = addon.id,
@@ -1484,6 +1535,11 @@ class StreamRepository @Inject constructor(
                     TAG,
                     "[StreamFetch][Movie] no enabled streaming addons imdbId=$imdbId"
                 )
+                AppLogger.breadcrumb(
+                    tag = "Sources",
+                    message = "movie_no_stream_addons",
+                    severity = "warning"
+                )
                 if (!forceRefresh) {
                     val cached = synchronized(streamResultCache) { streamResultCache[cacheKey] }
                     if (cached != null) {
@@ -1512,6 +1568,14 @@ class StreamRepository @Inject constructor(
                         fetchMovieStreamsFromAddon(addon, imdbId)
                     } catch (e: Exception) {
                         Log.e(TAG, "[StreamFetch][Movie] stremio addon ${addon.id} failed", e)
+                        AppLogger.recordException(
+                            throwable = e,
+                            context = mapOf(
+                                "error_area" to "StreamRepository",
+                                "source_phase" to "movie_addon_parallel",
+                                "addon_id" to addon.id
+                            )
+                        )
                         emptyList()
                     }
                     mutex.withLock {
@@ -1528,6 +1592,13 @@ class StreamRepository @Inject constructor(
                             val finalResult = StreamResult(filtered, emptyList())
                             synchronized(streamResultCache) {
                                 streamResultCache[cacheKey] = CachedStreamResult(finalResult, System.currentTimeMillis())
+                            }
+                            if (filtered.isEmpty()) {
+                                AppLogger.breadcrumb(
+                                    tag = "Sources",
+                                    message = "movie_sources_final_empty total_addons=$totalAddons",
+                                    severity = "warning"
+                                )
                             }
                         }
                         val progressiveResult = ProgressiveStreamResult(
@@ -1599,6 +1670,13 @@ class StreamRepository @Inject constructor(
                 )
             }.onFailure { e ->
                 System.err.println("[VOD] resolveMovieVodSources failed: ${e.message}")
+                AppLogger.recordException(
+                    throwable = e,
+                    context = mapOf(
+                        "error_area" to "StreamRepository",
+                        "source_phase" to "movie_vod_resolution"
+                    )
+                )
             }.getOrDefault(emptyList())
         }.orEmpty()
     }
@@ -1825,6 +1903,11 @@ class StreamRepository @Inject constructor(
                     TAG,
                     "[StreamFetch][Episode] no enabled streaming addons imdbId=$imdbId season=$season episode=$episode"
                 )
+                AppLogger.breadcrumb(
+                    tag = "Sources",
+                    message = "episode_no_stream_addons season_set=${season > 0} episode_set=${episode > 0}",
+                    severity = "warning"
+                )
                 if (!forceRefresh) {
                     val cached = synchronized(streamResultCache) { streamResultCache[cacheKey] }
                     if (cached != null) {
@@ -1864,6 +1947,16 @@ class StreamRepository @Inject constructor(
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "[StreamFetch][Episode] stremio addon ${addon.id} failed", e)
+                        AppLogger.recordException(
+                            throwable = e,
+                            context = mapOf(
+                                "error_area" to "StreamRepository",
+                                "source_phase" to "episode_addon_parallel",
+                                "addon_id" to addon.id,
+                                "season_set" to (season > 0).toString(),
+                                "episode_set" to (episode > 0).toString()
+                            )
+                        )
                         emptyList()
                     }
                     mutex.withLock {
@@ -1880,6 +1973,13 @@ class StreamRepository @Inject constructor(
                             val finalResult = StreamResult(filtered, emptyList())
                             synchronized(streamResultCache) {
                                 streamResultCache[cacheKey] = CachedStreamResult(finalResult, System.currentTimeMillis())
+                            }
+                            if (filtered.isEmpty()) {
+                                AppLogger.breadcrumb(
+                                    tag = "Sources",
+                                    message = "episode_sources_final_empty total_addons=$totalAddons season_set=${season > 0} episode_set=${episode > 0}",
+                                    severity = "warning"
+                                )
                             }
                         }
                         val progressiveResult = ProgressiveStreamResult(
@@ -1958,6 +2058,15 @@ class StreamRepository @Inject constructor(
                 )
             }.onFailure { e ->
                 System.err.println("[VOD] resolveEpisodeVodSources failed: ${e.message}")
+                AppLogger.recordException(
+                    throwable = e,
+                    context = mapOf(
+                        "error_area" to "StreamRepository",
+                        "source_phase" to "episode_vod_resolution",
+                        "season_set" to (season > 0).toString(),
+                        "episode_set" to (episode > 0).toString()
+                    )
+                )
             }.getOrDefault(emptyList())
         }.orEmpty()
     }
@@ -2358,8 +2467,18 @@ class StreamRepository @Inject constructor(
                 }
             }
         } catch (e: TimeoutCancellationException) {
+            AppLogger.breadcrumb(
+                tag = "Sources",
+                message = "playback_resolve_timeout kind=${sourceKind(stream)} addon=${stream.addonId.ifBlank { "unknown" }} quality=${stream.quality.ifBlank { "unknown" }}",
+                severity = "warning"
+            )
             null
         } catch (e: Exception) {
+            AppLogger.breadcrumb(
+                tag = "Sources",
+                message = "playback_resolve_exception kind=${sourceKind(stream)} addon=${stream.addonId.ifBlank { "unknown" }} error=${e::class.java.simpleName}",
+                severity = "warning"
+            )
             null
         }
     }

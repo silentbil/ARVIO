@@ -8,6 +8,7 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchlistRepository
+import com.arflix.tv.util.AppLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +43,15 @@ class WatchlistViewModel @Inject constructor(
     private val _logoUrls = MutableStateFlow<Map<String, String>>(emptyMap())
     val logoUrls: StateFlow<Map<String, String>> = _logoUrls.asStateFlow()
     private var traktSyncInFlight = false
+
+    private fun watchlistDiagnosticContext(
+        phase: String,
+        extra: Map<String, String> = emptyMap()
+    ): Map<String, String> = mutableMapOf(
+        "error_area" to "Watchlist",
+        "watchlist_phase" to phase,
+        "visible_count" to _uiState.value.items.size.toString()
+    ).apply { putAll(extra) }
 
     private fun List<MediaItem>.watchlistDisplayOrder(): List<MediaItem> {
         return sortedWith(
@@ -91,6 +101,12 @@ class WatchlistViewModel @Inject constructor(
         viewModelScope.launch {
             if (watchlistRepository.getCachedItems().isEmpty()) {
                 runCatching { cloudSyncRepository.pullFromCloud() }
+                    .onFailure { error ->
+                        AppLogger.recordException(
+                            throwable = error,
+                            context = watchlistDiagnosticContext("startup_cloud_pull")
+                        )
+                    }
             }
             val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
             if (traktConnected) {
@@ -127,6 +143,13 @@ class WatchlistViewModel @Inject constructor(
                     showLocalWatchlistOrError("Failed to load Trakt watchlist")
                 }
             } catch (e: Exception) {
+                AppLogger.recordException(
+                    throwable = e,
+                    context = watchlistDiagnosticContext(
+                        phase = "load_instant",
+                        extra = mapOf("trakt_connected" to traktConnected.toString())
+                    )
+                )
                 if (traktConnected) {
                     showLocalWatchlistOrError(e.message ?: "Failed to load Trakt watchlist")
                 } else if (_uiState.value.items.isEmpty()) {
@@ -157,6 +180,10 @@ class WatchlistViewModel @Inject constructor(
                     showLocalWatchlistOrError("Failed to load Trakt watchlist")
                 }
             } catch (e: Exception) {
+                AppLogger.recordException(
+                    throwable = e,
+                    context = watchlistDiagnosticContext("refresh")
+                )
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     toastMessage = "Failed to refresh",
@@ -194,7 +221,20 @@ class WatchlistViewModel @Inject constructor(
                     toastType = ToastType.SUCCESS
                 )
                 runCatching { cloudSyncRepository.pushToCloud() }
+                    .onFailure { error ->
+                        AppLogger.recordException(
+                            throwable = error,
+                            context = watchlistDiagnosticContext("remove_cloud_push")
+                        )
+                    }
             } catch (e: Exception) {
+                AppLogger.recordException(
+                    throwable = e,
+                    context = watchlistDiagnosticContext(
+                        phase = "remove",
+                        extra = mapOf("media_type" to item.mediaType.name.lowercase())
+                    )
+                )
                 _uiState.value = _uiState.value.copy(
                     toastMessage = "Failed to remove from watchlist",
                     toastType = ToastType.ERROR
@@ -213,10 +253,20 @@ class WatchlistViewModel @Inject constructor(
         return try {
             val (hasTraktAuth, syncResult) = traktRepository.getWatchlistSyncResultWithAuthState()
             if (!hasTraktAuth) {
+                AppLogger.breadcrumb(
+                    tag = "Watchlist",
+                    message = "trakt_sync_no_auth",
+                    severity = "info"
+                )
                 false
             } else {
                 val traktItems = syncResult?.items.orEmpty()
                 val rawCount = syncResult?.rawCount ?: 0
+                AppLogger.breadcrumb(
+                    tag = "Watchlist",
+                    message = "trakt_sync_result raw=$rawCount hydrated=${traktItems.size}",
+                    severity = "info"
+                )
                 if (traktItems.isNotEmpty()) {
                     watchlistRepository.clearWatchlistCache()
                     val orderedTraktItems = traktItems.watchlistDisplayOrder()
@@ -226,6 +276,18 @@ class WatchlistViewModel @Inject constructor(
                     watchlistRepository.syncFromTraktOrder(orderedTraktItems)
                     _uiState.value = WatchlistUiState(isLoading = false, items = orderedTraktItems)
                     runCatching { cloudSyncRepository.pushToCloud() }
+                        .onFailure { error ->
+                            AppLogger.recordException(
+                                throwable = error,
+                                context = watchlistDiagnosticContext(
+                                    phase = "trakt_sync_cloud_push",
+                                    extra = mapOf(
+                                        "raw_count" to rawCount.toString(),
+                                        "hydrated_count" to orderedTraktItems.size.toString()
+                                    )
+                                )
+                            )
+                        }
                 } else if (rawCount == 0) {
                     val cachedItems = (watchlistRepository.getCachedItems().ifEmpty {
                         watchlistRepository.getWatchlistItems()
@@ -237,13 +299,27 @@ class WatchlistViewModel @Inject constructor(
                         _uiState.value = WatchlistUiState(isLoading = false, items = emptyList())
                     }
                 } else {
+                    AppLogger.recordException(
+                        throwable = IllegalStateException("Trakt watchlist hydrated zero items"),
+                        context = watchlistDiagnosticContext(
+                            phase = "trakt_hydration_empty",
+                            extra = mapOf(
+                                "raw_count" to rawCount.toString(),
+                                "cached_count" to watchlistRepository.getCachedItems().size.toString()
+                            )
+                        )
+                    )
                     val cachedItems = watchlistRepository.getWatchlistItems().watchlistDisplayOrder()
                     _uiState.value = WatchlistUiState(isLoading = false, items = cachedItems)
                     fetchLogos(cachedItems)
                 }
                 true
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            AppLogger.recordException(
+                throwable = error,
+                context = watchlistDiagnosticContext("trakt_sync")
+            )
             false
         } finally {
             traktSyncInFlight = false

@@ -33,6 +33,7 @@ import com.arflix.tv.data.repository.CloudSyncStatus
 import com.arflix.tv.data.repository.CollectionTemplateManifest
 import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
+import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
@@ -1487,8 +1488,17 @@ class HomeViewModel @Inject constructor(
         // Don't restart if already running
         if (cwFetchJob?.isActive == true) return
         cwFetchJob = viewModelScope.launch(Dispatchers.IO) {
-            val cached = runCatching { preloadStartupContinueWatchingItems() }
-                .getOrDefault(emptyList())
+            val cachedResult = runCatching { preloadStartupContinueWatchingItems() }
+            cachedResult.onFailure { error ->
+                AppLogger.recordException(
+                    throwable = error,
+                    context = mapOf(
+                        "error_area" to "ContinueWatching",
+                        "cw_phase" to "preload_startup"
+                    )
+                )
+            }
+            val cached = cachedResult.getOrDefault(emptyList())
             if (cached.isNotEmpty()) {
                 publishContinueWatching(cached)
             }
@@ -1497,8 +1507,17 @@ class HomeViewModel @Inject constructor(
             // immediately. Avoids the 30–60s cold-refresh wait that used to
             // leave the CW row empty for minutes (especially when the Trakt
             // progress endpoint throttles with HTTP 429).
-            val instant = runCatching { resolveContinueWatchingItemsStable(forceFresh = false) }
-                .getOrDefault(emptyList())
+            val instantResult = runCatching { resolveContinueWatchingItemsStable(forceFresh = false) }
+            instantResult.onFailure { error ->
+                AppLogger.recordException(
+                    throwable = error,
+                    context = mapOf(
+                        "error_area" to "ContinueWatching",
+                        "cw_phase" to "instant"
+                    )
+                )
+            }
+            val instant = instantResult.getOrDefault(emptyList())
             if (instant.isNotEmpty()) {
                 publishContinueWatching(instant)
             }
@@ -1506,10 +1525,27 @@ class HomeViewModel @Inject constructor(
             // SLOW PATH — do a freshness refresh in the background. If it
             // returns something different, republish. Swallows transient
             // Trakt 429s so the visible row doesn't blink back to empty.
-            val fresh = runCatching { resolveContinueWatchingItemsStable(forceFresh = true) }
-                .getOrDefault(emptyList())
+            val freshResult = runCatching { resolveContinueWatchingItemsStable(forceFresh = true) }
+            freshResult.onFailure { error ->
+                AppLogger.recordException(
+                    throwable = error,
+                    context = mapOf(
+                        "error_area" to "ContinueWatching",
+                        "cw_phase" to "fresh"
+                    )
+                )
+            }
+            val fresh = freshResult.getOrDefault(emptyList())
             if (fresh.isNotEmpty() && fresh != instant) {
                 publishContinueWatching(fresh)
+            }
+            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+            if (traktConnected && cached.isEmpty() && instant.isEmpty() && fresh.isEmpty()) {
+                AppLogger.breadcrumb(
+                    tag = "ContinueWatching",
+                    message = "trakt_connected_empty_all_paths",
+                    severity = "warning"
+                )
             }
         }
     }
@@ -2790,10 +2826,35 @@ class HomeViewModel @Inject constructor(
         val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
         val items = if (isTraktAuthenticated) {
             val traktItems = if (forceFresh) {
-                runCatching { traktRepository.getContinueWatching(forceRefresh = true) }.getOrDefault(emptyList())
+                runCatching { traktRepository.getContinueWatching(forceRefresh = true) }
+                    .onFailure { error ->
+                        AppLogger.recordException(
+                            throwable = error,
+                            context = mapOf(
+                                "error_area" to "ContinueWatching",
+                                "cw_phase" to "trakt_fresh",
+                                "force_fresh" to forceFresh.toString()
+                            )
+                        )
+                    }
+                    .getOrDefault(emptyList())
             } else {
                 val cached = traktRepository.getCachedContinueWatching()
-                if (cached.isNotEmpty()) cached else runCatching { traktRepository.getContinueWatching() }.getOrDefault(emptyList())
+                if (cached.isNotEmpty()) {
+                    cached
+                } else {
+                    runCatching { traktRepository.getContinueWatching() }
+                        .onFailure { error ->
+                            AppLogger.recordException(
+                                throwable = error,
+                                context = mapOf(
+                                    "error_area" to "ContinueWatching",
+                                    "cw_phase" to "trakt_cached_miss"
+                                )
+                            )
+                        }
+                        .getOrDefault(emptyList())
+                }
             }
             val localItems = runCatching { traktRepository.getLocalContinueWatching() }.getOrDefault(emptyList())
             val historyItems = loadContinueWatchingFromHistoryStable()
@@ -2833,7 +2894,17 @@ class HomeViewModel @Inject constructor(
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
         val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
         val items = if (isTraktAuthenticated) {
-            runCatching { traktRepository.preloadContinueWatchingCache() }.getOrDefault(emptyList())
+            runCatching { traktRepository.preloadContinueWatchingCache() }
+                .onFailure { error ->
+                    AppLogger.recordException(
+                        throwable = error,
+                        context = mapOf(
+                            "error_area" to "ContinueWatching",
+                            "cw_phase" to "preload_trakt_cache"
+                        )
+                    )
+                }
+                .getOrDefault(emptyList())
         } else {
             val historyItems = loadContinueWatchingFromHistoryStable()
             if (historyItems.isNotEmpty()) {
@@ -3487,11 +3558,30 @@ class HomeViewModel @Inject constructor(
                     watchlistRepository.addToWatchlist(item.mediaType, item.id, item)
                 }
                 runCatching { cloudSyncRepository.pushToCloud() }
+                    .onFailure { error ->
+                        AppLogger.recordException(
+                            throwable = error,
+                            context = mapOf(
+                                "error_area" to "Watchlist",
+                                "watchlist_phase" to "home_toggle_cloud_push",
+                                "media_type" to item.mediaType.name.lowercase(),
+                                "trakt_connected" to traktConnected.toString()
+                            )
+                        )
+                    }
                 _uiState.value = _uiState.value.copy(
                     toastMessage = if (isInWatchlist) "Removed from watchlist" else "Added to watchlist",
                     toastType = ToastType.SUCCESS
                 )
             } catch (e: Exception) {
+                AppLogger.recordException(
+                    throwable = e,
+                    context = mapOf(
+                        "error_area" to "Watchlist",
+                        "watchlist_phase" to "home_toggle",
+                        "media_type" to item.mediaType.name.lowercase()
+                    )
+                )
                 _uiState.value = _uiState.value.copy(
                     toastMessage = "Failed to update watchlist",
                     toastType = ToastType.ERROR

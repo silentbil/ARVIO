@@ -1224,6 +1224,11 @@ class TraktRepository @Inject constructor(
         if (auth == null) {
             if (hasStoredTraktTokenForCurrentProfile()) {
                 val cached = loadContinueWatchingCache()
+                AppLogger.breadcrumb(
+                    tag = "Trakt",
+                    message = "cw_auth_missing_using_cache count=${cached.size}",
+                    severity = "warning"
+                )
                 cachedContinueWatching = cached
                 cachedContinueWatchingProfileId = requestProfileId
                 return@coroutineScope cached
@@ -1300,6 +1305,11 @@ class TraktRepository @Inject constructor(
                     }
                 } catch (e: Exception) {
                     System.err.println("TraktRepo:getCW: getHiddenShows failed: ${e.message}")
+                    AppLogger.breadcrumb(
+                        tag = "Trakt",
+                        message = "cw_hidden_shows_failed error=${e::class.java.simpleName}",
+                        severity = "warning"
+                    )
                     emptyList()
                 }
             }
@@ -1310,6 +1320,11 @@ class TraktRepository @Inject constructor(
                     }
                 } catch (e: Exception) {
                     System.err.println("TraktRepo:getCW: getHiddenResetShows failed: ${e.message}")
+                    AppLogger.breadcrumb(
+                        tag = "Trakt",
+                        message = "cw_hidden_reset_failed error=${e::class.java.simpleName}",
+                        severity = "warning"
+                    )
                     emptyList()
                 }
             }
@@ -1398,6 +1413,13 @@ class TraktRepository @Inject constructor(
                 }
             } catch (e: Exception) {
                 System.err.println("TraktRepo:getCW: playback progress failed: ${e.message}")
+                AppLogger.recordException(
+                    throwable = e,
+                    context = mapOf(
+                        "error_area" to "Trakt",
+                        "trakt_phase" to "cw_playback_progress"
+                    )
+                )
             }
 
             try {
@@ -1440,6 +1462,11 @@ class TraktRepository @Inject constructor(
                                 }
                             } catch (e: Exception) {
                                 System.err.println("TraktRepo:getCW: show progress failed for ${show.title}: ${e.message}")
+                                AppLogger.breadcrumb(
+                                    tag = "Trakt",
+                                    message = "cw_show_progress_failed error=${e::class.java.simpleName}",
+                                    severity = "warning"
+                                )
                                 return@withPermit null
                             }
 
@@ -1488,6 +1515,13 @@ class TraktRepository @Inject constructor(
                 watchedProgressFetched = true
             } catch (e: Exception) {
                 System.err.println("TraktRepo:getCW: watched progress failed: ${e.message}")
+                AppLogger.recordException(
+                    throwable = e,
+                    context = mapOf(
+                        "error_area" to "Trakt",
+                        "trakt_phase" to "cw_watched_progress"
+                    )
+                )
             }
 
             // Filter out dismissed items
@@ -1524,6 +1558,11 @@ class TraktRepository @Inject constructor(
             }
 
             val topCandidates = filteredCandidates.sortedByDescending { it.lastActivityAt }.take(Constants.MAX_CONTINUE_WATCHING)
+            AppLogger.breadcrumb(
+                tag = "Trakt",
+                message = "cw_candidates playback=$playbackFetched watched=$watchedProgressFetched candidates=${candidates.size} filtered=${filteredCandidates.size} top=${topCandidates.size}",
+                severity = if (topCandidates.isEmpty() && (playbackFetched || watchedProgressFetched)) "warning" else "info"
+            )
             if (topCandidates.isEmpty() && playbackFetched && watchedProgressFetched) {
                 cachedContinueWatching = emptyList()
                 cachedContinueWatchingProfileId = requestProfileId
@@ -1537,6 +1576,14 @@ class TraktRepository @Inject constructor(
             // Ensure we never lose items due to TMDB validation failures - prioritize local status
             // If hydration returned empty despite having candidates, fall back to local data
             if (hydratedItems.isEmpty() && topCandidates.isNotEmpty()) {
+                AppLogger.recordException(
+                    throwable = IllegalStateException("Trakt continue watching hydration returned zero items"),
+                    context = mapOf(
+                        "error_area" to "Trakt",
+                        "trakt_phase" to "cw_hydration_empty",
+                        "candidate_count" to topCandidates.size.toString()
+                    )
+                )
                 // Map candidates back to items without TMDB enrichment
                 // Filter out items with null season/episode (already validated at candidate creation)
                 val fallbackItems = topCandidates.map { it.item }
@@ -2364,9 +2411,21 @@ class TraktRepository @Inject constructor(
     }
 
     suspend fun getWatchlistSyncResultWithAuthState(): Pair<Boolean, WatchlistSyncResult?> {
-        val auth = getAuthHeader() ?: return false to null
+        val auth = getAuthHeader() ?: run {
+            AppLogger.breadcrumb(
+                tag = "Trakt",
+                message = "watchlist_no_auth",
+                severity = "warning"
+            )
+            return false to null
+        }
         val watchlist = fetchAllWatchlistItems(auth)
         val items = hydrateWatchlistItems(watchlist)
+        AppLogger.breadcrumb(
+            tag = "Trakt",
+            message = "watchlist_hydrated raw=${watchlist.size} hydrated=${items.size}",
+            severity = if (watchlist.isNotEmpty() && items.isEmpty()) "warning" else "info"
+        )
         return true to WatchlistSyncResult(items = items, rawCount = watchlist.size)
     }
 
@@ -2432,7 +2491,12 @@ class TraktRepository @Inject constructor(
                     limit = limit,
                     sort = "added"
                 )
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                AppLogger.breadcrumb(
+                    tag = "Trakt",
+                    message = "watchlist_page_type_failed type=$type page=$page error=${error::class.java.simpleName}",
+                    severity = "warning"
+                )
                 return WatchlistFetchResult(all, complete = false)
             }
 
@@ -2474,7 +2538,12 @@ class TraktRepository @Inject constructor(
                     limit = limit,
                     sort = null
                 )
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                AppLogger.breadcrumb(
+                    tag = "Trakt",
+                    message = "watchlist_page_fallback_failed page=$page error=${error::class.java.simpleName}",
+                    severity = "warning"
+                )
                 return WatchlistFetchResult(all, complete = false)
             }
 

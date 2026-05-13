@@ -8,6 +8,7 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvTvSessionState
+import com.arflix.tv.util.AppLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,6 +84,14 @@ class TvViewModel @Inject constructor(
      */
     @Volatile var cachedEnrichedChannels: Any? = null
     @Volatile var cachedChannelsSignature: String? = null
+
+    private fun countBucket(count: Int): String = when {
+        count < 100 -> "lt_100"
+        count < 1_000 -> "lt_1k"
+        count < 10_000 -> "lt_10k"
+        count < 50_000 -> "lt_50k"
+        else -> "gte_50k"
+    }
 
     init {
         observeConfigAndFavorites()
@@ -301,6 +310,16 @@ class TvViewModel @Inject constructor(
                     pendingForcedReload = true
                 }
             }.onFailure { error ->
+                AppLogger.recordException(
+                    throwable = error,
+                    context = mapOf(
+                        "error_area" to "IPTV",
+                        "iptv_phase" to "load_snapshot",
+                        "force_playlist_reload" to force.toString(),
+                        "force_epg_reload" to forceEpg.toString(),
+                        "had_existing_channels" to hasExistingChannels.toString()
+                    )
+                )
                 val fallback = runCatching {
                     iptvRepository.getMemoryCachedSnapshot() ?: iptvRepository.getCachedSnapshotOrNull()
                 }.getOrNull()
@@ -502,7 +521,7 @@ class TvViewModel @Inject constructor(
 
         completeEpgBackfillJob = viewModelScope.launch(Dispatchers.IO) {
             delay(if (channels.size > 10_000) 5_000L else 2_000L)
-            val snapshot = runCatching {
+            val backfillResult = runCatching {
                 kotlinx.coroutines.withTimeoutOrNull(900_000L) {
                     iptvRepository.loadSnapshot(
                         forcePlaylistReload = false,
@@ -514,9 +533,45 @@ class TvViewModel @Inject constructor(
                         }
                     )
                 }
-            }.getOrNull() ?: return@launch
+            }
+            backfillResult.onFailure { error ->
+                AppLogger.recordException(
+                    throwable = error,
+                    context = mapOf(
+                        "error_area" to "IPTV",
+                        "iptv_phase" to "complete_epg_backfill",
+                        "channel_count" to countBucket(channels.size),
+                        "start_coverage_pct" to ((coverage * 100).toInt()).toString()
+                    )
+                )
+            }
+            val snapshot = backfillResult.getOrNull()
+            if (snapshot == null) {
+                AppLogger.recordException(
+                    throwable = IllegalStateException("Complete EPG backfill timed out"),
+                    context = mapOf(
+                        "error_area" to "IPTV",
+                        "iptv_phase" to "complete_epg_backfill_timeout",
+                        "channel_count" to countBucket(channels.size),
+                        "start_coverage_pct" to ((coverage * 100).toInt()).toString()
+                    )
+                )
+                return@launch
+            }
 
-            if (snapshot.channels.isEmpty() || snapshot.nowNext.isEmpty()) return@launch
+            if (snapshot.channels.isEmpty() || snapshot.nowNext.isEmpty()) {
+                AppLogger.recordException(
+                    throwable = IllegalStateException("Complete EPG backfill returned empty guide"),
+                    context = mapOf(
+                        "error_area" to "IPTV",
+                        "iptv_phase" to "complete_epg_backfill_empty",
+                        "channel_count" to countBucket(channels.size),
+                        "snapshot_channels" to snapshot.channels.size.toString(),
+                        "snapshot_now_next" to snapshot.nowNext.size.toString()
+                    )
+                )
+                return@launch
+            }
             withContext(Dispatchers.Main.immediate) {
                 val current = _uiState.value
                 if (current.config.syncSignature() != state.config.syncSignature()) return@withContext
@@ -527,7 +582,15 @@ class TvViewModel @Inject constructor(
                     groupOrder = current.snapshot.groupOrder,
                 )
                 setUiState(current.copy(snapshot = mergedSnapshot))
-                System.err.println("[EPG-Complete] merged full guide coverage=${(epgCoverageRatio(mergedSnapshot) * 100).toInt()}%")
+                val finalCoveragePct = (epgCoverageRatio(mergedSnapshot) * 100).toInt()
+                System.err.println("[EPG-Complete] merged full guide coverage=$finalCoveragePct%")
+                if (finalCoveragePct < 80) {
+                    AppLogger.breadcrumb(
+                        tag = "IPTV",
+                        message = "complete_epg_low_coverage channel_count=${countBucket(channels.size)} coverage=$finalCoveragePct",
+                        severity = "warning"
+                    )
+                }
             }
         }.also { job ->
             job.invokeOnCompletion {

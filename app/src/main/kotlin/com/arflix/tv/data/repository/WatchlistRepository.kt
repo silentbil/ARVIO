@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.traktDataStore
 import com.google.gson.Gson
@@ -102,7 +103,15 @@ class WatchlistRepository @Inject constructor(
                 }
                 cacheLoaded = true
             }
-        } catch (_: Exception) {}
+        } catch (error: Exception) {
+            AppLogger.recordException(
+                throwable = error,
+                context = mapOf(
+                    "error_area" to "WatchlistRepository",
+                    "watchlist_phase" to "load_key_cache"
+                )
+            )
+        }
     }
 
     /**
@@ -310,7 +319,14 @@ class WatchlistRepository @Inject constructor(
                 LocalWatchlistItem::class.java
             ).type
             gson.fromJson<List<LocalWatchlistItem>>(json, type) ?: emptyList()
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            AppLogger.recordException(
+                throwable = error,
+                context = mapOf(
+                    "error_area" to "WatchlistRepository",
+                    "watchlist_phase" to "export_profile"
+                )
+            )
             emptyList()
         }
     }
@@ -340,7 +356,14 @@ class WatchlistRepository @Inject constructor(
             ).type
             (gson.fromJson<List<LocalWatchlistItem>>(json, type) ?: emptyList())
                 .sortedWith(compareBy<LocalWatchlistItem> { it.sourceOrder }.thenByDescending { it.addedAt })
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            AppLogger.recordException(
+                throwable = error,
+                context = mapOf(
+                    "error_area" to "WatchlistRepository",
+                    "watchlist_phase" to "load_raw"
+                )
+            )
             emptyList()
         }
     }
@@ -367,7 +390,12 @@ class WatchlistRepository @Inject constructor(
             } else {
                 enrichMovie(item.tmdbId, apiKey, item.addedAt, item.sourceOrder)
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            AppLogger.breadcrumb(
+                tag = "Watchlist",
+                message = "enrich_failed media_type=${item.mediaType} error=${error::class.java.simpleName}",
+                severity = "warning"
+            )
             // Fallback to basic item from stored data
             MediaItem(
                 id = item.tmdbId,
