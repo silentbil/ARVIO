@@ -16,6 +16,19 @@ val LocalArvioSkinTokens = staticCompositionLocalOf { ArvioSkinTokens.defaults()
 val LocalFocusBorderColorOverride = staticCompositionLocalOf<Color?> { null }
 
 /**
+ * Resolves the effective focus border colour for a component that draws its
+ * own focus border (for example, settings rows and glow chips) instead of
+ * using the [arvioFocusable] modifier. Returns the user's chosen override
+ * when set, otherwise the provided fallback color.
+ *
+ * Call this inside a `@Composable` lambda to read the CompositionLocal.
+ */
+@Composable
+fun resolveFocusBorderColor(fallback: Color): Color {
+    return LocalFocusBorderColorOverride.current ?: fallback
+}
+
+/**
  * Maps a user-facing colour name to its [Color] value.
  * Used by the focus border colour setting and the colour picker.
  */

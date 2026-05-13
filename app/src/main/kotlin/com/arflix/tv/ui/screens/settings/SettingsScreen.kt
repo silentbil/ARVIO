@@ -156,6 +156,7 @@ import com.arflix.tv.ui.components.toggleCatalogueRowLayoutMode
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
+import com.arflix.tv.ui.skin.resolveFocusBorderColor
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.BackgroundElevated
@@ -2012,6 +2013,7 @@ private fun SettingsChip(
     isFocused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val chipFocusColor = resolveFocusBorderColor(fallback = Color.White)
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
@@ -2024,7 +2026,7 @@ private fun SettingsChip(
             )
             .border(
                 width = if (isFocused) 1.dp else 0.dp,
-                color = if (isFocused) Color.White else Color.Transparent,
+                color = if (isFocused) chipFocusColor else Color.Transparent,
                 shape = RoundedCornerShape(10.dp)
             )
             .clickable(enabled = enabled) { onClick() }
@@ -5024,6 +5026,7 @@ private fun SettingsRow(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val focusRingColor = resolveFocusBorderColor(fallback = Pink)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -5038,7 +5041,7 @@ private fun SettingsRow(
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) Pink else Color.Transparent,
+                color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
             .padding(20.dp),
@@ -5094,6 +5097,7 @@ private fun SettingsToggleRow(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val focusRingColor = resolveFocusBorderColor(fallback = Pink)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -5108,7 +5112,7 @@ private fun SettingsToggleRow(
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) Pink else Color.Transparent,
+                color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
             .padding(20.dp),
@@ -5463,13 +5467,14 @@ private fun CatalogDiscoveryInputButton(
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val inputFocusColor = resolveFocusBorderColor(fallback = Color.White)
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(if (isFocused) Color.White else Color.Black.copy(alpha = 0.36f))
             .border(
                 width = if (isFocused) 2.dp else 1.dp,
-                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.55f),
+                color = if (isFocused) inputFocusColor else Color.White.copy(alpha = 0.55f),
                 shape = RoundedCornerShape(12.dp)
             )
             .onFocusChanged { isFocused = it.isFocused }
@@ -5594,6 +5599,7 @@ private fun CatalogDiscoveryResultRow(
     compact: Boolean = false
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val compactFocusColor = resolveFocusBorderColor(fallback = Color.White)
     val creator = result.creatorName ?: result.creatorHandle
     val creatorMeta = creator?.let { "by $it" }
     val itemCountMeta = result.itemCount?.let { "$it items" }
@@ -5613,7 +5619,7 @@ private fun CatalogDiscoveryResultRow(
                 )
                 .border(
                     width = if (isFocused) 3.dp else 1.dp,
-                    color = if (isFocused) Color.White else Color.White.copy(alpha = 0.08f),
+                    color = if (isFocused) compactFocusColor else Color.White.copy(alpha = 0.08f),
                     shape = RoundedCornerShape(14.dp)
                 )
                 .padding(12.dp)
@@ -5713,6 +5719,7 @@ private fun CatalogDiscoveryResultRow(
         return
     }
 
+    val resultFocusColor = resolveFocusBorderColor(fallback = Color.White)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -5725,7 +5732,7 @@ private fun CatalogDiscoveryResultRow(
             )
             .border(
                 width = if (isFocused) 3.dp else 1.dp,
-                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.08f),
+                color = if (isFocused) resultFocusColor else Color.White.copy(alpha = 0.08f),
                 shape = RoundedCornerShape(14.dp)
             )
             .padding(16.dp),
@@ -6430,6 +6437,7 @@ private fun AddonRow(
     val isToggleFocused = isFocused && focusedAction == 0
     val isDeleteFocused = canDelete && isFocused && focusedAction == 1
     val isEnabled = addon.isEnabled
+    val focusRingColor = resolveFocusBorderColor(fallback = Pink)
 
     Row(
         modifier = modifier
@@ -6441,7 +6449,7 @@ private fun AddonRow(
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) Pink else Color.Transparent,
+                color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
             .padding(16.dp),
@@ -6697,6 +6705,7 @@ private fun AccountActionRow(
     isEnabled: Boolean,
     isFocused: Boolean
 ) {
+    val focusRingColor = resolveFocusBorderColor(fallback = Pink)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -6706,7 +6715,7 @@ private fun AccountActionRow(
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) Pink else Color.Transparent,
+                color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
             .padding(20.dp),
@@ -6765,6 +6774,7 @@ private fun SettingsActionRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val focusRingColor = resolveFocusBorderColor(fallback = Pink)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -6775,7 +6785,7 @@ private fun SettingsActionRow(
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) Pink else Color.Transparent,
+                color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
             .padding(20.dp),
@@ -6840,6 +6850,7 @@ private fun AccountRow(
     secondaryActionLabel: String? = null,
     expirationText: String? = null
 ) {
+    val focusRingColor = resolveFocusBorderColor(fallback = Pink)
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -6852,7 +6863,7 @@ private fun AccountRow(
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) Pink else Color.Transparent,
+                color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
             .padding(20.dp)
@@ -7145,7 +7156,7 @@ private fun InputModalLegacy(
                             .focusRequester(fieldFocusRequesters[index])
                             .border(
                                 width = if (isFocused) 2.dp else 1.dp,
-                                color = if (isFocused) Pink else Color.White.copy(alpha = 0.2f),
+                                color = if (isFocused) resolveFocusBorderColor(fallback = Pink) else Color.White.copy(alpha = 0.2f),
                                 shape = RoundedCornerShape(8.dp)
                             )
                     )
@@ -7160,6 +7171,7 @@ private fun InputModalLegacy(
 
             // Paste button
             val isPasteFocused = focusedIndex == fields.size
+            val pasteFocusRingColor = resolveFocusBorderColor(fallback = Pink)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -7169,7 +7181,7 @@ private fun InputModalLegacy(
                     )
                     .border(
                         width = if (isPasteFocused) 2.dp else 0.dp,
-                        color = if (isPasteFocused) Pink else Color.Transparent,
+                        color = if (isPasteFocused) pasteFocusRingColor else Color.Transparent,
                         shape = RoundedCornerShape(8.dp)
                     )
                     .padding(vertical = 12.dp, horizontal = 16.dp),
@@ -7505,13 +7517,14 @@ private fun InputModal(
                                 )
                             }
 
+                            val regexFieldFocusColor = resolveFocusBorderColor(fallback = Pink)
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(Color.White.copy(alpha = if (isFocused) 0.12f else 0.05f), RoundedCornerShape(10.dp))
                                     .border(
                                         width = if (isFocused) 2.dp else 1.dp,
-                                        color = if (isFocused) Pink else Color.White.copy(alpha = 0.2f),
+                                        color = if (isFocused) regexFieldFocusColor else Color.White.copy(alpha = 0.2f),
                                         shape = RoundedCornerShape(10.dp)
                                     )
                                     .padding(2.dp)
@@ -7828,6 +7841,7 @@ private fun SubtitlePickerModal(
                     itemsIndexed(options) { index, option ->
                         val isFocused = index == safeIndex
                         val isSelected = option.equals(selected, ignoreCase = true)
+                        val optionFocusColor = resolveFocusBorderColor(fallback = Pink)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -7838,7 +7852,7 @@ private fun SubtitlePickerModal(
                                 )
                                 .border(
                                     width = if (isFocused) 2.dp else 1.dp,
-                                    color = if (isFocused) Pink else Color.White.copy(alpha = 0.1f),
+                                    color = if (isFocused) optionFocusColor else Color.White.copy(alpha = 0.1f),
                                     shape = RoundedCornerShape(10.dp)
                                 )
                                 .clickable { onSelect(option) }
