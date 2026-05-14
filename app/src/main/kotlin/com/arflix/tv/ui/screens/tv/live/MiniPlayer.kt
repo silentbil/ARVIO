@@ -46,6 +46,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.util.formatGenreName
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -264,7 +265,7 @@ private fun ChannelIdentityRow(channel: EnrichedChannel?) {
                         style = LiveType.SectionTag.copy(color = LiveColors.FgMute),
                     )
                     Text(
-                        text = channel.genre.name.uppercase(),
+                        text = formatGenreName(channel.genre.name),
                         style = LiveType.SectionTag.copy(color = LiveColors.FgMute),
                     )
                 }

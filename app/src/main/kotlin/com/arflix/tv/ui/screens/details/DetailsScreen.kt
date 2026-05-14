@@ -166,6 +166,7 @@ import com.arflix.tv.ui.theme.Purple
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.formatGenreName
 import com.arflix.tv.util.isInCinema
 import com.arflix.tv.util.parseRatingValue
 import java.text.SimpleDateFormat
@@ -1177,7 +1178,7 @@ private fun DetailsContent(
             }
         }
 
-        val genreText = genres.take(2).joinToString(" / ").ifBlank {
+        val genreText = genres.take(2).map(::formatGenreName).joinToString(" / ").ifBlank {
             if (item.mediaType == MediaType.TV) "TV Series" else "Movie"
         }
         val displayDate = item.year.takeIf { it.isNotBlank() }
@@ -1805,7 +1806,7 @@ private fun DetailsContent(
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                val genreText = genres.take(2).joinToString(" / ").ifEmpty {
+                val genreText = genres.take(2).map(::formatGenreName).joinToString(" / ").ifEmpty {
                     if (item.mediaType == MediaType.TV) "TV Series" else "Movie"
                 }
                 val isCompactHeight = configuration.screenHeightDp < 720
@@ -3959,7 +3960,7 @@ private fun GenreBadge(genre: String) {
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
-            text = genre.uppercase(),
+            text = formatGenreName(genre),
             style = ArflixTypography.label,
             color = Pink
         )

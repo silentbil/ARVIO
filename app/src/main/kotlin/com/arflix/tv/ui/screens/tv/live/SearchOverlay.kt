@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import com.arflix.tv.util.formatGenreName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -283,7 +284,7 @@ private fun SearchResultRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = channel.genre.name.uppercase(),
+                text = formatGenreName(channel.genre.name),
                 style = LiveType.SectionTag.copy(color = LiveColors.FgMute),
             )
         }
