@@ -1237,14 +1237,31 @@ class IptvRepository @Inject constructor(
             val upcoming = java.util.ArrayList<IptvProgram>(epgUpcomingProgramLimit)
             val recent = java.util.ArrayList<IptvProgram>()
 
-            for (i in 0 until allPrograms.size) {
-                val p = allPrograms[i]
-                when {
-                    p.endUtcMillis <= nowMs && p.endUtcMillis > recentCutoff -> recent.add(p)
-                    p.isLive(nowMs) -> now = p
-                    p.startUtcMillis > nowMs && next == null -> next = p
-                    p.startUtcMillis > nowMs && later == null -> later = p
-                    p.startUtcMillis > nowMs && upcoming.size < epgUpcomingProgramLimit -> upcoming.add(p)
+            if (allPrograms.isNotEmpty()) {
+                var startIndex = allPrograms.binarySearch { it.startUtcMillis.compareTo(recentCutoff) }
+                if (startIndex < 0) {
+                    startIndex = -(startIndex + 1)
+                }
+
+                // Walk backward to include programs starting before recentCutoff but ending after
+                while (startIndex > 0 && allPrograms[startIndex - 1].endUtcMillis > recentCutoff) {
+                    startIndex--
+                }
+
+                for (i in startIndex until allPrograms.size) {
+                    val p = allPrograms[i]
+                    when {
+                        p.endUtcMillis <= nowMs && p.endUtcMillis > recentCutoff -> recent.add(p)
+                        p.isLive(nowMs) -> now = p
+                        p.startUtcMillis > nowMs && next == null -> next = p
+                        p.startUtcMillis > nowMs && later == null -> later = p
+                        p.startUtcMillis > nowMs -> {
+                            upcoming.add(p)
+                            if (upcoming.size >= epgUpcomingProgramLimit) {
+                                break // We have enough upcoming programs
+                            }
+                        }
+                    }
                 }
             }
 
@@ -4154,13 +4171,31 @@ class IptvRepository @Inject constructor(
             val upcoming = mutableListOf<IptvProgram>()
             val recent = mutableListOf<IptvProgram>()
 
-            for (p in sorted) {
-                when {
-                    p.endUtcMillis <= nowMs && p.endUtcMillis > recentCutoff -> recent.add(p)
-                    p.isLive(nowMs) -> now = p
-                    p.startUtcMillis > nowMs && next == null -> next = p
-                    p.startUtcMillis > nowMs && later == null -> later = p
-                    p.startUtcMillis > nowMs -> upcoming.add(p)
+            if (sorted.isNotEmpty()) {
+                var startIndex = sorted.binarySearch { it.startUtcMillis.compareTo(recentCutoff) }
+                if (startIndex < 0) {
+                    startIndex = -(startIndex + 1)
+                }
+
+                // Walk backward to include programs starting before recentCutoff but ending after
+                while (startIndex > 0 && sorted[startIndex - 1].endUtcMillis > recentCutoff) {
+                    startIndex--
+                }
+
+                for (i in startIndex until sorted.size) {
+                    val p = sorted[i]
+                    when {
+                        p.endUtcMillis <= nowMs && p.endUtcMillis > recentCutoff -> recent.add(p)
+                        p.isLive(nowMs) -> now = p
+                        p.startUtcMillis > nowMs && next == null -> next = p
+                        p.startUtcMillis > nowMs && later == null -> later = p
+                        p.startUtcMillis > nowMs -> {
+                            upcoming.add(p)
+                            if (upcoming.size >= epgUpcomingProgramLimit) {
+                                break // We have enough upcoming programs
+                            }
+                        }
+                    }
                 }
             }
 
@@ -4168,7 +4203,7 @@ class IptvRepository @Inject constructor(
                 now = now,
                 next = next,
                 later = later,
-                upcoming = upcoming.take(epgUpcomingProgramLimit),
+                upcoming = upcoming,
                 recent = recent
             )
         }
