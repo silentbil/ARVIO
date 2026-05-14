@@ -144,6 +144,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.weightedSubtitleScore
+import com.arflix.tv.ui.skin.LocalFocusBorderColorOverride
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.PurpleDark
@@ -196,6 +197,7 @@ fun PlayerScreen(
     onBack: () -> Unit = {},
     onPlayNext: (Int, Int, String?, String?, String?) -> Unit = { _, _, _, _, _ -> }
 ) {
+    val playerAccent = LocalFocusBorderColorOverride.current ?: Color.White
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -2223,7 +2225,7 @@ fun PlayerScreen(
                                 Text(
                                     text = stream.quality,
                                     style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                                    color = Pink,
+                                    color = playerAccent,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -2526,7 +2528,7 @@ fun PlayerScreen(
                             val frac = if (duration > 0) ((if (isControlScrubbing) scrubPreviewPosition else currentPosition).toFloat() / duration.toFloat()).coerceIn(0f, 1f) else progress
                             Box(modifier = Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center), contentAlignment = Alignment.CenterStart) {
                             Box(modifier = Modifier.fillMaxWidth(frac).fillMaxHeight().background(
-                                if (trackbarFocused) Pink else Pink.copy(alpha = 0.8f), RoundedCornerShape(3.dp)
+                                if (trackbarFocused) playerAccent else playerAccent.copy(alpha = 0.8f), RoundedCornerShape(3.dp)
                             ))
                             }
                         }
@@ -2719,7 +2721,7 @@ fun PlayerScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .fillMaxSize((currentVolume.toFloat() / maxVolume).coerceIn(0f, 1f))
-                            .background(Pink, RoundedCornerShape(4.dp))
+                            .background(playerAccent, RoundedCornerShape(4.dp))
                             .align(Alignment.BottomCenter)
                     )
                 }
@@ -2936,6 +2938,7 @@ private fun PlayerIconButton(
     onUpKey: () -> Unit = {},
     onDownKey: () -> Unit = {}
 ) {
+    val btnAccent = LocalFocusBorderColorOverride.current ?: Color.White
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.15f else 1f, label = "iconScale")
 
@@ -2960,7 +2963,7 @@ private fun PlayerIconButton(
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClick() }
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .background(
-                color = if (focused) Color.White else Color.Transparent,
+                color = if (focused) btnAccent else Color.Transparent,
                 shape = CircleShape
             ),
         contentAlignment = Alignment.Center
@@ -3096,6 +3099,7 @@ private fun ErrorButton(
     isPrimary: Boolean,
     onClick: () -> Unit
 ) {
+    val btnAccent = LocalFocusBorderColorOverride.current ?: Color.White
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f, label = "scale")
 
     Box(
@@ -3118,7 +3122,7 @@ private fun ErrorButton(
                 width = 1.dp,
                 color = when {
                     isFocused -> Color.White
-                    isPrimary -> Pink.copy(alpha = 0.5f)
+                    isPrimary -> btnAccent.copy(alpha = 0.5f)
                     else -> Color.White.copy(alpha = 0.3f)
                 },
                 shape = RoundedCornerShape(8.dp)
@@ -3133,14 +3137,14 @@ private fun ErrorButton(
                 Icon(
                     imageVector = it,
                     contentDescription = null,
-                    tint = if (isFocused) Color.Black else if (isPrimary) Pink else TextSecondary,
+                    tint = if (isFocused) Color.Black else if (isPrimary) btnAccent else TextSecondary,
                     modifier = Modifier.size(18.dp)
                 )
             }
             Text(
                 text = text,
                 style = ArflixTypography.button,
-                color = if (isFocused) Color.Black else if (isPrimary) Pink else TextSecondary
+                color = if (isFocused) Color.Black else if (isPrimary) btnAccent else TextSecondary
             )
         }
     }
