@@ -598,7 +598,14 @@ fun HomeScreen(
         deduplicateHomeCategories(rawDisplayCategories)
     }
     val displayHeroItem = uiState.heroItem ?: preloadedHeroItem
-        ?: displayCategories.firstOrNull()?.items?.firstOrNull()
+        ?: if (uiState.categories.isEmpty()) {
+            // Only fall through to first-row hero while the ViewModel is still
+            // publishing its initial categories. Once categories are populated,
+            // the hero-update LaunchedEffect drives heroItem from focused cards.
+            displayCategories.firstOrNull()?.items?.firstOrNull()
+        } else {
+            null
+        }
     val displayHeroLogo = uiState.heroLogoUrl ?: preloadedHeroLogoUrl
     val displayHeroOverview = uiState.heroOverviewOverride
     val latestDisplayCategories by rememberUpdatedState(displayCategories)
@@ -737,8 +744,7 @@ fun HomeScreen(
                 if (categoriesSnapshot.isEmpty() || focusState.isSidebarFocused) return@collectLatest
                 if (focusSnapshot.focusedItemKey.isBlank()) return@collectLatest
                 if (focusSnapshot.focusedItemKey == focusSnapshot.heroItemKey) return@collectLatest
-                categoriesSnapshot
-                    .getOrNull(focusSnapshot.rowIndex)
+                categoriesSnapshot.getOrNull(focusSnapshot.rowIndex)
                     ?.items
                     ?.getOrNull(focusSnapshot.itemIndex)
                     ?: return@collectLatest

@@ -178,9 +178,8 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun isActionableMediaItem(item: MediaItem): Boolean {
-        // Synthetic collection tiles (Netflix/Disney/HBO service cards) carry
-        // a hash-based id in MediaItem.id that is not a real TMDB id — treating
-        // them as actionable triggers TMDB /images 404s in the logo preloader.
+        // Non-actionable items are expected during filtering: invalid IDs cannot be opened,
+        // placeholders are synthetic UI entries, and collection tiles use their own handling.
         return item.id > 0 && !item.isPlaceholder && !isCollectionItem(item)
     }
 
@@ -1958,7 +1957,24 @@ class HomeViewModel @Inject constructor(
                 // Launch the independent CW fetch
                 launchContinueWatchingFetch()
 
-                val heroItem = chooseInitialHero(categories)
+                // During catalog-triggered reloads, chooseInitialHero can pick
+                // the first Continue Watching item and overwrite the currently
+                // focused hero. Preserve the existing hero when possible, and
+                // let the focus watcher correct it on the next focus change.
+                val heroItem = if (_uiState.value.heroItem != null) {
+                    val currentHero = _uiState.value.heroItem!!
+                    // Preserve current hero during reload.  Try to find it in the fresh
+                    // categories; if the same id/mediaType still exists, use the fresh
+                    // instance to ensure reference consistency.  If not found, keep the
+                    // old hero — it's still valid UI and the hero-update LaunchedEffect
+                    // will correct it when the user moves focus.
+                    categories.asSequence()
+                        .flatMap { it.items.asSequence() }
+                        .firstOrNull { it.id == currentHero.id && it.mediaType == currentHero.mediaType }
+                        ?: currentHero
+                } else {
+                    chooseInitialHero(categories)
+                }
 
                 // Preload logos for the first visible rows so card overlays appear immediately.
                 // Skip IPTV items — their channel logo is already in item.image.
