@@ -570,11 +570,9 @@ fun HomeScreen(
     }
     val displayHeroItem = uiState.heroItem ?: preloadedHeroItem
         ?: if (uiState.categories.isEmpty()) {
-            // Only fall through to first-row hero during the initial-load window
-            // when both uiState and preloaded data are empty.  Once categories are
-            // populated, the hero-update LaunchedEffect drives heroItem via focus,
-            // so this fallback should never be reached — if it is, it means the
-            // hero vanished unexpectedly and we silently show wrong item #1.
+            // Only fall through to first-row hero while the ViewModel is still
+            // publishing its initial categories. Once categories are populated,
+            // the hero-update LaunchedEffect drives heroItem from focused cards.
             displayCategories.firstOrNull()?.items?.firstOrNull()
         } else {
             null
@@ -714,38 +712,23 @@ fun HomeScreen(
             .distinctUntilChanged()
             .collectLatest { focusSnapshot ->
                 val categoriesSnapshot = latestDisplayCategories
-                if (categoriesSnapshot.isEmpty() || focusState.isSidebarFocused) {
-                    android.util.Log.d("HeroDebug", "LaunchedEffect: EXIT at line 708 (empty=${categoriesSnapshot.isEmpty()}, sidebar=${focusState.isSidebarFocused})")
-                    return@collectLatest
-                }
-                if (focusSnapshot.focusedItemKey.isBlank()) {
-                    android.util.Log.d("HeroDebug", "LaunchedEffect: EXIT at line 709 (blank focusedKey)")
-                    return@collectLatest
-                }
-                if (focusSnapshot.focusedItemKey == focusSnapshot.heroItemKey) {
-                    android.util.Log.d("HeroDebug", "LaunchedEffect: EXIT at line 710 (hero already correct: ${focusSnapshot.heroItemKey})")
-                    return@collectLatest
-                }
-                val itemAtPosition = categoriesSnapshot
-                    .getOrNull(focusSnapshot.rowIndex)
+                if (categoriesSnapshot.isEmpty() || focusState.isSidebarFocused) return@collectLatest
+                if (focusSnapshot.focusedItemKey.isBlank()) return@collectLatest
+                if (focusSnapshot.focusedItemKey == focusSnapshot.heroItemKey) return@collectLatest
+                categoriesSnapshot.getOrNull(focusSnapshot.rowIndex)
                     ?.items
                     ?.getOrNull(focusSnapshot.itemIndex)
-                if (itemAtPosition == null) {
-                    android.util.Log.d("HeroDebug", "LaunchedEffect: EXIT at line 715 (no item at row=${focusSnapshot.rowIndex}, col=${focusSnapshot.itemIndex})")
-                    return@collectLatest
-                }
+                    ?: return@collectLatest
 
                 val now = SystemClock.elapsedRealtime()
                 val isFastScrolling = now - focusState.lastNavEventTime < fastScrollThresholdMs
                 if (isFastScrolling) {
-                    android.util.Log.d("HeroDebug", "LaunchedEffect: fast scroll detected, delaying 360ms. focusedKey=${focusSnapshot.focusedItemKey}, heroKey=${focusSnapshot.heroItemKey}")
                     delay(360L)
                     if (
                         focusState.currentRowIndex != focusSnapshot.rowIndex ||
                         focusState.currentItemIndex != focusSnapshot.itemIndex ||
                         focusState.isSidebarFocused
                     ) {
-                        android.util.Log.d("HeroDebug", "LaunchedEffect: EXIT at line 726 (focus moved during delay)")
                         return@collectLatest
                     }
                 }
@@ -753,15 +736,10 @@ fun HomeScreen(
                     .getOrNull(focusSnapshot.rowIndex)
                     ?.items
                     ?.getOrNull(focusSnapshot.itemIndex)
-                    ?: run {
-                        android.util.Log.d("HeroDebug", "LaunchedEffect: EXIT at line 733 (item vanished after delay)")
-                        return@collectLatest
-                    }
+                    ?: return@collectLatest
                 if (homeRowItemKey(latestFocusedItem) != focusSnapshot.focusedItemKey) {
-                    android.util.Log.d("HeroDebug", "LaunchedEffect: EXIT at line 735 (item key changed: ${homeRowItemKey(latestFocusedItem)} vs ${focusSnapshot.focusedItemKey})")
                     return@collectLatest
                 }
-                android.util.Log.d("HeroDebug", "LaunchedEffect: CORRECTING hero from key=${focusSnapshot.heroItemKey} to ${latestFocusedItem.title} (key=${homeRowItemKey(latestFocusedItem)})")
                 viewModel.onFocusChanged(focusSnapshot.rowIndex, focusSnapshot.itemIndex, shouldPrefetch = true)
                 viewModel.updateHeroItem(latestFocusedItem)
             }
