@@ -317,7 +317,16 @@ class DetailsViewModel @Inject constructor(
                     async { mediaRepository.getSeasonEpisodes(mediaId, seasonToLoad) }
                 } else null
 
-                // For TV shows, fetch season progress (watched/total per season)
+                // For TV shows, fetch season progress (watched/total per season).
+                // IMPORTANT: Initialize watched cache FIRST so fetchSeasonProgress()
+                // can read from the in-memory cache rather than falling back to a
+                // backend query that may return stale or empty data. The async below
+                // starts immediately, but initializeWatchedCache() runs synchronously
+                // before it, ensuring the cache is populated before fetchSeasonProgress
+                // checks getWatchedEpisodesFromCache().
+                if (mediaType == MediaType.TV) {
+                    runCatching { traktRepository.initializeWatchedCache() }
+                }
                 val seasonProgressDeferred = if (mediaType == MediaType.TV) {
                     async { fetchSeasonProgress(mediaId) }
                 } else null
@@ -1587,12 +1596,15 @@ class DetailsViewModel @Inject constructor(
                     traktRepository.markSeasonWatched(currentMediaId, season, episodeNumbers)
                 }
 
-                // 2. Remove from watch history concurrently (all episodes at once)
+                // 2. Remove from watch history FIRST (synchronous), before Supabase writes.
+                //    This avoids a race condition where removeFromHistory deletes the
+                //    just-written watched records, causing watched status to be lost on re-entry.
                 runCatching {
                     watchHistoryRepository.removeFromHistory(currentMediaId, season, null)
                 }
 
-                // 3. Concurrent Supabase writes for each episode (faster than sequential)
+                // 3. Concurrent Supabase writes for each episode (faster than sequential).
+                //    These run AFTER removeFromHistory to ensure the watched records are the final state.
                 episodeNumbers.map { epNum ->
                     async {
                         runCatching {
