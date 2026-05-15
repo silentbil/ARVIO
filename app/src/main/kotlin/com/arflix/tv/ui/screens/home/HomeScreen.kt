@@ -1099,6 +1099,7 @@ fun HomeScreen(
             profileCount = profileCount,
             clockFormat = uiState.clockFormat,
             syncStatus = uiState.syncStatus,
+            hasUpdateBadge = uiState.hasUpdateBadge,
             onItemFocusedPrefetch = {},
             onNavigateToDetails = onNavigateToDetails,
             onNavigateToCollection = onNavigateToCollection,
@@ -1222,6 +1223,18 @@ fun HomeScreen(
                 },
                 isVisible = true,
                 onDismiss = { viewModel.dismissToast() }
+            )
+        }
+
+        // App Update Modal
+        if (uiState.showAppUpdateDialog) {
+            com.arflix.tv.ui.components.AppUpdateModal(
+                status = uiState.updateStatus,
+                onDownload = { viewModel.downloadAppUpdate() },
+                onCancelDownload = { viewModel.cancelDownloadAppUpdate() },
+                onInstall = { viewModel.installAppUpdateOrRequestPermission() },
+                onDismiss = { viewModel.dismissAppUpdateDialog() },
+                onIgnore = { viewModel.ignoreAppUpdate() }
             )
         }
     }
@@ -2186,6 +2199,7 @@ private fun HomeInputLayer(
     profileCount: Int = 1,
     clockFormat: String = "24h",
     syncStatus: com.arflix.tv.data.repository.CloudSyncStatus = com.arflix.tv.data.repository.CloudSyncStatus.NOT_SIGNED_IN,
+    hasUpdateBadge: Boolean = false,
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit,
     onNavigateToCollection: (String) -> Unit,
@@ -2515,7 +2529,8 @@ private fun HomeInputLayer(
                 focusedIndex = focusState.sidebarFocusIndex,
                 profile = currentProfile,
                 profileCount = profileCount,
-                clockFormat = clockFormat
+                clockFormat = clockFormat,
+                hasUpdateBadge = hasUpdateBadge
             )
         }
 

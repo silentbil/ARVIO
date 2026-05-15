@@ -911,7 +911,7 @@ fun SettingsScreen(
                                                     viewModel.forceCloudSyncNow()
                                                 }
                                                 3 -> {
-                                                    if (uiState.downloadedApkPath != null) {
+                                                    if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) {
                                                         viewModel.installAppUpdateOrRequestPermission()
                                                     } else {
                                                         viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true)
@@ -1264,10 +1264,7 @@ fun SettingsScreen(
                             isTraktPolling = uiState.isTraktPolling,
                             isForceCloudSyncing = uiState.isForceCloudSyncing,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
-                            isCheckingForUpdate = uiState.isCheckingForUpdate,
-                            isAppUpdateAvailable = uiState.isAppUpdateAvailable,
-                            availableAppUpdate = uiState.availableAppUpdate,
-                            downloadedApkPath = uiState.downloadedApkPath,
+                            updateStatus = uiState.updateStatus,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             onConnectCloud = {
                                 if (isTouchDevice) {
@@ -1699,19 +1696,13 @@ fun SettingsScreen(
         }
 
         if (uiState.showAppUpdateDialog) {
-            AppUpdateModal(
-                update = uiState.availableAppUpdate,
-                isChecking = uiState.isCheckingForUpdate,
-                isAppUpdateAvailable = uiState.isAppUpdateAvailable,
-                isDownloading = uiState.isDownloadingAppUpdate,
-                progress = uiState.appUpdateDownloadProgress,
-                errorMessage = uiState.appUpdateError,
-                downloadedApkPath = uiState.downloadedApkPath,
-                isSelfUpdateSupported = uiState.isSelfUpdateSupported,
-                onDismiss = { viewModel.dismissAppUpdateDialog() },
-                onIgnore = { viewModel.ignoreAppUpdate() },
+            com.arflix.tv.ui.components.AppUpdateModal(
+                status = uiState.updateStatus,
                 onDownload = { viewModel.downloadAppUpdate() },
-                onInstall = { viewModel.installAppUpdateOrRequestPermission() }
+                onCancelDownload = { viewModel.cancelDownloadAppUpdate() },
+                onInstall = { viewModel.installAppUpdateOrRequestPermission() },
+                onDismiss = { viewModel.dismissAppUpdateDialog() },
+                onIgnore = { viewModel.ignoreAppUpdate() }
             )
         }
 
@@ -3098,7 +3089,7 @@ private fun MobileSettingsMainPage(
                     icon = Icons.Default.SystemUpdate,
                     title = stringResource(R.string.app_version),
                     subtitle = "V${BuildConfig.VERSION_NAME}",
-                    value = if (uiState.isAppUpdateAvailable) "Update Available" else "Check Updates",
+                    value = if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable) "Update Available" else "Check Updates",
                     isFocused = false,
                     showDivider = false,
                     onClick = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) }
@@ -3560,160 +3551,6 @@ private fun MobileSettingsRow(
 
 private enum class Zone {
     SIDEBAR, SECTION, CONTENT
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun AppUpdateModal(
-    update: com.arflix.tv.updater.AppUpdate?,
-    isChecking: Boolean,
-    isAppUpdateAvailable: Boolean,
-    isDownloading: Boolean,
-    progress: Float?,
-    errorMessage: String?,
-    downloadedApkPath: String?,
-    isSelfUpdateSupported: Boolean,
-    onDismiss: () -> Unit,
-    onIgnore: () -> Unit,
-    onDownload: () -> Unit,
-    onInstall: () -> Unit
-) {
-    val primaryEnabled = downloadedApkPath != null || isAppUpdateAvailable
-    var focusedIndex by remember(primaryEnabled) { mutableIntStateOf(if (primaryEnabled) 2 else 0) }
-    val focusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false
-        )
-    ) {
-        ModalScrim(onDismiss = onDismiss) {
-            Column(
-                modifier = Modifier
-                    .then(
-                        if (LocalDeviceType.current.isTouchDevice()) Modifier.fillMaxWidth(0.92f).widthIn(max = 600.dp)
-                        else Modifier.width(760.dp)
-                    )
-                    .background(BackgroundElevated, RoundedCornerShape(18.dp))
-                    .padding(if (LocalDeviceType.current.isTouchDevice()) 20.dp else 28.dp)
-                    .focusRequester(focusRequester)
-                    .focusable()
-                    .onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        when (event.key) {
-                            Key.Back, Key.Escape -> { onDismiss(); true }
-                            Key.DirectionLeft -> {
-                                focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
-                                true
-                            }
-                            Key.DirectionRight -> {
-                                focusedIndex = (focusedIndex + 1).coerceAtMost(2)
-                                true
-                            }
-                            Key.Enter, Key.DirectionCenter -> {
-                                when (focusedIndex) {
-                                    0 -> onDismiss()
-                                    1 -> onIgnore()
-                                    2 -> if (primaryEnabled) {
-                                        if (downloadedApkPath != null) onInstall() else onDownload()
-                                    }
-                                }
-                                true
-                            }
-                            else -> false
-                        }
-                    }
-            ) {
-            Text(stringResource(R.string.app_update), style = ArflixTypography.sectionTitle, color = TextPrimary)
-            Spacer(modifier = Modifier.height(10.dp))
-
-            val subtitle = when {
-                !isSelfUpdateSupported -> "This install is managed by the Play Store."
-                downloadedApkPath != null && update != null -> "${update.title} is ready to install."
-                isAppUpdateAvailable && update != null -> "Update available: ${update.title} (${update.tag})"
-                update != null -> "You already have the latest version installed."
-                isChecking -> "Checking GitHub Releases..."
-                else -> "No release information available."
-            }
-            Text(subtitle, style = ArflixTypography.body, color = TextSecondary)
-
-            if (update != null && !isChecking && !isDownloading) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (isAppUpdateAvailable) {
-                        "Current version ${BuildConfig.VERSION_NAME} -> latest ${update.tag}"
-                    } else {
-                        "Current version ${BuildConfig.VERSION_NAME} is up to date"
-                    },
-                    style = ArflixTypography.caption,
-                    color = TextSecondary.copy(alpha = 0.78f)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            if (!errorMessage.isNullOrBlank()) {
-                Text(errorMessage, style = ArflixTypography.body, color = Pink)
-                Spacer(modifier = Modifier.height(12.dp))
-            }
-
-            when {
-                isDownloading -> {
-                    Text("Downloading update...", style = ArflixTypography.body, color = TextPrimary)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    androidx.compose.material3.LinearProgressIndicator(
-                        progress = progress ?: 0f,
-                        modifier = Modifier.fillMaxWidth(),
-                        color = SuccessGreen,
-                        trackColor = Color.White.copy(alpha = 0.08f)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = progress?.let { "${(it * 100).toInt()}%" } ?: "Preparing...",
-                        style = ArflixTypography.caption,
-                        color = TextSecondary
-                    )
-                }
-                downloadedApkPath != null -> {
-                    Text("The latest ARVIO update has been downloaded and is ready to install.", style = ArflixTypography.body, color = TextPrimary)
-                }
-                !update?.notes.isNullOrBlank() -> {
-                    Text(
-                        text = update!!.notes.take(900),
-                        style = ArflixTypography.caption.copy(lineHeight = 18.sp),
-                        color = TextSecondary,
-                        modifier = Modifier.heightIn(max = 260.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                UpdateActionButton("Close", focusedIndex == 0, onDismiss)
-                UpdateActionButton("Ignore", focusedIndex == 1, onIgnore)
-                UpdateActionButton(
-                    when {
-                        downloadedApkPath != null -> "Install"
-                        isAppUpdateAvailable -> "Download"
-                        else -> "Latest"
-                    },
-                    focusedIndex == 2,
-                    if (downloadedApkPath != null) onInstall else onDownload,
-                    highlighted = true,
-                    enabled = isSelfUpdateSupported && !isChecking && primaryEnabled
-                )
-            }
-        }
-        }
-    }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -6583,10 +6420,7 @@ private fun AccountsSettings(
     isTraktPolling: Boolean,
     isForceCloudSyncing: Boolean,
     isSelfUpdateSupported: Boolean,
-    isCheckingForUpdate: Boolean,
-    isAppUpdateAvailable: Boolean,
-    availableAppUpdate: com.arflix.tv.updater.AppUpdate?,
-    downloadedApkPath: String?,
+    updateStatus: com.arflix.tv.updater.UpdateStatus,
     focusedIndex: Int,
     onConnectCloud: () -> Unit,
     onDisconnectCloud: () -> Unit,
@@ -6663,22 +6497,22 @@ private fun AccountsSettings(
             title = stringResource(R.string.app_update),
             description = when {
                 !isSelfUpdateSupported -> "This install is managed by the Play Store"
-                downloadedApkPath != null -> "Latest update downloaded and ready to install"
-                isCheckingForUpdate -> "Checking GitHub Releases for a newer APK"
-                isAppUpdateAvailable -> "Update available: ${availableAppUpdate?.title ?: availableAppUpdate?.tag ?: "latest release"}"
-                availableAppUpdate != null -> "You already have ARVIO v${BuildConfig.VERSION_NAME}"
+                updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall -> "Latest update downloaded and ready to install"
+                updateStatus is com.arflix.tv.updater.UpdateStatus.Checking -> "Checking GitHub Releases for a newer APK"
+                updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable -> "Update available: ${updateStatus.update.title.ifBlank { updateStatus.update.tag }}"
+                updateStatus is com.arflix.tv.updater.UpdateStatus.Success -> "You already have the latest ARVIO version"
                 else -> "Check GitHub Releases for the latest ARVIO APK"
             },
             actionLabel = when {
                 !isSelfUpdateSupported -> "PLAY"
-                downloadedApkPath != null -> "INSTALL"
-                isCheckingForUpdate -> "CHECKING"
-                isAppUpdateAvailable -> "UPDATE"
+                updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall -> "INSTALL"
+                updateStatus is com.arflix.tv.updater.UpdateStatus.Checking -> "CHECKING"
+                updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable -> "UPDATE"
                 else -> "CHECK"
             },
             isFocused = focusedIndex == 3,
             onClick = {
-                if (downloadedApkPath != null) onInstallUpdate() else onCheckUpdates()
+                if (updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) onInstallUpdate() else onCheckUpdates()
             },
             modifier = Modifier.settingsFocusSlot(3)
         )
