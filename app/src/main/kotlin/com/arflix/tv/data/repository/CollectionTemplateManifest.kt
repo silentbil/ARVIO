@@ -132,14 +132,10 @@ internal object CollectionTemplateManifest {
             hideTitle = true,
             heroVideoUrl = "${VIDEO_BASE}disneyplus.mp4",
             sources = listOf(
-                source(addonId = "aio-metadata", type = "movie", catalogId = "streaming.dnp"),
-                source(addonId = "aio-metadata", type = "series", catalogId = "streaming.dnp"),
-                watchProviderSource(type = "movie", providerId = 337),
-                watchProviderSource(type = "series", providerId = 337)
+                mdblistSource("garycrawfordgc/disney-shows")
             ),
             listMetadata = listOf(
-                metadata(sourceCatalogId = "streaming.dnp", sourceAddonId = "aio-metadata", sourceName = "Disney+", sourceLabel = "AIO", mediaType = "movie", itemCount = null, author = null, url = null),
-                metadata(sourceCatalogId = "streaming.dnp", sourceAddonId = "aio-metadata", sourceName = "Disney+", sourceLabel = "AIO", mediaType = "series", itemCount = null, author = null, url = null)
+                metadata(sourceCatalogId = "mdblist.garycrawfordgc.disney-shows", sourceAddonId = null, sourceName = "Disney+", sourceLabel = "MDBLIST", mediaType = "all", itemCount = null, author = "garycrawfordgc", url = "https://mdblist.com/lists/garycrawfordgc/disney-shows")
             )
         ),
         entry(
@@ -1052,6 +1048,11 @@ internal object CollectionTemplateManifest {
         addonId = addonId,
         addonCatalogType = type,
         addonCatalogId = catalogId
+    )
+
+    private fun mdblistSource(slug: String) = CollectionSourceConfig(
+        kind = CollectionSourceKind.MDBLIST_PUBLIC,
+        mdblistSlug = slug
     )
 
     private fun tmdbCollectionSource(collectionId: Int) = CollectionSourceConfig(

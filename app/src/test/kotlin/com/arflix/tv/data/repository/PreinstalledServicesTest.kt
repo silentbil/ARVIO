@@ -40,7 +40,8 @@ class PreinstalledServicesTest {
         "collection_service_prime_video",
         "collection_service_hbo_max",
         "collection_service_hulu",
-        "collection_service_paramountplus"
+        "collection_service_paramountplus",
+        "collection_service_crunchyroll"
     )
 
     private val servicesWithoutHeroVideo = serviceOrder.toSet() - serviceVideoIds
@@ -92,7 +93,8 @@ class PreinstalledServicesTest {
             "collection_service_prime_video" to "networks%20videos/amazonprime.mp4",
             "collection_service_hbo_max" to "networks%20videos/hbomax.mp4",
             "collection_service_hulu" to "networks%20videos/hulu.mp4",
-            "collection_service_paramountplus" to "networks%20videos/paramount.mp4"
+            "collection_service_paramountplus" to "networks%20videos/paramount.mp4",
+            "collection_service_crunchyroll" to "networks%20videos/crunchyroll.mp4"
         )
         services.forEach { cfg ->
             val video = cfg.collectionHeroVideoUrl
@@ -120,6 +122,16 @@ class PreinstalledServicesTest {
             .filter { it.kind == CatalogKind.COLLECTION && it.collectionGroup == CollectionGroupKind.SERVICE }
         assertTrue("Expected service collections", services.isNotEmpty())
         services.forEach { cfg ->
+            if (cfg.title == "Disney+") {
+                assertTrue(
+                    "Disney+ must use the curated MDBList source",
+                    cfg.collectionSources.any {
+                        it.kind == CollectionSourceKind.MDBLIST_PUBLIC &&
+                            it.mdblistSlug == "garycrawfordgc/disney-shows"
+                    }
+                )
+                return@forEach
+            }
             assertTrue(
                 "${cfg.title} must have a TMDB watch-provider fallback",
                 cfg.collectionSources.any { it.kind == CollectionSourceKind.TMDB_WATCH_PROVIDER }

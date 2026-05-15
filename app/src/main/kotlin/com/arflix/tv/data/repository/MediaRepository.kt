@@ -528,16 +528,8 @@ class MediaRepository @Inject constructor(
                 heroVideo = "${mrtxivBase}networks%20videos/disneyplus.mp4",
                 clearLogo = null,
                 sources = listOf(
-                    addonCollectionSource("org.kris.ultra.max.all.v5", "movie", "disney_movies"),
-                    addonCollectionSource("org.kris.ultra.max.all.v5", "series", "disney_series"),
-                    addonCollectionSource("aio-metadata", "movie", "mdblist.86759"),
-                    addonCollectionSource("aio-metadata", "series", "mdblist.86758"),
-                    addonCollectionSource(null, "movie", "dnp"),
-                    addonCollectionSource(null, "series", "dnp"),
-                    watchProviderSource(MediaType.MOVIE, 337),
-                    watchProviderSource(MediaType.TV, 337)
-                ),
-                requiredAddons = listOf(STREAMING_COLLECTION_ADDON_URL)
+                    mdblistSource("garycrawfordgc/disney-shows")
+                )
             ),
             collection(
                 id = "collection_service_hbo",
