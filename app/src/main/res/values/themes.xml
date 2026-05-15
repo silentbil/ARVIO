@@ -4,11 +4,14 @@
     <style name="Theme.ArflixTV.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/background_dark</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
-        <item name="windowSplashScreenAnimationDuration">1000</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
         <!-- Post-splash transitions to Mobile theme (no fullscreen).
              TV overrides this in MainActivity.onCreate() before super. -->
         <item name="postSplashScreenTheme">@style/Theme.ArflixTV.Mobile</item>
         <item name="android:windowBackground">@color/background_dark</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:backgroundDimEnabled">false</item>
     </style>
 
     <!-- ARVIO TV Theme - Arctic Fuse 2 Inspired (TV devices only) -->
@@ -20,6 +23,9 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:backgroundDimEnabled">false</item>
     </style>
 
     <!-- ARVIO Mobile Theme - Normal app bar behaviour (phones/tablets) -->

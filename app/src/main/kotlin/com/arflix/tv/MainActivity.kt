@@ -2,6 +2,7 @@ package com.arflix.tv
 
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.view.ViewTreeObserver
 import android.view.WindowManager
@@ -201,6 +202,10 @@ class MainActivity : ComponentActivity() {
         }
 
         super.onCreate(savedInstanceState)
+        window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.BLACK))
+        window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
+        @Suppress("DEPRECATION")
+        overridePendingTransition(0, 0)
         pendingLauncherRequest = parseLauncherRequest(intent)
 
         // Set orientation based on device type
@@ -425,9 +430,19 @@ fun ArvioLoadingScreen() {
     LaunchedEffect(Unit) {
         reveal.animateTo(
             targetValue = 1f,
-            animationSpec = tween(durationMillis = 720, easing = FastOutSlowInEasing)
+            animationSpec = tween(durationMillis = 920, easing = FastOutSlowInEasing)
         )
     }
+
+    val sweep by infiniteTransition.animateFloat(
+        initialValue = -1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1550, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "sweep"
+    )
 
     // Rotating spinner
     val rotation by infiniteTransition.animateFloat(
@@ -441,10 +456,10 @@ fun ArvioLoadingScreen() {
     )
 
     val logoAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.94f,
+        initialValue = 0.96f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
+            animation = tween(2100, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "logoAlpha"
@@ -453,18 +468,31 @@ fun ArvioLoadingScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0a0a0a)),
+            .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
+            drawRect(color = Color.Black)
+
             val progress = reveal.value
-            val halfWidth = 148.dp.toPx() * progress
-            val y = center.y + 86.dp.toPx()
+            val logoCenterY = center.y - 8.dp.toPx()
+            val baselineY = logoCenterY + 138.dp.toPx()
+
+            val halfWidth = 180.dp.toPx() * progress
             drawLine(
-                color = Color(0xFF00F0D0).copy(alpha = 0.42f * progress),
-                start = Offset(center.x - halfWidth, y),
-                end = Offset(center.x + halfWidth, y),
+                color = Color(0xFF00F0D0).copy(alpha = 0.32f * progress),
+                start = Offset(center.x - halfWidth, baselineY),
+                end = Offset(center.x + halfWidth, baselineY),
                 strokeWidth = 1.6.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+
+            val sweepX = center.x + (sweep * 210.dp.toPx())
+            drawLine(
+                color = Color.White.copy(alpha = 0.54f * progress),
+                start = Offset(sweepX - 34.dp.toPx(), baselineY),
+                end = Offset(sweepX + 34.dp.toPx(), baselineY),
+                strokeWidth = 1.2.dp.toPx(),
                 cap = StrokeCap.Round
             )
         }
@@ -474,12 +502,14 @@ fun ArvioLoadingScreen() {
             contentDescription = "ARVIO",
             modifier = Modifier
                 .padding(horizontal = 24.dp)
-                .fillMaxWidth(0.58f)
-                .widthIn(max = 360.dp)
+                .fillMaxWidth(0.52f)
+                .widthIn(max = 320.dp)
                 .graphicsLayer {
                     alpha = reveal.value * logoAlpha
-                    scaleX = 0.94f + (0.06f * reveal.value)
-                    scaleY = 0.94f + (0.06f * reveal.value)
+                    val scale = 0.88f + (0.12f * reveal.value)
+                    scaleX = scale
+                    scaleY = scale
+                    translationY = (1f - reveal.value) * 18.dp.toPx()
                 },
             contentScale = ContentScale.Fit,
         )
@@ -487,7 +517,7 @@ fun ArvioLoadingScreen() {
         Canvas(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 132.dp)
+                .padding(bottom = 104.dp)
                 .size(28.dp)
         ) {
             val strokeWidth = 2.dp.toPx()
@@ -507,7 +537,7 @@ fun ArvioLoadingScreen() {
             )
 
             drawArc(
-                color = Color.White.copy(alpha = 0.9f),
+                color = Color(0xFF00F0D0).copy(alpha = 0.9f),
                 startAngle = rotation,
                 sweepAngle = 82f,
                 useCenter = false,
@@ -550,12 +580,17 @@ fun ArflixApp(
             ActiveProfileLoadState.Loaded(profile) as ActiveProfileLoadState
         }
     }.collectAsStateWithLifecycle(initialValue = ActiveProfileLoadState.Loading)
+    var startupIntroComplete by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(1350)
+        startupIntroComplete = true
+    }
     val activeProfile = (activeProfileState as? ActiveProfileLoadState.Loaded)?.profile
     val startupReady = skipProfileSelection != null &&
         activeProfileState is ActiveProfileLoadState.Loaded &&
         authState !is AuthState.Loading
 
-    if (!startupReady) {
+    if (!startupReady || !startupIntroComplete) {
         ArvioLoadingScreen()
         return
     }
