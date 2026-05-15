@@ -11,25 +11,19 @@ class AddonRuntimeAggregator(
         stremioAddons: List<Addon>,
         request: MovieRuntimeRequest
     ): List<StreamSource> {
-        val streams = mutableListOf<StreamSource>()
-        if (stremioAddons.isNotEmpty()) {
-            streams += addonRuntimes[RuntimeKind.STREMIO]
-                ?.resolveMovieStreams(stremioAddons, request)
-                .orEmpty()
-        }
-        return streams
+        if (stremioAddons.isEmpty()) return emptyList()
+        return addonRuntimes[RuntimeKind.STREMIO]
+            ?.resolveMovieStreams(stremioAddons, request)
+            .orEmpty()
     }
 
     suspend fun resolveEpisodeStreams(
         stremioAddons: List<Addon>,
         request: EpisodeRuntimeRequest
     ): List<StreamSource> {
-        val streams = mutableListOf<StreamSource>()
-        if (stremioAddons.isNotEmpty()) {
-            streams += addonRuntimes[RuntimeKind.STREMIO]
-                ?.resolveEpisodeStreams(stremioAddons, request)
-                .orEmpty()
-        }
-        return streams
+        if (stremioAddons.isEmpty()) return emptyList()
+        return addonRuntimes[RuntimeKind.STREMIO]
+            ?.resolveEpisodeStreams(stremioAddons, request)
+            .orEmpty()
     }
 }

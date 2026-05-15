@@ -13,15 +13,17 @@ import javax.inject.Singleton
 class PlaybackTelemetryRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private val startupSamplesKey = longPreferencesKey("telemetry_startup_samples_v1")
-    private val startupAvgMsKey = longPreferencesKey("telemetry_startup_avg_ms_v1")
-    private val startupRetriesKey = longPreferencesKey("telemetry_startup_retries_v1")
-    private val failoverAttemptsKey = longPreferencesKey("telemetry_failover_attempts_v1")
-    private val failoverSuccessesKey = longPreferencesKey("telemetry_failover_successes_v1")
-    private val longRebuffersKey = longPreferencesKey("telemetry_long_rebuffers_v1")
-    private val playbackFailuresKey = longPreferencesKey("telemetry_playback_failures_v1")
-    private val lastStartupMsKey = longPreferencesKey("telemetry_last_startup_ms_v1")
-    private val lastSessionRetriesKey = intPreferencesKey("telemetry_last_session_retries_v1")
+    private companion object {
+        val startupSamplesKey = longPreferencesKey("telemetry_startup_samples_v1")
+        val startupAvgMsKey = longPreferencesKey("telemetry_startup_avg_ms_v1")
+        val startupRetriesKey = longPreferencesKey("telemetry_startup_retries_v1")
+        val failoverAttemptsKey = longPreferencesKey("telemetry_failover_attempts_v1")
+        val failoverSuccessesKey = longPreferencesKey("telemetry_failover_successes_v1")
+        val longRebuffersKey = longPreferencesKey("telemetry_long_rebuffers_v1")
+        val playbackFailuresKey = longPreferencesKey("telemetry_playback_failures_v1")
+        val lastStartupMsKey = longPreferencesKey("telemetry_last_startup_ms_v1")
+        val lastSessionRetriesKey = intPreferencesKey("telemetry_last_session_retries_v1")
+    }
 
     suspend fun recordStartup(startupMs: Long, retries: Int, failoversBeforeStart: Int) {
         val safeStartup = startupMs.coerceAtLeast(0L)
