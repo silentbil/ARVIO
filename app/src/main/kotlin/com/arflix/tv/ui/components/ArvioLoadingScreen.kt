@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.components
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -12,12 +13,16 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import com.arflix.tv.R
 import com.arflix.tv.ui.theme.BackgroundOverlay
 import com.arflix.tv.ui.theme.Cyan
 import com.arflix.tv.ui.theme.ParticleCyan
@@ -44,14 +49,21 @@ fun ArvioLoadingScreen(
     modifier: Modifier = Modifier,
     showText: Boolean = true
 ) {
-    // Single simple animation for logo pulse
     val infiniteTransition = rememberInfiniteTransition(label = "loading")
+    val reveal = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        reveal.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 720, easing = EaseInOutCubic)
+        )
+    }
 
     val logoAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.7f,
+        initialValue = 0.94f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = EaseInOutCubic),
+            animation = tween(1800, easing = EaseInOutCubic),
             repeatMode = RepeatMode.Reverse
         ),
         label = "logoAlpha"
@@ -70,13 +82,18 @@ fun ArvioLoadingScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Simple logo without blur layers
-            Text(
-                text = "ARVIO",
-                fontSize = 72.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 12.sp,
-                color = Color.White.copy(alpha = logoAlpha)
+            Image(
+                painter = painterResource(id = R.drawable.arvio_loading_logo),
+                contentDescription = "ARVIO",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth(0.58f)
+                    .widthIn(max = 360.dp)
+                    .graphicsLayer {
+                        alpha = reveal.value * logoAlpha
+                        scaleX = 0.94f + (0.06f * reveal.value)
+                        scaleY = 0.94f + (0.06f * reveal.value)
+                    }
             )
 
             Spacer(modifier = Modifier.height(60.dp))

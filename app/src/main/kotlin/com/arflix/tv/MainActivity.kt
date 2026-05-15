@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -419,6 +420,14 @@ private fun ComponentActivity.runAfterFirstDraw(block: () -> Unit) {
 @Composable
 fun ArvioLoadingScreen() {
     val infiniteTransition = rememberInfiniteTransition(label = "loading")
+    val reveal = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        reveal.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 720, easing = FastOutSlowInEasing)
+        )
+    }
 
     // Rotating spinner
     val rotation by infiniteTransition.animateFloat(
@@ -432,10 +441,10 @@ fun ArvioLoadingScreen() {
     )
 
     val logoAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.72f,
+        initialValue = 0.94f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
+            animation = tween(1800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "logoAlpha"
@@ -447,12 +456,32 @@ fun ArvioLoadingScreen() {
             .background(Color(0xFF0a0a0a)),
         contentAlignment = Alignment.Center
     ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val progress = reveal.value
+            val halfWidth = 148.dp.toPx() * progress
+            val y = center.y + 86.dp.toPx()
+            drawLine(
+                color = Color(0xFF00F0D0).copy(alpha = 0.42f * progress),
+                start = Offset(center.x - halfWidth, y),
+                end = Offset(center.x + halfWidth, y),
+                strokeWidth = 1.6.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+        }
+
         Image(
             painter = painterResource(id = R.drawable.arvio_loading_logo),
             contentDescription = "ARVIO",
-            modifier = Modifier.padding(horizontal = 24.dp),
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .fillMaxWidth(0.58f)
+                .widthIn(max = 360.dp)
+                .graphicsLayer {
+                    alpha = reveal.value * logoAlpha
+                    scaleX = 0.94f + (0.06f * reveal.value)
+                    scaleY = 0.94f + (0.06f * reveal.value)
+                },
             contentScale = ContentScale.Fit,
-            alpha = logoAlpha
         )
 
         Canvas(
