@@ -12,7 +12,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -28,7 +27,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -48,7 +46,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
@@ -444,17 +441,6 @@ fun ArvioLoadingScreen() {
         label = "sweep"
     )
 
-    // Rotating spinner
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rotation"
-    )
-
     val logoAlpha by infiniteTransition.animateFloat(
         initialValue = 0.96f,
         targetValue = 1f,
@@ -479,19 +465,23 @@ fun ArvioLoadingScreen() {
             val baselineY = logoCenterY + 138.dp.toPx()
 
             val halfWidth = 180.dp.toPx() * progress
+            val lineStartX = center.x - halfWidth
+            val lineEndX = center.x + halfWidth
             drawLine(
                 color = Color(0xFF00F0D0).copy(alpha = 0.32f * progress),
-                start = Offset(center.x - halfWidth, baselineY),
-                end = Offset(center.x + halfWidth, baselineY),
+                start = Offset(lineStartX, baselineY),
+                end = Offset(lineEndX, baselineY),
                 strokeWidth = 1.6.dp.toPx(),
                 cap = StrokeCap.Round
             )
 
-            val sweepX = center.x + (sweep * 210.dp.toPx())
+            val sweepHalfWidth = 34.dp.toPx()
+            val sweepTravel = (halfWidth - sweepHalfWidth).coerceAtLeast(0f)
+            val sweepX = center.x + (sweep * sweepTravel)
             drawLine(
                 color = Color.White.copy(alpha = 0.54f * progress),
-                start = Offset(sweepX - 34.dp.toPx(), baselineY),
-                end = Offset(sweepX + 34.dp.toPx(), baselineY),
+                start = Offset(sweepX - sweepHalfWidth, baselineY),
+                end = Offset(sweepX + sweepHalfWidth, baselineY),
                 strokeWidth = 1.2.dp.toPx(),
                 cap = StrokeCap.Round
             )
@@ -513,39 +503,6 @@ fun ArvioLoadingScreen() {
                 },
             contentScale = ContentScale.Fit,
         )
-
-        Canvas(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 104.dp)
-                .size(28.dp)
-        ) {
-            val strokeWidth = 2.dp.toPx()
-            val arcSize = androidx.compose.ui.geometry.Size(
-                size.width - strokeWidth,
-                size.height - strokeWidth
-            )
-
-            drawArc(
-                color = Color.White.copy(alpha = 0.12f),
-                startAngle = 0f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = Offset(strokeWidth / 2, strokeWidth / 2),
-                size = arcSize,
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-            )
-
-            drawArc(
-                color = Color(0xFF00F0D0).copy(alpha = 0.9f),
-                startAngle = rotation,
-                sweepAngle = 82f,
-                useCenter = false,
-                topLeft = Offset(strokeWidth / 2, strokeWidth / 2),
-                size = arcSize,
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-            )
-        }
     }
 }
 
