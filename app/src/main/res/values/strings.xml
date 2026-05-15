@@ -158,6 +158,8 @@
     <string name="subtitle_color_desc">Text color for subtitles</string>
     <string name="subtitle_style_desc">Bold, Normal, or Background style for subtitles</string>
     <string name="subtitle_offset_desc">Vertical position for subtitles</string>
+    <string name="subtitle_stylized">Stylized Subtitles</string>
+    <string name="subtitle_stylized_desc">Honor embedded styles from ASS/SSA subtitles. When off, all subtitles use your size, color, and style settings.</string>
     <string name="auto_play_desc">Start next episode automatically</string>
     <string name="autoplay_desc">Off opens the source picker on Play</string>
     <string name="auto_play_quality_desc">Min quality for auto-play</string>

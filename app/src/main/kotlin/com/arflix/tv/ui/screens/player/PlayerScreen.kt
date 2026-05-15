@@ -1568,6 +1568,7 @@ fun PlayerScreen(
     val subtitleSizePref = uiState.subtitleSize
     val subtitleColorPref = uiState.subtitleColor
     val subtitleStylePref = uiState.subtitleStyle
+    val subtitleStylizedPref = uiState.subtitleStylized
     val aspectModeLabel = when (playerResizeMode) {
         AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
         AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
@@ -2000,9 +2001,8 @@ fun PlayerScreen(
                         setKeepContentOnPlayerReset(true)
                         resizeMode = playerResizeMode
 
-                        // Enable subtitle view with Netflix-style: bold white text with black outline
+                        // Enable subtitle view with styling based on user preference
                         subtitleView?.apply {
-                            // Read subtitle appearance from user settings
                             val subSizeSp = when (subtitleSizePref) {
                                 "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
                             }
@@ -2011,35 +2011,45 @@ fun PlayerScreen(
                                 "Green" -> android.graphics.Color.GREEN
                                 "Cyan" -> android.graphics.Color.CYAN
                                 else -> android.graphics.Color.WHITE
-                                }
-                                val subTypeface = when (subtitleStylePref) {
-                                    "Normal" -> android.graphics.Typeface.DEFAULT
-                                    "Background" -> android.graphics.Typeface.DEFAULT_BOLD
-                                    else -> android.graphics.Typeface.DEFAULT_BOLD
-                                }
-                                val subEdgeType = when (subtitleStylePref) {
-                                    "Normal" -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
-                                    "Background" -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
-                                    else -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE
-                                }
-                                val subBgColor = when (subtitleStylePref) {
-                                    "Background" -> android.graphics.Color.argb(180, 0, 0, 0)
-                                    else -> android.graphics.Color.TRANSPARENT
-                                }
-                                setStyle(
-                                    androidx.media3.ui.CaptionStyleCompat(
-                                        subFgColor,
-                                        android.graphics.Color.TRANSPARENT,
-                                        subBgColor,
-                                        subEdgeType,
-                                        android.graphics.Color.BLACK,
-                                        subTypeface
-                                    )
+                            }
+                            val subTypeface = when (subtitleStylePref) {
+                                "Normal" -> android.graphics.Typeface.DEFAULT
+                                "Background" -> android.graphics.Typeface.DEFAULT_BOLD
+                                else -> android.graphics.Typeface.DEFAULT_BOLD
+                            }
+                            val subEdgeType = when (subtitleStylePref) {
+                                "Normal" -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
+                                "Background" -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
+                                else -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE
+                            }
+                            val subBgColor = when (subtitleStylePref) {
+                                "Background" -> android.graphics.Color.argb(180, 0, 0, 0)
+                                else -> android.graphics.Color.TRANSPARENT
+                            }
+                            setStyle(
+                                androidx.media3.ui.CaptionStyleCompat(
+                                    subFgColor,
+                                    android.graphics.Color.TRANSPARENT,
+                                    subBgColor,
+                                    subEdgeType,
+                                    android.graphics.Color.BLACK,
+                                    subTypeface
                                 )
-                            setApplyEmbeddedStyles(false)
-                            setApplyEmbeddedFontSizes(false)
+                            )
                             setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp)
                             setBottomPaddingFraction(0.08f)
+
+                            if (subtitleStylizedPref) {
+                                // Stylized mode: let Media3 render embedded ASS/SSA styles
+                                // (colors, fonts, positioning, z-order). User prefs are
+                                // only used as a fallback CaptionStyle for plain SRT/VTT.
+                                setApplyEmbeddedStyles(true)
+                                setApplyEmbeddedFontSizes(true)
+                            } else {
+                                // Uniform mode: override everything with user preferences
+                                setApplyEmbeddedStyles(false)
+                                setApplyEmbeddedFontSizes(false)
+                            }
                         }
                     }
                 },
