@@ -38,6 +38,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -187,7 +189,32 @@ private class SettingsFocusTracker {
 
 private val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null }
 
-private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete-account"
+private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete"
+
+private val tvGeneralSectionIds = setOf(
+    "language",
+    "subtitles",
+    "ai_subtitles",
+    "playback",
+    "trailers",
+    "appearance",
+    "profiles",
+    "network"
+)
+
+private fun tvGeneralRowsForSection(section: String): List<Int> {
+    return when (section) {
+        "language" -> listOf(0, 1, 2, 3)
+        "subtitles" -> listOf(4, 5, 6, 7, 8, 9)
+        "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
+        "playback" -> listOf(10, 11, 12, 16, 15, 27)
+        "trailers" -> listOf(13, 14)
+        "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22)
+        "profiles" -> listOf(19)
+        "network" -> listOf(25, 26)
+        else -> emptyList()
+    }
+}
 
 private fun openExternalUrl(context: Context, url: String) {
     runCatching {
@@ -321,17 +348,24 @@ fun SettingsScreen(
     }
     val sections = remember {
         buildList {
-            add("general")
-            add("iptv")
-            add("home_server")
+            add("accounts")
+            add("profiles")
+            add("language")
+            add("playback")
+            add("subtitles")
+            add("ai_subtitles")
             add("catalogs")
             add("stremio")
-            add("accounts")
+            add("iptv")
+            add("home_server")
+            add("trailers")
+            add("appearance")
+            add("network")
         }
     }
     val sectionMaxIndex: (String) -> Int = { section ->
         when (section) {
-            "general" -> 33 // 34 rows (28 from main + 6 AI subtitle rows)
+            in tvGeneralSectionIds -> (tvGeneralRowsForSection(section).size - 1).coerceAtLeast(0)
             "iptv" -> 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size // Add + rows
@@ -733,8 +767,8 @@ fun SettingsScreen(
                                 Zone.SECTION -> activeZone = Zone.CONTENT
                                 Zone.CONTENT -> {
                                     when (currentSection) {
-                                        "general" -> {
-                                            when (contentFocusIndex) {
+                                        in tvGeneralSectionIds -> {
+                                            when (tvGeneralRowsForSection(currentSection).getOrNull(contentFocusIndex)) {
                                                 0 -> openContentLanguagePicker()
                                                 1 -> openSubtitlePicker()
                                                 2 -> openSecondarySubtitlePicker()
@@ -985,22 +1019,25 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = AppTopBarContentTopInset)
+                    .padding(start = 34.dp, end = 42.dp, bottom = 28.dp)
             ) {
                 // Settings internal sidebar
                 Column(
                     modifier = Modifier
-                        .width(280.dp)
+                        .width(204.dp)
                         .fillMaxSize()
-                        .background(appBackgroundDark())
-                        .padding(vertical = 32.dp, horizontal = 24.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF050505))
+                        .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(16.dp))
+                        .padding(vertical = 18.dp, horizontal = 10.dp)
                 ) {
                     Text(
                         text = stringResource(R.string.settings),
-                        style = ArflixTypography.heroTitle.copy(fontSize = androidx.compose.ui.unit.TextUnit.Unspecified),
+                        style = ArflixTypography.cardTitle.copy(fontSize = 19.sp),
                         color = TextPrimary,
                         modifier = Modifier
-                            .padding(start = 16.dp)
-                            .padding(bottom = 24.dp)
+                            .padding(start = 8.dp)
+                            .padding(bottom = 14.dp)
                     )
 
                     Column(
@@ -1012,7 +1049,14 @@ fun SettingsScreen(
                         sections.forEachIndexed { index, section ->
                             SettingsSectionItem(
                                 icon = when (section) {
-                                    "general" -> Icons.Default.Settings
+                                    "language" -> Icons.Default.Language
+                                    "subtitles" -> Icons.Default.Subtitles
+                                    "ai_subtitles" -> Icons.Default.AutoAwesome
+                                    "playback" -> Icons.Default.PlayArrow
+                                    "trailers" -> Icons.Default.Movie
+                                    "appearance" -> Icons.Default.Palette
+                                    "profiles" -> Icons.Default.SwitchAccount
+                                    "network" -> Icons.Default.Language
                                     "iptv" -> Icons.Default.LiveTv
                                     "home_server" -> Icons.Default.Cloud
                                     "catalogs" -> Icons.Default.Widgets
@@ -1021,7 +1065,14 @@ fun SettingsScreen(
                                     else -> Icons.Default.Settings
                                 },
                                 title = when (section) {
-                                    "general" -> stringResource(R.string.general)
+                                    "language" -> "Language"
+                                    "subtitles" -> "Subtitles"
+                                    "ai_subtitles" -> stringResource(R.string.ai_subtitles_section)
+                                    "playback" -> stringResource(R.string.playback)
+                                    "trailers" -> "Trailers"
+                                    "appearance" -> stringResource(R.string.interface_label)
+                                    "profiles" -> "Profiles"
+                                    "network" -> stringResource(R.string.network)
                                     "iptv" -> stringResource(R.string.iptv)
                                     "home_server" -> "Home Server"
                                     "catalogs" -> stringResource(R.string.catalogs)
@@ -1038,17 +1089,17 @@ fun SettingsScreen(
                                 }
                             )
 
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     
                     Text(
                         text = "ARVIO V${BuildConfig.VERSION_NAME}",
                         style = ArflixTypography.caption,
                         color = TextSecondary.copy(alpha = 0.5f),
-                        modifier = Modifier.padding(start = 16.dp)
+                        modifier = Modifier.padding(start = 8.dp)
                     )
                 }
 
@@ -1058,12 +1109,19 @@ fun SettingsScreen(
                         .weight(1f)
                         .fillMaxSize()
                         .verticalScroll(scrollState)
-                        .padding(48.dp)
+                        .padding(start = 28.dp)
                 ) {
+                    TvSettingsSectionHeader(
+                        section = sections[sectionIndex],
+                        uiState = uiState,
+                        addonCount = stremioAddons.size
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
                   CompositionLocalProvider(LocalSettingsFocusTracker provides focusTracker) {
                     when (sections[sectionIndex]) {
-                        "general" -> {
-                        GeneralSettings(
+                        in tvGeneralSectionIds -> {
+                        TvGeneralSettingsRows(
+                            section = sections[sectionIndex],
                             defaultSubtitle = uiState.defaultSubtitle,
                             secondarySubtitle = uiState.secondarySubtitle,
                             defaultAudioLanguage = uiState.defaultAudioLanguage,
@@ -1387,10 +1445,12 @@ fun SettingsScreen(
                         displayName = plexHomeServerDisplayName.trim()
                     )
                     plexHomeServerDisplayName = ""
+                    plexHomeServerUrl = ""
                     showPlexHomeServerInput = false
                 },
                 onDismiss = {
                     plexHomeServerDisplayName = ""
+                    plexHomeServerUrl = ""
                     showPlexHomeServerInput = false
                 }
             )
@@ -1691,9 +1751,14 @@ fun SettingsScreen(
         uiState.plexHomeServerAuth?.let { plexAuth ->
             TraktActivationModal(
                 title = "Connect with code",
-                instruction = "Scan the QR code or open the auth page and confirm this code",
+                instruction = if (LocalDeviceType.current.isTouchDevice()) {
+                    "Open the auth page, sign in, then return to ARVIO. This screen will finish automatically."
+                } else {
+                    "Scan the QR code or open the auth page and confirm this code"
+                },
                 verificationUrl = plexAuth.verificationUrl,
                 userCode = plexAuth.code,
+                onOpenUrl = { openExternalUrl(context, plexAuth.verificationUrl) },
                 onDismiss = { viewModel.cancelPlexHomeServerAuth() }
             )
         }
@@ -2731,12 +2796,14 @@ private fun TraktActivationModal(
     userCode: String,
     onDismiss: () -> Unit,
     title: String = "Connect Trakt.tv",
-    instruction: String = "Go to $verificationUrl and enter this code"
+    instruction: String = "Go to $verificationUrl and enter this code",
+    onOpenUrl: (() -> Unit)? = null
 ) {
     val focusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val qrContainerSize = if (isMobile) 0.dp else 172.dp
     val qrBitmapSizePx = if (isMobile) 0 else 512
+    val clipboardManager = LocalClipboardManager.current
 
     LaunchedEffect(userCode) {
         focusRequester.requestFocus()
@@ -2832,9 +2899,50 @@ private fun TraktActivationModal(
 
                 Spacer(modifier = Modifier.height(28.dp))
 
+                if (isMobile && onOpenUrl != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Pink, RoundedCornerShape(10.dp))
+                            .clickable { onOpenUrl() }
+                            .padding(vertical = 13.dp, horizontal = 18.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Open auth page",
+                            style = ArflixTypography.button,
+                            color = Color.White
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                            .clickable { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(userCode)) }
+                            .padding(vertical = 12.dp, horizontal = 18.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Copy code",
+                            style = ArflixTypography.button,
+                            color = Color.White
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 Box(
                     modifier = Modifier
-                        .background(Pink, RoundedCornerShape(10.dp))
+                        .background(
+                            if (isMobile && onOpenUrl != null) Color.White.copy(alpha = 0.08f) else Pink,
+                            RoundedCornerShape(10.dp)
+                        )
+                        .then(if (isMobile && onOpenUrl != null) Modifier.fillMaxWidth() else Modifier)
                         .clickable { onDismiss() }
                         .padding(vertical = 12.dp, horizontal = 18.dp),
                     contentAlignment = Alignment.Center
@@ -3688,36 +3796,604 @@ private fun SettingsSectionItem(
     onClick: () -> Unit = {}
 ) {
     val bgColor = when {
-        isFocused -> Color.White.copy(alpha = 0.1f)
-        isSelected -> Color.White.copy(alpha = 0.05f)
+        isFocused -> Color.White.copy(alpha = 0.12f)
+        isSelected -> Color.White.copy(alpha = 0.07f)
         else -> Color.Transparent
     }
     val textColor = when {
-        isFocused -> Pink
+        isFocused -> TextPrimary
         isSelected -> TextPrimary
         else -> TextSecondary
     }
+    val accentColor = resolveFocusBorderColor(fallback = Pink)
     
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
             .background(bgColor, RoundedCornerShape(12.dp))
-            .padding(16.dp),
+            .border(
+                width = if (isFocused) 1.dp else 0.dp,
+                color = if (isFocused) accentColor else Color.Transparent,
+                shape = RoundedCornerShape(12.dp)
+            )
+            .padding(horizontal = 9.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = textColor,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.width(16.dp))
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .background(
+                    if (isSelected || isFocused) accentColor.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.05f),
+                    RoundedCornerShape(9.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (isFocused || isSelected) accentColor else textColor,
+                modifier = Modifier.size(17.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
         Text(
             text = title,
-            style = ArflixTypography.body,
-            color = textColor
+            style = ArflixTypography.body.copy(fontSize = 16.sp),
+            color = textColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
         )
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(20.dp)
+                    .background(accentColor, RoundedCornerShape(99.dp))
+            )
+        }
+    }
+}
+
+@Composable
+private fun TvSettingsSectionHeader(
+    section: String,
+    uiState: SettingsUiState,
+    addonCount: Int
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = tvSettingsSectionTitle(section),
+                    style = ArflixTypography.sectionTitle.copy(fontSize = 24.sp),
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = tvSettingsSectionDescription(section),
+                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                    color = TextSecondary.copy(alpha = 0.74f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(18.dp))
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                tvSettingsSectionPills(section, uiState, addonCount).take(2).forEach { pill ->
+                    TvSettingsStatusPill(label = pill)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvSettingsStatusPill(label: String) {
+    Row(
+        modifier = Modifier
+            .height(26.dp)
+            .background(Color.White.copy(alpha = 0.065f), RoundedCornerShape(999.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .background(resolveFocusBorderColor(fallback = Pink), RoundedCornerShape(99.dp))
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = ArflixTypography.caption.copy(fontSize = 11.sp),
+            color = TextSecondary.copy(alpha = 0.86f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun TvSettingsInsightPanel(
+    section: String,
+    focusedIndex: Int,
+    uiState: SettingsUiState,
+    addonCount: Int,
+    modifier: Modifier = Modifier
+) {
+    val help = tvSettingsFocusedHelp(section, focusedIndex)
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color(0xFF050505))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+            .padding(22.dp)
+    ) {
+        Text(
+            text = "Overview",
+            style = ArflixTypography.sectionTitle.copy(fontSize = 22.sp),
+            color = TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = tvSettingsSectionDescription(section),
+            style = ArflixTypography.caption,
+            color = TextSecondary.copy(alpha = 0.7f),
+            lineHeight = 18.sp
+        )
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White.copy(alpha = 0.055f), RoundedCornerShape(16.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(16.dp))
+                .padding(18.dp)
+        ) {
+            Column {
+                Text(
+                    text = if (focusedIndex >= 0) "Focused setting" else "Section",
+                    style = ArflixTypography.caption,
+                    color = resolveFocusBorderColor(fallback = Pink),
+                    maxLines = 1
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = help.title,
+                    style = ArflixTypography.cardTitle,
+                    color = TextPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = help.description,
+                    style = ArflixTypography.caption,
+                    color = TextSecondary.copy(alpha = 0.76f),
+                    lineHeight = 18.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        Text(
+            text = "Status",
+            style = ArflixTypography.caption.copy(fontSize = 11.sp),
+            color = TextSecondary.copy(alpha = 0.54f),
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        tvSettingsPanelFacts(section, uiState, addonCount).forEach { fact ->
+            TvSettingsFactRow(fact.first, fact.second)
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun TvSettingsFactRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = ArflixTypography.caption,
+            color = TextSecondary.copy(alpha = 0.62f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            style = ArflixTypography.caption,
+            color = TextPrimary.copy(alpha = 0.88f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.widthIn(max = 132.dp)
+        )
+    }
+}
+
+private data class TvSettingsHelp(
+    val title: String,
+    val description: String
+)
+
+@Composable
+private fun tvSettingsSectionTitle(section: String): String {
+    return when (section) {
+        "language" -> "Language"
+        "subtitles" -> "Subtitles"
+        "ai_subtitles" -> stringResource(R.string.ai_subtitles_section)
+        "playback" -> stringResource(R.string.playback)
+        "trailers" -> "Trailers"
+        "appearance" -> stringResource(R.string.interface_label)
+        "profiles" -> "Profiles"
+        "network" -> stringResource(R.string.network)
+        "iptv" -> stringResource(R.string.iptv)
+        "home_server" -> "Home Server"
+        "catalogs" -> stringResource(R.string.catalogs)
+        "stremio" -> stringResource(R.string.addons)
+        "accounts" -> stringResource(R.string.accounts)
+        else -> section.replaceFirstChar { it.uppercase() }
+    }
+}
+
+private fun tvSettingsSectionDescription(section: String): String {
+    return when (section) {
+        "language" -> "App text, audio and subtitle language defaults."
+        "subtitles" -> "Subtitle display, styling and language filtering."
+        "ai_subtitles" -> "AI subtitle translation and cleanup options."
+        "playback" -> "Autoplay, source quality, frame-rate matching and audio boost."
+        "trailers" -> "Trailer autoplay and sound behavior on hero banners."
+        "appearance" -> "Layout, OLED mode, focus styling and hero metadata."
+        "profiles" -> "Profile startup behavior for this device."
+        "network" -> "DNS and loading diagnostic preferences."
+        "iptv" -> "Live TV playlists, EPG refresh, channel loading and playlist management."
+        "home_server" -> "Connect personal media servers and use their libraries as sources."
+        "catalogs" -> "Discover, rename, order and remove home rows and list catalogs."
+        "stremio" -> "Manage third-party addons used for catalog and source discovery."
+        "accounts" -> "Cloud sync, Trakt connection, app updates and account controls."
+        else -> "Configure ARVIO for this profile."
+    }
+}
+
+private fun tvSettingsSectionPills(
+    section: String,
+    uiState: SettingsUiState,
+    addonCount: Int
+): List<String> {
+    return when (section) {
+        "language" -> listOf(
+            "Language ${uiState.contentLanguage.uppercase()}",
+            "Audio ${uiState.defaultAudioLanguage}"
+        )
+        "subtitles" -> listOf(
+            "Default ${uiState.defaultSubtitle}",
+            "Size ${uiState.subtitleSize}"
+        )
+        "ai_subtitles" -> listOf(
+            if (uiState.subtitleAiEnabled) "AI on" else "AI off",
+            if (uiState.subtitleAiAutoSelect) "Auto-select on" else "Auto-select off"
+        )
+        "playback" -> listOf(
+            "Autoplay ${if (uiState.autoPlaySingleSource) "on" else "off"}",
+            "Min ${uiState.autoPlayMinQuality}",
+        )
+        "trailers" -> listOf(
+            "Autoplay ${if (uiState.trailerAutoPlay) "on" else "off"}",
+            "Sound ${if (uiState.trailerSoundEnabled) "on" else "off"}"
+        )
+        "appearance" -> listOf(
+            "OLED ${if (uiState.oledBlackBackground) "on" else "off"}"
+        )
+        "profiles" -> listOf(if (uiState.skipProfileSelection) "Skip on" else "Picker on")
+        "network" -> listOf("DNS ${uiState.dnsProvider}", if (uiState.showLoadingStats) "Stats on" else "Stats off")
+        "iptv" -> listOf(
+            "${uiState.iptvPlaylists.size}/3 playlists",
+            "${formatCompactCount(uiState.iptvChannelCount)} channels",
+            if (uiState.isIptvLoading) "Refreshing" else "Ready"
+        )
+        "home_server" -> listOf(
+            "${uiState.homeServerConnections.size} connected",
+            if (uiState.isHomeServerConnecting || uiState.isPlexHomeServerPolling) "Working" else "Idle"
+        )
+        "catalogs" -> listOf("${uiState.catalogs.size} catalogs", "Cloud synced")
+        "stremio" -> listOf("$addonCount installed", "Profile scoped")
+        "accounts" -> listOf(
+            if (uiState.isLoggedIn) "Cloud connected" else "Cloud off",
+            if (uiState.isTraktAuthenticated) "Trakt connected" else "Trakt off",
+            if (uiState.isForceCloudSyncing) "Syncing" else "Ready"
+        )
+        else -> emptyList()
+    }
+}
+
+private fun tvSettingsPanelFacts(
+    section: String,
+    uiState: SettingsUiState,
+    addonCount: Int
+): List<Pair<String, String>> {
+    return when (section) {
+        "general" -> listOf(
+            "Subtitle" to uiState.defaultSubtitle,
+            "Audio" to uiState.defaultAudioLanguage,
+            "Frame rate" to uiState.frameRateMatchingMode,
+            "Focus border" to uiState.focusBorderColor
+        )
+        "iptv" -> listOf(
+            "Playlists" to "${uiState.iptvPlaylists.size}/3",
+            "Channels" to formatCompactCount(uiState.iptvChannelCount),
+            "EPG" to if (uiState.iptvPlaylists.any { it.epgUrl.isNotBlank() }) "Configured" else "Optional",
+            "State" to if (uiState.isIptvLoading) "Refreshing" else "Ready"
+        )
+        "home_server" -> listOf(
+            "Servers" to uiState.homeServerConnections.size.toString(),
+            "Status" to if (uiState.isHomeServerConnecting || uiState.isPlexHomeServerPolling) "Working" else "Ready"
+        )
+        "catalogs" -> listOf(
+            "Catalogs" to uiState.catalogs.size.toString(),
+            "Discovery" to if (uiState.isCatalogSearching) "Searching" else "Ready"
+        )
+        "stremio" -> listOf(
+            "Addons" to addonCount.toString(),
+            "Scope" to "Current profile"
+        )
+        "accounts" -> listOf(
+            "Cloud" to if (uiState.isLoggedIn) "Connected" else "Disconnected",
+            "Trakt" to if (uiState.isTraktAuthenticated) "Connected" else "Disconnected",
+            "Updates" to if (uiState.isSelfUpdateSupported) "Available" else "Play build"
+        )
+        else -> emptyList()
+    }
+}
+
+private fun tvSettingsFocusedHelp(section: String, focusedIndex: Int): TvSettingsHelp {
+    if (focusedIndex < 0) {
+        return TvSettingsHelp(
+            title = "Choose a setting",
+            description = "Move into the center panel to edit the selected section."
+        )
+    }
+    return when (section) {
+        "general" -> when (focusedIndex) {
+            0 -> TvSettingsHelp("App language", "Changes the interface and metadata language used by ARVIO.")
+            1 -> TvSettingsHelp("Default subtitle", "Preferred subtitle language when playback starts.")
+            2 -> TvSettingsHelp("Secondary subtitle", "Optional second subtitle preference where available.")
+            3 -> TvSettingsHelp("Default audio", "Preferred audio language when multiple tracks exist.")
+            in 4..9 -> TvSettingsHelp("Subtitle preference", "Adjust subtitle size, color, position, style and filtering.")
+            in 10..16 -> TvSettingsHelp("Playback", "Tune autoplay, trailers, frame-rate matching and source quality behavior.")
+            in 17..24 -> TvSettingsHelp("Interface", "Control layout, profile startup, OLED mode, clock and focus styling.")
+            in 25..26 -> TvSettingsHelp("Network", "DNS and loading diagnostic preferences.")
+            27 -> TvSettingsHelp("Volume boost", "Boosts playback audio output when enabled.")
+            else -> TvSettingsHelp("AI subtitles", "Configure optional AI subtitle translation and cleanup.")
+        }
+        "iptv" -> when (focusedIndex) {
+            0 -> TvSettingsHelp("Add playlist", "Add another IPTV playlist with M3U or Xtream details.")
+            else -> TvSettingsHelp("IPTV playlist", "Enable, edit, reorder, refresh or remove IPTV data.")
+        }
+        "home_server" -> when (focusedIndex) {
+            0 -> TvSettingsHelp("Add server", "Connect a personal media server with URL and credentials.")
+            1 -> TvSettingsHelp("Connect with code", "Use device-code auth for supported personal servers.")
+            else -> TvSettingsHelp("Server connection", "Edit, test or remove connected personal media servers.")
+        }
+        "catalogs" -> when (focusedIndex) {
+            0 -> TvSettingsHelp("Discover catalog", "Search public list catalogs or add a direct URL.")
+            else -> TvSettingsHelp("Catalog row", "Rename, reorder, change layout or remove this catalog.")
+        }
+        "stremio" -> TvSettingsHelp("Addon", "Enable, disable, add or remove third-party addon sources.")
+        "accounts" -> when (focusedIndex) {
+            0 -> TvSettingsHelp("Cloud account", "Connect or disconnect ARVIO cloud sync.")
+            1 -> TvSettingsHelp("Trakt", "Connect or disconnect Trakt watch history and lists.")
+            2 -> TvSettingsHelp("Force cloud sync", "Push/pull the latest synced profile data now.")
+            3 -> TvSettingsHelp("App updates", "Check for sideload app updates or install a downloaded update.")
+            else -> TvSettingsHelp("Account data", "Open account and data deletion information.")
+        }
+        else -> TvSettingsHelp("Setting", "Use OK to change this option.")
+    }
+}
+
+private fun formatCompactCount(value: Int): String {
+    return when {
+        value >= 1_000_000 -> "${value / 1_000_000}M"
+        value >= 1_000 -> "${value / 1_000}k"
+        else -> value.toString()
+    }
+}
+
+@Composable
+private fun TvGeneralSettingsRows(
+    section: String,
+    defaultSubtitle: String,
+    secondarySubtitle: String = "Off",
+    defaultAudioLanguage: String,
+    contentLanguage: String = "en-US",
+    dnsProvider: String,
+    cardLayoutMode: String,
+    frameRateMatchingMode: String,
+    autoPlayNext: Boolean,
+    autoPlaySingleSource: Boolean,
+    autoPlayMinQuality: String,
+    subtitleSize: String = "Medium",
+    subtitleColor: String = "White",
+    subtitleOffset: String = "Low",
+    subtitleStyle: String = "Bold",
+    deviceModeOverride: String = "auto",
+    skipProfileSelection: Boolean = false,
+    oledBlackBackground: Boolean = false,
+    clockFormat: String = "24h",
+    showBudget: Boolean = true,
+    spoilerBlurEnabled: Boolean = false,
+    focusBorderColor: String = "White",
+    volumeBoostDb: Int = 0,
+    focusedIndex: Int,
+    onSubtitleClick: () -> Unit,
+    onSecondarySubtitleClick: () -> Unit = {},
+    onAudioLanguageClick: () -> Unit,
+    onCardLayoutToggle: () -> Unit,
+    onFrameRateMatchingClick: () -> Unit,
+    onDnsProviderClick: () -> Unit,
+    onAutoPlayToggle: (Boolean) -> Unit,
+    onAutoPlaySingleSourceToggle: (Boolean) -> Unit,
+    onAutoPlayMinQualityClick: () -> Unit,
+    onDeviceModeClick: () -> Unit = {},
+    onContentLanguageClick: () -> Unit = {},
+    onSkipProfileSelectionToggle: (Boolean) -> Unit = {},
+    onOledBlackBackgroundToggle: (Boolean) -> Unit = {},
+    onClockFormatClick: () -> Unit = {},
+    onShowBudgetToggle: (Boolean) -> Unit = {},
+    onSpoilerBlurToggle: (Boolean) -> Unit = {},
+    onFocusBorderColorClick: () -> Unit = {},
+    showLoadingStats: Boolean = true,
+    onShowLoadingStatsToggle: (Boolean) -> Unit = {},
+    onVolumeBoostClick: () -> Unit = {},
+    trailerAutoPlay: Boolean = false,
+    trailerSoundEnabled: Boolean = false,
+    onSubtitleSizeClick: () -> Unit = {},
+    onSubtitleColorClick: () -> Unit = {},
+    onSubtitleOffsetClick: () -> Unit = {},
+    onSubtitleStyleClick: () -> Unit = {},
+    subtitleStylized: Boolean = true,
+    onSubtitleStylizedToggle: () -> Unit = {},
+    filterSubtitlesByLanguage: Boolean = true,
+    onFilterSubtitlesByLanguageToggle: (Boolean) -> Unit = {},
+    onTrailerAutoPlayToggle: (Boolean) -> Unit = {},
+    onTrailerSoundEnabledToggle: (Boolean) -> Unit = {},
+    qualityFilterValue: String = "OFF",
+    onQualityFiltersClick: () -> Unit = {},
+    subtitleAiEnabled: Boolean = false,
+    subtitleAiAutoSelect: Boolean = false,
+    subtitleAiApiKey: String = "",
+    subtitleAiModel: com.arflix.tv.ui.screens.player.SubtitleAiModel = com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B,
+    subtitleRemoveHearingImpaired: Boolean = true,
+    onSubtitleAiEnabledToggle: (Boolean) -> Unit = {},
+    onSubtitleAiModelClick: () -> Unit = {},
+    onSubtitleAiAutoSelectToggle: (Boolean) -> Unit = {},
+    onSubtitleRemoveHearingImpairedToggle: (Boolean) -> Unit = {},
+    onSubtitleAiApiKeyClick: () -> Unit = {},
+    onSubtitleAiQrClick: () -> Unit = {}
+) {
+    Column {
+        tvGeneralRowsForSection(section).forEachIndexed { localIndex, rowId ->
+            if (localIndex > 0) Spacer(modifier = Modifier.height(10.dp))
+            when (rowId) {
+                0 -> SettingsRow(
+                    icon = Icons.Default.Language,
+                    title = stringResource(R.string.app_language),
+                    subtitle = stringResource(R.string.app_language_desc),
+                    value = TMDB_LANGUAGES.firstOrNull { it.first == contentLanguage }?.second ?: contentLanguage,
+                    isFocused = focusedIndex == localIndex,
+                    onClick = onContentLanguageClick,
+                    modifier = Modifier.settingsFocusSlot(localIndex)
+                )
+                1 -> SettingsRow(
+                    icon = Icons.Default.Subtitles,
+                    title = stringResource(R.string.default_subtitle),
+                    subtitle = stringResource(R.string.subtitle_desc),
+                    value = defaultSubtitle,
+                    isFocused = focusedIndex == localIndex,
+                    onClick = onSubtitleClick,
+                    modifier = Modifier.settingsFocusSlot(localIndex)
+                )
+                2 -> SettingsRow(
+                    icon = Icons.Default.Subtitles,
+                    title = stringResource(R.string.secondary_subtitle),
+                    subtitle = stringResource(R.string.secondary_subtitle_desc),
+                    value = secondarySubtitle,
+                    isFocused = focusedIndex == localIndex,
+                    onClick = onSecondarySubtitleClick,
+                    modifier = Modifier.settingsFocusSlot(localIndex)
+                )
+                3 -> SettingsRow(
+                    icon = Icons.Default.VolumeUp,
+                    title = stringResource(R.string.default_audio),
+                    subtitle = stringResource(R.string.audio_desc),
+                    value = defaultAudioLanguage,
+                    isFocused = focusedIndex == localIndex,
+                    onClick = onAudioLanguageClick,
+                    modifier = Modifier.settingsFocusSlot(localIndex)
+                )
+                4 -> SettingsRow(Icons.Default.Subtitles, stringResource(R.string.subtitle_size), stringResource(R.string.subtitle_size_desc), subtitleSize, focusedIndex == localIndex, onSubtitleSizeClick, Modifier.settingsFocusSlot(localIndex))
+                5 -> SettingsRow(Icons.Default.Subtitles, stringResource(R.string.subtitle_color), stringResource(R.string.subtitle_color_desc), subtitleColor, focusedIndex == localIndex, onSubtitleColorClick, Modifier.settingsFocusSlot(localIndex))
+                6 -> SettingsRow(Icons.Default.Subtitles, stringResource(R.string.subtitle_offset), stringResource(R.string.subtitle_offset_desc), subtitleOffset, focusedIndex == localIndex, onSubtitleOffsetClick, Modifier.settingsFocusSlot(localIndex))
+                7 -> SettingsRow(Icons.Default.Subtitles, stringResource(R.string.subtitle_style), stringResource(R.string.subtitle_style_desc), subtitleStyle, focusedIndex == localIndex, onSubtitleStyleClick, Modifier.settingsFocusSlot(localIndex))
+                8 -> SettingsToggleRow(stringResource(R.string.subtitle_stylized), stringResource(R.string.subtitle_stylized_desc), subtitleStylized, focusedIndex == localIndex, { onSubtitleStylizedToggle() }, Modifier.settingsFocusSlot(localIndex))
+                9 -> SettingsToggleRow(stringResource(R.string.filter_subtitles), stringResource(R.string.filter_subtitles_desc), filterSubtitlesByLanguage, focusedIndex == localIndex, onFilterSubtitlesByLanguageToggle, Modifier.settingsFocusSlot(localIndex))
+                10 -> SettingsToggleRow(stringResource(R.string.auto_play_next_title), stringResource(R.string.auto_play_desc), autoPlayNext, focusedIndex == localIndex, onAutoPlayToggle, Modifier.settingsFocusSlot(localIndex))
+                11 -> SettingsToggleRow(stringResource(R.string.autoplay), stringResource(R.string.autoplay_desc), autoPlaySingleSource, focusedIndex == localIndex, onAutoPlaySingleSourceToggle, Modifier.settingsFocusSlot(localIndex))
+                12 -> SettingsRow(Icons.Default.HighQuality, stringResource(R.string.auto_play_min_quality), stringResource(R.string.auto_play_quality_desc), autoPlayMinQuality, focusedIndex == localIndex, onAutoPlayMinQualityClick, Modifier.settingsFocusSlot(localIndex))
+                13 -> SettingsToggleRow(stringResource(R.string.trailer_auto_play), stringResource(R.string.trailer_desc), trailerAutoPlay, focusedIndex == localIndex, onTrailerAutoPlayToggle, Modifier.settingsFocusSlot(localIndex))
+                14 -> SettingsToggleRow(stringResource(R.string.trailer_sound), stringResource(R.string.trailer_sound_desc), trailerSoundEnabled, focusedIndex == localIndex, onTrailerSoundEnabledToggle, Modifier.settingsFocusSlot(localIndex))
+                15 -> SettingsRow(Icons.Default.Movie, stringResource(R.string.frame_rate), stringResource(R.string.frame_rate_desc), frameRateMatchingMode, focusedIndex == localIndex, onFrameRateMatchingClick, Modifier.settingsFocusSlot(localIndex))
+                16 -> SettingsRow(Icons.Default.HighQuality, stringResource(R.string.quality_filters), stringResource(R.string.quality_filters_desc), qualityFilterValue, focusedIndex == localIndex, onQualityFiltersClick, Modifier.settingsFocusSlot(localIndex))
+                17 -> SettingsRow(Icons.Default.Widgets, stringResource(R.string.card_layout), stringResource(R.string.card_layout_desc), cardLayoutMode, focusedIndex == localIndex, onCardLayoutToggle, Modifier.settingsFocusSlot(localIndex))
+                18 -> SettingsRow(
+                    icon = Icons.Default.Settings,
+                    title = stringResource(R.string.ui_mode),
+                    subtitle = stringResource(R.string.ui_mode_desc),
+                    value = when (deviceModeOverride) {
+                        "tv" -> "TV"
+                        "tablet" -> "Tablet"
+                        "phone" -> "Phone"
+                        else -> "Auto"
+                    },
+                    isFocused = focusedIndex == localIndex,
+                    onClick = onDeviceModeClick,
+                    modifier = Modifier.settingsFocusSlot(localIndex)
+                )
+                19 -> SettingsToggleRow(stringResource(R.string.skip_profile), stringResource(R.string.skip_profile_desc), skipProfileSelection, focusedIndex == localIndex, onSkipProfileSelectionToggle, Modifier.settingsFocusSlot(localIndex))
+                20 -> SettingsToggleRow(stringResource(R.string.oled_black_background), stringResource(R.string.oled_black_background_desc), oledBlackBackground, focusedIndex == localIndex, onOledBlackBackgroundToggle, Modifier.settingsFocusSlot(localIndex))
+                21 -> SettingsRow(Icons.Default.Schedule, stringResource(R.string.clock_format), stringResource(R.string.clock_format_desc), if (clockFormat == "12h") "12-hour" else "24-hour", focusedIndex == localIndex, onClockFormatClick, Modifier.settingsFocusSlot(localIndex))
+                22 -> SettingsToggleRow(stringResource(R.string.show_budget), stringResource(R.string.show_budget_desc), showBudget, focusedIndex == localIndex, onShowBudgetToggle, Modifier.settingsFocusSlot(localIndex))
+                23 -> SettingsToggleRow(stringResource(R.string.spoiler_blur), stringResource(R.string.spoiler_blur_desc), spoilerBlurEnabled, focusedIndex == localIndex, onSpoilerBlurToggle, Modifier.settingsFocusSlot(localIndex))
+                24 -> SettingsRow(Icons.Default.Palette, stringResource(R.string.focus_border_color), stringResource(R.string.focus_border_color_desc), focusBorderColor, focusedIndex == localIndex, onFocusBorderColorClick, Modifier.settingsFocusSlot(localIndex))
+                25 -> SettingsRow(Icons.Default.Language, stringResource(R.string.dns_provider), stringResource(R.string.dns_desc), dnsProvider, focusedIndex == localIndex, onDnsProviderClick, Modifier.settingsFocusSlot(localIndex))
+                26 -> SettingsToggleRow(stringResource(R.string.show_loading_stats), stringResource(R.string.show_loading_stats_desc), showLoadingStats, focusedIndex == localIndex, onShowLoadingStatsToggle, Modifier.settingsFocusSlot(localIndex))
+                27 -> SettingsRow(
+                    icon = Icons.Default.VolumeUp,
+                    title = stringResource(R.string.volume_boost),
+                    subtitle = stringResource(R.string.volume_boost_desc),
+                    value = if (volumeBoostDb == 0) "Off" else "+${volumeBoostDb} dB",
+                    isFocused = focusedIndex == localIndex,
+                    onClick = onVolumeBoostClick,
+                    modifier = Modifier.settingsFocusSlot(localIndex)
+                )
+                28 -> SettingsToggleRow(stringResource(R.string.ai_subtitle_translation_title), stringResource(R.string.ai_subtitle_translation_desc), subtitleAiEnabled, focusedIndex == localIndex, onSubtitleAiEnabledToggle, Modifier.settingsFocusSlot(localIndex))
+                29 -> SettingsRow(
+                    icon = Icons.Default.AutoAwesome,
+                    title = stringResource(R.string.ai_model_title),
+                    subtitle = stringResource(R.string.ai_model_desc),
+                    value = when (subtitleAiModel) {
+                        com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq - Llama 3.3 70B"
+                        com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 2.5 Flash"
+                    },
+                    isFocused = focusedIndex == localIndex,
+                    onClick = onSubtitleAiModelClick,
+                    modifier = Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f)
+                )
+                30 -> SettingsToggleRow(stringResource(R.string.ai_auto_select_title), stringResource(R.string.ai_auto_select_desc), subtitleAiAutoSelect, focusedIndex == localIndex, onSubtitleAiAutoSelectToggle, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
+                31 -> SettingsToggleRow(stringResource(R.string.ai_remove_hi_title), stringResource(R.string.ai_remove_hi_desc), subtitleRemoveHearingImpaired, focusedIndex == localIndex, onSubtitleRemoveHearingImpairedToggle, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
+                32 -> SettingsRow(Icons.Default.VpnKey, stringResource(R.string.ai_api_key_title), stringResource(R.string.ai_api_key_desc), maskAiApiKey(subtitleAiApiKey, stringResource(R.string.ai_key_not_set)), focusedIndex == localIndex, onSubtitleAiApiKeyClick, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
+                33 -> SettingsRow(Icons.Default.QrCode, stringResource(R.string.ai_scan_qr_title), stringResource(R.string.ai_scan_qr_desc), "", focusedIndex == localIndex, onSubtitleAiQrClick, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
+            }
+        }
     }
 }
 
@@ -4895,15 +5571,15 @@ private fun SettingsRow(
                 onClick = onClick
             )
             .background(
-                if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
-                RoundedCornerShape(12.dp)
+                if (isFocused) Color.White.copy(alpha = 0.105f) else Color.White.copy(alpha = 0.055f),
+                RoundedCornerShape(10.dp)
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
                 color = if (isFocused) focusRingColor else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(10.dp)
             )
-            .padding(20.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -4912,13 +5588,13 @@ private fun SettingsRow(
                 imageVector = icon,
                 contentDescription = null,
                 tint = TextSecondary,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(19.dp)
             )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column {
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    style = ArflixTypography.cardTitle,
+                    style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
                     color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -4926,22 +5602,34 @@ private fun SettingsRow(
                 if (subtitle.isNotEmpty()) {
                     Text(
                         text = subtitle,
-                        style = ArflixTypography.caption,
+                        style = ArflixTypography.caption.copy(fontSize = 13.sp),
                         color = TextSecondary,
-                        maxLines = 2,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             }
         }
+        Spacer(modifier = Modifier.width(12.dp))
         
-        Text(
-            text = value.uppercase(),
-            style = ArflixTypography.label,
-            color = Pink,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        if (value.isNotBlank()) {
+            Box(
+                modifier = Modifier
+                    .widthIn(min = 80.dp, max = 158.dp)
+                    .background(Color.Black.copy(alpha = 0.22f), RoundedCornerShape(999.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(999.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = value.uppercase(),
+                    style = ArflixTypography.label.copy(fontSize = 12.sp),
+                    color = Pink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 
@@ -4966,31 +5654,31 @@ private fun SettingsToggleRow(
                 onClick = { onToggle(!isEnabled) }
             )
             .background(
-                if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
-                RoundedCornerShape(12.dp)
+                if (isFocused) Color.White.copy(alpha = 0.105f) else Color.White.copy(alpha = 0.055f),
+                RoundedCornerShape(10.dp)
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
                 color = if (isFocused) focusRingColor else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(10.dp)
             )
-            .padding(20.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = ArflixTypography.cardTitle,
+                style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
                 color = TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = subtitle,
-                style = ArflixTypography.caption,
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
                 color = TextSecondary,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -4998,8 +5686,8 @@ private fun SettingsToggleRow(
         // Custom toggle indicator instead of Switch
         Box(
             modifier = Modifier
-                .width(48.dp)
-                .height(26.dp)
+                .width(42.dp)
+                .height(22.dp)
                 .background(
                     color = if (isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f),
                     shape = RoundedCornerShape(13.dp)
@@ -5009,7 +5697,7 @@ private fun SettingsToggleRow(
         ) {
             Box(
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(16.dp)
                     .background(
                         color = Color.White,
                         shape = RoundedCornerShape(10.dp)
@@ -7223,6 +7911,8 @@ private fun InputModal(
                         if (LocalDeviceType.current.isTouchDevice()) Modifier.fillMaxWidth(0.92f).widthIn(max = 600.dp)
                         else Modifier.width(560.dp)
                     )
+                    .navigationBarsPadding()
+                    .imePadding()
                     .heightIn(max = 560.dp)
                     .background(BackgroundElevated, RoundedCornerShape(14.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
@@ -7316,7 +8006,11 @@ private fun InputModal(
                     color = TextPrimary
                 )
                 Text(
-                    text = "Use D-pad to move, press OK to edit a field",
+                    text = if (LocalDeviceType.current.isTouchDevice()) {
+                        "Tap a field to edit, then tap Confirm"
+                    } else {
+                        "Use D-pad to move, press OK to edit a field"
+                    },
                     style = ArflixTypography.caption,
                     color = TextSecondary.copy(alpha = 0.75f),
                     modifier = Modifier.padding(top = 2.dp, bottom = if (supportingText == null) 12.dp else 4.dp)
