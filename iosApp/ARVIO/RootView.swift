@@ -4,12 +4,15 @@ enum ArvioTab: String, CaseIterable {
     case home = "Home"
     case movies = "Movies"
     case series = "Series"
+    case liveTV = "Live TV"
     case watchlist = "Watchlist"
     case search = "Search"
+    case addons = "Addons"
     case settings = "Settings"
 }
 
 struct RootView: View {
+    @EnvironmentObject private var appState: AppState
     @State private var selectedTab: ArvioTab = .home
 
     var body: some View {
@@ -34,10 +37,14 @@ struct RootView: View {
                         CatalogView(title: "Movies", subtitle: "Curated cinema and recent releases.", items: featuredItems.filter { $0.kind == .movie })
                     case .series:
                         CatalogView(title: "Series", subtitle: "Continue seasons and discover premium TV.", items: featuredItems.filter { $0.kind == .series })
+                    case .liveTV:
+                        CatalogView(title: "Live TV", subtitle: "IPTV guide and channels are next in the iOS parity queue.", items: featuredItems)
                     case .watchlist:
                         WatchlistView()
                     case .search:
                         SearchView()
+                    case .addons:
+                        AddonsView()
                     case .settings:
                         SettingsView()
                     }
