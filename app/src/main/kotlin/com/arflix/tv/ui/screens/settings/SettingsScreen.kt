@@ -196,7 +196,6 @@ private val tvGeneralSectionIds = setOf(
     "subtitles",
     "ai_subtitles",
     "playback",
-    "trailers",
     "appearance",
     "profiles",
     "network"
@@ -204,11 +203,10 @@ private val tvGeneralSectionIds = setOf(
 
 private fun tvGeneralRowsForSection(section: String): List<Int> {
     return when (section) {
-        "language" -> listOf(0, 1, 2, 3)
-        "subtitles" -> listOf(4, 5, 6, 7, 8, 9)
+        "language" -> listOf(0, 3)
+        "subtitles" -> listOf(1, 2, 4, 5, 6, 7, 8, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
-        "playback" -> listOf(10, 11, 12, 16, 15, 27)
-        "trailers" -> listOf(13, 14)
+        "playback" -> listOf(10, 11, 12, 13, 14, 16, 15, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22)
         "profiles" -> listOf(19)
         "network" -> listOf(25, 26)
@@ -350,15 +348,14 @@ fun SettingsScreen(
         buildList {
             add("accounts")
             add("profiles")
-            add("language")
             add("playback")
+            add("language")
             add("subtitles")
             add("ai_subtitles")
-            add("catalogs")
-            add("stremio")
             add("iptv")
+            add("stremio")
+            add("catalogs")
             add("home_server")
-            add("trailers")
             add("appearance")
             add("network")
         }
@@ -1047,33 +1044,37 @@ fun SettingsScreen(
                             .verticalScroll(sectionScrollState)
                     ) {
                         sections.forEachIndexed { index, section ->
+                            val group = tvSettingsSidebarGroup(section)
+                            val previousGroup = sections.getOrNull(index - 1)?.let { tvSettingsSidebarGroup(it) }
+                            if (index == 0 || group != previousGroup) {
+                                SettingsSectionGroupLabel(group)
+                                Spacer(modifier = Modifier.height(6.dp))
+                            }
                             SettingsSectionItem(
                                 icon = when (section) {
                                     "language" -> Icons.Default.Language
                                     "subtitles" -> Icons.Default.Subtitles
                                     "ai_subtitles" -> Icons.Default.AutoAwesome
                                     "playback" -> Icons.Default.PlayArrow
-                                    "trailers" -> Icons.Default.Movie
                                     "appearance" -> Icons.Default.Palette
                                     "profiles" -> Icons.Default.SwitchAccount
-                                    "network" -> Icons.Default.Language
+                                    "network" -> Icons.Default.Settings
                                     "iptv" -> Icons.Default.LiveTv
                                     "home_server" -> Icons.Default.Cloud
                                     "catalogs" -> Icons.Default.Widgets
-                                    "stremio" -> Icons.Default.Widgets
+                                    "stremio" -> Icons.Default.Extension
                                     "accounts" -> Icons.Default.Person
                                     else -> Icons.Default.Settings
                                 },
                                 title = when (section) {
-                                    "language" -> "Language"
+                                    "language" -> "Language & Audio"
                                     "subtitles" -> "Subtitles"
                                     "ai_subtitles" -> stringResource(R.string.ai_subtitles_section)
                                     "playback" -> stringResource(R.string.playback)
-                                    "trailers" -> "Trailers"
                                     "appearance" -> stringResource(R.string.interface_label)
                                     "profiles" -> "Profiles"
                                     "network" -> stringResource(R.string.network)
-                                    "iptv" -> stringResource(R.string.iptv)
+                                    "iptv" -> "Live TV"
                                     "home_server" -> "Home Server"
                                     "catalogs" -> stringResource(R.string.catalogs)
                                     "stremio" -> stringResource(R.string.addons)
@@ -3786,6 +3787,27 @@ private fun UpdateActionButton(
     }
 }
 
+private fun tvSettingsSidebarGroup(section: String): String {
+    return when (section) {
+        "accounts", "profiles" -> "Profile"
+        "playback", "language", "subtitles", "ai_subtitles" -> "Playback"
+        "iptv", "stremio", "catalogs", "home_server" -> "Sources"
+        else -> "System"
+    }
+}
+
+@Composable
+private fun SettingsSectionGroupLabel(label: String) {
+    Text(
+        text = label.uppercase(),
+        style = ArflixTypography.caption.copy(fontSize = 10.sp),
+        color = TextSecondary.copy(alpha = 0.46f),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(start = 9.dp, top = 8.dp)
+    )
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SettingsSectionItem(
@@ -4039,15 +4061,14 @@ private data class TvSettingsHelp(
 @Composable
 private fun tvSettingsSectionTitle(section: String): String {
     return when (section) {
-        "language" -> "Language"
+        "language" -> "Language & Audio"
         "subtitles" -> "Subtitles"
         "ai_subtitles" -> stringResource(R.string.ai_subtitles_section)
         "playback" -> stringResource(R.string.playback)
-        "trailers" -> "Trailers"
         "appearance" -> stringResource(R.string.interface_label)
         "profiles" -> "Profiles"
         "network" -> stringResource(R.string.network)
-        "iptv" -> stringResource(R.string.iptv)
+        "iptv" -> "Live TV"
         "home_server" -> "Home Server"
         "catalogs" -> stringResource(R.string.catalogs)
         "stremio" -> stringResource(R.string.addons)
@@ -4058,11 +4079,10 @@ private fun tvSettingsSectionTitle(section: String): String {
 
 private fun tvSettingsSectionDescription(section: String): String {
     return when (section) {
-        "language" -> "App text, audio and subtitle language defaults."
-        "subtitles" -> "Subtitle display, styling and language filtering."
+        "language" -> "App text and preferred audio track."
+        "subtitles" -> "Subtitle language defaults, display style and filtering."
         "ai_subtitles" -> "AI subtitle translation and cleanup options."
-        "playback" -> "Autoplay, source quality, frame-rate matching and audio boost."
-        "trailers" -> "Trailer autoplay and sound behavior on hero banners."
+        "playback" -> "Autoplay, trailers, source quality, frame-rate matching and audio boost."
         "appearance" -> "Layout, OLED mode, focus styling and hero metadata."
         "profiles" -> "Profile startup behavior for this device."
         "network" -> "DNS and loading diagnostic preferences."
@@ -4082,7 +4102,7 @@ private fun tvSettingsSectionPills(
 ): List<String> {
     return when (section) {
         "language" -> listOf(
-            "Language ${uiState.contentLanguage.uppercase()}",
+            "App ${uiState.contentLanguage.uppercase()}",
             "Audio ${uiState.defaultAudioLanguage}"
         )
         "subtitles" -> listOf(
@@ -4095,11 +4115,8 @@ private fun tvSettingsSectionPills(
         )
         "playback" -> listOf(
             "Autoplay ${if (uiState.autoPlaySingleSource) "on" else "off"}",
+            "Trailers ${if (uiState.trailerAutoPlay) "on" else "off"}",
             "Min ${uiState.autoPlayMinQuality}",
-        )
-        "trailers" -> listOf(
-            "Autoplay ${if (uiState.trailerAutoPlay) "on" else "off"}",
-            "Sound ${if (uiState.trailerSoundEnabled) "on" else "off"}"
         )
         "appearance" -> listOf(
             "OLED ${if (uiState.oledBlackBackground) "on" else "off"}"
@@ -4132,11 +4149,34 @@ private fun tvSettingsPanelFacts(
     addonCount: Int
 ): List<Pair<String, String>> {
     return when (section) {
-        "general" -> listOf(
-            "Subtitle" to uiState.defaultSubtitle,
-            "Audio" to uiState.defaultAudioLanguage,
-            "Frame rate" to uiState.frameRateMatchingMode,
+        "language" -> listOf(
+            "App language" to uiState.contentLanguage.uppercase(),
+            "Audio" to uiState.defaultAudioLanguage
+        )
+        "subtitles" -> listOf(
+            "Default" to uiState.defaultSubtitle,
+            "Secondary" to uiState.secondarySubtitle,
+            "Style" to uiState.subtitleStyle
+        )
+        "ai_subtitles" -> listOf(
+            "AI" to if (uiState.subtitleAiEnabled) "Enabled" else "Off",
+            "Auto-select" to if (uiState.subtitleAiAutoSelect) "On" else "Off"
+        )
+        "playback" -> listOf(
+            "Autoplay" to if (uiState.autoPlaySingleSource) "On" else "Off",
+            "Trailers" to if (uiState.trailerAutoPlay) "On" else "Off",
+            "Frame rate" to uiState.frameRateMatchingMode
+        )
+        "appearance" -> listOf(
+            "OLED" to if (uiState.oledBlackBackground) "On" else "Off",
             "Focus border" to uiState.focusBorderColor
+        )
+        "profiles" -> listOf(
+            "Startup" to if (uiState.skipProfileSelection) "Skip picker" else "Show picker"
+        )
+        "network" -> listOf(
+            "DNS" to uiState.dnsProvider,
+            "Loading stats" to if (uiState.showLoadingStats) "On" else "Off"
         )
         "iptv" -> listOf(
             "Playlists" to "${uiState.iptvPlaylists.size}/3",
@@ -4173,18 +4213,26 @@ private fun tvSettingsFocusedHelp(section: String, focusedIndex: Int): TvSetting
         )
     }
     return when (section) {
-        "general" -> when (focusedIndex) {
+        "language" -> when (focusedIndex) {
             0 -> TvSettingsHelp("App language", "Changes the interface and metadata language used by ARVIO.")
-            1 -> TvSettingsHelp("Default subtitle", "Preferred subtitle language when playback starts.")
-            2 -> TvSettingsHelp("Secondary subtitle", "Optional second subtitle preference where available.")
-            3 -> TvSettingsHelp("Default audio", "Preferred audio language when multiple tracks exist.")
-            in 4..9 -> TvSettingsHelp("Subtitle preference", "Adjust subtitle size, color, position, style and filtering.")
-            in 10..16 -> TvSettingsHelp("Playback", "Tune autoplay, trailers, frame-rate matching and source quality behavior.")
-            in 17..24 -> TvSettingsHelp("Interface", "Control layout, profile startup, OLED mode, clock and focus styling.")
-            in 25..26 -> TvSettingsHelp("Network", "DNS and loading diagnostic preferences.")
-            27 -> TvSettingsHelp("Volume boost", "Boosts playback audio output when enabled.")
-            else -> TvSettingsHelp("AI subtitles", "Configure optional AI subtitle translation and cleanup.")
+            else -> TvSettingsHelp("Default audio", "Preferred audio language when multiple tracks exist.")
         }
+        "subtitles" -> when (focusedIndex) {
+            0 -> TvSettingsHelp("Default subtitle", "Preferred subtitle language when playback starts.")
+            1 -> TvSettingsHelp("Secondary subtitle", "Optional second subtitle preference where available.")
+            else -> TvSettingsHelp("Subtitle preference", "Adjust subtitle size, color, position, style and filtering.")
+        }
+        "ai_subtitles" -> TvSettingsHelp("AI subtitles", "Configure optional AI subtitle translation and cleanup.")
+        "playback" -> when (focusedIndex) {
+            0 -> TvSettingsHelp("Next episode autoplay", "Controls whether episodes continue automatically.")
+            1 -> TvSettingsHelp("Source autoplay", "Controls whether a single source starts immediately or opens the picker.")
+            in 3..4 -> TvSettingsHelp("Trailers", "Tune trailer autoplay and sound behavior on hero banners.")
+            7 -> TvSettingsHelp("Volume boost", "Boosts playback audio output when enabled.")
+            else -> TvSettingsHelp("Playback", "Tune source quality, frame-rate matching and playback behavior.")
+        }
+        "appearance" -> TvSettingsHelp("Interface", "Control layout, OLED mode, clock and focus styling.")
+        "profiles" -> TvSettingsHelp("Profiles", "Control whether this device opens the profile picker on startup.")
+        "network" -> TvSettingsHelp("Network", "DNS and loading diagnostic preferences.")
         "iptv" -> when (focusedIndex) {
             0 -> TvSettingsHelp("Add playlist", "Add another IPTV playlist with M3U or Xtream details.")
             else -> TvSettingsHelp("IPTV playlist", "Enable, edit, reorder, refresh or remove IPTV data.")
@@ -5267,14 +5315,7 @@ private fun IptvSettings(
     var selectedIndices by remember { mutableStateOf(setOf<Int>()) }
 
     Column {
-        if (!isMobile) {
-            Text(
-                text = stringResource(R.string.iptv),
-                style = ArflixTypography.sectionTitle,
-                color = TextPrimary,
-                modifier = Modifier.padding(bottom = 24.dp)
-            )
-        } else if (selectionMode) {
+        if (isMobile && selectionMode) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
                 verticalAlignment = Alignment.CenterVertically
