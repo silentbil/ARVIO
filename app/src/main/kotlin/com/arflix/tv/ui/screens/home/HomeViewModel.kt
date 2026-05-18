@@ -1098,7 +1098,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             realtimeSyncManager.watchHistoryEvents.collect {
                 // Fast path: directly update the progress bar on existing CW cards using
-                // Supabase watch_history data (which Device A writes every 15s). This gives
+                // Supabase watch_history data (which Device A writes every ~5s). This gives
                 // immediate visual feedback without waiting for the full Trakt re-fetch
                 // (which can take 10+ seconds for profiles with hundreds of watched items).
                 runCatching {

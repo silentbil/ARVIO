@@ -62,7 +62,8 @@ class RealtimeSyncManager @Inject constructor(
         // meaningfully increasing load (one GET every 45s while signed in).
         private const val PERIODIC_SYNC_INTERVAL_MS = 45_000L
         private const val DEBOUNCE_MS = 2_000L
-        private const val WATCH_HISTORY_DEBOUNCE_MS = 5_000L
+        private const val WATCH_HISTORY_DEBOUNCE_MS = 1_000L
+        private const val WATCH_HISTORY_SELF_ECHO_GUARD_MS = 1_500L
         // Reconnect with fresh token every 30 minutes to prevent silent auth expiry
         private const val TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000L
     }
@@ -392,7 +393,7 @@ class RealtimeSyncManager @Inject constructor(
     }
 
     private fun debouncedWatchHistoryEmit() {
-        if (System.currentTimeMillis() - lastLocalWatchHistoryWriteTimestamp < 3_000L) {
+        if (System.currentTimeMillis() - lastLocalWatchHistoryWriteTimestamp < WATCH_HISTORY_SELF_ECHO_GUARD_MS) {
             Log.d(TAG, "Skipping watch_history emit - recent local write")
             return
         }
