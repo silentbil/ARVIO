@@ -1569,6 +1569,7 @@ fun PlayerScreen(
     val subtitleColorPref = uiState.subtitleColor
     val subtitleStylePref = uiState.subtitleStyle
     val subtitleStylizedPref = uiState.subtitleStylized
+    val subtitleOffsetPref = uiState.subtitleOffset
     val aspectModeLabel = when (playerResizeMode) {
         AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
         AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
@@ -2037,7 +2038,14 @@ fun PlayerScreen(
                                 )
                             )
                             setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp)
-                            setBottomPaddingFraction(0.08f)
+                            val bottomPaddingFraction = when (subtitleOffsetPref) {
+                                "Bottom" -> 0.02f
+                                "Low" -> 0.08f
+                                "Medium" -> 0.15f
+                                "High" -> 0.25f
+                                else -> 0.02f
+                            }
+                            setBottomPaddingFraction(bottomPaddingFraction)
 
                             if (subtitleStylizedPref) {
                                 // Stylized mode: let Media3 render embedded ASS/SSA styles
