@@ -15,6 +15,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -297,6 +298,21 @@ fun LiveTvScreen(
         playingChannelId?.let { enrichedState.value.index.byId[it] }
             ?: filteredChannels.firstOrNull { it.id == playingChannelId }
     }
+    val currentNowNext = remember(playingChannelId, playingCatchupProgram, state.snapshot.nowNext) {
+        val live = playingChannelId?.let { state.snapshot.nowNext[it] }
+        val catchup = playingCatchupProgram
+        if (catchup != null) {
+            com.arflix.tv.data.model.IptvNowNext(
+                now = catchup,
+                next = null,
+                later = null,
+                upcoming = emptyList(),
+                recent = emptyList()
+            )
+        } else {
+            live
+        }
+    }
 
     val epgPrefetchIds = remember(filteredChannels, selectedCategoryId, playingChannelId) {
         val maxPrefetch = if (selectedCategoryId == "all") 96 else 180
@@ -433,13 +449,19 @@ fun LiveTvScreen(
         runCatching { epgFocus.requestFocus() }
     }
 
-    fun playChannelFullscreen(channel: EnrichedChannel) {
+    fun selectChannel(channel: EnrichedChannel) {
         focusedChannelId = channel.id
         rememberedChannelByCategory[selectedCategoryId] = channel.id
-        playingChannelId = channel.id
-        playingCatchupProgram = null
-        isFullScreen = true
-        hudPokeSignal++
+        if (channel.id == playingChannelId && !isFullScreen) {
+            // Second tap on the already-playing channel → fullscreen
+            playingCatchupProgram = null
+            isFullScreen = true
+            hudPokeSignal++
+        } else {
+            // First tap or different channel → tune in mini-player
+            playingChannelId = channel.id
+            playingCatchupProgram = null
+        }
     }
 
     fun playProgramInMini(channel: EnrichedChannel, program: IptvProgram?) {
@@ -576,11 +598,18 @@ fun LiveTvScreen(
     BackHandler(enabled = !searchOpen && !isFullScreen) {
         when (focusZone) {
             LiveTvFocusZone.EPG -> focusChannelList(focusedChannelId ?: playingChannelId)
-            LiveTvFocusZone.CHANNEL_LIST -> focusPlaylistSearch()
+            LiveTvFocusZone.CHANNEL_LIST -> {
+                if (isTouchDevice) onBack()
+                else focusPlaylistSearch()
+            }
             LiveTvFocusZone.CATEGORY_LIST -> {
-                topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
-                    .coerceIn(0, maxTopBarIndex)
-                focusZone = LiveTvFocusZone.TOPBAR
+                if (isTouchDevice) {
+                    onBack()
+                } else {
+                    topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
+                        .coerceIn(0, maxTopBarIndex)
+                    focusZone = LiveTvFocusZone.TOPBAR
+                }
             }
             LiveTvFocusZone.TOPBAR -> onBack()
         }
@@ -675,7 +704,7 @@ fun LiveTvScreen(
                         exoPlayer = exoPlayer,
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = currentNowNext,
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
                         onFullscreenClick = openFullScreenPlayer,
@@ -703,7 +732,10 @@ fun LiveTvScreen(
                         },
                         compact = true,
                         gridFocused = focusZone == LiveTvFocusZone.EPG,
-                        onChannelSelect = { channel, _ -> playChannelFullscreen(channel) },
+                        onChannelSelect = { channel, _ ->
+                            focusZone = LiveTvFocusZone.CHANNEL_LIST
+                            selectChannel(channel)
+                        },
                         onProgramSelect = { channel, program -> playProgramInMini(channel, program) },
                         onChannelFocused = { channel ->
                             focusedChannelId = channel.id
@@ -772,7 +804,7 @@ fun LiveTvScreen(
                         exoPlayer = exoPlayer,
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = currentNowNext,
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
                         onFullscreenClick = openFullScreenPlayer,
@@ -793,7 +825,7 @@ fun LiveTvScreen(
                         },
                         compact = compactTouchLayout,
                         gridFocused = focusZone == LiveTvFocusZone.CHANNEL_LIST || focusZone == LiveTvFocusZone.EPG,
-                        onChannelSelect = { channel, _ -> playChannelFullscreen(channel) },
+                        onChannelSelect = { channel, _ -> selectChannel(channel) },
                         onProgramSelect = { channel, program -> playProgramInMini(channel, program) },
                         onChannelFocused = { channel ->
                             focusedChannelId = channel.id
@@ -857,7 +889,19 @@ fun LiveTvScreen(
                             Key.DirectionLeft, Key.DirectionRight -> { hudPokeSignal++; false }
                             else -> false
                         }
-                    },
+                    }
+                    .then(
+                        if (isTouchDevice) {
+                            Modifier.clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                hudPokeSignal++
+                            }
+                        } else {
+                            Modifier
+                        }
+                    ),
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
@@ -873,8 +917,9 @@ fun LiveTvScreen(
                 if (isFullScreen) {
                     FullscreenHud(
                         channel = playingChannel,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
+                        onBackClick = if (isTouchDevice) { { isFullScreen = false } } else null,
                         modifier = Modifier,
                     )
                 }

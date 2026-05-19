@@ -584,11 +584,16 @@ class IptvRepository @Inject constructor(
         val endUnix = program.endUtcMillis / 1000L
         val durationMin = ((program.endUtcMillis - program.startUtcMillis) / 60_000L).coerceAtLeast(1L)
 
-        return when (channel.catchupType?.lowercase(Locale.US)) {
+        val resolvedType = channel.catchupType?.lowercase(Locale.US)
+            ?: if (resolveXtreamCredentials(channel.streamUrl) != null && resolveXtreamStreamId(channel) != null) "xtream" else "default"
+
+        return when (resolvedType) {
             "xtream" -> {
                 val creds = resolveXtreamCredentials(channel.streamUrl) ?: return channel.streamUrl
-                val streamId = channel.xtreamStreamId ?: return channel.streamUrl
-                val startDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(program.startUtcMillis), ZoneId.of("UTC"))
+                val streamId = channel.xtreamStreamId ?: resolveXtreamStreamId(channel) ?: return channel.streamUrl
+                val offset = getServerOffset(creds)
+                val serverStartMs = program.startUtcMillis + offset
+                val startDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(serverStartMs), ZoneId.of("UTC"))
                 val startStr = startDt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm"))
                 "${creds.baseUrl}/timeshift/${creds.username}/${creds.password}/$durationMin/$startStr/$streamId.ts"
             }
@@ -1397,6 +1402,7 @@ class IptvRepository @Inject constructor(
             if (allListings.isEmpty()) return@withContext null
 
             val freshNowNext = buildNowNextFromXtreamListings(
+                creds = creds,
                 listings = allListings,
                 epgIdToChannelIds = epgIdToChannelIds,
                 streamIdToChannelIds = streamIdToChannelIds,
@@ -4080,6 +4086,7 @@ class IptvRepository @Inject constructor(
 
         onProgress(IptvLoadProgress("Parsing EPG data (${allListings.size} listings)...", 98))
         return buildNowNextFromXtreamListings(
+            creds = creds,
             listings = allListings,
             epgIdToChannelIds = epgIdToChannelIds,
             streamIdToChannelIds = streamIdToChannelIds,
@@ -4182,11 +4189,26 @@ class IptvRepository @Inject constructor(
      * @return A map keyed by IPTV channel ID with values of `IptvNowNext`. Each `IptvNowNext` may contain `now`, `next`, `later`, a truncated `upcoming` list (at most 12 items), and a `recent` list of programs that ended within the recent cutoff window.
      */
     private fun buildNowNextFromXtreamListings(
+        creds: XtreamCredentials,
         listings: List<XtreamEpgListing>,
         epgIdToChannelIds: Map<String, List<String>>,
         streamIdToChannelIds: Map<String, List<String>>,
         channelsById: Map<String, IptvChannel> = emptyMap()
     ): Map<String, IptvNowNext> {
+        // Detect and save server timezone offset
+        val sampleListing = listings.firstOrNull { it.startTimestamp != null && !it.start.isNullOrBlank() }
+        if (sampleListing != null) {
+            val startMs = sampleListing.startTimestamp?.toLongOrNull()?.let { it * 1000L }
+            val parsedMs = parseXtreamDateTime(sampleListing.start)
+            if (startMs != null && parsedMs != null) {
+                val offset = parsedMs - startMs
+                if (Math.abs(offset) <= 18 * 60 * 60 * 1000L) {
+                    saveServerOffset(creds, offset)
+                    System.err.println("[EPG] Detected Xtream Server timezone offset: ${offset / 3600000.0} hours")
+                }
+            }
+        }
+
         val nowMs = System.currentTimeMillis()
         val oldestRecentCutoff = oldestRecentCutoff(channelsById.values, nowMs)
 
@@ -4316,6 +4338,25 @@ class IptvRepository @Inject constructor(
             null
         }
     }
+
+    private fun saveServerOffset(creds: XtreamCredentials, offset: Long) {
+        runCatching {
+            context.getSharedPreferences("arvio_iptv_prefs", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putLong(xtreamServerOffsetKey(creds), offset)
+                .apply()
+        }
+    }
+
+    private fun getServerOffset(creds: XtreamCredentials): Long {
+        return runCatching {
+            context.getSharedPreferences("arvio_iptv_prefs", android.content.Context.MODE_PRIVATE)
+                .getLong(xtreamServerOffsetKey(creds), 0L)
+        }.getOrDefault(0L)
+    }
+
+    private fun xtreamServerOffsetKey(creds: XtreamCredentials): String =
+        "xtream_server_offset_${xtreamDiskCacheHash(creds)}"
 
     /**
      * Some providers return malformed XML text that includes JSON-style backslash escapes
@@ -4762,11 +4803,11 @@ class IptvRepository @Inject constructor(
     }
 
     private fun recentProgramLimitForChannel(channel: IptvChannel?): Int {
-        return if ((channel?.catchupDays ?: 0) > 0) catchupRecentProgramLimit else epgRecentProgramLimit
+        return if (effectiveCatchupDays(channel) > 0) catchupRecentProgramLimit else epgRecentProgramLimit
     }
 
     private fun recentCutoffForChannel(channel: IptvChannel?, nowUtcMillis: Long): Long {
-        val catchupDays = channel?.catchupDays?.coerceIn(0, 7) ?: 0
+        val catchupDays = effectiveCatchupDays(channel)
         return if (catchupDays > 0) {
             nowUtcMillis - catchupDays * 24L * 60L * 60_000L
         } else {
@@ -4775,12 +4816,23 @@ class IptvRepository @Inject constructor(
     }
 
     private fun oldestRecentCutoff(channels: Collection<IptvChannel>, nowUtcMillis: Long): Long {
-        val maxCatchupDays = channels.maxOfOrNull { it.catchupDays }?.coerceIn(0, 7) ?: 0
+        val maxCatchupDays = channels.maxOfOrNull { effectiveCatchupDays(it) } ?: 0
         return if (maxCatchupDays > 0) {
             nowUtcMillis - maxCatchupDays * 24L * 60L * 60_000L
         } else {
             nowUtcMillis - 30L * 60_000L
         }
+    }
+
+    private fun effectiveCatchupDays(channel: IptvChannel?): Int {
+        if (channel == null) return 0
+        val explicitDays = channel.catchupDays.coerceIn(0, 7)
+        if (explicitDays > 0) return explicitDays
+        val hasCatchupMetadata = !channel.catchupType.isNullOrBlank() || !channel.catchupSource.isNullOrBlank()
+        if (hasCatchupMetadata) return 7
+        val looksLikeXtream = resolveXtreamCredentials(channel.streamUrl) != null &&
+            resolveXtreamStreamId(channel) != null
+        return if (looksLikeXtream) 7 else 0
     }
 
     private fun hasAnyProgramData(nowNext: Map<String, IptvNowNext>): Boolean {
