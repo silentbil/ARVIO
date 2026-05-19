@@ -3294,9 +3294,10 @@ class HomeViewModel @Inject constructor(
             return
         }
 
-        // Always fetch trailer for new hero item
-        if (_uiState.value.trailerAutoPlay) {
-            // Clear previous trailer immediately
+        // Fetch trailer for new hero item; skip if already loaded for this item (prevents restart mid-play)
+        if (_uiState.value.trailerAutoPlay &&
+            !(_uiState.value.heroItem?.id == item.id && _uiState.value.heroTrailerKey != null)
+        ) {
             _uiState.value = _uiState.value.copy(heroTrailerKey = null)
             viewModelScope.launch(networkDispatcher) {
                 try {
@@ -3392,8 +3393,10 @@ class HomeViewModel @Inject constructor(
     private fun scheduleHeroDetailsFetch(item: MediaItem, fastScrolling: Boolean) {
         heroDetailsJob?.cancel()
 
-        // Always fetch trailer for new hero item (separate from details cache)
-        if (_uiState.value.trailerAutoPlay) {
+        // Fetch trailer for new hero item; skip if already loaded for this item (prevents restart mid-play)
+        if (_uiState.value.trailerAutoPlay &&
+            !(_uiState.value.heroItem?.id == item.id && _uiState.value.heroTrailerKey != null)
+        ) {
             _uiState.value = _uiState.value.copy(heroTrailerKey = null)
             viewModelScope.launch(networkDispatcher) {
                 try {
