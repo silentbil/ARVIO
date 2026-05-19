@@ -78,7 +78,7 @@ data class HomeUiState(
     val heroTrailerKey: String? = null,
     val trailerAutoPlay: Boolean = false,
     val trailerSoundEnabled: Boolean = false,
-    val trailerDelaySeconds: Int = 0,
+    val trailerDelaySeconds: Int = 2,
     // Home hero metadata visibility toggles (issue #72)
     val showBudget: Boolean = true,
     val heroOverviewOverride: String? = null,
@@ -1081,7 +1081,7 @@ class HomeViewModel @Inject constructor(
                     ?.value as? Boolean ?: false
                 val trailerDelaySeconds = (prefs.asMap().entries
                     .firstOrNull { (key, _) -> key.name.endsWith("_trailer_delay_seconds") }
-                    ?.value as? String)?.toIntOrNull() ?: 0
+                    ?.value as? String)?.toIntOrNull() ?: 2
                 _uiState.value = _uiState.value.copy(
                     trailerAutoPlay = trailerEnabled,
                     trailerSoundEnabled = trailerSoundEnabled,

@@ -114,7 +114,7 @@ class CloudSyncRepository @Inject constructor(
         val autoPlayMinQuality: String = "Any",
         val trailerAutoPlay: Boolean = false,
         val trailerSoundEnabled: Boolean = false,
-        val trailerDelaySeconds: Int = 0,
+        val trailerDelaySeconds: Int = 2,
         val clockFormat: String = "24h",
         val showBudget: Boolean = true,
         val spoilerBlurEnabled: Boolean = false,
@@ -274,7 +274,7 @@ class CloudSyncRepository @Inject constructor(
 
                         trailerAutoPlay = prefs[trailerAutoPlayKeyFor(profile.id)] ?: false,
                         trailerSoundEnabled = prefs[trailerSoundEnabledKeyFor(profile.id)] ?: false,
-                        trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 0,
+                        trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 2,
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
                         spoilerBlurEnabled = prefs[spoilerBlurKeyFor(profile.id)] ?: false,

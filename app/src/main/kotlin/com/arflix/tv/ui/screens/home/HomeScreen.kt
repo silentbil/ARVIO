@@ -832,6 +832,16 @@ fun HomeScreen(
         else -> null
     }
 
+    var isTrailerPlaying by remember { mutableStateOf(false) }
+    val trailerOverlayAlpha = remember { Animatable(1f) }
+    LaunchedEffect(isTrailerPlaying) {
+        if (isTrailerPlaying) {
+            trailerOverlayAlpha.animateTo(0f, tween(1500, easing = FastOutSlowInEasing))
+        } else {
+            trailerOverlayAlpha.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
+        }
+    }
+
     var heroPlaybackHandles by remember { mutableStateOf<HomeHeroPlaybackHandles?>(null) }
     var preparedHeroVideoUrl by remember { mutableStateOf<String?>(null) }
     val heroExoPlayer = heroPlaybackHandles?.player
@@ -995,6 +1005,7 @@ fun HomeScreen(
                         youtubeKey = uiState.heroTrailerKey!!,
                         delayMs = uiState.trailerDelaySeconds * 1000L,
                         volume = if (uiState.trailerSoundEnabled) 1f else 0f,
+                        onPlayingChanged = { playing -> isTrailerPlaying = playing },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1061,6 +1072,7 @@ fun HomeScreen(
             }
         } // end if (!isMobile) backdrop
         
+        Box(modifier = Modifier.fillMaxSize().graphicsLayer { alpha = trailerOverlayAlpha.value }) {
         HomeInputLayer(
             categories = displayCategories,
             cardLogoUrls = cardLogoUrls,
@@ -1117,8 +1129,10 @@ fun HomeScreen(
                 showContextMenu = true
             }
         )
+        } // end trailer-dim wrapper
 
         if (showCinematicHomeLayer) {
+            Box(modifier = Modifier.fillMaxSize().graphicsLayer { alpha = trailerOverlayAlpha.value }) {
             HomeHeroLayer(
                 heroItem = displayHeroItem,
                 heroLogoUrl = displayHeroLogo,
@@ -1132,6 +1146,7 @@ fun HomeScreen(
                 getIptvChannelId = { item -> viewModel.getIptvChannelId(item) },
                 getIptvStreamUrl = { itemId -> viewModel.getIptvStreamUrl(itemId) }
             )
+            } // end trailer-dim wrapper
         }
 
         // Error state - show message when loading failed and no content

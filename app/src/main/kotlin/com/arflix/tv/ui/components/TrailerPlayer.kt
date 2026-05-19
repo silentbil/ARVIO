@@ -49,7 +49,8 @@ fun TrailerPlayer(
     youtubeKey: String,
     modifier: Modifier = Modifier,
     delayMs: Long = 0L,
-    volume: Float = 0f
+    volume: Float = 0f,
+    onPlayingChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     var shouldPlay by remember { mutableStateOf(false) }
@@ -79,7 +80,12 @@ fun TrailerPlayer(
                 }
             } catch (_: Exception) {}
         }
-        if (videoUrl != null) shouldPlay = true
+        if (videoUrl != null) {
+            shouldPlay = true
+            onPlayingChanged(true)
+        } else {
+            onPlayingChanged(false)
+        }
     }
 
     AnimatedVisibility(
@@ -122,6 +128,7 @@ fun TrailerPlayer(
 
         DisposableEffect(Unit) {
             onDispose {
+                onPlayingChanged(false)
                 player.stop()
                 player.release()
             }
