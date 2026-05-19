@@ -3450,7 +3450,6 @@ private fun formatDate(dateStr: String): String {
     }
 }
 
-
 private object MediaRegexes {
     val YEAR_SUFFIX_REGEX = Regex("""\s+\(\d{4}\)$""")
     val DIGITS_REGEX = Regex("""\d+""")
