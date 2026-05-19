@@ -1077,7 +1077,7 @@ class StreamRepository @Inject constructor(
             val resources = manifest?.resources.orEmpty().joinToString(";") { resource ->
                 listOf(
                     resource.name,
-                    resource.types.joinToString(","),
+                    resource.types.orEmpty().joinToString(","),
                     resource.idPrefixes.orEmpty().joinToString(",")
                 ).joinToString(":")
             }
