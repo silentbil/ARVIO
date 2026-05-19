@@ -833,6 +833,8 @@ fun HomeScreen(
     }
 
     var isTrailerPlaying by remember { mutableStateOf(false) }
+    var trailerSuppressed by remember { mutableStateOf(false) }
+    LaunchedEffect(displayHeroItem?.id) { trailerSuppressed = false }
     val trailerOverlayAlpha = remember { Animatable(1f) }
     LaunchedEffect(isTrailerPlaying) {
         if (isTrailerPlaying) {
@@ -1000,7 +1002,7 @@ fun HomeScreen(
                 }
 
                 // YouTube trailer auto-play (sound controlled by trailerSoundEnabled setting)
-                if (heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null) {
+                if (heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null && !trailerSuppressed) {
                     TrailerPlayer(
                         youtubeKey = uiState.heroTrailerKey!!,
                         delayMs = uiState.trailerDelaySeconds * 1000L,
@@ -1083,6 +1085,8 @@ fun HomeScreen(
             fastScrollThresholdMs = fastScrollThresholdMs,
             usePosterCards = usePosterCards,
             isContextMenuOpen = showContextMenu,
+            trailerIsPlaying = isTrailerPlaying,
+            onTrailerStop = { trailerSuppressed = true },
             isMobile = isMobile,
             heroItem = displayHeroItem,
             heroOverviewOverride = displayHeroOverview,
@@ -2206,6 +2210,8 @@ private fun HomeInputLayer(
     fastScrollThresholdMs: Long,
     usePosterCards: Boolean,
     isContextMenuOpen: Boolean,
+    trailerIsPlaying: Boolean = false,
+    onTrailerStop: () -> Unit = {},
     isMobile: Boolean = false,
     heroItem: MediaItem? = null,
     heroOverviewOverride: String? = null,
@@ -2328,6 +2334,12 @@ private fun HomeInputLayer(
         Modifier.onPreviewKeyEvent { event ->
             if (isContextMenuOpen) {
                 return@onPreviewKeyEvent false
+            }
+            if (trailerIsPlaying && event.type == KeyEventType.KeyDown &&
+                (isArvioDpadNavigationKey(event.key) || event.key == Key.Enter || event.key == Key.DirectionCenter)
+            ) {
+                onTrailerStop()
+                return@onPreviewKeyEvent true
             }
             if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
                 dpadRepeatGate.reset()
