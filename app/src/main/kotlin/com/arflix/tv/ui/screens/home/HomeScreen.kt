@@ -2336,7 +2336,7 @@ private fun HomeInputLayer(
                 return@onPreviewKeyEvent false
             }
             if (trailerIsPlaying && event.type == KeyEventType.KeyDown &&
-                (isArvioDpadNavigationKey(event.key) || event.key == Key.Enter || event.key == Key.DirectionCenter)
+                (isArvioDpadNavigationKey(event.key) || event.key == Key.Enter || event.key == Key.DirectionCenter || event.key == Key.Back)
             ) {
                 onTrailerStop()
                 return@onPreviewKeyEvent true
