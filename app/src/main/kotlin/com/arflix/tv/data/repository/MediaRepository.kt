@@ -2721,10 +2721,15 @@ class MediaRepository @Inject constructor(
         val type = if (mediaType == MediaType.TV) "tv" else "movie"
         return try {
             val videos = tmdbApi.getVideos(type, mediaId, apiKey, language = contentLanguage)
-            val trailer = videos.results.find { it.type == "Trailer" && it.site == "YouTube" && it.official }
-                ?: videos.results.find { it.type == "Trailer" && it.site == "YouTube" }
-                ?: videos.results.find { it.type == "Teaser" && it.site == "YouTube" }
-                ?: videos.results.find { it.site == "YouTube" }
+            var results = videos.results
+            // If language-specific request returned no YouTube videos, fall back to English
+            if (results.none { it.site == "YouTube" } && !contentLanguage.isNullOrBlank()) {
+                results = tmdbApi.getVideos(type, mediaId, apiKey, language = null).results
+            }
+            val trailer = results.find { it.type == "Trailer" && it.site == "YouTube" && it.official }
+                ?: results.find { it.type == "Trailer" && it.site == "YouTube" }
+                ?: results.find { it.type == "Teaser" && it.site == "YouTube" }
+                ?: results.find { it.site == "YouTube" }
             trailer?.key
         } catch (e: Exception) {
             null
