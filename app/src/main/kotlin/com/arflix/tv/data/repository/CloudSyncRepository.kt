@@ -114,6 +114,7 @@ class CloudSyncRepository @Inject constructor(
         val autoPlayMinQuality: String = "Any",
         val trailerAutoPlay: Boolean = false,
         val trailerSoundEnabled: Boolean = false,
+        val trailerDelaySeconds: Int = 0,
         val clockFormat: String = "24h",
         val showBudget: Boolean = true,
         val spoilerBlurEnabled: Boolean = false,
@@ -138,6 +139,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileBooleanKeyFor(profileId, "trailer_auto_play")
     private fun trailerSoundEnabledKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "trailer_sound_enabled")
+    private fun trailerDelayKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "trailer_delay_seconds")
     private fun clockFormatKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "clock_format")
     private fun showBudgetKeyFor(profileId: String) =
@@ -271,6 +274,7 @@ class CloudSyncRepository @Inject constructor(
 
                         trailerAutoPlay = prefs[trailerAutoPlayKeyFor(profile.id)] ?: false,
                         trailerSoundEnabled = prefs[trailerSoundEnabledKeyFor(profile.id)] ?: false,
+                        trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 0,
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
                         spoilerBlurEnabled = prefs[spoilerBlurKeyFor(profile.id)] ?: false,
@@ -685,6 +689,7 @@ class CloudSyncRepository @Inject constructor(
 
                         prefs[trailerAutoPlayKeyFor(profileId)] = state.trailerAutoPlay
                         prefs[trailerSoundEnabledKeyFor(profileId)] = state.trailerSoundEnabled
+                        prefs[trailerDelayKeyFor(profileId)] = state.trailerDelaySeconds.toString()
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
                         prefs[showBudgetKeyFor(profileId)] = state.showBudget
                         prefs[spoilerBlurKeyFor(profileId)] = state.spoilerBlurEnabled

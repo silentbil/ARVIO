@@ -1968,7 +1968,10 @@ private fun DetailsContent(
                         isIconOnly = true
                     )
                 }
-                Box(modifier = Modifier.clickable { onButtonClick(2) }) {
+                Box(modifier = Modifier
+                    .clickable(enabled = hasTrailer) { onButtonClick(2) }
+                    .graphicsLayer { alpha = if (hasTrailer) 1f else 0.4f }
+                ) {
                     PremiumActionButton(
                         icon = Icons.Default.Movie,
                         text = stringResource(R.string.trailer),

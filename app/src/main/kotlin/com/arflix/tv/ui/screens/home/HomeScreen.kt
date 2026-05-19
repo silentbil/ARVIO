@@ -993,6 +993,7 @@ fun HomeScreen(
                 if (heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null) {
                     TrailerPlayer(
                         youtubeKey = uiState.heroTrailerKey!!,
+                        delayMs = uiState.trailerDelaySeconds * 1000L,
                         volume = if (uiState.trailerSoundEnabled) 1f else 0f,
                         modifier = Modifier.fillMaxSize()
                     )

@@ -206,7 +206,7 @@ private fun tvGeneralRowsForSection(section: String): List<Int> {
         "language" -> listOf(0, 3)
         "subtitles" -> listOf(1, 2, 4, 5, 6, 7, 8, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
-        "playback" -> listOf(10, 11, 12, 13, 14, 16, 15, 27)
+        "playback" -> listOf(10, 11, 12, 13, 14, 34, 16, 15, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22)
         "profiles" -> listOf(19)
         "network" -> listOf(25, 26)
@@ -800,6 +800,7 @@ fun SettingsScreen(
                                                 31 -> viewModel.setSubtitleRemoveHearingImpaired(!uiState.subtitleRemoveHearingImpaired)
                                                 32 -> showAiApiKeyDialog = true
                                                 33 -> viewModel.startAiKeyServer()
+                                                34 -> viewModel.cycleTrailerDelay()
                                             }
                                         }
                                         "iptv" -> {
@@ -1158,6 +1159,8 @@ fun SettingsScreen(
                             onTrailerAutoPlayToggle = { viewModel.setTrailerAutoPlay(it) },
                             trailerSoundEnabled = uiState.trailerSoundEnabled,
                             onTrailerSoundEnabledToggle = { viewModel.setTrailerSoundEnabled(it) },
+                            trailerDelaySeconds = uiState.trailerDelaySeconds,
+                            onTrailerDelayClick = { viewModel.cycleTrailerDelay() },
                             onDeviceModeClick = openUiModeWarningDialog,
                             onContentLanguageClick = openContentLanguagePicker,
                             onSkipProfileSelectionToggle = { viewModel.setSkipProfileSelection(it) },
@@ -3278,6 +3281,13 @@ private fun MobileSettingsSubPage(
                         onClick = { viewModel.setTrailerSoundEnabled(!uiState.trailerSoundEnabled) }
                     )
                     MobileSettingsRow(
+                        icon = Icons.Default.Schedule,
+                        title = stringResource(R.string.trailer_delay),
+                        value = "${uiState.trailerDelaySeconds}s",
+                        isFocused = false,
+                        onClick = { viewModel.cycleTrailerDelay() }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.Settings,
                         title = stringResource(R.string.frame_rate),
                         value = uiState.frameRateMatchingMode,
@@ -4324,6 +4334,8 @@ private fun TvGeneralSettingsRows(
     onFilterSubtitlesByLanguageToggle: (Boolean) -> Unit = {},
     onTrailerAutoPlayToggle: (Boolean) -> Unit = {},
     onTrailerSoundEnabledToggle: (Boolean) -> Unit = {},
+    trailerDelaySeconds: Int = 1,
+    onTrailerDelayClick: () -> Unit = {},
     qualityFilterValue: String = "OFF",
     onQualityFiltersClick: () -> Unit = {},
     subtitleAiEnabled: Boolean = false,
@@ -4440,6 +4452,7 @@ private fun TvGeneralSettingsRows(
                 31 -> SettingsToggleRow(stringResource(R.string.ai_remove_hi_title), stringResource(R.string.ai_remove_hi_desc), subtitleRemoveHearingImpaired, focusedIndex == localIndex, onSubtitleRemoveHearingImpairedToggle, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
                 32 -> SettingsRow(Icons.Default.VpnKey, stringResource(R.string.ai_api_key_title), stringResource(R.string.ai_api_key_desc), maskAiApiKey(subtitleAiApiKey, stringResource(R.string.ai_key_not_set)), focusedIndex == localIndex, onSubtitleAiApiKeyClick, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
                 33 -> SettingsRow(Icons.Default.QrCode, stringResource(R.string.ai_scan_qr_title), stringResource(R.string.ai_scan_qr_desc), "", focusedIndex == localIndex, onSubtitleAiQrClick, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
+                34 -> SettingsRow(Icons.Default.Schedule, stringResource(R.string.trailer_delay), stringResource(R.string.trailer_delay_desc), if (trailerDelaySeconds == 0) "Off" else "${trailerDelaySeconds}s", focusedIndex == localIndex, onTrailerDelayClick, Modifier.settingsFocusSlot(localIndex))
             }
         }
     }

@@ -48,7 +48,7 @@ interface TrailerPlayerEntryPoint {
 fun TrailerPlayer(
     youtubeKey: String,
     modifier: Modifier = Modifier,
-    delayMs: Long = 3000L,
+    delayMs: Long = 0L,
     volume: Float = 0f
 ) {
     val context = LocalContext.current
@@ -65,7 +65,6 @@ fun TrailerPlayer(
     }
     val extractor = remember { entryPoint.inAppYouTubeExtractor() }
 
-    // Delay, then extract YouTube direct URL
     LaunchedEffect(youtubeKey) {
         shouldPlay = false
         videoUrl = null
@@ -93,6 +92,11 @@ fun TrailerPlayer(
             ExoPlayer.Builder(context).build().apply {
                 repeatMode = Player.REPEAT_MODE_ONE
                 playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        extractor.evictCache(youtubeKey)
+                    }
+                })
             }
         }
 
