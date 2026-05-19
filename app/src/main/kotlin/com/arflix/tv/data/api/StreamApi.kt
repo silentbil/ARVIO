@@ -225,7 +225,7 @@ data class StremioStream(
                 (firstLine.contains(".mkv", ignoreCase = true) ||
                  firstLine.contains(".mp4", ignoreCase = true) ||
                  firstLine.contains(".avi", ignoreCase = true) ||
-                 firstLine.matches(Regex(".*\\[.*\\].*")))) {  // Contains [quality] tags
+                  firstLine.matches(StreamApiRegexes.QUALITY_TAGS_REGEX))) {  // Contains [quality] tags
                 return firstLine
             }
         }
@@ -267,12 +267,10 @@ data class StremioStream(
 
         for (text in textsToCheck) {
             // Priority 2: Extract size with emoji (Torrentio format: "💾 15.2 GB")
-            val emojiRegex = """💾\s*([\d.]+\s*[GMKT]B)""".toRegex(RegexOption.IGNORE_CASE)
-            emojiRegex.find(text)?.groupValues?.getOrNull(1)?.let { return it }
+            StreamApiRegexes.EMOJI_SIZE_REGEX.find(text)?.groupValues?.getOrNull(1)?.let { return it }
 
             // Priority 3: Extract size without emoji (AIOStreams/other formats: "15.2 GB", "15.2GB")
-            val plainRegex = """(\d+\.?\d*)\s*(GB|MB|TB|KB)""".toRegex(RegexOption.IGNORE_CASE)
-            plainRegex.find(text)?.let { match ->
+            StreamApiRegexes.PLAIN_SIZE_REGEX.find(text)?.let { match ->
                 val value = match.groupValues[1]
                 val unit = match.groupValues[2].uppercase()
                 return "$value $unit"
@@ -294,8 +292,7 @@ data class StremioStream(
 
     fun getSeeders(): Int? {
         // Extract seeders from title if present (e.g., "👤 125")
-        val seederRegex = """👤\s*(\d+)""".toRegex()
-        val match = seederRegex.find(title ?: "")
+        val match = StreamApiRegexes.SEEDER_REGEX.find(title ?: "")
         return match?.groupValues?.getOrNull(1)?.toIntOrNull()
     }
 
@@ -476,3 +473,10 @@ data class ArmMappingEntry(
     val themoviedb: Int? = null,
     val thetvdb: Int? = null
 )
+
+private object StreamApiRegexes {
+    val QUALITY_TAGS_REGEX = Regex(".*\\[.*\\].*")
+    val EMOJI_SIZE_REGEX = """💾\s*([\d.]+\s*[GMKT]B)""".toRegex(RegexOption.IGNORE_CASE)
+    val PLAIN_SIZE_REGEX = """(\d+\.?\d*)\s*(GB|MB|TB|KB)""".toRegex(RegexOption.IGNORE_CASE)
+    val SEEDER_REGEX = """👤\s*(\d+)""".toRegex()
+}

@@ -34,10 +34,10 @@ private const val DEFAULT_USER_AGENT =
         "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
 private const val PREFERRED_SEPARATE_CLIENT = "android_vr"
 
-private val VIDEO_ID_REGEX = Regex("^[a-zA-Z0-9_-]{11}$")
-private val API_KEY_REGEX = Regex("\"INNERTUBE_API_KEY\":\"([^\"]+)\"")
-private val VISITOR_DATA_REGEX = Regex("\"VISITOR_DATA\":\"([^\"]+)\"")
-private val QUALITY_LABEL_REGEX = Regex("(\\d{2,4})p")
+
+
+
+
 
 private data class YouTubeClient(
     val key: String,
@@ -369,14 +369,14 @@ class InAppYouTubeExtractor @Inject constructor() {
     }
 
     private fun parseWatchConfig(html: String): WatchConfig {
-        val apiKey = API_KEY_REGEX.find(html)?.groupValues?.getOrNull(1)
-        val visitorData = VISITOR_DATA_REGEX.find(html)?.groupValues?.getOrNull(1)
+        val apiKey = YouTubeExtractorRegexes.API_KEY_REGEX.find(html)?.groupValues?.getOrNull(1)
+        val visitorData = YouTubeExtractorRegexes.VISITOR_DATA_REGEX.find(html)?.groupValues?.getOrNull(1)
         return WatchConfig(apiKey = apiKey, visitorData = visitorData)
     }
 
     private fun extractVideoId(input: String): String? {
         val trimmed = input.trim()
-        if (VIDEO_ID_REGEX.matches(trimmed)) return trimmed
+        if (YouTubeExtractorRegexes.VIDEO_ID_REGEX.matches(trimmed)) return trimmed
 
         val normalized = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
             trimmed
@@ -389,14 +389,22 @@ class InAppYouTubeExtractor @Inject constructor() {
             val host = uri.host?.lowercase().orEmpty()
             if (host.endsWith("youtu.be")) {
                 val id = uri.pathSegments.firstOrNull()
-                if (!id.isNullOrBlank() && VIDEO_ID_REGEX.matches(id)) return id
+                if (!id.isNullOrBlank() && YouTubeExtractorRegexes.VIDEO_ID_REGEX.matches(id)) {
+                    return id
+                }
             }
             val queryId = uri.getQueryParameter("v")
-            if (!queryId.isNullOrBlank() && VIDEO_ID_REGEX.matches(queryId)) return queryId
+            if (!queryId.isNullOrBlank() && YouTubeExtractorRegexes.VIDEO_ID_REGEX.matches(queryId)) {
+                return queryId
+            }
+
             val segments = uri.pathSegments
             if (segments.size >= 2) {
-                val first = segments[0]; val second = segments[1]
-                if ((first == "embed" || first == "shorts" || first == "live") && VIDEO_ID_REGEX.matches(second)) return second
+                val first = segments[0]
+                val second = segments[1]
+                if ((first == "embed" || first == "shorts" || first == "live") && YouTubeExtractorRegexes.VIDEO_ID_REGEX.matches(second)) {
+                    return second
+                }
             }
             null
         }.getOrNull()
@@ -489,7 +497,8 @@ class InAppYouTubeExtractor @Inject constructor() {
 
     private fun parseQualityLabel(label: String?): Int? {
         if (label.isNullOrBlank()) return null
-        return QUALITY_LABEL_REGEX.find(label)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val match = YouTubeExtractorRegexes.QUALITY_LABEL_REGEX.find(label) ?: return null
+        return match.groupValues.getOrNull(1)?.toIntOrNull()
     }
 
     private fun hasNParam(url: String): Boolean =
@@ -567,4 +576,11 @@ private fun Map<*, *>.numberValue(key: String): Double? = when (val v = this[key
     is Number -> v.toDouble()
     is String -> v.toDoubleOrNull()
     else -> null
+}
+
+private object YouTubeExtractorRegexes {
+    val VIDEO_ID_REGEX = Regex("^[a-zA-Z0-9_-]{11}$")
+    val API_KEY_REGEX = Regex("\"INNERTUBE_API_KEY\":\"([^\"]+)\"")
+    val VISITOR_DATA_REGEX = Regex("\"VISITOR_DATA\":\"([^\"]+)\"")
+    val QUALITY_LABEL_REGEX = Regex("(\\d{2,4})p")
 }

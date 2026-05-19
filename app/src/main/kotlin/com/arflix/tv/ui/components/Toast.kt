@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -29,13 +31,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.ui.theme.ArflixTypography
-import com.arflix.tv.ui.theme.Pink
-import com.arflix.tv.ui.theme.SuccessGreen
-import com.arflix.tv.ui.theme.TextPrimary
 import kotlinx.coroutines.delay
 
 enum class ToastType {
@@ -74,43 +75,64 @@ fun Toast(
             enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
         ) {
-            val (bgColor, iconColor, icon) = when (type) {
+            val (accentColor, icon, iconBgColor) = when (type) {
                 ToastType.SUCCESS -> Triple(
-                    SuccessGreen.copy(alpha = 0.9f),
-                    Color.White,
-                    Icons.Default.Check
+                    Color(0xFF34D399),
+                    Icons.Default.Check,
+                    Color(0x2234D399)
                 )
                 ToastType.ERROR -> Triple(
-                    Color(0xFFEF4444).copy(alpha = 0.9f),
-                    Color.White,
-                    Icons.Default.Close
+                    Color(0xFFF87171),
+                    Icons.Default.Close,
+                    Color(0x22F87171)
                 )
                 ToastType.INFO -> Triple(
-                    com.arflix.tv.ui.theme.ArcticGray.copy(alpha = 0.9f),
-                    Color.White,
-                    Icons.Default.Info
+                    Color(0xFF60A5FA),
+                    Icons.Default.Info,
+                    Color(0x2260A5FA)
                 )
             }
-            
+
             Row(
                 modifier = Modifier
                     .padding(bottom = 48.dp)
-                    .background(bgColor, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                    .shadow(
+                        elevation = 18.dp,
+                        shape = RoundedCornerShape(18.dp),
+                        ambientColor = Color.Black.copy(alpha = 0.32f),
+                        spotColor = Color.Black.copy(alpha = 0.32f)
+                    )
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xE61A1E28))
+                    .border(
+                        width = 1.dp,
+                        color = accentColor.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(18.dp)
+                    )
+                    .widthIn(max = 560.dp)
+                    .padding(horizontal = 18.dp, vertical = 13.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.Start
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconColor,
-                    modifier = Modifier.size(20.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(iconBgColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = message,
                     style = ArflixTypography.body,
-                    color = TextPrimary
+                    color = Color.White
                 )
             }
         }

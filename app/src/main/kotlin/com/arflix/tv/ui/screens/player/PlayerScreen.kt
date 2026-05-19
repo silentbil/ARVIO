@@ -1569,6 +1569,7 @@ fun PlayerScreen(
     val subtitleColorPref = uiState.subtitleColor
     val subtitleStylePref = uiState.subtitleStyle
     val subtitleStylizedPref = uiState.subtitleStylized
+    val subtitleOffsetPref = uiState.subtitleOffset
     val aspectModeLabel = when (playerResizeMode) {
         AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
         AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
@@ -2037,7 +2038,14 @@ fun PlayerScreen(
                                 )
                             )
                             setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp)
-                            setBottomPaddingFraction(0.08f)
+                            val bottomPaddingFraction = when (subtitleOffsetPref) {
+                                "Bottom" -> 0.02f
+                                "Low" -> 0.08f
+                                "Medium" -> 0.15f
+                                "High" -> 0.25f
+                                else -> 0.02f
+                            }
+                            setBottomPaddingFraction(bottomPaddingFraction)
 
                             if (subtitleStylizedPref) {
                                 // Stylized mode: let Media3 render embedded ASS/SSA styles
@@ -2606,6 +2614,7 @@ fun PlayerScreen(
                         try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
                     }
                 },
+                onToggleAi = { viewModel.activateAiSubtitle() },
                 onClose = {
                     showSubtitleMenu = false
                     showControls = true
@@ -3370,6 +3379,7 @@ private fun SubtitleMenu(
     onTabChanged: (Int) -> Unit,
     onSelectSubtitle: (Int) -> Unit,
     onSelectAudio: (AudioTrackInfo) -> Unit,
+    onToggleAi: () -> Unit = {},
     onClose: () -> Unit
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
@@ -3752,6 +3762,8 @@ private fun SubtitleMenu(
 
                         // Grouped by language
                         subtitleGroups.forEach { (langName, indexedSubs) ->
+                            val isAiGroup = isAiAvailable && aiTargetLanguageName.isNotBlank() &&
+                                langName.equals(aiTargetLanguageName, ignoreCase = true)
                             item(key = "mobile_header_$langName") {
                                 Text(
                                     text = langName.uppercase(),
@@ -3765,17 +3777,37 @@ private fun SubtitleMenu(
                                         .padding(start = 16.dp, top = 8.dp, bottom = 2.dp)
                                 )
                             }
+                            if (isAiGroup) {
+                                item(key = "mobile_ai_item") {
+                                    MobileTrackItem(
+                                        name = aiTargetLanguageName,
+                                        description = "AI",
+                                        isSelected = isAiTranslating,
+                                        onClick = { onToggleAi(); onClose() }
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp)
+                                            .height(1.dp)
+                                            .background(Color.White.copy(alpha = 0.06f))
+                                    )
+                                }
+                            }
                             indexedSubs.forEach { (originalIndex, sub) ->
                                 item(key = "mobile_${sub.id}") {
-                                    val trackLabel = sub.label.ifBlank { sub.lang }
-                                    val languageInfo = getFullLanguageName(sub.lang)
-                                    val description = if (trackLabel.lowercase() != languageInfo.lowercase() &&
-                                        !trackLabel.lowercase().contains(languageInfo.lowercase())
-                                    ) languageInfo else null
+                                    val score = subtitleMatchScore(streamSource, sub)
+                                    val langFullName = getFullLanguageName(sub.lang)
+                                    val displayName = if (score > 0) "$langFullName ($score%)" else langFullName
+                                    val description = when {
+                                        sub.isEmbedded && sub.url.isBlank() -> "Built-in"
+                                        sub.provider.isNotBlank() -> sub.provider
+                                        else -> null
+                                    }
                                     MobileTrackItem(
-                                        name = trackLabel,
+                                        name = displayName,
                                         description = description,
-                                        isSelected = selectedSubtitle?.id == sub.id,
+                                        isSelected = !isAiTranslating && selectedSubtitle?.id == sub.id,
                                         onClick = { onSelectSubtitle(originalIndex + 1) }
                                     )
                                     Box(

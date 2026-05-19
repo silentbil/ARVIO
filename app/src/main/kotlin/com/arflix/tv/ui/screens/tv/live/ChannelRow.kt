@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -39,6 +40,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,6 +69,8 @@ fun ChannelRow(
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit,
     onMoveLeft: () -> Unit = {},
+    onMoveRight: () -> Boolean = { false },
+    onMoveUp: () -> Boolean = { false },
     onFocused: () -> Unit = {},
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     forceFocused: Boolean = false,
@@ -109,6 +113,16 @@ fun ChannelRow(
             )
             .background(if (visuallyFocused) LiveColors.PanelRaised else bg)
             .focusable()
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown) {
+                    when (ev.key) {
+                        Key.DirectionLeft -> { onMoveLeft(); return@onPreviewKeyEvent true }
+                        Key.DirectionRight -> if (onMoveRight()) return@onPreviewKeyEvent true
+                        Key.DirectionUp -> if (onMoveUp()) return@onPreviewKeyEvent true
+                    }
+                }
+                false
+            }
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onFavoriteToggle,
@@ -119,10 +133,6 @@ fun ChannelRow(
             // repeatCount == 1) on CENTER / ENTER / MENU triggers favorite
             // toggle, giving the user the "hold OK" gesture everywhere.
             .onKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft) {
-                    onMoveLeft()
-                    return@onKeyEvent true
-                }
                 val isLongHoldCenter = ev.type == KeyEventType.KeyDown &&
                     (ev.key == Key.DirectionCenter || ev.key == Key.Enter) &&
                     ev.nativeKeyEvent.repeatCount == 1
@@ -182,6 +192,15 @@ fun ChannelRow(
                         imageVector = Icons.Filled.Star,
                         contentDescription = null,
                         tint = Color(0xFFFFC04A), // Golden star
+                        modifier = Modifier.size(11.dp),
+                    )
+                }
+                if (channel.catchupDays > 0) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Filled.History,
+                        contentDescription = "Catchup available",
+                        tint = LiveColors.Accent.copy(alpha = 0.8f),
                         modifier = Modifier.size(11.dp),
                     )
                 }

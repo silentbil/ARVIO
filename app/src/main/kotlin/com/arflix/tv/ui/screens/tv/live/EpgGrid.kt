@@ -2,40 +2,30 @@ package com.arflix.tv.ui.screens.tv.live
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.StarOutline
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -54,7 +44,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -64,12 +53,17 @@ import androidx.tv.material3.Text
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 private const val EpgWindowMinutes = 24 * 60
-private const val EpgWindowSlotCount = EpgWindowMinutes / 30
+
+enum class EpgGridFocusMode {
+    ChannelList,
+    Epg,
+}
 
 /**
  * EPG grid per spec §3.4.
@@ -85,90 +79,92 @@ fun EpgGrid(
     nowNext: Map<String, IptvNowNext>,
     selectedChannelId: String?,
     focusSelectedChannelSignal: Int,
-    onChannelSelect: (EnrichedChannel) -> Unit,
+    focusEpgSignal: Int = 0,
+    focusMode: EpgGridFocusMode = EpgGridFocusMode.ChannelList,
+    onChannelSelect: (EnrichedChannel, IptvProgram?) -> Unit,
+    onProgramSelect: (EnrichedChannel, IptvProgram?) -> Unit = onChannelSelect,
     onChannelFocused: (EnrichedChannel) -> Unit = {},
     onChannelFavoriteToggle: (String) -> Unit,
     favorites: Set<String>,
     compact: Boolean = false,
     gridFocused: Boolean = false,
     onMoveLeftFromChannels: () -> Unit = {},
+    onEnterEpg: (EnrichedChannel) -> Unit = {},
+    onExitEpg: (EnrichedChannel?) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val pxPerMin = LiveDims.EpgPxPerMinute
+    val pxPerMin = if (compact) 96f / 30f else LiveDims.EpgPxPerMinute.toFloat()
     val selectedChannelFocusRequester = remember { FocusRequester() }
+    val firstChannelFocusRequester = remember { FocusRequester() }
     val headerHeight = if (compact) 32.dp else LiveDims.EpgHeaderHeight
     val channelColumnWidth = if (compact) 164.dp else LiveDims.EpgChannelColWidth
-    val halfHourWidth = if (compact) 96.dp else LiveDims.EpgHalfHourWidth
+    val halfHourWidth = (pxPerMin * 30f).dp
     val rowHeight = if (compact) 52.dp else LiveDims.EpgRowHeight
+    val programFocusRequesters = remember { mutableStateMapOf<String, List<FocusRequester>>() }
+    val programFocusTargets = remember { mutableStateMapOf<String, List<ProgramFocusTarget>>() }
 
-    // Window: now − 30 min → now + 2 h = 2.5 h total.
-    // Past is limited to 30 min so most of the ruler is future programmes
-    // (what you're about to watch), not what already aired.
-    val windowStartMillis = remember { roundedWindowStart() }
-    val windowEndMillis = remember(windowStartMillis) {
-        windowStartMillis + EpgWindowMinutes * 60L * 1000L
+    val maxCatchupDays = remember(channels) {
+        channels.maxOfOrNull { ch -> effectiveCatchupDays(ch) } ?: 0
     }
-    // 5 half-hour slots across the window.
-    val slots = remember(windowStartMillis) { buildHalfHourSlots(windowStartMillis, EpgWindowSlotCount) }
+    val todayStartMillis = remember { roundedWindowStart() }
+    val windowStartMillis = remember(todayStartMillis, maxCatchupDays) {
+        todayStartMillis - maxCatchupDays * 24L * 60L * 60_000L
+    }
+    val windowEndMillis = remember(todayStartMillis) {
+        todayStartMillis + EpgWindowMinutes * 60L * 1000L
+    }
+    val slotCount = remember(windowStartMillis, windowEndMillis) {
+        (((windowEndMillis - windowStartMillis) / 60_000L) / 30L).toInt().coerceAtLeast(1)
+    }
+    val slots = remember(windowStartMillis, slotCount) { buildHalfHourSlots(windowStartMillis, slotCount) }
 
     // Shared horizontal scroll state between header and body rows.
     val hScroll = rememberScrollState()
-    // Two separate vertical list states: one per LazyColumn.
-    // A single LazyListState cannot be shared across two LazyColumns —
-    // Compose asserts exclusive ownership and crashes on recomposition
-    // when it detects two attached hosts. We keep them in lock-step via
-    // snapshotFlow below.
+    // A single LazyListState handles vertical scrolling for both channels and EPG.
     val channelListState = rememberLazyListState()
-    val programListState = rememberLazyListState()
     var didPositionInitialSelection by remember(channels) { mutableStateOf(false) }
 
-    // Two-way scroll sync without feedback loop.
-    // A single leader token flips to whichever list registered a user
-    // scroll last; only the leader's snapshotFlow writes to the other.
-    // This survives focus-driven bringIntoView scrolls from either side.
-    var leader by remember { mutableStateOf(0) } // 0=none, 1=program, 2=channel
-    LaunchedEffect(programListState) {
-        snapshotFlow { programListState.isScrollInProgress }
-            .distinctUntilChanged()
-            .collect { if (it) leader = 1 }
-    }
-    LaunchedEffect(channelListState) {
-        snapshotFlow { channelListState.isScrollInProgress }
-            .distinctUntilChanged()
-            .collect { if (it) leader = 2 }
-    }
-    LaunchedEffect(channelListState, programListState) {
-        snapshotFlow { programListState.firstVisibleItemIndex to programListState.firstVisibleItemScrollOffset }
-            .distinctUntilChanged()
-            .collect { (idx, off) ->
-                if (leader != 1) return@collect
-                if (channelListState.firstVisibleItemIndex != idx ||
-                    channelListState.firstVisibleItemScrollOffset != off
-                ) channelListState.scrollToItem(idx, off)
-            }
-    }
-    LaunchedEffect(channelListState, programListState) {
-        snapshotFlow { channelListState.firstVisibleItemIndex to channelListState.firstVisibleItemScrollOffset }
-            .distinctUntilChanged()
-            .collect { (idx, off) ->
-                if (leader != 2) return@collect
-                if (programListState.firstVisibleItemIndex != idx ||
-                    programListState.firstVisibleItemScrollOffset != off
-                ) programListState.scrollToItem(idx, off)
-            }
-    }
-
     val scope = rememberCoroutineScope()
-
-    // Park NOW ~30 dp from the left so only a thin slice of the past is
-    // visible and the rest of the viewport holds upcoming programmes.
-    LaunchedEffect(Unit) {
-        with(density) {
-            val nowOffsetMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
-            val targetPx = (nowOffsetMin * pxPerMin).dp.toPx().toInt() - 30.dp.toPx().toInt()
-            hScroll.scrollTo(targetPx.coerceAtLeast(0))
+    fun requestProgramFocus(rowIdx: Int, targetIdx: Int): Boolean {
+        val channel = channels.getOrNull(rowIdx) ?: return false
+        val requesters = programFocusRequesters[channel.id].orEmpty()
+        if (requesters.isEmpty()) return false
+        val safeTargetIdx = targetIdx.coerceIn(0, requesters.lastIndex)
+        scope.launch {
+            channelListState.scrollToItem(rowIdx)
+            runCatching { requesters[safeTargetIdx].requestFocus() }
         }
+        return true
+    }
+
+    fun nearestProgramIndex(rowIdx: Int, anchorStartMin: Int): Int? {
+        val channel = channels.getOrNull(rowIdx) ?: return null
+        val targets = programFocusTargets[channel.id].orEmpty()
+        if (targets.isEmpty()) return null
+        return targets
+            .withIndex()
+            .minByOrNull { (_, target) -> target.distanceTo(anchorStartMin) }
+            ?.index
+    }
+
+    fun requestNearestProgramFocus(rowIdx: Int, anchorStartMin: Int): Boolean {
+        val targetIdx = nearestProgramIndex(rowIdx, anchorStartMin) ?: return false
+        return requestProgramFocus(rowIdx, targetIdx)
+    }
+
+    fun keepChannelFocus(rowIdx: Int): Boolean {
+        val channel = channels.getOrNull(rowIdx) ?: return true
+        scope.launch {
+            channelListState.scrollToItem(rowIdx)
+            val requester = when {
+                rowIdx == 0 -> firstChannelFocusRequester
+                channel.id == selectedChannelId -> selectedChannelFocusRequester
+                else -> null
+            }
+            requester?.let { runCatching { it.requestFocus() } }
+        }
+        return true
     }
 
     // Scroll the grid to the active channel whenever the selection changes
@@ -180,8 +176,6 @@ fun EpgGrid(
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channels.indexOfFirst { it.id == id }
         if (idx < 0) return@LaunchedEffect
-        leader = 0 // avoid triggering the two-way sync during the jump
-        programListState.scrollToItem(idx)
         channelListState.scrollToItem(idx)
         didPositionInitialSelection = true
     }
@@ -191,10 +185,29 @@ fun EpgGrid(
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channels.indexOfFirst { it.id == id }
         if (idx < 0) return@LaunchedEffect
-        leader = 0
-        programListState.scrollToItem(idx)
         channelListState.scrollToItem(idx)
         runCatching { selectedChannelFocusRequester.requestFocus() }
+    }
+
+    LaunchedEffect(focusEpgSignal, selectedChannelId, channels, windowStartMillis) {
+        if (focusEpgSignal == 0) return@LaunchedEffect
+        val id = selectedChannelId ?: return@LaunchedEffect
+        val idx = channels.indexOfFirst { it.id == id }
+        if (idx < 0) return@LaunchedEffect
+        val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
+        repeat(6) {
+            if (requestNearestProgramFocus(idx, nowMin)) return@LaunchedEffect
+            delay(50L)
+        }
+        keepChannelFocus(idx)
+    }
+
+    LaunchedEffect(windowStartMillis) {
+        with(density) {
+            val nowOffsetMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
+            val targetPx = (nowOffsetMin * pxPerMin).dp.toPx().toInt() - 30.dp.toPx().toInt()
+            hScroll.scrollTo(targetPx.coerceAtLeast(0))
+        }
     }
 
     Column(
@@ -261,19 +274,21 @@ fun EpgGrid(
                     }
                 }
                 // Cyan "NOW hh:mm" pill hovering above the now-line inside the header.
-                val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
-                val nowOffset = (nowMin * pxPerMin).dp
-                Box(
-                    modifier = Modifier
-                        .offset(x = nowOffset - 46.dp, y = 6.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(LiveColors.Accent)
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                ) {
-                    Text(
-                        text = "NOW " + formatClock(clockTickMillis),
-                        style = LiveType.Badge.copy(color = LiveColors.Bg),
-                    )
+                if (clockTickMillis in windowStartMillis until windowEndMillis) {
+                    val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
+                    val nowOffset = (nowMin * pxPerMin).dp
+                    Box(
+                        modifier = Modifier
+                            .offset(x = nowOffset - 46.dp, y = 6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(LiveColors.Accent)
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = "NOW " + formatClock(clockTickMillis),
+                            style = LiveType.Badge.copy(color = LiveColors.Bg),
+                        )
+                    }
                 }
             }
         }
@@ -288,98 +303,141 @@ fun EpgGrid(
 
         // ─── Body ───────────────────────────────────────────────────
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                // Channel column (sticky left, vertical scroll only)
+            val totalWidth = halfHourWidth * slots.size
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onKeyEvent { ev ->
+                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.Back) {
+                            onExitEpg(selectedChannelId?.let { id -> channels.firstOrNull { it.id == id } })
+                            selectedChannelFocusRequester.requestFocus()
+                            true
+                        } else false
+                    }
+            ) {
                 LazyColumn(
                     state = channelListState,
                     modifier = Modifier
-                        .width(channelColumnWidth)
-                        .fillMaxHeight()
+                        .fillMaxSize()
                         .arvioDpadFocusGroup()
-                        .background(LiveColors.PanelDeep),
                 ) {
                     itemsIndexed(
                         channels,
                         key = { _, ch -> ch.id },
-                        contentType = { _, _ -> "channel" }
+                        contentType = { _, _ -> "channelRowAndPrograms" }
                     ) { idx, ch ->
-                        ChannelRow(
-                            channel = ch,
-                            isActive = ch.id == selectedChannelId,
-                            clockTickMillis = clockTickMillis,
-                            nowNext = nowNext[ch.id],
-                            isFavorite = ch.id in favorites,
-                            stripe = idx % 2 == 1,
-                            onClick = { onChannelSelect(ch) },
-                            onFocused = { onChannelFocused(ch) },
-                            onMoveLeft = onMoveLeftFromChannels,
-                            onFavoriteToggle = { onChannelFavoriteToggle(ch.id) },
-                            rowHeight = rowHeight,
-                            forceFocused = gridFocused && ch.id == selectedChannelId,
-                            modifier = if (ch.id == selectedChannelId) {
-                                Modifier.focusRequester(selectedChannelFocusRequester)
-                            } else {
-                                Modifier
-                            },
-                        )
-                    }
-                }
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .background(LiveColors.Divider)
-                )
-                // Program grid (scrolls both ways, synced with above)
-                Box(modifier = Modifier.fillMaxSize()) {
-                    LazyColumn(
-                        state = programListState,
-                        userScrollEnabled = false,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .horizontalScroll(hScroll),
-                    ) {
-                        itemsIndexed(
-                            channels,
-                            key = { _, ch -> ch.id },
-                            contentType = { _, _ -> "programsRow" }
-                        ) { idx, ch ->
-                            // Memoise the windowed program list per channel.
-                            // Without this, every vertical scroll tick triggers
-                            // a full recomputation across every visible row —
-                            // which turns the category-expand interaction into
-                            // a stutter/ANR on lower-end TV boxes.
-                            val rowPrograms = remember(
-                                ch.id,
-                                nowNext[ch.id],
-                                windowStartMillis,
-                                windowEndMillis,
-                            ) {
-                                programsInWindow(nowNext[ch.id], windowStartMillis, windowEndMillis)
-                            }
-                            ProgramsRow(
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(rowHeight)
+                        ) {
+                            // 1. Channel item (fixed width, doesn't scroll horizontally)
+                            ChannelRow(
                                 channel = ch,
-                                programs = rowPrograms,
-                                clockTickMillis = clockTickMillis,
-                                windowStartMillis = windowStartMillis,
-                                windowEndMillis = windowEndMillis,
-                                totalWidth = halfHourWidth * slots.size,
-                                pxPerMin = pxPerMin,
-                                stripe = idx % 2 == 1,
                                 isActive = ch.id == selectedChannelId,
-                                rowHeight = rowHeight,
-                                onClick = { onChannelSelect(ch) },
+                                clockTickMillis = clockTickMillis,
+                                nowNext = nowNext[ch.id],
+                                isFavorite = ch.id in favorites,
+                                stripe = idx % 2 == 1,
+                                onClick = { onChannelSelect(ch, null) },
                                 onFocused = { onChannelFocused(ch) },
+                                onMoveLeft = onMoveLeftFromChannels,
+                                onMoveRight = {
+                                    val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
+                                    onEnterEpg(ch)
+                                    if (requestNearestProgramFocus(idx, nowMin)) {
+                                        true
+                                    } else {
+                                        keepChannelFocus(idx)
+                                    }
+                                    true
+                                },
+                                onFavoriteToggle = { onChannelFavoriteToggle(ch.id) },
+                                rowHeight = rowHeight,
+                                forceFocused = gridFocused &&
+                                    focusMode == EpgGridFocusMode.ChannelList &&
+                                    ch.id == selectedChannelId,
+                                modifier = Modifier
+                                    .width(channelColumnWidth)
+                                    .background(LiveColors.PanelDeep)
+                                    .then(if (idx == 0) Modifier.focusRequester(firstChannelFocusRequester) else Modifier)
+                                    .then(if (ch.id == selectedChannelId) Modifier.focusRequester(selectedChannelFocusRequester) else Modifier),
                             )
+
+                            // 2. Vertical Divider
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .fillMaxHeight()
+                                    .background(LiveColors.Divider)
+                            )
+
+                            // 3. EPG programs row (scrolls horizontally using the shared hScroll)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .horizontalScroll(hScroll)
+                            ) {
+                                val rowPrograms = remember(
+                                    ch.id,
+                                    nowNext[ch.id],
+                                    windowStartMillis,
+                                    windowEndMillis,
+                                ) {
+                                    programsInWindow(nowNext[ch.id], windowStartMillis, windowEndMillis)
+                                }
+                                ProgramsRow(
+                                    channel = ch,
+                                    programs = rowPrograms,
+                                    clockTickMillis = clockTickMillis,
+                                    windowStartMillis = windowStartMillis,
+                                    windowEndMillis = windowEndMillis,
+                                    totalWidth = totalWidth,
+                                    pxPerMin = pxPerMin,
+                                    stripe = idx % 2 == 1,
+                                    isActive = ch.id == selectedChannelId && focusMode == EpgGridFocusMode.Epg,
+                                    rowHeight = rowHeight,
+                                    onClick = { program -> onProgramSelect(ch, program) },
+                                    onFocused = { onChannelFocused(ch) },
+                                    onMoveVertically = { targetRowIdx, anchorStartMin ->
+                                        requestNearestProgramFocus(targetRowIdx, anchorStartMin)
+                                    },
+                                    onMoveLeftFromStart = {
+                                        // Stay in EPG; do not exit EPG or pass focus to channel list on left press
+                                        true
+                                    },
+                                    rowIdx = idx,
+                                    focusRequesters = programFocusRequesters,
+                                    focusTargets = programFocusTargets,
+                                )
+                            }
                         }
                     }
-                    // NOW glow line across full body
-                    NowLine(
-                        clockTickMillis = clockTickMillis,
-                        windowStartMillis = windowStartMillis,
-                        pxPerMin = pxPerMin,
-                        hScrollOffsetPx = hScroll.value,
-                    )
+                }
+
+                // NOW glow line across full body
+                if (clockTickMillis in windowStartMillis until windowEndMillis) {
+                    val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
+                    val xDpInside = (nowMin * pxPerMin).dp - with(density) { hScroll.value.toDp() }
+                    if (xDpInside >= 0.dp) {
+                        val xDp = channelColumnWidth + 1.dp + xDpInside
+                        Box(
+                            modifier = Modifier
+                                .offset(x = xDp)
+                                .fillMaxHeight()
+                                .width(2.dp)
+                                .background(LiveColors.Accent),
+                        )
+                        // Glow behind the 2dp line
+                        Box(
+                            modifier = Modifier
+                                .offset(x = xDp - 3.dp)
+                                .fillMaxHeight()
+                                .width(8.dp)
+                                .background(LiveColors.Accent.copy(alpha = 0.22f)),
+                        )
+                    }
                 }
             }
         }
@@ -395,12 +453,17 @@ private fun ProgramsRow(
     windowStartMillis: Long,
     windowEndMillis: Long,
     totalWidth: Dp,
-    pxPerMin: Int,
+    pxPerMin: Float,
     stripe: Boolean,
     isActive: Boolean,
     rowHeight: Dp,
-    onClick: () -> Unit,
+    onClick: (IptvProgram?) -> Unit,
     onFocused: () -> Unit,
+    onMoveVertically: (rowIdx: Int, anchorStartMin: Int) -> Boolean,
+    onMoveLeftFromStart: () -> Boolean,
+    rowIdx: Int,
+    focusRequesters: MutableMap<String, List<FocusRequester>>,
+    focusTargets: MutableMap<String, List<ProgramFocusTarget>>,
 ) {
     val nowMillis = clockTickMillis
     Box(
@@ -419,10 +482,33 @@ private fun ProgramsRow(
         val placements = remember(programs, windowStartMillis, windowEndMillis, nowMillis) {
             buildProgramPlacements(programs, windowStartMillis, windowEndMillis, nowMillis)
         }
+        val focusablePlacementIndices = remember(placements, channel.catchupDays, nowMillis) {
+            placements.mapIndexedNotNull { index, placement ->
+                val canFocus = placement.canFocus(channel, nowMillis)
+                if (canFocus) index else null
+            }
+        }
+        val rowFocusRequesters = remember(channel.id, focusablePlacementIndices.size) {
+            List(focusablePlacementIndices.size) { FocusRequester() }
+        }
+        val rowFocusTargets = remember(placements, focusablePlacementIndices) {
+            focusablePlacementIndices.mapNotNull { index ->
+                placements.getOrNull(index)?.let { placement ->
+                    ProgramFocusTarget(placement.startMin, placement.endMin)
+                }
+            }
+        }
+        SideEffect {
+            focusRequesters[channel.id] = rowFocusRequesters
+            focusTargets[channel.id] = rowFocusTargets
+        }
         if (placements.isNotEmpty()) {
-            placements.forEach { placement ->
+            placements.forEachIndexed { placementIndex, placement ->
                 val offset = (placement.startMin * pxPerMin).dp
                 val width = (placement.durationMin * pxPerMin).dp
+                val isCatchupSupported = placement.isCatchupSupported(channel, nowMillis)
+                val focusableIndex = focusablePlacementIndices.indexOf(placementIndex)
+                val isFocusable = focusableIndex >= 0
                 ProgramCell(
                     program = placement.program,
                     clockTickMillis = clockTickMillis,
@@ -430,10 +516,40 @@ private fun ProgramsRow(
                     isNow = placement.isNow,
                     isPast = placement.isPast,
                     isFocusTarget = placement.isNow,
-                    focusable = false,
-                    onClick = onClick,
+                    focusable = isFocusable,
+                    isCatchupSupported = isCatchupSupported,
+                    onClick = {
+                        if (placement.isPast && isCatchupSupported) {
+                            onClick(placement.program)
+                        } else if (!placement.isPast) {
+                            onClick(null)
+                        }
+                    },
                     onFocused = onFocused,
+                    onMoveLeft = {
+                        if (focusableIndex > 0) {
+                            rowFocusRequesters[focusableIndex - 1].requestFocus()
+                            true
+                        } else {
+                            onMoveLeftFromStart()
+                        }
+                    },
+                    onMoveRight = {
+                        if (focusableIndex in 0 until rowFocusRequesters.lastIndex) {
+                            rowFocusRequesters[focusableIndex + 1].requestFocus()
+                            true
+                        } else {
+                            false
+                        }
+                    },
+                    onMoveUp = {
+                        onMoveVertically(rowIdx - 1, placement.startMin)
+                    },
+                    onMoveDown = {
+                        onMoveVertically(rowIdx + 1, placement.startMin)
+                    },
                     rowHeight = rowHeight,
+                    focusRequester = rowFocusRequesters.getOrNull(focusableIndex),
                     modifier = Modifier.offset(x = offset),
                 )
             }
@@ -446,7 +562,7 @@ private fun ProgramsRow(
 private fun NowLine(
     clockTickMillis: Long,
     windowStartMillis: Long,
-    pxPerMin: Int,
+    pxPerMin: Float,
     hScrollOffsetPx: Int,
 ) {
     val density = LocalDensity.current
@@ -483,16 +599,16 @@ private fun buildHalfHourSlots(startMillis: Long, count: Int): List<TimeSlot> {
     return out
 }
 
-/** Round down to the nearest half-hour, shifted 30 min back so the user
- *  can still see what just aired without the past dominating the viewport. */
+/** Round down to the start of the current day (00:00) so the user can
+ *  scroll back through the full daily timeline for catchup. */
 private fun roundedWindowStart(): Long {
     val cal = java.util.Calendar.getInstance()
     cal.timeInMillis = System.currentTimeMillis()
+    cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    cal.set(java.util.Calendar.MINUTE, 0)
     cal.set(java.util.Calendar.SECOND, 0)
     cal.set(java.util.Calendar.MILLISECOND, 0)
-    val min = cal.get(java.util.Calendar.MINUTE)
-    cal.set(java.util.Calendar.MINUTE, if (min >= 30) 30 else 0)
-    return cal.timeInMillis - 30L * 60_000L
+    return cal.timeInMillis
 }
 
 private fun programsInWindow(
@@ -520,8 +636,45 @@ private data class ProgramPlacement(
     val startMin: Int,
     val durationMin: Int,
     val isNow: Boolean,
-    val isPast: Boolean
-)
+    val isPast: Boolean,
+    val isPlaceholder: Boolean = false,
+) {
+    val endMin: Int get() = startMin + durationMin
+}
+
+private data class ProgramFocusTarget(val startMin: Int, val endMin: Int) {
+    fun distanceTo(anchorStartMin: Int): Int = when {
+        anchorStartMin < startMin -> startMin - anchorStartMin
+        anchorStartMin > endMin -> anchorStartMin - endMin
+        else -> 0
+    }
+}
+
+private fun ProgramPlacement.isCatchupSupported(channel: EnrichedChannel, nowMillis: Long): Boolean {
+    val days = effectiveCatchupDays(channel)
+    return days > 0 &&
+        !isPlaceholder &&
+        program.startUtcMillis >= nowMillis - days * 24L * 60L * 60_000L
+}
+
+private fun effectiveCatchupDays(channel: EnrichedChannel): Int {
+    val explicitDays = channel.catchupDays.coerceIn(0, 7)
+    if (explicitDays > 0) return explicitDays
+    val source = channel.source
+    val hasCatchupMetadata = !source.catchupType.isNullOrBlank() || !source.catchupSource.isNullOrBlank()
+    if (hasCatchupMetadata) return 7
+    val pathId = source.streamUrl.substringBefore('?')
+        .trimEnd('/')
+        .substringAfterLast('/')
+        .substringBefore('.')
+        .toIntOrNull()
+    val looksLikeXtream = source.xtreamStreamId != null ||
+        (pathId != null && source.streamUrl.contains("/live/", ignoreCase = true))
+    return if (looksLikeXtream) 7 else 0
+}
+
+private fun ProgramPlacement.canFocus(channel: EnrichedChannel, nowMillis: Long): Boolean =
+    !isPast || isCatchupSupported(channel, nowMillis)
 
 private fun buildProgramPlacements(
     programs: List<IptvProgram>,
@@ -529,23 +682,66 @@ private fun buildProgramPlacements(
     windowEndMillis: Long,
     nowMillis: Long
 ): List<ProgramPlacement> {
-    if (programs.isEmpty()) return emptyList()
-
     val placements = mutableListOf<ProgramPlacement>()
     var cursor = windowStartMillis
+
     programs.forEach { program ->
+        // 1. Fill gap before this program
+        if (program.startUtcMillis > cursor) {
+            val gapEnd = minOf(program.startUtcMillis, windowEndMillis)
+            if (gapEnd > cursor) {
+                // Clamp placeholder start to at most 60 mins before now to avoid horizontal scroll jumps
+                var placeholderStart = maxOf(cursor, nowMillis - 60 * 60_000L)
+                while (placeholderStart < gapEnd) {
+                    val blockEnd = minOf(placeholderStart + 60 * 60_000L, gapEnd)
+                    placements += ProgramPlacement(
+                        program = IptvProgram("No Information", startUtcMillis = placeholderStart, endUtcMillis = blockEnd),
+                        startMin = ((placeholderStart - windowStartMillis) / 60_000L).toInt(),
+                        durationMin = ((blockEnd - placeholderStart) / 60_000L).toInt().coerceAtLeast(1),
+                        isNow = nowMillis in placeholderStart until blockEnd,
+                        isPast = blockEnd <= nowMillis,
+                        isPlaceholder = true,
+                    )
+                    placeholderStart = blockEnd
+                }
+                cursor = gapEnd
+            }
+        }
+
+        if (cursor >= windowEndMillis) return@forEach
+
+        // 2. Add the actual program
         val clampedStart = maxOf(program.startUtcMillis, windowStartMillis, cursor)
         val clampedEnd = minOf(program.endUtcMillis, windowEndMillis)
-        if (clampedEnd <= clampedStart) return@forEach
-
-        placements += ProgramPlacement(
-            program = program,
-            startMin = ((clampedStart - windowStartMillis) / 60_000L).toInt().coerceAtLeast(0),
-            durationMin = ((clampedEnd - clampedStart) / 60_000L).toInt().coerceAtLeast(1),
-            isNow = nowMillis in clampedStart until clampedEnd,
-            isPast = clampedEnd <= nowMillis
-        )
-        cursor = clampedEnd
+        if (clampedEnd > clampedStart) {
+            placements += ProgramPlacement(
+                program = program,
+                startMin = ((clampedStart - windowStartMillis) / 60_000L).toInt(),
+                durationMin = ((clampedEnd - clampedStart) / 60_000L).toInt().coerceAtLeast(1),
+                isNow = nowMillis in clampedStart until clampedEnd,
+                isPast = clampedEnd <= nowMillis
+            )
+            cursor = clampedEnd
+        }
     }
+
+    // 3. Fill trailing gap
+    if (cursor < windowEndMillis) {
+        // Clamp placeholder start to at most 60 mins before now to avoid horizontal scroll jumps
+        var placeholderStart = maxOf(cursor, nowMillis - 60 * 60_000L)
+        while (placeholderStart < windowEndMillis) {
+            val blockEnd = minOf(placeholderStart + 60 * 60_000L, windowEndMillis)
+            placements += ProgramPlacement(
+                program = IptvProgram("No Information", startUtcMillis = placeholderStart, endUtcMillis = blockEnd),
+                startMin = ((placeholderStart - windowStartMillis) / 60_000L).toInt(),
+                durationMin = ((blockEnd - placeholderStart) / 60_000L).toInt().coerceAtLeast(1),
+                isNow = nowMillis in placeholderStart until blockEnd,
+                isPast = blockEnd <= nowMillis,
+                isPlaceholder = true,
+            )
+            placeholderStart = blockEnd
+        }
+    }
+
     return placements
 }

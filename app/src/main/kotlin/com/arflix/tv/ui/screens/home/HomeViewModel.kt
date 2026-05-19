@@ -111,6 +111,9 @@ enum class ToastType {
     SUCCESS, ERROR, INFO
 }
 
+private val ALPHANUMERIC_REGEX = Regex("[^A-Za-z0-9_.-]")
+private val FILE_NAME_REGEX = Regex("[^a-zA-Z0-9._-]")
+
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel @Inject constructor(
@@ -619,9 +622,9 @@ class HomeViewModel @Inject constructor(
     private fun categoriesCacheFile(): java.io.File {
         val profileId = profileManager.getProfileIdSync()
             .ifBlank { "default" }
-            .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            .replace(ALPHANUMERIC_REGEX, "_")
         val language = (mediaRepository.contentLanguage ?: "en-US")
-            .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            .replace(ALPHANUMERIC_REGEX, "_")
         return java.io.File(context.cacheDir, "home_categories_cache_${profileId}_$language.json")
     }
 
@@ -765,7 +768,14 @@ class HomeViewModel @Inject constructor(
     private val heroDetailsCache = ConcurrentHashMap<String, HeroDetailsSnapshot>()
     private val savedCatalogById = ConcurrentHashMap<String, CatalogConfig>()
     private val categoryPaginationStates = ConcurrentHashMap<String, CategoryPaginationState>()
-    private val preloadedRequests = Collections.synchronizedSet(mutableSetOf<String>())
+    private val preloadedRequests: MutableSet<String> = run {
+        val backingMap = object : java.util.LinkedHashMap<String, Boolean>(1200, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>): Boolean {
+                return size > 1200
+            }
+        }
+        Collections.synchronizedSet(Collections.newSetFromMap(backingMap))
+    }
     private var logoCachePublishJob: Job? = null
     @Volatile
     private var pendingLogoPublishPriority: Boolean = false
@@ -1101,7 +1111,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             realtimeSyncManager.watchHistoryEvents.collect {
                 // Fast path: directly update the progress bar on existing CW cards using
-                // Supabase watch_history data (which Device A writes every 15s). This gives
+                // Supabase watch_history data (which Device A writes every ~5s). This gives
                 // immediate visual feedback without waiting for the full Trakt re-fetch
                 // (which can take 10+ seconds for profiles with hundreds of watched items).
                 runCatching {
@@ -2543,9 +2553,6 @@ class HomeViewModel @Inject constructor(
      * Uses target display sizes to reduce decode overhead.
      */
     private fun preloadImagesWithCoil(urls: List<String>, width: Int, height: Int, batchLimit: Int = 0) {
-        if (preloadedRequests.size > if (isLowRamDevice) 1_200 else 4_000) {
-            preloadedRequests.clear()
-        }
         // Bumped from 2/4 to 4/8 — enough to preload one full row of cards on
         // the home screen. The old limits left the majority of visible cards
         // without preloaded images on cold start.
@@ -2828,14 +2835,24 @@ class HomeViewModel @Inject constructor(
             }.mapNotNull { entry ->
                 val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
                 val storedPct = (entry.progress * 100f).toInt()
-                val derivedPct = if (storedPct <= 0 && entry.duration_seconds > 0 && entry.position_seconds > 0) {
-                    ((entry.position_seconds.toFloat() / entry.duration_seconds.toFloat()) * 100f).toInt()
-                } else {
-                    storedPct
+                val hasResumePosition = entry.position_seconds > 0L
+                val derivedPct = when {
+                    storedPct > 0 -> storedPct
+                    entry.duration_seconds > 0 && hasResumePosition ->
+                        ((entry.position_seconds.toFloat() / entry.duration_seconds.toFloat()) * 100f).toInt()
+                    hasResumePosition -> 1
+                    else -> 0
                 }
+                val resolvedTitle = entry.title
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: entry.episode_title
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                    ?: "Untitled"
                 ContinueWatchingItem(
                     id = entry.show_tmdb_id,
-                    title = entry.title ?: return@mapNotNull null,
+                    title = resolvedTitle,
                     mediaType = mediaType,
                     progress = derivedPct.coerceIn(0, 100),
                     resumePositionSeconds = entry.position_seconds.coerceAtLeast(0L),
@@ -2862,14 +2879,24 @@ class HomeViewModel @Inject constructor(
             }.mapNotNull { entry ->
                 val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
                 val storedPct = (entry.progress * 100f).toInt()
-                val derivedPct = if (storedPct <= 0 && entry.duration_seconds > 0 && entry.position_seconds > 0) {
-                    ((entry.position_seconds.toFloat() / entry.duration_seconds.toFloat()) * 100f).toInt()
-                } else {
-                    storedPct
+                val hasResumePosition = entry.position_seconds > 0L
+                val derivedPct = when {
+                    storedPct > 0 -> storedPct
+                    entry.duration_seconds > 0 && hasResumePosition ->
+                        ((entry.position_seconds.toFloat() / entry.duration_seconds.toFloat()) * 100f).toInt()
+                    hasResumePosition -> 1
+                    else -> 0
                 }
+                val resolvedTitle = entry.title
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: entry.episode_title
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                    ?: "Untitled"
                 ContinueWatchingItem(
                     id = entry.show_tmdb_id,
-                    title = entry.title ?: return@mapNotNull null,
+                    title = resolvedTitle,
                     mediaType = mediaType,
                     progress = derivedPct.coerceIn(0, 100),
                     resumePositionSeconds = entry.position_seconds.coerceAtLeast(0L),
@@ -2952,7 +2979,7 @@ class HomeViewModel @Inject constructor(
                 dismissedContinueWatchingKeys.contains(showKey) || persistedDismissedKeys.contains(showKey)
             }
             .filter { item ->
-                if (isTraktAuthenticated) true else item.progress in 1..99
+                if (isTraktAuthenticated) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
@@ -2990,7 +3017,7 @@ class HomeViewModel @Inject constructor(
                 dismissedContinueWatchingKeys.contains(showKey) || persistedDismissedKeys.contains(showKey)
             }
             .filter { item ->
-                if (isTraktAuthenticated) true else item.progress in 1..99
+                if (isTraktAuthenticated) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
@@ -3980,7 +4007,7 @@ class HomeViewModel @Inject constructor(
         downloadJob = viewModelScope.launch {
             updateStatusManager.updateStatus(com.arflix.tv.updater.UpdateStatus.Downloading(0f, update))
 
-            val safeName = update.assetName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val safeName = update.assetName.replace(FILE_NAME_REGEX, "_")
             val dest = java.io.File(java.io.File(context.cacheDir, "updates"), safeName)
 
             val result = kotlinx.coroutines.withContext(Dispatchers.IO) {
@@ -4064,4 +4091,3 @@ class HomeViewModel @Inject constructor(
         updateStatusManager.reset()
     }
 }
-

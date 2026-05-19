@@ -253,23 +253,32 @@ object AppTranslations {
         }
     }
 
+private object AppLanguageRegexes {
+    val MOVIES = Regex("""Movies \((\d+)\)""")
+    val TV_SHOWS = Regex("""TV Shows \((\d+)\)""")
+    val NO_RESULTS = Regex("No results found for \"(.+)\"")
+    val SOURCES = Regex("""(\d+) sources available""")
+    val NEXT = Regex("""Next: (.+)""")
+    val ENDS_AT = Regex("""Ends at (.+)""")
+}
+
     private fun translateDynamic(text: String, table: Map<String, String>): String? {
-        Regex("""Movies \((\d+)\)""").matchEntire(text)?.let {
+        AppLanguageRegexes.MOVIES.matchEntire(text)?.let {
             return "${table.word("Movies")} (${it.groupValues[1]})"
         }
-        Regex("""TV Shows \((\d+)\)""").matchEntire(text)?.let {
+        AppLanguageRegexes.TV_SHOWS.matchEntire(text)?.let {
             return "${table.word("TV Shows")} (${it.groupValues[1]})"
         }
-        Regex("No results found for \"(.+)\"").matchEntire(text)?.let {
+        AppLanguageRegexes.NO_RESULTS.matchEntire(text)?.let {
             return "${table.word("No results found for")} \"${it.groupValues[1]}\""
         }
-        Regex("""(\d+) sources available""").matchEntire(text)?.let {
+        AppLanguageRegexes.SOURCES.matchEntire(text)?.let {
             return "${it.groupValues[1]} ${table.word("sources available")}"
         }
-        Regex("""Next: (.+)""").matchEntire(text)?.let {
+        AppLanguageRegexes.NEXT.matchEntire(text)?.let {
             return "${table.word("Next")}: ${it.groupValues[1]}"
         }
-        Regex("""Ends at (.+)""").matchEntire(text)?.let {
+        AppLanguageRegexes.ENDS_AT.matchEntire(text)?.let {
             return "${table.word("Ends at")} ${it.groupValues[1]}"
         }
         return null

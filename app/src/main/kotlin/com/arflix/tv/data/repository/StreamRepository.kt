@@ -100,6 +100,10 @@ class StreamRepository @Inject constructor(
     )
     private val streamResultCache = mutableMapOf<String, CachedStreamResult>()
     private val resolvedStreamCache = ConcurrentHashMap<String, CachedResolvedStream>()
+    // Cache getStreamAddons() result per content type, invalidated when addon list changes.
+    // Avoids re-iterating all addon manifests on every stream resolution call.
+    private val streamAddonsCache = mutableMapOf<String, List<Addon>>()
+    private var cachedStreamAddonsFingerprint: String? = null
     private val stremioAddonRuntime = StremioAddonRuntime(
         movieResolver = { addon, request ->
             fetchMovieStreamsFromAddon(
@@ -704,7 +708,7 @@ class StreamRepository @Inject constructor(
     }
 
     private fun sanitizeProviderLabel(value: String): String {
-        return value.replace(Regex("nu" + "vio", RegexOption.IGNORE_CASE), "HTTP").trim()
+        return value.replace(StreamRegexes.NUVIO_REGEX, "HTTP").trim()
     }
 
     private fun isIncompleteExternalAddon(addon: Addon): Boolean {
@@ -836,7 +840,7 @@ class StreamRepository @Inject constructor(
         cleanUrl = cleanUrl.substringBefore('#')
         // Handle common manifest typo variants like manifest.jsonv / manifest.json123.
         cleanUrl = cleanUrl.replace(
-            Regex("""(?i)/manifest\.json[a-z0-9_-]+(?=($|[?]))"""),
+            StreamRegexes.MANIFEST_TYPO_REGEX,
             "/manifest.json"
         )
         return cleanUrl.trim()
@@ -983,59 +987,117 @@ class StreamRepository @Inject constructor(
      * Filter addons that support streaming for the given content type - 
      * More lenient filtering to ensure custom addons work
      */
+    /**
+     * Filter addons that support streaming for the given content type -
+     * More lenient filtering to ensure custom addons work.
+     *
+     * Results are cached per content type and invalidated when the installed
+     * addon list changes (via fingerprint comparison). The id-dependent
+     * idPrefixes check is applied per-call on the cached base result.
+     */
     private fun getStreamAddons(addons: List<Addon>, type: String, id: String): List<Addon> {
         val normalizedType = type.trim().lowercase(Locale.US)
-        return addons.filter { addon ->
-            // Must be installed and enabled
-            if (!addon.isInstalled || !addon.isEnabled) return@filter false
+        val currentFingerprint = streamAddonsFingerprint(addons)
 
-            if (addon.runtimeKind != RuntimeKind.STREMIO) return@filter false
-
-            // Skip subtitle addons
-            if (addon.type == AddonType.SUBTITLE) return@filter false
-
-            // Must have a URL to fetch from
-            if (addon.url.isNullOrBlank()) return@filter false
-
-            // For custom addons, require stream support when manifest is available.
-            // Otherwise we may probe catalog-only addons and add unnecessary latency.
-            if (addon.type == AddonType.CUSTOM) {
-                val manifest = addon.manifest
-                if (manifest != null && manifest.resources.isNotEmpty()) {
-                    val supportsStream = manifest.resources.any { resource ->
-                        (resource.name.equals("stream", ignoreCase = true) ||
-                            resource.name.equals("streams", ignoreCase = true)) &&
-                            supportsResourceType(resource.types, normalizedType)
-                    }
-                    return@filter supportsStream
-                }
-                return@filter true
+        val baseCandidates: List<Addon> = synchronized(streamAddonsCache) {
+            if (currentFingerprint != cachedStreamAddonsFingerprint) {
+                streamAddonsCache.clear()
+                cachedStreamAddonsFingerprint = currentFingerprint
             }
+            streamAddonsCache.getOrPut(normalizedType) {
+                addons.filter { addon ->
+                    // Must be installed and enabled
+                    if (!addon.isInstalled || !addon.isEnabled) return@filter false
 
-            // If addon has manifest with resource info, check it
+                    if (addon.runtimeKind != RuntimeKind.STREMIO) return@filter false
+
+                    // Skip subtitle addons
+                    if (addon.type == AddonType.SUBTITLE) return@filter false
+
+                    // Must have a URL to fetch from
+                    if (addon.url.isNullOrBlank()) return@filter false
+
+                    // For custom addons, fully evaluate here (no idPrefixes concern).
+                    if (addon.type == AddonType.CUSTOM) {
+                        val manifest = addon.manifest
+                        if (manifest != null && manifest.resources.isNotEmpty()) {
+                            val supportsStream = manifest.resources.any { resource ->
+                                (resource.name.equals("stream", ignoreCase = true) ||
+                                    resource.name.equals("streams", ignoreCase = true)) &&
+                                    supportsResourceType(resource.types, normalizedType)
+                            }
+                            return@filter supportsStream
+                        }
+                        return@filter true
+                    }
+
+                    // For non-custom addons, check stream resource existence WITHOUT
+                    // idPrefixes (applied per-call below).
+                    val manifest = addon.manifest
+                    if (manifest != null && manifest.resources.isNotEmpty()) {
+                        return@filter manifest.resources.any { resource ->
+                            (resource.name.equals("stream", ignoreCase = true) ||
+                                resource.name.equals("streams", ignoreCase = true)) &&
+                                supportsResourceType(resource.types, normalizedType)
+                        }
+                    }
+
+                    // Default: assume addon supports streaming
+                    true
+                }
+            }
+        }
+
+        // Apply id-prefix filtering per-call (varies by id, cheap string ops).
+        return baseCandidates.filter { addon ->
+            if (addon.type == AddonType.CUSTOM) return@filter true
             val manifest = addon.manifest
             if (manifest != null && manifest.resources.isNotEmpty()) {
-                val hasStreamResource = manifest.resources.any { resource ->
+                val hasMatchingResource = manifest.resources.any { resource ->
                     (resource.name.equals("stream", ignoreCase = true) ||
                         resource.name.equals("streams", ignoreCase = true)) &&
-                    supportsResourceType(resource.types, normalizedType) &&
-                    (resource.idPrefixes == null || resource.idPrefixes.isEmpty() || resource.idPrefixes.any { id.startsWith(it) })
+                        supportsResourceType(resource.types, normalizedType) &&
+                        (resource.idPrefixes == null || resource.idPrefixes.isEmpty() ||
+                            resource.idPrefixes.any { id.startsWith(it) })
                 }
-                if (hasStreamResource) return@filter true
+                if (hasMatchingResource) return@filter true
             }
-
-            // Check global idPrefixes if present (but be lenient)
+            // Check global idPrefixes if present
             val idPrefixes = manifest?.idPrefixes
             if (idPrefixes != null && idPrefixes.isNotEmpty()) {
                 if (!idPrefixes.any { id.startsWith(it) }) return@filter false
             }
-
-            // Default: assume addon supports streaming (be lenient for unknown addons)
             true
         }
     }
 
-    private fun supportsResourceType(resourceTypes: List<String>, requestedType: String): Boolean {
+    private fun streamAddonsFingerprint(addons: List<Addon>): String {
+        return addons.joinToString("\n") { addon ->
+            val manifest = addon.manifest
+            val resources = manifest?.resources.orEmpty().joinToString(";") { resource ->
+                listOf(
+                    resource.name,
+                    resource.types.joinToString(","),
+                    resource.idPrefixes.orEmpty().joinToString(",")
+                ).joinToString(":")
+            }
+            listOf(
+                addon.id,
+                addon.isInstalled.toString(),
+                addon.isEnabled.toString(),
+                addon.runtimeKind.name,
+                addon.type.name,
+                addon.url.orEmpty(),
+                addon.transportUrl.orEmpty(),
+                manifest?.id.orEmpty(),
+                manifest?.version.orEmpty(),
+                manifest?.idPrefixes.orEmpty().joinToString(","),
+                resources
+            ).joinToString("|")
+        }
+    }
+
+    private fun supportsResourceType(resourceTypes: List<String>?, requestedType: String): Boolean {
         if (resourceTypes.isNullOrEmpty()) return true
         val normalized = resourceTypes.map { it.trim().lowercase(Locale.US) }
         val aliases = when (requestedType) {
@@ -2966,8 +3028,7 @@ class StreamRepository @Inject constructor(
 
         // Normalize comma decimals (European format: "5,71 GB" -> "5.71 GB")
         val normalized = sizeStr.replace(",", ".")
-        val regex = Regex("""([\d.]+)\s*(GB|MB|KB|TB)""", RegexOption.IGNORE_CASE)
-        val match = regex.find(normalized) ?: return 0L
+        val match = StreamRegexes.SIZE_REGEX.find(normalized) ?: return 0L
 
         val value = match.groupValues[1].toDoubleOrNull() ?: return 0L
         val unit = match.groupValues[2].uppercase()
@@ -3109,18 +3170,29 @@ class StreamRepository @Inject constructor(
         val enabledFilters = qualityFilters.filter { it.enabled && it.regexPattern.isNotBlank() }
         if (enabledFilters.isEmpty()) return streams
 
+        val compiledRegexes = enabledFilters.mapNotNull { filter ->
+            try {
+                Regex(filter.regexPattern, RegexOption.IGNORE_CASE)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        if (compiledRegexes.isEmpty()) return streams
+
         return streams.filter { stream ->
             // Check if this stream matches any exclusion filter regex
-            enabledFilters.none { filter ->
-                try {
-                    Regex(filter.regexPattern, RegexOption.IGNORE_CASE).containsMatchIn(stream.quality)
-                } catch (e: Exception) {
-                    // If regex is invalid, don't filter (log might be helpful)
-                    false
-                }
+            compiledRegexes.none { regex ->
+                regex.containsMatchIn(stream.quality)
             }
         }
     }
+
+private object StreamRegexes {
+    val MANIFEST_TYPO_REGEX = Regex("""(?i)/manifest\.json[a-z0-9_-]+(?=($|[?]))""")
+    val NUVIO_REGEX = Regex("nu" + "vio", RegexOption.IGNORE_CASE)
+    val SIZE_REGEX = Regex("""([\d.]+)\s*(GB|MB|KB|TB)""", RegexOption.IGNORE_CASE)
+}
 
 /**
  * Addon configuration

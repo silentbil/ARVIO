@@ -28,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -44,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.util.LocalDeviceType
 
 /**
  * A single EPG program cell placed inside a row with an absolute offset.
@@ -59,11 +62,19 @@ fun ProgramCell(
     isPast: Boolean,
     isFocusTarget: Boolean,
     focusable: Boolean = true,
+    isCatchupSupported: Boolean = false,
     onClick: () -> Unit,
     onFocused: () -> Unit = {},
+    onMoveLeft: () -> Boolean = { false },
+    onMoveRight: () -> Boolean = { false },
+    onMoveUp: () -> Boolean = { false },
+    onMoveDown: () -> Boolean = { false },
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
+    focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
+    val deviceType = LocalDeviceType.current
+    val isTouchDevice = deviceType.isTouchDevice()
     var focused by remember { mutableStateOf(false) }
     val baseBg = when {
         isNow -> LiveColors.FocusBg
@@ -86,7 +97,7 @@ fun ProgramCell(
         label = "program-cell-scale",
     )
     val contentAlpha by animateFloatAsState(
-        targetValue = if (isPast && !focused) 0.55f else 1f,
+        targetValue = if (isPast && !focused && !isCatchupSupported) 0.55f else 1f,
         animationSpec = tween(durationMillis = 150),
         label = "program-cell-alpha",
     )
@@ -103,6 +114,13 @@ fun ProgramCell(
                 scaleX = scale
                 scaleY = scale
             }
+            .then(
+                if (focusable && focusRequester != null) {
+                    Modifier.focusRequester(focusRequester)
+                } else {
+                    Modifier
+                }
+            )
             .then(
                 if (focusable) {
                     Modifier.onFocusChanged {
@@ -125,16 +143,30 @@ fun ProgramCell(
             .then(
                 if (focusable) {
                     Modifier.onKeyEvent { ev ->
-                        if (ev.type == KeyEventType.KeyDown &&
-                            (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) {
-                            onClick(); true
-                        } else false
+                        if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
+                        when (ev.key) {
+                            Key.DirectionLeft -> onMoveLeft()
+                            Key.DirectionRight -> onMoveRight()
+                            Key.DirectionUp -> onMoveUp()
+                            Key.DirectionDown -> onMoveDown()
+                            Key.DirectionCenter, Key.Enter -> {
+                                onClick()
+                                true
+                            }
+                            else -> false
+                        }
                     }
                 } else {
                     Modifier
                 }
             )
-            .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) }
+            .then(
+                if (focusable || isTouchDevice) {
+                    Modifier.pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) }
+                } else {
+                    Modifier
+                }
+            )
             .padding(horizontal = 6.dp, vertical = 4.dp),
     ) {
         if (isNow) {
@@ -157,11 +189,19 @@ fun ProgramCell(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val nowMs = clockTickMillis
-                val isNewTag = (nowMs - program.startUtcMillis) in 0..24L * 60 * 60 * 1000L &&
-                    !program.isLive(nowMs)
-                if (isNewTag) {
-                    Badge("NEW", LiveColors.Bg, LiveColors.Accent)
+                if (isNow) {
+                    Badge("LIVE", Color.White, LiveColors.LiveRed)
                     Spacer(Modifier.size(6.dp))
+                } else if (isPast && isCatchupSupported) {
+                    Badge("ARCHIVE", LiveColors.Bg, LiveColors.Accent)
+                    Spacer(Modifier.size(6.dp))
+                } else if (!isPast) {
+                    val isNewTag = (nowMs - program.startUtcMillis) in 0..24L * 60 * 60 * 1000L &&
+                        !program.isLive(nowMs)
+                    if (isNewTag) {
+                        Badge("NEW", LiveColors.Bg, LiveColors.Accent)
+                        Spacer(Modifier.size(6.dp))
+                    }
                 }
                 Text(
                     text = program.title,

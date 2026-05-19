@@ -73,6 +73,7 @@ data class PlayerUiState(
     val subtitleColor: String = "White",
     val subtitleStyle: String = "Bold",
     val subtitleStylized: Boolean = true,
+    val subtitleOffset: String = "Bottom",
     val error: String? = null,
     val isSetupError: Boolean = false, // true when error is due to missing addons (shows friendly guide instead of red error)
     // Auto-play next episode at end of current one. Mirrors the profile-scoped
@@ -152,6 +153,7 @@ class PlayerViewModel @Inject constructor(
     private var currentPreferredBingeGroup: String? = null
     private var lastScrobbleTime: Long = 0
     private var lastWatchHistorySaveTime: Long = 0
+    private var lastWatchHistorySavedPositionSeconds: Long = -1L
     private var lastIsPlaying: Boolean = false
     private var hasMarkedWatched: Boolean = false
     private var hasManualSubtitleSelection: Boolean = false
@@ -213,7 +215,7 @@ class PlayerViewModel @Inject constructor(
     private val SKIP_INTERVAL_MIN_VISIBLE_MS = 250L
 
     private val SCROBBLE_UPDATE_INTERVAL_MS = 20_000L
-    private val WATCH_HISTORY_UPDATE_INTERVAL_MS = 15_000L
+    private val WATCH_HISTORY_UPDATE_INTERVAL_MS = 10_000L
     private val CLOUD_PUSH_INTERVAL_MS = 60_000L // Push CW to cloud every 60s during active playback
 
     private var lastCloudPushTime = 0L
@@ -300,6 +302,7 @@ class PlayerViewModel @Inject constructor(
         lastIsPlaying = false
         lastScrobbleTime = 0
         lastWatchHistorySaveTime = 0
+        lastWatchHistorySavedPositionSeconds = -1L
         subtitleRefreshJob?.cancel()
         subtitleSelectionJob?.cancel()
         vodAppendJob?.cancel()
@@ -359,6 +362,7 @@ class PlayerViewModel @Inject constructor(
             val subColor = prefs[profileManager.profileStringKey("subtitle_color")] ?: "White"
             val subStyle = prefs[profileManager.profileStringKey("subtitle_style")] ?: "Bold"
             val subStylized = prefs[profileManager.profileBooleanKey("subtitle_stylized")] ?: true
+            val subOffset = prefs[profileManager.profileStringKey("subtitle_offset")] ?: "Bottom"
             val autoPlayNext = prefs[autoPlayNextKey()] ?: true
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
             val volumeBoostDb = prefs[profileManager.profileStringKey("volume_boost_db")]
@@ -392,6 +396,7 @@ class PlayerViewModel @Inject constructor(
                 subtitleColor = subColor,
                 subtitleStyle = subStyle,
                 subtitleStylized = subStylized,
+                subtitleOffset = subOffset,
                 autoPlayNext = autoPlayNext,
                 showLoadingStats = showLoadingStats,
                 volumeBoostDb = volumeBoostDb
@@ -2361,10 +2366,16 @@ class PlayerViewModel @Inject constructor(
             // the next-episode CW entry, and saving the finished episode's full position here
             // would contaminate the next episode's resume time via show-level history fallback.
             val isAtWatchedThreshold = progressPercent >= Constants.WATCHED_THRESHOLD
-            if ((!isPlaying || currentTime - lastWatchHistorySaveTime >= WATCH_HISTORY_UPDATE_INTERVAL_MS) && !isAtWatchedThreshold) {
+            val durationSeconds = (duration / 1000L).coerceAtLeast(1L)
+            val positionSeconds = (position / 1000L).coerceAtLeast(0L)
+            val hasSeekJump = lastWatchHistorySavedPositionSeconds >= 0L &&
+                kotlin.math.abs(positionSeconds - lastWatchHistorySavedPositionSeconds) >= 20L
+            val shouldPersistWatchHistory = !isPlaying ||
+                currentTime - lastWatchHistorySaveTime >= WATCH_HISTORY_UPDATE_INTERVAL_MS ||
+                hasSeekJump
+            if (shouldPersistWatchHistory && !isAtWatchedThreshold) {
                 lastWatchHistorySaveTime = currentTime
-                val durationSeconds = (duration / 1000L).coerceAtLeast(1L)
-                val positionSeconds = (position / 1000L).coerceAtLeast(0L)
+                lastWatchHistorySavedPositionSeconds = positionSeconds
                 val selectedStream = _uiState.value.selectedStream
                 val shouldPersistStreamAffinity = positionSeconds >= 30L
                 val streamKey = if (shouldPersistStreamAffinity) buildStreamKey(selectedStream) else null

@@ -14,9 +14,11 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.scrollBy
@@ -70,6 +72,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.Role
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
@@ -788,6 +791,10 @@ fun DetailsScreen(
                         episodeIndex = 0
                         viewModel.loadSeason(idx + 1)
                     },
+                    onSeasonLongClick = { idx ->
+                        contextMenuSeason = idx + 1
+                        showSeasonContextMenu = true
+                    },
                     onEpisodeClick = { idx ->
                         val ep = uiState.episodes.getOrNull(idx)
                         if (ep != null) {
@@ -1142,6 +1149,7 @@ private fun DetailsContent(
     onBack: () -> Unit = {},
     onButtonClick: (Int) -> Unit = {},
     onSeasonClick: (Int) -> Unit = {},
+    onSeasonLongClick: ((Int) -> Unit)? = null,
     onEpisodeClick: (Int) -> Unit = {},
     onCastClick: (Int) -> Unit = {},
     spoilerBlurEnabled: Boolean = false,
@@ -1466,13 +1474,18 @@ private fun DetailsContent(
                                     val currentSeasonProgress = if (season == currentSeason && episodes.isNotEmpty()) {
                                         Pair(episodes.count { it.isWatched }, episodes.size)
                                     } else null
+                                    val seasonClick = remember(index, onSeasonClick) { { onSeasonClick(index) } }
+                                    val seasonLongClick = remember(index, onSeasonLongClick) {
+                                        onSeasonLongClick?.let { callback -> { callback(index) } }
+                                    }
                                     SeasonButton(
                                         season = season,
                                         isSelected = season == currentSeason,
                                         isFocused = false,
                                         watchedCount = currentSeasonProgress?.first ?: progress?.first ?: 0,
                                         totalCount = currentSeasonProgress?.second ?: progress?.second ?: 0,
-                                        onClick = { onSeasonClick(index) }
+                                        onClick = seasonClick,
+                                        onLongClick = seasonLongClick
                                     )
                                 }
                             }
@@ -3493,7 +3506,8 @@ private fun SeasonButton(
     isFocused: Boolean,
     watchedCount: Int = 0,
     totalCount: Int = 0,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null
 ) {
     val shape = RoundedCornerShape(8.dp)
     val backgroundColor = when {
@@ -3509,9 +3523,21 @@ private fun SeasonButton(
 
     val isFullyWatched = totalCount > 0 && watchedCount >= totalCount
 
+    val clickModifier = if (onLongClick != null) {
+        @OptIn(ExperimentalFoundationApi::class)
+        Modifier.combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick,
+            role = Role.Button,
+            onClickLabel = "Select season $season",
+            onLongClickLabel = "Show season options"
+        )
+    } else {
+        Modifier.clickable(onClick = onClick)
+    }
+
     Row(
-        modifier = Modifier
-            .clickable { onClick() }
+        modifier = clickModifier
             .background(backgroundColor, shape)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
