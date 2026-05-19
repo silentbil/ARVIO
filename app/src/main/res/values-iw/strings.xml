@@ -13,7 +13,8 @@
     <string name="all_genres">כל הז\'אנרים</string>
     <string name="any_language">כל שפה</string>
     <string name="app_language">שפת האפליקציה</string>
-    <string name="language_and_subtitles">שפה וכתוביות</string>
+    <string name="language_and_subtitles">שפה</string>
+    <string name="language_and_audio">שפה</string>
     <string name="subtitles">כתוביות</string>
     <string name="audio">אודיו</string>
     <string name="playback">ניגון</string>
@@ -110,6 +111,10 @@
     <string name="autoplay_desc">כיבוי פותח את בורר המקורות בעת הפעלה</string>
     <string name="auto_play_quality_desc">איכות מינימום להפעלה אוטומטית</string>
     <string name="trailer_desc">הפעל טריילרים בבאנר הראשי</string>
+    <string name="trailer_sound">צליל טריילר</string>
+    <string name="trailer_sound_desc">הפעל שמע טריילר בבאנר הראשי</string>
+    <string name="trailer_delay">השהיית טריילר</string>
+    <string name="trailer_delay_desc">שניות לפני שהטריילר מתחיל לנגן</string>
     <string name="frame_rate_desc">כבוי, חלק, או תמיד</string>
     <string name="quality_filters_desc">הוצא רמות איכות במכשיר זה</string>
     <string name="card_layout_desc">כרטיסים לרוחב או לגובה</string>
@@ -158,6 +163,7 @@
     <string name="connected">מחובר</string>
     <string name="connect">התחבר</string>
     <string name="whos_watching">מי צופה?</string>
+    <string name="profiles">פרופילים</string>
     <string name="manage_profiles">ניהול פרופילים</string>
     <string name="add_profile">הוסף פרופיל</string>
     <string name="loading_profile">טוען פרופיל…</string>
@@ -168,7 +174,7 @@
     <string name="connect_to_cloud">התחבר ל-ARVIO Cloud</string>
 
     <!-- AI Subtitles -->
-    <string name="ai_subtitles_section">כתוביות בינה מלאכותית</string>
+    <string name="ai_subtitles_section">כתוביות AI</string>
     <string name="ai_subtitle_translation_title">תרגום כתוביות AI</string>
     <string name="ai_subtitle_translation_desc">תרגם כתוביות בזמן אמת עם גרוק או ג\'מיני</string>
     <string name="ai_model_title">מודל</string>

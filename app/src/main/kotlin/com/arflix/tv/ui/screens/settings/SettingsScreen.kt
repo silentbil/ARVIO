@@ -1068,12 +1068,12 @@ fun SettingsScreen(
                                     else -> Icons.Default.Settings
                                 },
                                 title = when (section) {
-                                    "language" -> "Language & Audio"
-                                    "subtitles" -> "Subtitles"
+                                    "language" -> stringResource(R.string.language_and_audio)
+                                    "subtitles" -> stringResource(R.string.subtitles)
                                     "ai_subtitles" -> stringResource(R.string.ai_subtitles_section)
                                     "playback" -> stringResource(R.string.playback)
                                     "appearance" -> stringResource(R.string.interface_label)
-                                    "profiles" -> "Profiles"
+                                    "profiles" -> stringResource(R.string.profiles)
                                     "network" -> stringResource(R.string.network)
                                     "iptv" -> "Live TV"
                                     "home_server" -> "Home Server"
@@ -4071,12 +4071,12 @@ private data class TvSettingsHelp(
 @Composable
 private fun tvSettingsSectionTitle(section: String): String {
     return when (section) {
-        "language" -> "Language & Audio"
-        "subtitles" -> "Subtitles"
+        "language" -> stringResource(R.string.language_and_audio)
+        "subtitles" -> stringResource(R.string.subtitles)
         "ai_subtitles" -> stringResource(R.string.ai_subtitles_section)
         "playback" -> stringResource(R.string.playback)
         "appearance" -> stringResource(R.string.interface_label)
-        "profiles" -> "Profiles"
+        "profiles" -> stringResource(R.string.profiles)
         "network" -> stringResource(R.string.network)
         "iptv" -> "Live TV"
         "home_server" -> "Home Server"

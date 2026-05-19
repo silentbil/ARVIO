@@ -29,6 +29,7 @@
     <!-- Settings sections -->
     <string name="app_language">App Language</string>
     <string name="language_and_subtitles">Language &amp; Subtitles</string>
+    <string name="language_and_audio">Language &amp; Audio</string>
     <string name="audio">Audio</string>
     <string name="playback">Playback</string>
     <string name="interface_label">Interface</string>
@@ -204,6 +205,7 @@
     <string name="connected">Connected</string>
     <string name="connect">Connect</string>
     <string name="whos_watching">Who\'s watching?</string>
+    <string name="profiles">Profiles</string>
     <string name="manage_profiles">Manage Profiles</string>
     <string name="add_profile">Add Profile</string>
     <string name="loading_profile">Loading profile…</string>
