@@ -1,0 +1,65 @@
+name: E2E Navigation Test
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: e2e-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Home → Details navigation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Prepare local.properties
+        env:
+          LOCAL_PROPERTIES_BASE64: ${{ secrets.LOCAL_PROPERTIES_BASE64 }}
+        run: |
+          if [ -n "$LOCAL_PROPERTIES_BASE64" ]; then
+            printf '%s' "$LOCAL_PROPERTIES_BASE64" | base64 --decode > local.properties
+          fi
+
+      - name: Prepare secrets.properties
+        run: |
+          cat > secrets.properties <<EOF
+          TMDB_API_KEY=${{ secrets.TMDB_API_KEY }}
+          SUPABASE_URL=https://your-project.supabase.co
+          SUPABASE_ANON_KEY=your-supabase-anon-key
+          GOOGLE_WEB_CLIENT_ID=placeholder
+          SENTRY_DSN=disabled
+          TRAKT_CLIENT_ID=placeholder
+          TRAKT_CLIENT_SECRET=placeholder
+          EOF
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run E2E test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: >-
+            ./gradlew connectedSideloadDebugAndroidTest
+            -Pandroid.testInstrumentationRunnerArguments.class=com.arflix.tv.HomeToDetailsNavigationTest
+            --no-daemon

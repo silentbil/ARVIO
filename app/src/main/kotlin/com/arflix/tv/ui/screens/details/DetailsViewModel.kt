@@ -27,6 +27,7 @@ import com.arflix.tv.util.settingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -181,6 +182,10 @@ class DetailsViewModel @Inject constructor(
         private const val TAG = "DetailsViewModel"
     }
 
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        com.arflix.tv.util.AppLogger.recordException(throwable)
+    }
+
     private val _uiState = MutableStateFlow(DetailsUiState())
     val uiState: StateFlow<DetailsUiState> = _uiState.asStateFlow()
 
@@ -249,7 +254,7 @@ class DetailsViewModel @Inject constructor(
         focusedStreamPrewarmJob?.cancel()
         lastStreamListPrewarmKey = ""
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             try {
                 val prefs = context.settingsDataStore.data.first()
                 val autoPlaySingleSource = prefs[autoPlaySingleSourceKey()] ?: true
@@ -795,7 +800,7 @@ class DetailsViewModel @Inject constructor(
         // Don't reload if already on this season
         if (_uiState.value.currentSeason == seasonNumber && _uiState.value.episodes.isNotEmpty()) return
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             // Keep current episodes visible while loading new ones
             val currentEpisodes = _uiState.value.episodes
 
@@ -845,7 +850,7 @@ class DetailsViewModel @Inject constructor(
     fun toggleWatched(episodeIndex: Int? = null) {
         val currentItem = _uiState.value.item ?: return
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             try {
                 if (currentMediaType == MediaType.MOVIE) {
                     val newWatched = !currentItem.isWatched
@@ -959,7 +964,7 @@ class DetailsViewModel @Inject constructor(
         val currentItem = _uiState.value.item ?: return
         val newInWatchlist = !_uiState.value.isInWatchlist
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             try {
                 val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
                 if (newInWatchlist) {
@@ -1036,7 +1041,7 @@ class DetailsViewModel @Inject constructor(
         if (_uiState.value.isLoading || !initialLoadComplete) return
         val mediaType = currentMediaType
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             // Force-refresh watched episodes from backend (not just in-memory cache)
             // to pick up episodes marked watched during playback.
             val watchedKeys = if (mediaType == MediaType.TV) {
@@ -1145,7 +1150,7 @@ class DetailsViewModel @Inject constructor(
     // ========== Person Modal ==========
 
     fun loadPerson(personId: Int) {
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             _uiState.value = _uiState.value.copy(
                 showPersonModal = true,
                 isLoadingPerson = true,
@@ -1185,17 +1190,19 @@ class DetailsViewModel @Inject constructor(
         prefetchJob?.cancel()
         val requestMediaType = currentMediaType
         val requestMediaId = currentMediaId
-        prefetchJob = viewModelScope.launch {
+        prefetchJob = viewModelScope.launch(exceptionHandler) {
             runCatching {
                 if (requestMediaType == MediaType.MOVIE) {
                     launch {
-                        streamRepository.resolveMovieHomeServerSources(
-                            imdbId = imdbId,
-                            title = _uiState.value.item?.title.orEmpty(),
-                            year = _uiState.value.item?.year?.toIntOrNull(),
-                            tmdbId = requestMediaId,
-                            timeoutMs = 5_000L
-                        )
+                        runCatching {
+                            streamRepository.resolveMovieHomeServerSources(
+                                imdbId = imdbId,
+                                title = _uiState.value.item?.title.orEmpty(),
+                                year = _uiState.value.item?.year?.toIntOrNull(),
+                                tmdbId = requestMediaId,
+                                timeoutMs = 5_000L
+                            )
+                        }
                     }
                     streamRepository.resolveMovieStreamsProgressive(
                         imdbId = imdbId,
@@ -1212,15 +1219,17 @@ class DetailsViewModel @Inject constructor(
                     }
                 } else if (season != null && episode != null) {
                     launch {
-                        streamRepository.resolveEpisodeHomeServerSources(
-                            imdbId = imdbId,
-                            season = season,
-                            episode = episode,
-                            title = _uiState.value.item?.title.orEmpty(),
-                            tmdbId = requestMediaId,
-                            tvdbId = _uiState.value.tvdbId,
-                            timeoutMs = 5_000L
-                        )
+                        runCatching {
+                            streamRepository.resolveEpisodeHomeServerSources(
+                                imdbId = imdbId,
+                                season = season,
+                                episode = episode,
+                                title = _uiState.value.item?.title.orEmpty(),
+                                tmdbId = requestMediaId,
+                                tvdbId = _uiState.value.tvdbId,
+                                timeoutMs = 5_000L
+                            )
+                        }
                     }
                     val prefetchAirDate = _uiState.value.episodes
                         .firstOrNull { it.seasonNumber == season && it.episodeNumber == episode }
@@ -1253,7 +1262,7 @@ class DetailsViewModel @Inject constructor(
 
     fun prewarmStream(stream: StreamSource) {
         focusedStreamPrewarmJob?.cancel()
-        focusedStreamPrewarmJob = viewModelScope.launch {
+        focusedStreamPrewarmJob = viewModelScope.launch(exceptionHandler) {
             runCatching {
                 streamRepository.prewarmStreamForPlayback(stream, allowNetworkWarmup = true)
             }
@@ -1263,7 +1272,7 @@ class DetailsViewModel @Inject constructor(
     fun prewarmStreamsAround(stream: StreamSource, streams: List<StreamSource>) {
         if (streams.isEmpty()) return
         focusedStreamPrewarmJob?.cancel()
-        focusedStreamPrewarmJob = viewModelScope.launch {
+        focusedStreamPrewarmJob = viewModelScope.launch(exceptionHandler) {
             val index = streams.indexOf(stream).takeIf { it >= 0 } ?: 0
             val candidates = listOf(index, index + 1, index + 2)
                 .mapNotNull { streams.getOrNull(it) }
@@ -1287,7 +1296,7 @@ class DetailsViewModel @Inject constructor(
         if (prewarmKey == lastStreamListPrewarmKey) return
         lastStreamListPrewarmKey = prewarmKey
         streamListPrewarmJob?.cancel()
-        streamListPrewarmJob = viewModelScope.launch {
+        streamListPrewarmJob = viewModelScope.launch(exceptionHandler) {
             runCatching {
                 streamRepository.prewarmStreamsForPlayback(
                     streams = topStreams,
@@ -1307,7 +1316,7 @@ class DetailsViewModel @Inject constructor(
         val requestMediaType = currentMediaType
         val requestMediaId = currentMediaId
 
-        loadStreamsJob = viewModelScope.launch {
+        loadStreamsJob = viewModelScope.launch(exceptionHandler) {
             fun isCurrentRequest(): Boolean {
                 return requestId == loadStreamsRequestId &&
                     currentMediaType == requestMediaType &&
@@ -1353,31 +1362,35 @@ class DetailsViewModel @Inject constructor(
                 val originalLanguage = item?.originalLanguage
                 val hasHomeServerConnections = streamRepository.hasHomeServerConnections()
                 // Start VOD append in background - runs parallel to addon stream fetch
-                homeServerAppendJob = viewModelScope.launch {
-                    appendHomeServerSourcesInBackground(
-                        imdbId = resolvedImdbId,
-                        season = season,
-                        episode = episode,
-                        timeoutMs = 5_000L,
-                        requestId = requestId,
-                        requestMediaType = requestMediaType,
-                        requestMediaId = requestMediaId
-                    )
+                homeServerAppendJob = viewModelScope.launch(exceptionHandler) {
+                    runCatching {
+                        appendHomeServerSourcesInBackground(
+                            imdbId = resolvedImdbId,
+                            season = season,
+                            episode = episode,
+                            timeoutMs = 5_000L,
+                            requestId = requestId,
+                            requestMediaType = requestMediaType,
+                            requestMediaId = requestMediaId
+                        )
+                    }
                 }
                 vodAppendJob?.cancel()
-                vodAppendJob = viewModelScope.launch {
-                    // VOD lookups use disk-cached catalogs (near-instant on warm starts).
-                    // On rare true cold starts, catalog download can take 15-30s for large providers.
-                    val vodTimeout = if (currentMediaType == MediaType.MOVIE) 30_000L else 45_000L
-                    appendVodSourceInBackground(
-                        imdbId = resolvedImdbId,
-                        season = season,
-                        episode = episode,
-                        timeoutMs = vodTimeout,
-                        requestId = requestId,
-                        requestMediaType = requestMediaType,
-                        requestMediaId = requestMediaId
-                    )
+                vodAppendJob = viewModelScope.launch(exceptionHandler) {
+                    runCatching {
+                        // VOD lookups use disk-cached catalogs (near-instant on warm starts).
+                        // On rare true cold starts, catalog download can take 15-30s for large providers.
+                        val vodTimeout = if (currentMediaType == MediaType.MOVIE) 30_000L else 45_000L
+                        appendVodSourceInBackground(
+                            imdbId = resolvedImdbId,
+                            season = season,
+                            episode = episode,
+                            timeoutMs = vodTimeout,
+                            requestId = requestId,
+                            requestMediaType = requestMediaType,
+                            requestMediaId = requestMediaId
+                        )
+                    }
                 }
 
                 val result = if (currentMediaType == MediaType.MOVIE) {
@@ -1516,7 +1529,7 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun markEpisodeWatched(season: Int, episode: Int, watched: Boolean) {
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             try {
                 if (watched) {
                     traktRepository.markEpisodeWatched(currentMediaId, season, episode)
@@ -1582,7 +1595,7 @@ class DetailsViewModel @Inject constructor(
         if (currentMediaType != MediaType.TV) return
         val currentItem = _uiState.value.item ?: return
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             try {
                 val seasonEpisodes = if (_uiState.value.currentSeason == season && _uiState.value.episodes.isNotEmpty()) {
                     _uiState.value.episodes
@@ -1712,7 +1725,7 @@ class DetailsViewModel @Inject constructor(
         if (currentMediaType != MediaType.TV) return
         val currentItem = _uiState.value.item ?: return
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             try {
                 val seasonEpisodes = if (_uiState.value.currentSeason == season && _uiState.value.episodes.isNotEmpty()) {
                     _uiState.value.episodes

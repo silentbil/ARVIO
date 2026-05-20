@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -143,7 +144,8 @@ fun ProfileSelectionScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(appBackgroundDark()),
+            .background(appBackgroundDark())
+            .testTag("profile_screen"),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -384,7 +386,7 @@ private fun ProfileAvatar(
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
+        modifier = modifier.testTag("profile_avatar")
     ) {
         Box(contentAlignment = Alignment.Center) {
             val avatarContent: @Composable () -> Unit = {
@@ -636,7 +638,9 @@ private fun CloudConnectButton(
             )
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                modifier = Modifier
+                    .testTag("connect_to_cloud")
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {

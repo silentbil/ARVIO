@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -233,6 +234,7 @@ private fun TopBarNavChip(
 
     Row(
         modifier = Modifier
+            .testTag("topbar_${item.name.lowercase()}")
             .clip(RoundedCornerShape(16.dp))
             .background(containerColor)
             .graphicsLayer {

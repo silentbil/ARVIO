@@ -118,6 +118,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -616,6 +617,7 @@ fun SettingsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .testTag("settings_screen")
             .background(appBackgroundDark())
             .focusRequester(focusRequester)
             .focusable()

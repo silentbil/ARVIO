@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -183,6 +184,7 @@ fun MediaCard(
         modifier = modifier
             .width(width)
             .zIndex(if (visualFocused && raiseOnFocus) 1f else 0f)
+            .testTag("media_card")
     ) {
         ArvioFocusableSurface(
             modifier = Modifier

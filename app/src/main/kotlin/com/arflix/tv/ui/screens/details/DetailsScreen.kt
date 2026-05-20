@@ -48,6 +48,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.blur
 import com.arflix.tv.util.settingsDataStore
 import kotlinx.coroutines.flow.first
@@ -693,6 +694,7 @@ fun DetailsScreen(
             .focusRequester(focusRequester)
             .focusable()
             .then(keyModifier)
+            .testTag("details_screen")
     ) {
         // Main content - full screen with sidebar overlay (same as HomeScreen)
         if (uiState.isLoading || uiState.item == null) {
