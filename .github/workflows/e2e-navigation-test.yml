@@ -37,7 +37,7 @@ jobs:
         run: |
           cat > secrets.properties <<EOF
           TMDB_API_KEY=${{ secrets.TMDB_API_KEY || 'placeholder' }}
-          SUPABASE_URL=https://your-project.supabase.co
+          SUPABASE_URL=https://zrdwvortcfnoykltzuqf.supabase.co
           SUPABASE_ANON_KEY=your-supabase-anon-key
           GOOGLE_WEB_CLIENT_ID=placeholder
           SENTRY_DSN=disabled
