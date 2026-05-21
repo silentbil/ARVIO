@@ -1297,6 +1297,7 @@ private fun HeroSection(
     // Use primary shadow for text (Compose only supports one shadow per text)
     // But the frosted pill provides additional protection
     val textShadow = textShadowPrimary
+    val heroTextWidth = 360.dp
 
     Column(
         modifier = modifier,
@@ -1417,158 +1418,172 @@ private fun HeroSection(
                         }
                     }
                 } else {
-                // Get actual genre names from genre IDs (memoized to avoid list allocations per recomposition)
-                val genreText = remember(currentItem.id, currentItem.genreIds) {
-                    val genreMap = if (currentItem.mediaType == MediaType.TV) tvGenres else movieGenres
-                    currentItem.genreIds.mapNotNull { genreMap[it] }.take(2).joinToString(" / ")
-                }
-                val displayDate = currentItem.releaseDate?.takeIf { it.isNotEmpty() } ?: currentItem.year
-                val hasDuration = currentItem.duration.isNotEmpty() && currentItem.duration != "0m"
-                val hasGenre = genreText.isNotEmpty()
-                val primaryNetworkLogo = currentItem.primaryNetworkLogo?.takeIf { it.isNotBlank() }
-                val budgetText = remember(currentItem.mediaType, currentItem.budget) {
-                    val budgetValue = currentItem.budget
-                    if (currentItem.mediaType == MediaType.MOVIE && budgetValue != null && budgetValue > 0L) {
-                        formatBudgetCompact(budgetValue)
-                    } else {
-                        null
+                    // Get actual genre names from genre IDs (memoized to avoid list allocations per recomposition)
+                    val genreText = remember(currentItem.id, currentItem.genreIds) {
+                        val genreMap = if (currentItem.mediaType == MediaType.TV) tvGenres else movieGenres
+                        currentItem.genreIds.mapNotNull { genreMap[it] }.take(2).joinToString(" / ")
                     }
-                }
-
-                // Metadata row: Date | Genre | Duration | IMDb rating
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (displayDate.isNotEmpty()) {
-                        Text(
-                            text = displayDate,
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White
-                        )
-
-                        if (hasGenre) {
-                            Text(
-                                text = "|",
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White.copy(alpha = 0.7f)
-                            )
+                    val displayDate = currentItem.releaseDate?.takeIf { it.isNotEmpty() } ?: currentItem.year
+                    val hasDuration = currentItem.duration.isNotEmpty() && currentItem.duration != "0m"
+                    val hasGenre = genreText.isNotEmpty()
+                    val primaryNetworkLogo = currentItem.primaryNetworkLogo?.takeIf { it.isNotBlank() }
+                    val budgetText = remember(currentItem.mediaType, currentItem.budget) {
+                        val budgetValue = currentItem.budget
+                        if (currentItem.mediaType == MediaType.MOVIE && budgetValue != null && budgetValue > 0L) {
+                            formatBudgetCompact(budgetValue)
+                        } else {
+                            null
                         }
                     }
-
-                    if (hasGenre) {
-                        Text(
-                            text = genreText,
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White
-                        )
-                    }
-
-                    if (hasDuration) {
-                        if (displayDate.isNotEmpty() || hasGenre) {
-                            Text(
-                                text = "|",
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White.copy(alpha = 0.7f)
-                            )
-                        }
-                        Text(
-                            text = currentItem.duration,
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White
-                        )
-                    }
-
-                    if (primaryNetworkLogo != null) {
-                        if (displayDate.isNotEmpty() || hasGenre || hasDuration) {
-                            Text(
-                                text = "|",
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White.copy(alpha = 0.7f)
-                            )
-                        }
-                        AsyncImage(
-                            model = primaryNetworkLogo,
-                            imageLoader = metadataLogoImageLoader,
-                            contentDescription = "Primary streaming provider",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .height(16.dp)
-                                .width(52.dp)
-                        )
-                    }
-
                     val rating = currentItem.imdbRating.ifEmpty { currentItem.tmdbRating }
                     val ratingValue = parseRatingValue(rating)
-                    if (ratingValue > 0f) {
-                        if (displayDate.isNotEmpty() || hasGenre || hasDuration || primaryNetworkLogo != null) {
-                            Text(
-                                text = "|",
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White.copy(alpha = 0.7f)
-                            )
-                        }
-                        ImdbSvgRatingBadge(
-                            rating = rating,
-                            imageLoader = metadataLogoImageLoader,
-                            ratingFontSize = 13,
-                            logoWidth = 34.dp,
-                            logoHeight = 14.dp,
-                            textShadow = textShadow
-                        )
-                    }
+                    val hasRatingMetadata = ratingValue > 0f
+                    val hasBudgetMetadata = showBudget && !budgetText.isNullOrBlank()
+                    val hasSecondaryMetadata = primaryNetworkLogo != null ||
+                        hasRatingMetadata ||
+                        hasBudgetMetadata
 
-                    // Budget line can be hidden via Settings -> General -> Show Budget on Home.
-                    // Default is shown (showBudget = true) to preserve existing behavior.
-                    // Issue #72.
-                    if (showBudget && !budgetText.isNullOrBlank()) {
-                        if (displayDate.isNotEmpty() || hasGenre || hasDuration || ratingValue > 0f) {
-                            Text(
-                                text = "|",
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White.copy(alpha = 0.7f)
-                            )
+                    Column(
+                        modifier = Modifier.width(heroTextWidth),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (displayDate.isNotEmpty()) {
+                                Text(
+                                    text = displayDate,
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 1
+                                )
+
+                                if (hasGenre || hasDuration) {
+                                    Text(
+                                        text = "|",
+                                        style = ArflixTypography.caption.copy(
+                                            fontSize = 13.sp,
+                                            shadow = textShadow
+                                        ),
+                                        color = Color.White.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+
+                            if (hasGenre) {
+                                Text(
+                                    text = genreText,
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            }
+
+                            if (hasDuration) {
+                                if (hasGenre) {
+                                    Text(
+                                        text = "|",
+                                        style = ArflixTypography.caption.copy(
+                                            fontSize = 13.sp,
+                                            shadow = textShadow
+                                        ),
+                                        color = Color.White.copy(alpha = 0.7f)
+                                    )
+                                }
+                                Text(
+                                    text = currentItem.duration,
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 1
+                                )
+                            }
                         }
 
-                        Text(
-                            text = "Budget $budgetText",
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White
-                        )
+                        if (hasSecondaryMetadata) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                if (primaryNetworkLogo != null) {
+                                    AsyncImage(
+                                        model = primaryNetworkLogo,
+                                        imageLoader = metadataLogoImageLoader,
+                                        contentDescription = "Primary streaming provider",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .height(16.dp)
+                                            .width(58.dp)
+                                    )
+
+                                    if (hasRatingMetadata || hasBudgetMetadata) {
+                                        Text(
+                                            text = "|",
+                                            style = ArflixTypography.caption.copy(
+                                                fontSize = 12.sp,
+                                                shadow = textShadow
+                                            ),
+                                            color = Color.White.copy(alpha = 0.58f)
+                                        )
+                                    }
+                                }
+
+                                if (hasRatingMetadata) {
+                                    ImdbSvgRatingBadge(
+                                        rating = rating,
+                                        imageLoader = metadataLogoImageLoader,
+                                        ratingFontSize = 13,
+                                        logoWidth = 36.dp,
+                                        logoHeight = 15.dp,
+                                        textShadow = textShadow
+                                    )
+
+                                    if (hasBudgetMetadata) {
+                                        Text(
+                                            text = "|",
+                                            style = ArflixTypography.caption.copy(
+                                                fontSize = 12.sp,
+                                                shadow = textShadow
+                                            ),
+                                            color = Color.White.copy(alpha = 0.58f)
+                                        )
+                                    }
+                                }
+
+                                if (hasBudgetMetadata) {
+                                    Text(
+                                        text = "Budget $budgetText",
+                                        style = ArflixTypography.caption.copy(
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            shadow = textShadow
+                                        ),
+                                        color = Color.White.copy(alpha = 0.74f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
-                } // end else (non-IPTV metadata)
 
                 Spacer(modifier = Modifier.height(6.dp))
 

@@ -23,8 +23,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween as animTween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -2203,28 +2201,6 @@ fun PlayerScreen(
             )
         }
 
-        // Top-left metadata block — replaces the old per-state metadata within the
-        // controls overlay. Handles both playing and paused states:
-        //   Playing → clearlogo, episode title (TV), pipe-separated meta (no synopsis)
-        //   Paused  → clearlogo, synopsis
-        AnimatedVisibility(
-            visible = hasPlaybackStarted && showControls && !showSubtitleMenu && !showSourceMenu,
-            enter = fadeIn(androidx.compose.animation.core.tween(300)),
-            exit = fadeOut(androidx.compose.animation.core.tween(200)),
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 24.dp, top = 8.dp)
-                .zIndex(4f)
-        ) {
-            PlayingStateMetadataBlock(
-                uiState = uiState,
-                mediaType = mediaType,
-                seasonNumber = seasonNumber,
-                episodeNumber = episodeNumber,
-                isPaused = hasPlaybackStarted && !isPlaying && !isBuffering
-            )
-        }
-
         // Netflix-style Controls Overlay
         AnimatedVisibility(
             visible = hasPlaybackStarted && showControls && !showSubtitleMenu && !showSourceMenu,
@@ -2237,16 +2213,29 @@ fun PlayerScreen(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
-                        .padding(start = 24.dp, top = 8.dp, end = 24.dp),
+                        .padding(
+                            start = if (isTouchDevice) 20.dp else 28.dp,
+                            top = if (isTouchDevice) 18.dp else 30.dp,
+                            end = if (isTouchDevice) 24.dp else 48.dp
+                        )
+                        .zIndex(4f),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Top
                 ) {
-                    // Left side metadata is now handled by the external
-                    // PlayingStateMetadataBlock (above the controls scrim).
-                    Spacer(modifier = Modifier.weight(1f))
+                    val isPaused = hasPlaybackStarted && !isPlaying && !isBuffering
+
+                    PlayerMetadataChrome(
+                        uiState = uiState,
+                        mediaType = mediaType,
+                        seasonNumber = seasonNumber,
+                        episodeNumber = episodeNumber,
+                        isPaused = isPaused,
+                        accentColor = playerAccent,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
 
                     // Right side - Ends At + Clock
-                    Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 8.dp)) {
+                    Column(horizontalAlignment = Alignment.End) {
                         val currentTime = remember { mutableStateOf("") }
                         val endsAtTime = remember { mutableStateOf("") }
                         LaunchedEffect(duration, currentPosition, clockFormat) {
@@ -2261,10 +2250,24 @@ fun PlayerScreen(
                             }
                         }
                         if (!isTouchDevice) {
-                            Text(currentTime.value, style = ArflixTypography.body.copy(fontSize = 18.sp, fontWeight = FontWeight.Medium), color = TextSecondary, maxLines = 1)
+                            Text(
+                                currentTime.value,
+                                style = ArflixTypography.sectionTitle.copy(
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = TextPrimary.copy(alpha = 0.92f),
+                                maxLines = 1
+                            )
                         }
                         if (endsAtTime.value.isNotBlank()) {
-                            Text("${stringResource(R.string.ends_at)} ${endsAtTime.value}", style = ArflixTypography.caption.copy(fontSize = 12.sp), color = TextSecondary.copy(alpha = 0.7f), maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                            Text(
+                                "${stringResource(R.string.ends_at)} ${endsAtTime.value}",
+                                style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                                color = TextPrimary.copy(alpha = 0.72f),
+                                maxLines = 1,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
                         }
                     }
                 }
@@ -4403,148 +4406,131 @@ private class PlaybackCookieJar : CookieJar {
     }
 }
 
-// ── Shimmer constants ──────────────────────────────────────────────────
-private const val SHIMMER_START_OFFSET = -0.5f
-private const val SHIMMER_END_OFFSET = 1.5f
-private const val SHIMMER_DURATION_MS = 1500
-private const val SHIMMER_WIDTH_FRACTION = 0.45f
-
-/**
- * Animated shimmer overlay that sweeps a glossy highlight across the clear logo
- * while the player is paused. Uses a linear gradient that translates left-to-right
- * in an infinite repeat loop. Colors are hoisted with [remember] to avoid
- * per-frame allocations.
- */
 @Composable
-private fun PauseShimmerOverlay(modifier: Modifier = Modifier) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pauseShimmer")
-    val shimmerProgress by infiniteTransition.animateFloat(
-        initialValue = SHIMMER_START_OFFSET,
-        targetValue = SHIMMER_END_OFFSET,
-        animationSpec = infiniteRepeatable(
-            animation = animTween(durationMillis = SHIMMER_DURATION_MS, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmerProgress"
-    )
-
-    // Hoist gradient colors to avoid per-frame allocations
-    val shimmerColors = remember {
-        listOf(
-            Color.Transparent,
-            Color.White.copy(alpha = 0.10f),
-            Color.White.copy(alpha = 0.30f),
-            Color.White.copy(alpha = 0.10f),
-            Color.Transparent
-        )
-    }
-
-    Box(modifier = modifier) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val shimmerWidth = size.width * SHIMMER_WIDTH_FRACTION
-            val offsetX = size.width * shimmerProgress
-            drawRect(
-                brush = Brush.linearGradient(
-                    colors = shimmerColors,
-                    start = Offset(offsetX, 0f),
-                    end = Offset(offsetX + shimmerWidth, size.height)
-                ),
-                size = size
-            )
-        }
-    }
-}
-
-/**
- * Top-left metadata block rendered above the controls scrim. Handles both playing
- * and paused states:
- * - **Playing**: Clearlogo → episode title (TV) → pipe-separated meta line
- * - **Paused**:  Clearlogo → synopsis (TMDB overview)
- *
- * Non-interactive — no focusable children, so D-pad navigation is unaffected.
- */
-@Composable
-private fun PlayingStateMetadataBlock(
+private fun PlayerMetadataChrome(
     uiState: PlayerUiState,
     mediaType: MediaType,
     seasonNumber: Int?,
     episodeNumber: Int?,
-    isPaused: Boolean = false,
+    isPaused: Boolean,
+    accentColor: Color,
     modifier: Modifier = Modifier
 ) {
-    Column(
-        modifier = modifier.widthIn(max = 480.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+    val displayTitle = when {
+        mediaType == MediaType.TV && !uiState.episodeTitle.isNullOrBlank() -> uiState.episodeTitle
+        else -> uiState.title
+    }
+    val metaLine = buildPlaybackMetaLine(uiState, mediaType, seasonNumber, episodeNumber)
+    val overview = uiState.overview?.trim().orEmpty()
+    val logoHeight = 44.dp
+    val logoWidth = 230.dp
+    val chromeHeight = when {
+        isPaused && overview.isNotBlank() -> 138.dp
+        isPaused -> 104.dp
+        else -> 86.dp
+    }
+
+    Row(
+        modifier = modifier.widthIn(max = if (isPaused) 620.dp else 520.dp),
+        verticalAlignment = Alignment.Top
     ) {
-        // Clearlogo or fallback title (same pattern as PulsingLogo, static)
-        if (!uiState.logoUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = uiState.logoUrl,
-                contentDescription = uiState.title,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxWidth(0.76f)
-                    .height(48.dp)
-            )
-        } else {
-            Text(
-                text = uiState.title,
-                style = ArflixTypography.sectionTitle.copy(
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                ),
-                color = TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        if (isPaused && !uiState.overview.isNullOrBlank()) {
-            // Synopsis — shown only when paused
-            Text(
-                text = uiState.overview,
-                style = ArflixTypography.body.copy(fontSize = 13.sp),
-                color = TextSecondary,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 420.dp)
-            )
-        } else if (!isPaused) {
-            // Playing state: episode title + meta pipe
-
-            // Episode title (TV only)
-            if (mediaType == MediaType.TV && !uiState.episodeTitle.isNullOrBlank()) {
+        Box(
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .width(2.dp)
+                .height(chromeHeight)
+                .background(accentColor.copy(alpha = if (isPaused) 0.78f else 0.46f))
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(
+            modifier = Modifier.widthIn(max = if (isPaused) 560.dp else 470.dp),
+            verticalArrangement = Arrangement.spacedBy(if (isPaused) 5.dp else 4.dp)
+        ) {
+            if (!uiState.logoUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = uiState.logoUrl,
+                    contentDescription = uiState.title,
+                    alignment = Alignment.CenterStart,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .width(logoWidth)
+                        .height(logoHeight)
+                )
+            } else if (displayTitle.isNotBlank()) {
                 Text(
-                    text = uiState.episodeTitle,
-                    style = ArflixTypography.sectionTitle.copy(fontSize = 16.sp),
+                    text = displayTitle,
+                    style = ArflixTypography.sectionTitle.copy(
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
                     color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            // Meta pipe: Season/Episode or Year | Quality | Size
-            val metaParts = mutableListOf<String>()
-            if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
-                metaParts.add("Season $seasonNumber | Episode $episodeNumber")
-            } else if (!uiState.releaseYear.isNullOrBlank()) {
-                metaParts.add(uiState.releaseYear)
-            }
-            uiState.selectedStream?.let { stream ->
-                if (!stream.quality.isNullOrBlank()) metaParts.add(stream.quality)
-                if (!stream.size.isNullOrBlank()) metaParts.add(stream.size)
-            }
-            if (metaParts.isNotEmpty()) {
+            if (!uiState.logoUrl.isNullOrBlank() && displayTitle.isNotBlank()) {
                 Text(
-                    text = metaParts.joinToString(" | "),
-                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                    color = TextSecondary,
+                    text = displayTitle,
+                    style = ArflixTypography.sectionTitle.copy(
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
+
+            if (metaLine.isNotBlank()) {
+                Text(
+                    text = metaLine,
+                    style = ArflixTypography.caption.copy(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = TextPrimary.copy(alpha = 0.78f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            if (isPaused && overview.isNotBlank()) {
+                Text(
+                    text = overview,
+                    style = ArflixTypography.body.copy(fontSize = 13.sp),
+                    color = TextPrimary.copy(alpha = 0.76f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 540.dp)
+                )
+            }
         }
     }
+}
+
+private fun buildPlaybackMetaLine(
+    uiState: PlayerUiState,
+    mediaType: MediaType,
+    seasonNumber: Int?,
+    episodeNumber: Int?
+): String {
+    val parts = mutableListOf<String>()
+    if (mediaType == MediaType.TV) {
+        seasonNumber?.let { parts.add("Season $it") }
+        episodeNumber?.let { parts.add("Episode $it") }
+    } else {
+        uiState.releaseYear?.trim()?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+    }
+
+    uiState.selectedStream?.let { stream ->
+        stream.quality.trim().takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        val size = stream.size.trim().takeIf { it.isNotBlank() }
+            ?: stream.sizeBytes?.let { formatFileSize(it) }
+        size?.let { parts.add(it) }
+    }
+
+    return parts.distinct().joinToString(" | ")
 }
 
 private fun subtitleMatchScore(streamSource: String, subtitle: Subtitle): Int {
