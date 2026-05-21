@@ -1023,7 +1023,16 @@ fun SettingsScreen(
                 selectedItem = SidebarItem.SETTINGS,
                 isFocused = activeZone == Zone.SIDEBAR,
                 focusedIndex = sidebarFocusIndex,
-                profile = currentProfile
+                profile = currentProfile,
+                onItemSelected = { item ->
+                    when (item) {
+                        SidebarItem.HOME -> onNavigateToHome()
+                        SidebarItem.SEARCH -> onNavigateToSearch()
+                        SidebarItem.TV -> onNavigateToTv()
+                        SidebarItem.WATCHLIST -> onNavigateToWatchlist()
+                        else -> Unit
+                    }
+                }
             )
 
             Row(

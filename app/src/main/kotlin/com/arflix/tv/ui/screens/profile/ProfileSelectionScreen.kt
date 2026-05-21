@@ -620,7 +620,9 @@ private fun CloudConnectButton(
     } else {
         Surface(
             onClick = onClick,
-            modifier = Modifier.onFocusChanged { isFocused = if (it.isFocused) 1 else 0 },
+            modifier = Modifier
+                .testTag("connect_to_cloud")
+                .onFocusChanged { isFocused = if (it.isFocused) 1 else 0 },
             shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(24.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.White.copy(alpha = 0.06f),
@@ -639,7 +641,6 @@ private fun CloudConnectButton(
         ) {
             Row(
                 modifier = Modifier
-                    .testTag("connect_to_cloud")
                     .padding(horizontal = 24.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)

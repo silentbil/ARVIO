@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -99,6 +100,7 @@ fun AppTopBar(
     clockFormat: String = "24h",
     syncStatus: com.arflix.tv.data.repository.CloudSyncStatus = com.arflix.tv.data.repository.CloudSyncStatus.NOT_SIGNED_IN,
     hasUpdateBadge: Boolean = false,
+    onItemSelected: ((SidebarItem) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // Always show the profile avatar when a profile exists — it's clickable
@@ -158,7 +160,8 @@ fun AppTopBar(
                         TopBarNavChip(
                             item = item,
                             isFocused = isFocused && focusedIndex == itemFocusIndex,
-                            isSelected = selectedIndex == itemFocusIndex
+                            isSelected = selectedIndex == itemFocusIndex,
+                            onClick = onItemSelected?.let { cb -> { cb(item) } }
                         )
                     }
                 }
@@ -192,7 +195,8 @@ fun AppTopBar(
 private fun TopBarNavChip(
     item: SidebarItem,
     isFocused: Boolean,
-    isSelected: Boolean
+    isSelected: Boolean,
+    onClick: (() -> Unit)? = null
 ) {
     val containerColor by animateColorAsState(
         targetValue = when {
@@ -235,6 +239,7 @@ private fun TopBarNavChip(
     Row(
         modifier = Modifier
             .testTag("topbar_${item.name.lowercase()}")
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .clip(RoundedCornerShape(16.dp))
             .background(containerColor)
             .graphicsLayer {
