@@ -39,22 +39,25 @@ class HomeToDetailsNavigationTest {
         }
 
         if (profilePickerVisible) {
-            // Wait for either profile avatars (authenticated) or the cloud-connect button
-            // (unauthenticated). Using waitUntil avoids a race where async profile loading
-            // hasn't completed yet when we first check.
-            composeTestRule.waitUntil(timeoutMillis = 15_000) {
-                composeTestRule.onAllNodesWithTag("profile_avatar").fetchSemanticsNodes().isNotEmpty() ||
-                composeTestRule.onAllNodesWithTag("connect_to_cloud").fetchSemanticsNodes().isNotEmpty()
-            }
+            // Let the profile screen settle before querying semantics.
+            // The headless CI emulator needs this gap; tight polling via
+            // waitUntil immediately after profile_screen appears races
+            // with Compose's initial layout pass on the TV Surface.
+            SystemClock.sleep(500)
             device.waitForIdle()
             composeTestRule.waitForIdle()
 
             if (composeTestRule.onAllNodesWithTag("profile_avatar").fetchSemanticsNodes().isNotEmpty()) {
+                // Cloud connected — select the focused profile
                 composeTestRule.onAllNodesWithTag("profile_avatar").onFirst().performClick()
             } else {
-                // No cloud session: semantic-click the connect button.
-                // Modifier.clickable is attached to the TV Surface so performClick()
-                // dispatches via semantics rather than touch (TV Surface ignores touch).
+                // No cloud session — wait for the button, then semantic-click it.
+                // Modifier.clickable is attached to the TV Surface (and the touch Row)
+                // so performClick() dispatches via semantics rather than touch.
+                composeTestRule.waitUntil(timeoutMillis = 10_000) {
+                    composeTestRule.onAllNodesWithTag("connect_to_cloud").fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.waitForIdle()
                 composeTestRule.onNodeWithTag("connect_to_cloud").performClick()
                 device.waitForIdle()
                 composeTestRule.waitForIdle()

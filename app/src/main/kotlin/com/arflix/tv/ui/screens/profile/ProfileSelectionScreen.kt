@@ -590,6 +590,7 @@ private fun CloudConnectButton(
     if (isTouchDevice) {
         Row(
             modifier = Modifier
+                .testTag("connect_to_cloud")
                 .clip(RoundedCornerShape(24.dp))
                 .background(
                     brush = Brush.horizontalGradient(
