@@ -47,24 +47,14 @@ class HomeToDetailsNavigationTest {
                 // Cloud connected — select the focused profile
                 composeTestRule.onAllNodesWithTag("profile_avatar").onFirst().performClick()
             } else {
-                // No cloud session — navigate to "Connect to ARVIO Cloud" via D-pad.
-                // Wait for the button to confirm the screen is in unauthenticated state.
+                // No cloud session — wait for the button, then semantic-click it.
+                // The TV Surface has a companion Modifier.clickable so performClick()
+                // dispatches via semantics rather than touch (TV Surface ignores touch).
                 composeTestRule.waitUntil(timeoutMillis = 10_000) {
                     composeTestRule.onAllNodesWithTag("connect_to_cloud").fetchSemanticsNodes().isNotEmpty()
                 }
-                // TV Surface only responds to D-pad, not touch/semantic click.
-                // 3 × DOWN is safe for both "Add Profile has focus" and "no initial focus" cases:
-                //   Add Profile → Manage Profiles → Connect to Cloud → stays (last element).
-                // composeTestRule.waitForIdle() after each key ensures Compose processes
-                // the focus change before the next key event is sent.
-                SystemClock.sleep(300)
-                device.waitForIdle()
-                repeat(3) {
-                    device.pressKeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
-                    device.waitForIdle()
-                    composeTestRule.waitForIdle()
-                }
-                device.pressKeyCode(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                composeTestRule.waitForIdle()
+                composeTestRule.onNodeWithTag("connect_to_cloud").performClick()
                 device.waitForIdle()
                 composeTestRule.waitForIdle()
                 composeTestRule.waitUntil(timeoutMillis = 10_000) {

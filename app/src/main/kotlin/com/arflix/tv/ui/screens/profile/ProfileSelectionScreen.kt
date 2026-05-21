@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.draw.clip
@@ -276,7 +277,7 @@ fun ProfileSelectionScreen(
                 // Cloud connect button — focusable on TV, tappable on mobile
                 CloudConnectButton(
                     onClick = {
-                        if ((isTouchDevice || isReadyForInput) && !uiState.isSwitchingProfile) {
+                        if (!uiState.isSwitchingProfile) {
                             onConnectCloud()
                         }
                     }
@@ -622,6 +623,11 @@ private fun CloudConnectButton(
             onClick = onClick,
             modifier = Modifier
                 .testTag("connect_to_cloud")
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onClick
+                )
                 .onFocusChanged { isFocused = if (it.isFocused) 1 else 0 },
             shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(24.dp)),
             colors = ClickableSurfaceDefaults.colors(
