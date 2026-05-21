@@ -2,6 +2,7 @@ package com.arflix.tv.data.repository
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.Profile
@@ -18,11 +19,16 @@ import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.max
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -50,6 +56,12 @@ class CloudSyncRepository @Inject constructor(
     private val invalidationBus: CloudSyncInvalidationBus
 ) {
     private val gson = Gson()
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cloudSyncLocalDirtyAtKey = longPreferencesKey("cloud_sync_local_dirty_at")
+    private val cloudSyncLastPushAtKey = longPreferencesKey("cloud_sync_last_push_at")
+    private val cloudSyncLastAppliedAtKey = longPreferencesKey("cloud_sync_last_applied_at")
+    @Volatile
+    private var latestLocalDirtyAt: Long = 0L
 
     private fun payloadSizeBucket(payload: String): String = when {
         payload.length < 10_000 -> "lt_10kb"
@@ -91,7 +103,59 @@ class CloudSyncRepository @Inject constructor(
         private set
 
     fun markLocalStateDirty() {
+        val dirtyAt = System.currentTimeMillis()
+        latestLocalDirtyAt = max(latestLocalDirtyAt, dirtyAt)
         isPushDirty = true
+        repositoryScope.launch {
+            persistLocalDirty(dirtyAt)
+        }
+    }
+
+    suspend fun markLocalStateDirtyNow() {
+        val dirtyAt = System.currentTimeMillis()
+        latestLocalDirtyAt = max(latestLocalDirtyAt, dirtyAt)
+        isPushDirty = true
+        persistLocalDirty(dirtyAt)
+    }
+
+    private suspend fun persistLocalDirty(dirtyAt: Long) {
+        if (dirtyAt <= 0L || latestLocalDirtyAt <= 0L) return
+        context.settingsDataStore.edit { prefs ->
+            if (latestLocalDirtyAt <= 0L) return@edit
+            val existing = prefs[cloudSyncLocalDirtyAtKey] ?: 0L
+            prefs[cloudSyncLocalDirtyAtKey] = max(existing, dirtyAt)
+        }
+    }
+
+    private suspend fun markPushFailedDirty() {
+        val dirtyAt = latestLocalDirtyAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+        latestLocalDirtyAt = max(latestLocalDirtyAt, dirtyAt)
+        isPushDirty = true
+        persistLocalDirty(dirtyAt)
+    }
+
+    private suspend fun clearLocalDirtyAfterSuccessfulPush() {
+        latestLocalDirtyAt = 0L
+        isPushDirty = false
+        context.settingsDataStore.edit { prefs ->
+            prefs.remove(cloudSyncLocalDirtyAtKey)
+            prefs[cloudSyncLastPushAtKey] = System.currentTimeMillis()
+        }
+    }
+
+    private suspend fun hasPendingLocalChanges(): Boolean {
+        val storedDirtyAt = context.settingsDataStore.data.first()[cloudSyncLocalDirtyAtKey] ?: 0L
+        if (storedDirtyAt > 0L) {
+            latestLocalDirtyAt = max(latestLocalDirtyAt, storedDirtyAt)
+        }
+        return isPushDirty || latestLocalDirtyAt > 0L || storedDirtyAt > 0L
+    }
+
+    private suspend fun markCloudPayloadApplied(payload: String) {
+        val cloudUpdatedAt = runCatching { JSONObject(payload).optLong("updatedAt", 0L) }.getOrDefault(0L)
+        context.settingsDataStore.edit { prefs ->
+            prefs[cloudSyncLastAppliedAtKey] = cloudUpdatedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+        }
     }
 
     enum class RestoreResult { RESTORED, NO_BACKUP, FAILED }
@@ -470,16 +534,20 @@ class CloudSyncRepository @Inject constructor(
     // ══════════════════════════════════════════════════════════
 
     suspend fun pushToCloud(): Result<Unit> = cloudSyncMutex.withLock {
+        pushToCloudLocked()
+    }
+
+    private suspend fun pushToCloudLocked(): Result<Unit> {
         if (authRepository.getCurrentUserId().isNullOrBlank()) {
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "push_skipped_not_logged_in dirty=$isPushDirty",
                 severity = "warning"
             )
-            return@withLock Result.failure(IllegalStateException("Not logged in"))
+            return Result.failure(IllegalStateException("Not logged in"))
         }
         val payload = runCatching { buildCloudSnapshotJson() }.getOrElse {
-            isPushDirty = true
+            markPushFailedDirty()
             AppLogger.recordException(
                 throwable = it,
                 context = mapOf(
@@ -488,11 +556,11 @@ class CloudSyncRepository @Inject constructor(
                     "dirty" to isPushDirty.toString()
                 )
             )
-            return@withLock Result.failure(it)
+            return Result.failure(it)
         }
         val result = authRepository.saveAccountSyncPayload(payload)
         if (result.isSuccess) {
-            isPushDirty = false
+            clearLocalDirtyAfterSuccessfulPush()
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "push_success size=${payloadSizeBucket(payload)}",
@@ -503,7 +571,7 @@ class CloudSyncRepository @Inject constructor(
             // Mark dirty so the next ON_RESUME or periodic sync retries the push.
             // Without this, a single network hiccup would permanently diverge the
             // cloud state until the user explicitly changes another setting.
-            isPushDirty = true
+            markPushFailedDirty()
             AppLogger.recordException(
                 throwable = result.exceptionOrNull() ?: IllegalStateException("Cloud push failed"),
                 context = mapOf(
@@ -514,7 +582,7 @@ class CloudSyncRepository @Inject constructor(
                 )
             )
         }
-        result
+        return result
     }
 
     // ══════════════════════════════════════════════════════════
@@ -526,6 +594,25 @@ class CloudSyncRepository @Inject constructor(
      * Returns [RestoreResult] indicating what happened.
      */
     suspend fun pullFromCloud(): RestoreResult = cloudSyncMutex.withLock {
+        if (hasPendingLocalChanges()) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_pushes_pending_local_first",
+                severity = "info"
+            )
+            val pushResult = pushToCloudLocked()
+            if (pushResult.isFailure) {
+                AppLogger.recordException(
+                    throwable = pushResult.exceptionOrNull() ?: IllegalStateException("Pending local cloud push failed"),
+                    context = mapOf(
+                        "error_area" to "CloudSync",
+                        "cloud_flow" to "pull_pre_push_pending_local"
+                    )
+                )
+                return@withLock RestoreResult.FAILED
+            }
+        }
+
         val payloadResult = authRepository.loadAccountSyncPayload()
         if (payloadResult.isFailure) {
             AppLogger.recordException(
@@ -552,6 +639,7 @@ class CloudSyncRepository @Inject constructor(
             invalidationBus.suppressDuringRemoteApply {
                 applyCloudPayload(payload)
             }
+            markCloudPayloadApplied(payload)
         }.fold(
             onSuccess = {
                 AppLogger.breadcrumb(
