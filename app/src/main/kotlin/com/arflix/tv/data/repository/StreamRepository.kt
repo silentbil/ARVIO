@@ -235,6 +235,23 @@ class StreamRepository @Inject constructor(
         invalidationBus.markDirty(CloudSyncScope.PROFILE_SETTINGS, profileManager.getProfileIdSync(), "torrserver url")
     }
 
+    suspend fun exportTorrServerBaseUrlForProfile(profileId: String): String {
+        val key = profileManager.profileStringKeyFor(profileId, "torrserver_base_url_v1")
+        return context.streamDataStore.data.first()[key].orEmpty()
+    }
+
+    suspend fun importTorrServerBaseUrlForProfile(profileId: String, raw: String?) {
+        val key = profileManager.profileStringKeyFor(profileId, "torrserver_base_url_v1")
+        val value = raw.orEmpty().trim()
+        context.streamDataStore.edit { prefs ->
+            if (value.isBlank()) {
+                prefs.remove(key)
+            } else {
+                prefs[key] = value
+            }
+        }
+    }
+
     // Default addons - only built-in sources that work without configuration
     // Users must add their own streaming addons via Settings > Addons
     private val defaultAddons = listOf(

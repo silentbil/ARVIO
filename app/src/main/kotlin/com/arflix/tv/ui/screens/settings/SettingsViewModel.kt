@@ -1272,6 +1272,7 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 dnsProvider = dnsProviderLabel(value)
             )
+            syncLocalStateToCloud(silent = true)
 
             // Replace Coil image loader with one using the new DNS
             val imageLoader = withContext(Dispatchers.IO) {
@@ -1295,6 +1296,7 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 customUserAgent = trimmed
             )
+            syncLocalStateToCloud(silent = true)
         }
     }
 
@@ -1913,7 +1915,7 @@ class SettingsViewModel @Inject constructor(
     fun setTorrServerBaseUrl(url: String) {
         viewModelScope.launch {
             streamRepository.setTorrServerBaseUrl(url)
-            // No cloud sync needed; this is a local playback setting.
+            syncLocalStateToCloud(silent = true)
         }
     }
 

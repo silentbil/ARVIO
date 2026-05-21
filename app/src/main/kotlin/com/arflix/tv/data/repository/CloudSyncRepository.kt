@@ -3,10 +3,12 @@ package com.arflix.tv.data.repository
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.ContinueWatchingItem
+import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.CARD_LAYOUT_MODE_LANDSCAPE
 import com.arflix.tv.ui.components.catalogueRowLayoutKeyFromPreferenceName
 import com.arflix.tv.ui.components.catalogueRowLayoutPreferencePrefixFor
@@ -14,6 +16,8 @@ import com.arflix.tv.ui.components.normalizeCardLayoutMode
 import com.arflix.tv.ui.components.profileCatalogueRowLayoutModeKey
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
 import com.arflix.tv.util.AppLogger
+import com.arflix.tv.util.FOCUS_BORDER_COLOR_KEY
+import com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY
 import com.arflix.tv.util.SKIP_PROFILE_SELECTION_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
@@ -49,6 +53,7 @@ class CloudSyncRepository @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val iptvRepository: IptvRepository,
     private val streamRepository: StreamRepository,
+    private val homeServerRepository: HomeServerRepository,
     private val traktRepository: TraktRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
     private val watchlistRepository: WatchlistRepository,
@@ -60,6 +65,8 @@ class CloudSyncRepository @Inject constructor(
     private val cloudSyncLocalDirtyAtKey = longPreferencesKey("cloud_sync_local_dirty_at")
     private val cloudSyncLastPushAtKey = longPreferencesKey("cloud_sync_last_push_at")
     private val cloudSyncLastAppliedAtKey = longPreferencesKey("cloud_sync_last_applied_at")
+    private val globalDnsProviderKey = stringPreferencesKey(OkHttpProvider.DNS_PROVIDER_PREF_KEY)
+    private val customUserAgentKey = stringPreferencesKey(OkHttpProvider.USER_AGENT_PREF_KEY)
     @Volatile
     private var latestLocalDirtyAt: Long = 0L
 
@@ -181,6 +188,7 @@ class CloudSyncRepository @Inject constructor(
         val trailerDelaySeconds: Int = 2,
         val clockFormat: String = "24h",
         val showBudget: Boolean = true,
+        val showLoadingStats: Boolean? = null,
         val spoilerBlurEnabled: Boolean = false,
         val volumeBoostDb: Int = 0,
         val includeSpecials: Boolean = false,
@@ -192,6 +200,7 @@ class CloudSyncRepository @Inject constructor(
         val secondarySubtitle: String = "Off",
         val filterSubtitlesByLanguage: Boolean = true,
         val homeServerConnectionJson: String? = null,
+        val torrServerBaseUrl: String? = null,
         val catalogueRowLayoutModes: Map<String, String> = emptyMap()
     )
 
@@ -209,6 +218,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "clock_format")
     private fun showBudgetKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "show_budget_on_home")
+    private fun showLoadingStatsKeyFor(profileId: String) =
+        profileManager.profileBooleanKeyFor(profileId, "show_loading_stats")
     private fun spoilerBlurKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "spoiler_blur")
     private fun volumeBoostDbKeyFor(profileId: String) =
@@ -238,8 +249,6 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "secondary_subtitle")
     private fun filterSubtitlesByLanguageKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "filter_subtitles_by_lang")
-    private fun homeServerConnectionKeyFor(profileId: String) =
-        profileManager.profileStringKeyFor(profileId, HomeServerRepository.CONNECTION_KEY_NAME)
     private fun defaultSubtitleKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "default_subtitle")
     private fun defaultAudioLanguageKeyFor(profileId: String) =
@@ -325,6 +334,7 @@ class CloudSyncRepository @Inject constructor(
         val prefs = context.settingsDataStore.data.first()
         val root = JSONObject()
         val profiles = profileRepository.getProfiles()
+        val globalDnsProvider = prefs[globalDnsProviderKey] ?: prefs[dnsProviderKey()] ?: "system"
 
         // Per-profile settings
         val profileSettingsById = buildMap<String, CloudProfileSettings> {
@@ -341,9 +351,10 @@ class CloudSyncRepository @Inject constructor(
                         trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 2,
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
+                        showLoadingStats = prefs[showLoadingStatsKeyFor(profile.id)] ?: true,
                         spoilerBlurEnabled = prefs[spoilerBlurKeyFor(profile.id)] ?: false,
                         volumeBoostDb = prefs[volumeBoostDbKeyFor(profile.id)]?.toIntOrNull()?.coerceIn(0, 15) ?: 0,
-                        dnsProvider = prefs[dnsProviderKeyFor(profile.id)] ?: "system",
+                        dnsProvider = prefs[dnsProviderKeyFor(profile.id)] ?: globalDnsProvider,
                         subtitleUsageJson = prefs[subtitleUsageKeyFor(profile.id)] ?: "",
                         subtitleSettingsUpdatedAt = prefs[subtitleSettingsUpdatedAtKeyFor(profile.id)]?.toLongOrNull() ?: 0L,
                         subtitleSize = prefs[subtitleSizeKeyFor(profile.id)] ?: "Medium",
@@ -355,7 +366,8 @@ class CloudSyncRepository @Inject constructor(
                         iptvGroupOrder = prefs[iptvGroupOrderKeyFor(profile.id)] ?: "",
                         secondarySubtitle = prefs[secondarySubtitleKeyFor(profile.id)] ?: "Off",
                         filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKeyFor(profile.id)] ?: true,
-                        homeServerConnectionJson = prefs[homeServerConnectionKeyFor(profile.id)] ?: "",
+                        homeServerConnectionJson = homeServerRepository.exportCloudConnectionsJsonForProfile(profile.id),
+                        torrServerBaseUrl = streamRepository.exportTorrServerBaseUrlForProfile(profile.id),
                         catalogueRowLayoutModes = catalogueRowLayoutModesForProfile(prefs, profile.id),
                         cardLayoutMode = normalizeCardLayoutMode(
                             prefs[cardLayoutModeKeyFor(profile.id)] ?: CARD_LAYOUT_MODE_LANDSCAPE
@@ -385,7 +397,10 @@ class CloudSyncRepository @Inject constructor(
         root.put("autoPlaySingleSource", prefs[autoPlaySingleSourceKey()] ?: true)
         root.put("autoPlayMinQuality", normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()] ?: "Any"))
         root.put("includeSpecials", prefs[includeSpecialsKey()] ?: false)
-        root.put("dnsProvider", prefs[dnsProviderKey()] ?: "system")
+        root.put("dnsProvider", globalDnsProvider)
+        root.put("customUserAgent", prefs[customUserAgentKey] ?: "")
+        root.put("oledBlackBackground", prefs[OLED_BLACK_BACKGROUND_KEY] ?: false)
+        root.put("focusBorderColor", prefs[FOCUS_BORDER_COLOR_KEY] ?: "White")
         root.put("subtitleUsageJson", prefs[subtitleUsageKey()] ?: "")
         root.put("subtitleSettingsUpdatedAt", prefs[subtitleSettingsUpdatedAtKey()]?.toLongOrNull() ?: 0L)
         root.put("skipProfileSelection", prefs[SKIP_PROFILE_SELECTION_KEY] ?: false)
@@ -735,6 +750,8 @@ class CloudSyncRepository @Inject constructor(
         val allProfiles = profileRepository.getProfiles()
         val activeProfileId = profileRepository.getActiveProfileId()
             ?: allProfiles.firstOrNull()?.id ?: "default"
+        val homeServerConnectionsToImport = linkedMapOf<String, String?>()
+        val torrServerUrlsToImport = linkedMapOf<String, String?>()
 
         // ── Per-profile settings ──
         root.optJSONObject("profileSettingsById")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
@@ -780,6 +797,7 @@ class CloudSyncRepository @Inject constructor(
                         prefs[trailerDelayKeyFor(profileId)] = state.trailerDelaySeconds.toString()
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
                         prefs[showBudgetKeyFor(profileId)] = state.showBudget
+                        state.showLoadingStats?.let { prefs[showLoadingStatsKeyFor(profileId)] = it }
                         prefs[spoilerBlurKeyFor(profileId)] = state.spoilerBlurEnabled
                         prefs[volumeBoostDbKeyFor(profileId)] = state.volumeBoostDb.coerceIn(0, 15).toString()
                         prefs[dnsProviderKeyFor(profileId)] = state.dnsProvider.ifBlank { "system" }
@@ -798,11 +816,10 @@ class CloudSyncRepository @Inject constructor(
                         prefs[secondarySubtitleKeyFor(profileId)] = state.secondarySubtitle.ifBlank { "Off" }
                         prefs[filterSubtitlesByLanguageKeyFor(profileId)] = state.filterSubtitlesByLanguage
                         state.homeServerConnectionJson?.let { homeServerConnectionJson ->
-                            if (homeServerConnectionJson.isBlank()) {
-                                prefs.remove(homeServerConnectionKeyFor(profileId))
-                            } else {
-                                prefs[homeServerConnectionKeyFor(profileId)] = homeServerConnectionJson
-                            }
+                            homeServerConnectionsToImport[profileId] = homeServerConnectionJson
+                        }
+                        state.torrServerBaseUrl?.let { torrServerBaseUrl ->
+                            torrServerUrlsToImport[profileId] = torrServerBaseUrl
                         }
                         val normalizedProfileLayout = normalizeCardLayoutMode(state.cardLayoutMode)
                         prefs[cardLayoutModeKeyFor(profileId)] = normalizedProfileLayout
@@ -855,6 +872,47 @@ class CloudSyncRepository @Inject constructor(
                     if (usage.isBlank()) prefs.remove(subtitleUsageKeyFor(activeProfileId)) else prefs[subtitleUsageKeyFor(activeProfileId)] = usage
                 }
             }
+        }
+        homeServerConnectionsToImport.forEach { (profileId, json) ->
+            homeServerRepository.importCloudConnectionsJsonForProfile(profileId, json)
+        }
+        torrServerUrlsToImport.forEach { (profileId, url) ->
+            streamRepository.importTorrServerBaseUrlForProfile(profileId, url)
+        }
+
+        var restoredDnsProvider: String? = null
+        var restoredCustomUserAgent: String? = null
+        if (
+            root.has("dnsProvider") ||
+            root.has("customUserAgent") ||
+            root.has("oledBlackBackground") ||
+            root.has("focusBorderColor")
+        ) {
+            context.settingsDataStore.edit { prefs ->
+                if (root.has("dnsProvider")) {
+                    val dnsProvider = root.optString("dnsProvider", "system").ifBlank { "system" }
+                    prefs[globalDnsProviderKey] = dnsProvider
+                    prefs[dnsProviderKeyFor(activeProfileId)] = dnsProvider
+                    restoredDnsProvider = dnsProvider
+                }
+                if (root.has("customUserAgent")) {
+                    val userAgent = root.optString("customUserAgent", "").trim()
+                    if (userAgent.isBlank()) {
+                        prefs.remove(customUserAgentKey)
+                    } else {
+                        prefs[customUserAgentKey] = userAgent
+                    }
+                    restoredCustomUserAgent = userAgent
+                }
+                if (root.has("oledBlackBackground")) {
+                    prefs[OLED_BLACK_BACKGROUND_KEY] = root.optBoolean("oledBlackBackground", false)
+                }
+                if (root.has("focusBorderColor")) {
+                    prefs[FOCUS_BORDER_COLOR_KEY] = root.optString("focusBorderColor", "White").ifBlank { "White" }
+                }
+            }
+            restoredDnsProvider?.let { OkHttpProvider.setDnsProvider(OkHttpProvider.parseDnsProvider(it)) }
+            restoredCustomUserAgent?.let { OkHttpProvider.setCustomUserAgent(it) }
         }
         if (root.has("skipProfileSelection")) {
             context.settingsDataStore.edit { prefs ->

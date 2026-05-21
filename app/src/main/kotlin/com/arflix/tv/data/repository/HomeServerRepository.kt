@@ -8,6 +8,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.ProxyHeaders
 import com.arflix.tv.data.model.StreamBehaviorHints
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.util.SecureStorage
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
 import com.google.gson.JsonElement
@@ -179,6 +180,8 @@ class HomeServerRepository @Inject constructor(
         const val ADDON_NAME = "Home Server"
         const val CONNECTION_KEY_NAME = "home_server_connection_v1"
         const val CATALOG_SOURCE_REF_PREFIX = "home_server_catalog|"
+        private const val HOME_SERVER_TOKEN_KEY_ALIAS = "arvio_home_server_tokens_v1"
+        private const val SECURE_TOKEN_PREFIX = "enc:v1:"
         private const val SOURCE_CACHE_MAX_ENTRIES = 128
         private const val SOURCE_CACHE_TTL_MS = 30L * 60L * 1000L
 
@@ -417,8 +420,7 @@ class HomeServerRepository @Inject constructor(
 
     suspend fun currentConnections(): List<HomeServerConnection> {
         val profileId = profileManager.getProfileId()
-        val prefs = context.settingsDataStore.data.first()
-        return parseConnections(prefs[connectionKeyFor(profileId)])
+        return currentConnectionsForProfile(profileId, migratePlainTokens = true)
     }
 
     suspend fun hasUsableConnections(): Boolean = currentConnections().any { it.isUsable }
@@ -544,16 +546,45 @@ class HomeServerRepository @Inject constructor(
     }
 
     private suspend fun saveConnections(connections: List<HomeServerConnection>) {
-        val profileId = profileManager.getProfileId()
+        saveConnectionsForProfile(profileManager.getProfileId(), connections)
+    }
+
+    private suspend fun saveConnectionsForProfile(profileId: String, connections: List<HomeServerConnection>) {
         context.settingsDataStore.edit { prefs ->
             prefs[connectionKeyFor(profileId)] = gson.toJson(
-                HomeServerProfileConfig(connections = connections.map { it.sanitized() })
+                HomeServerProfileConfig(connections = connections.map { it.sanitized().withEncryptedTokens() })
             )
         }
     }
 
     private fun connectionKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, CONNECTION_KEY_NAME)
+
+    suspend fun exportCloudConnectionsJsonForProfile(profileId: String): String {
+        val connections = currentConnectionsForProfile(profileId, migratePlainTokens = true)
+        if (connections.isEmpty()) return ""
+        return gson.toJson(HomeServerProfileConfig(connections = connections.map { it.sanitized() }))
+    }
+
+    suspend fun importCloudConnectionsJsonForProfile(profileId: String, json: String?) {
+        if (json.isNullOrBlank()) {
+            context.settingsDataStore.edit { prefs -> prefs.remove(connectionKeyFor(profileId)) }
+            return
+        }
+        saveConnectionsForProfile(profileId, parseConnections(json))
+    }
+
+    private suspend fun currentConnectionsForProfile(
+        profileId: String,
+        migratePlainTokens: Boolean
+    ): List<HomeServerConnection> {
+        val raw = context.settingsDataStore.data.first()[connectionKeyFor(profileId)]
+        val connections = parseConnections(raw)
+        if (migratePlainTokens && raw.hasPlainHomeServerTokens()) {
+            saveConnectionsForProfile(profileId, connections)
+        }
+        return connections
+    }
 
     private fun parseConnection(json: String?): HomeServerConnection? {
         return parseConnections(json).firstOrNull()
@@ -576,10 +607,50 @@ class HomeServerRepository @Inject constructor(
             }
             connections
                 .map { it.sanitized() }
+                .map { it.withDecryptedTokens() }
                 .filter { it.serverUrl.isNotBlank() || it.accessToken.isNotBlank() }
                 .distinctBy { connectionIdentity(it) }
         }.getOrDefault(emptyList())
     }
+
+    private fun String?.hasPlainHomeServerTokens(): Boolean {
+        if (isNullOrBlank()) return false
+        return parseConnections(this).any { connection ->
+            val rawAccessToken = tokenValueFromRawJson(this, connection.connectionId, "accessToken")
+            val rawAccountToken = tokenValueFromRawJson(this, connection.connectionId, "accountToken")
+            rawAccessToken.isPlainToken() || rawAccountToken.isPlainToken()
+        }
+    }
+
+    private fun tokenValueFromRawJson(json: String, connectionId: String, fieldName: String): String {
+        return runCatching {
+            val root = JsonParser().parse(json)
+            val candidates = when {
+                root.isJsonObject && root.asJsonObject.has("connections") -> root.asJsonObject
+                    .getAsJsonArray("connections")
+                    .toList()
+                root.isJsonArray -> root.asJsonArray.toList()
+                root.isJsonObject -> listOf(root)
+                else -> emptyList()
+            }
+            candidates
+                .mapNotNull { it.asJsonObjectOrNull() }
+                .firstOrNull { obj ->
+                    obj.string("connectionId").ifBlank {
+                        createConnectionId(
+                            obj.string("serverUrl"),
+                            runCatching { HomeServerKind.valueOf(obj.string("serverKind")) }.getOrDefault(HomeServerKind.UNKNOWN),
+                            obj.string("userId").ifBlank { obj.string("userName") }
+                        )
+                    } == connectionId
+                }
+                ?.string(fieldName)
+                .orEmpty()
+        }.getOrDefault("")
+    }
+
+    private fun String.isPlainToken(): Boolean =
+        isNotBlank() && !startsWith(SECURE_TOKEN_PREFIX)
 
     private fun HomeServerConnection.sanitized(): HomeServerConnection {
         return HomeServerConnection(
@@ -606,6 +677,30 @@ class HomeServerRepository @Inject constructor(
             },
             lastConnectedAt = lastConnectedAt
         )
+    }
+
+    private fun HomeServerConnection.withEncryptedTokens(): HomeServerConnection =
+        copy(
+            accessToken = encryptToken(accessToken),
+            accountToken = encryptToken(accountToken)
+        )
+
+    private fun HomeServerConnection.withDecryptedTokens(): HomeServerConnection =
+        copy(
+            accessToken = decryptToken(accessToken),
+            accountToken = decryptToken(accountToken)
+        )
+
+    private fun encryptToken(value: String): String {
+        val trimmed = value.trim()
+        if (trimmed.isBlank() || trimmed.startsWith(SECURE_TOKEN_PREFIX)) return trimmed
+        return SecureStorage.encrypt(trimmed, HOME_SERVER_TOKEN_KEY_ALIAS)
+    }
+
+    private fun decryptToken(value: String): String {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) return ""
+        return SecureStorage.decrypt(trimmed, HOME_SERVER_TOKEN_KEY_ALIAS).orEmpty()
     }
 
     private fun createConnectionId(serverUrl: String, kind: HomeServerKind, userIdentity: String): String {
