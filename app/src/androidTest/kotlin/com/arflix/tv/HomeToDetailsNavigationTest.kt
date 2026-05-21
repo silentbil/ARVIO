@@ -39,25 +39,26 @@ class HomeToDetailsNavigationTest {
         }
 
         if (profilePickerVisible) {
-            // Wait past the 300 ms isReadyForInput guard in ProfileSelectionScreen
-            SystemClock.sleep(500)
+            // Wait for either profile avatars (authenticated) or the cloud-connect button
+            // (unauthenticated). Using waitUntil avoids a race where async profile loading
+            // hasn't completed yet when we first check.
+            composeTestRule.waitUntil(timeoutMillis = 15_000) {
+                composeTestRule.onAllNodesWithTag("profile_avatar").fetchSemanticsNodes().isNotEmpty() ||
+                composeTestRule.onAllNodesWithTag("connect_to_cloud").fetchSemanticsNodes().isNotEmpty()
+            }
             device.waitForIdle()
+            composeTestRule.waitForIdle()
 
             if (composeTestRule.onAllNodesWithTag("profile_avatar").fetchSemanticsNodes().isNotEmpty()) {
-                // Cloud connected — select the focused profile
                 composeTestRule.onAllNodesWithTag("profile_avatar").onFirst().performClick()
             } else {
-                // No cloud session — wait for the button, then semantic-click it.
-                // The TV Surface has a companion Modifier.clickable so performClick()
+                // No cloud session: semantic-click the connect button.
+                // Modifier.clickable is attached to the TV Surface so performClick()
                 // dispatches via semantics rather than touch (TV Surface ignores touch).
-                composeTestRule.waitUntil(timeoutMillis = 10_000) {
-                    composeTestRule.onAllNodesWithTag("connect_to_cloud").fetchSemanticsNodes().isNotEmpty()
-                }
-                composeTestRule.waitForIdle()
                 composeTestRule.onNodeWithTag("connect_to_cloud").performClick()
                 device.waitForIdle()
                 composeTestRule.waitForIdle()
-                composeTestRule.waitUntil(timeoutMillis = 10_000) {
+                composeTestRule.waitUntil(timeoutMillis = 20_000) {
                     composeTestRule.onAllNodesWithTag("settings_screen").fetchSemanticsNodes().isNotEmpty()
                 }
                 composeTestRule.onNodeWithTag("topbar_home").performClick()
