@@ -427,7 +427,7 @@ fun SettingsScreen(
     }
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        runCatching { focusRequester.requestFocus() }
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
     }
 
