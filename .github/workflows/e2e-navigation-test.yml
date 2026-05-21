@@ -38,7 +38,7 @@ jobs:
           cat > secrets.properties <<EOF
           TMDB_API_KEY=${{ secrets.TMDB_API_KEY || 'placeholder' }}
           SUPABASE_URL=https://zrdwvortcfnoykltzuqf.supabase.co
-          SUPABASE_ANON_KEY=your-supabase-anon-key
+          SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpyZHd2b3J0Y2Zub3lrbHR6dXFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3NDU4NzMsImV4cCI6MjA4MjMyMTg3M30.YfKZbSwxGs6_xMd6jkDtn1PKkfuyOHo9qVhUvFRddGU
           GOOGLE_WEB_CLIENT_ID=placeholder
           SENTRY_DSN=disabled
           TRAKT_CLIENT_ID=placeholder
