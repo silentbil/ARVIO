@@ -64,6 +64,11 @@ class HomeToDetailsNavigationTest {
                 composeTestRule.waitUntil(timeoutMillis = 20_000) {
                     composeTestRule.onAllNodesWithTag("settings_screen").fetchSemanticsNodes().isNotEmpty()
                 }
+                device.waitForIdle()
+                composeTestRule.waitForIdle()
+                composeTestRule.waitUntil(timeoutMillis = 10_000) {
+                    composeTestRule.onAllNodesWithTag("topbar_home").fetchSemanticsNodes().isNotEmpty()
+                }
                 composeTestRule.onNodeWithTag("topbar_home").performClick()
             }
         }
