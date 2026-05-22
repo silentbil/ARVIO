@@ -184,12 +184,12 @@ fun MediaCard(
         modifier = modifier
             .width(width)
             .zIndex(if (visualFocused && raiseOnFocus) 1f else 0f)
-            .testTag("media_card")
     ) {
         ArvioFocusableSurface(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(aspectRatio),
+                .aspectRatio(aspectRatio)
+                .testTag("media_card"),
             shape = shape,
             backgroundColor = ArvioSkin.colors.surface,
             outlineColor = ArvioSkin.colors.focusOutline,
