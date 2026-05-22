@@ -1920,7 +1920,7 @@ private fun QualityFiltersModal(
     }
 
     LaunchedEffect(hasFilters) {
-        modalFocusRequester.requestFocus()
+        runCatching { modalFocusRequester.requestFocus() }
         if (!hasFilters) {
             isFooterFocused = true
             selectedFilterIndex = -1
@@ -2173,9 +2173,9 @@ private fun QualityFilterEditorModal(
     LaunchedEffect(Unit) { runCatching { modalFocusRequester.requestFocus() } }
     LaunchedEffect(focusedIndex) {
         when (focusedIndex) {
-            0 -> deviceNameRequester.requestFocus()
-            1 -> regexPatternRequester.requestFocus()
-            else -> modalFocusRequester.requestFocus()
+            0 -> runCatching { deviceNameRequester.requestFocus() }
+            1 -> runCatching { regexPatternRequester.requestFocus() }
+            else -> runCatching { modalFocusRequester.requestFocus() }
         }
     }
 
@@ -2309,8 +2309,8 @@ private fun CloudEmailPasswordModal(
     LaunchedEffect(Unit) { runCatching { emailRequester.requestFocus() } }
     LaunchedEffect(focusedIndex) {
         when (focusedIndex) {
-            0 -> emailRequester.requestFocus()
-            1 -> passwordRequester.requestFocus()
+            0 -> runCatching { emailRequester.requestFocus() }
+            1 -> runCatching { passwordRequester.requestFocus() }
         }
     }
 
@@ -2855,7 +2855,7 @@ private fun TraktActivationModal(
     val clipboardManager = LocalClipboardManager.current
 
     LaunchedEffect(userCode) {
-        focusRequester.requestFocus()
+        runCatching { focusRequester.requestFocus() }
     }
 
     androidx.compose.ui.window.Dialog(
@@ -7806,7 +7806,7 @@ private fun InputModalLegacy(
     // Request focus when focusedIndex changes to a text field
     LaunchedEffect(focusedIndex) {
         if (focusedIndex < fields.size && focusedIndex >= 0) {
-            fieldFocusRequesters[focusedIndex].requestFocus()
+            runCatching { fieldFocusRequesters[focusedIndex].requestFocus() }
         }
     }
 
@@ -8098,7 +8098,7 @@ private fun InputModal(
 
     LaunchedEffect(title, fields.size) {
         // Ensure D-pad events always start from the dialog on all TV devices.
-        modalFocusRequester.requestFocus()
+        runCatching { modalFocusRequester.requestFocus() }
     }
 
     // Auto-scroll the form so the focused field stays in view when D-pad navigates.
