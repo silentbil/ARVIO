@@ -64,8 +64,13 @@ class HomeToDetailsNavigationTest {
                 composeTestRule.waitUntil(timeoutMillis = 20_000) {
                     composeTestRule.onAllNodesWithTag("settings_screen").fetchSemanticsNodes().isNotEmpty()
                 }
-                device.waitForIdle()
-                composeTestRule.waitForIdle()
+                // The CloudPairModal auto-opens in TV mode (autoCloudAuth=true path).
+                // Pressing Back dismisses it via its dismissOnBackPress=true handler, which
+                // calls cancelCloudAuth() and stops the background polling job.
+                // Without this, waitForIdle/waitUntil drives the polling delay() via
+                // TestCoroutineScheduler, firing repeated real network calls that eat all time.
+                device.pressBack()
+                SystemClock.sleep(300)
                 composeTestRule.waitUntil(timeoutMillis = 10_000) {
                     composeTestRule.onAllNodesWithTag("topbar_home").fetchSemanticsNodes().isNotEmpty()
                 }
