@@ -180,10 +180,10 @@ class DetailsViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "DetailsViewModel"
-        private const val MIN_COMMUNITY_REVIEW_CHARS = 80
-        private const val MAX_COMMUNITY_REVIEW_CHARS = 1200
-        private const val MIN_COMMUNITY_REVIEW_WORDS = 16
-        private const val MIN_COMMUNITY_REVIEW_COUNT = 2
+        private const val MIN_COMMUNITY_REVIEW_CHARS = 40
+        private const val MAX_COMMUNITY_REVIEW_CHARS = 1400
+        private const val MIN_COMMUNITY_REVIEW_WORDS = 8
+        private const val MIN_COMMUNITY_REVIEW_COUNT = 1
     }
 
     private val _uiState = MutableStateFlow(DetailsUiState())
@@ -2231,18 +2231,44 @@ class DetailsViewModel @Inject constructor(
         imdbId: String?
     ): List<Review> {
         val traktId = imdbId?.takeIf { it.startsWith("tt", ignoreCase = true) } ?: mediaId.toString()
-        val comments = if (mediaType == MediaType.TV) {
+        val comments = loadCommunityComments(mediaType, traktId)
+
+        val formalReviews = comments.toFilteredCommunityReviews(requireReview = true)
+        val reviews = if (formalReviews.isNotEmpty()) {
+            formalReviews
+        } else {
+            comments.toFilteredCommunityReviews(requireReview = false)
+        }
+
+        return reviews.takeIf { it.size >= MIN_COMMUNITY_REVIEW_COUNT } ?: emptyList()
+    }
+
+    private suspend fun loadCommunityComments(mediaType: MediaType, traktId: String): List<TraktComment> {
+        val liked = if (mediaType == MediaType.TV) {
             traktRepository.getShowComments(traktId, page = 1, limit = 30, sort = "likes")
         } else {
             traktRepository.getMovieComments(traktId, page = 1, limit = 30, sort = "likes")
         }
+        val newest = if (liked.size < 8) {
+            if (mediaType == MediaType.TV) {
+                traktRepository.getShowComments(traktId, page = 1, limit = 30, sort = "newest")
+            } else {
+                traktRepository.getMovieComments(traktId, page = 1, limit = 30, sort = "newest")
+            }
+        } else {
+            emptyList()
+        }
+        return (liked + newest).distinctBy { it.id }
+    }
 
-        val reviews = comments
-            .asSequence()
-            .filter { it.parentId == null && it.review && !it.spoiler }
+    private fun List<TraktComment>.toFilteredCommunityReviews(requireReview: Boolean): List<Review> {
+        return asSequence()
+            .filter { it.parentId == null && !it.spoiler }
+            .filter { !requireReview || it.review }
             .filterNot { isSpammyReviewText(it.comment) }
             .sortedWith(
-                compareByDescending<TraktComment> { it.likes }
+                compareByDescending<TraktComment> { it.review }
+                    .thenByDescending { it.likes }
                     .thenByDescending { it.userStats?.rating ?: 0 }
                     .thenByDescending { it.createdAt }
             )
@@ -2252,8 +2278,6 @@ class DetailsViewModel @Inject constructor(
             }
             .take(8)
             .toList()
-
-        return reviews.takeIf { it.size >= MIN_COMMUNITY_REVIEW_COUNT } ?: emptyList()
     }
 
     private fun TraktComment.toCommunityReview(): Review? {
