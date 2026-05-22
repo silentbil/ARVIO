@@ -64,13 +64,22 @@ class HomeToDetailsNavigationTest {
                 composeTestRule.waitUntil(timeoutMillis = 20_000) {
                     composeTestRule.onAllNodesWithTag("settings_screen").fetchSemanticsNodes().isNotEmpty()
                 }
-                // The CloudPairModal auto-opens in TV mode (autoCloudAuth=true path).
-                // Pressing Back dismisses it via its dismissOnBackPress=true handler, which
-                // calls cancelCloudAuth() and stops the background polling job.
-                // Without this, waitForIdle/waitUntil drives the polling delay() via
-                // TestCoroutineScheduler, firing repeated real network calls that eat all time.
-                device.pressBack()
-                SystemClock.sleep(300)
+                // tv-auth-start takes ~2s to return after settings_screen appears.
+                // Wait for CloudPairModal before pressing Back — pressing Back too early
+                // pops the Settings screen entirely instead of dismissing the modal.
+                val modalAppeared = try {
+                    composeTestRule.waitUntil(timeoutMillis = 15_000) {
+                        composeTestRule.onAllNodesWithTag("cloud_pair_modal").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    true
+                } catch (e: ComposeTimeoutException) { false }
+
+                if (modalAppeared) {
+                    // Back dismisses the modal via dismissOnBackPress=true, which calls
+                    // cancelCloudAuth() and stops the background polling job.
+                    device.pressBack()
+                    SystemClock.sleep(300)
+                }
                 composeTestRule.waitUntil(timeoutMillis = 10_000) {
                     composeTestRule.onAllNodesWithTag("topbar_home").fetchSemanticsNodes().isNotEmpty()
                 }

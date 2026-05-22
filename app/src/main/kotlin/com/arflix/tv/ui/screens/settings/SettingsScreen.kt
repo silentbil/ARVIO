@@ -2583,6 +2583,7 @@ private fun CloudPairModal(
 
             Column(
                 modifier = Modifier
+                    .testTag("cloud_pair_modal")
                     .then(
                         if (isMobile) Modifier.fillMaxWidth(0.92f).widthIn(max = 600.dp)
                         else Modifier.widthIn(max = modalWidth).fillMaxWidth(0.62f)
