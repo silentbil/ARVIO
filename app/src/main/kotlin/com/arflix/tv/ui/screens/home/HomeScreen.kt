@@ -2250,7 +2250,7 @@ private fun HomeInputLayer(
     val maxSidebarIndex = topBarMaxIndex(hasProfile)
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        runCatching { focusRequester.requestFocus() }
     }
     LaunchedEffect(rootHasFocus, isContextMenuOpen, isMobile) {
         if (isMobile || isContextMenuOpen || rootHasFocus) return@LaunchedEffect
