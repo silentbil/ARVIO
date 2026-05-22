@@ -83,7 +83,7 @@ fun LoginScreen(
 
     // Request initial focus
     LaunchedEffect(Unit) {
-        emailFocusRequester.requestFocus()
+        runCatching { emailFocusRequester.requestFocus() }
     }
 
     // Handle keyboard navigation

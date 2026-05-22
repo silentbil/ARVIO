@@ -2170,7 +2170,7 @@ private fun QualityFilterEditorModal(
     val deviceNameRequester = remember { FocusRequester() }
     val regexPatternRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) { modalFocusRequester.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { modalFocusRequester.requestFocus() } }
     LaunchedEffect(focusedIndex) {
         when (focusedIndex) {
             0 -> deviceNameRequester.requestFocus()
@@ -2306,7 +2306,7 @@ private fun CloudEmailPasswordModal(
     val emailRequester = remember { FocusRequester() }
     val passwordRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) { emailRequester.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { emailRequester.requestFocus() } }
     LaunchedEffect(focusedIndex) {
         when (focusedIndex) {
             0 -> emailRequester.requestFocus()
@@ -3748,7 +3748,7 @@ private fun UnknownSourcesModal(
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        runCatching { focusRequester.requestFocus() }
     }
 
     androidx.compose.ui.window.Dialog(
@@ -5111,7 +5111,7 @@ private fun AiApiKeyDialog(
     BackHandler { onDismiss() }
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(100)
-        inputFocusRequester.requestFocus()
+        runCatching { inputFocusRequester.requestFocus() }
     }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Box(
@@ -5204,7 +5204,7 @@ private fun CustomUserAgentDialog(
     BackHandler { onDismiss() }
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(100)
-        inputFocusRequester.requestFocus()
+        runCatching { inputFocusRequester.requestFocus() }
     }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Box(
@@ -5302,7 +5302,7 @@ private fun AiKeyQrOverlay(
     onClose: () -> Unit
 ) {
     val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     BackHandler { onClose() }
     Box(
         modifier = Modifier
@@ -7799,7 +7799,7 @@ private fun InputModalLegacy(
     // Request focus on first field when modal opens
     LaunchedEffect(Unit) {
         if (fieldFocusRequesters.isNotEmpty()) {
-            fieldFocusRequesters[0].requestFocus()
+            runCatching { fieldFocusRequesters[0].requestFocus() }
         }
     }
 
@@ -8555,7 +8555,7 @@ private fun SubtitlePickerModal(
         }
     }
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        runCatching { focusRequester.requestFocus() }
     }
 
     androidx.compose.ui.window.Dialog(
@@ -8679,7 +8679,7 @@ private fun UiModeWarningDialog(
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        runCatching { focusRequester.requestFocus() }
     }
 
     androidx.compose.ui.window.Dialog(

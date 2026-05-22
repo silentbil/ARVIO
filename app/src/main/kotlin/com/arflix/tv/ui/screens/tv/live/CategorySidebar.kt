@@ -623,7 +623,7 @@ private fun CategoryContextMenu(
     var ignoreSelectUntilRelease by remember(actions.size) { mutableStateOf(true) }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        runCatching { focusRequester.requestFocus() }
     }
 
     Popup(

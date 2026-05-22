@@ -158,7 +158,7 @@ fun WatchlistScreen(
     }
 
     LaunchedEffect(Unit) {
-        rootFocusRequester.requestFocus()
+        runCatching { rootFocusRequester.requestFocus() }
     }
 
     LaunchedEffect(uiState.isLoading, uiState.items.isEmpty()) {
