@@ -64,22 +64,10 @@ class HomeToDetailsNavigationTest {
                 composeTestRule.waitUntil(timeoutMillis = 20_000) {
                     composeTestRule.onAllNodesWithTag("settings_screen").fetchSemanticsNodes().isNotEmpty()
                 }
-                // tv-auth-start takes ~2s to return after settings_screen appears.
-                // Wait for CloudPairModal before pressing Back — pressing Back too early
-                // pops the Settings screen entirely instead of dismissing the modal.
-                val modalAppeared = try {
-                    composeTestRule.waitUntil(timeoutMillis = 15_000) {
-                        composeTestRule.onAllNodesWithTag("cloud_pair_modal").fetchSemanticsNodes().isNotEmpty()
-                    }
-                    true
-                } catch (e: ComposeTimeoutException) { false }
-
-                if (modalAppeared) {
-                    // Back dismisses the modal via dismissOnBackPress=true, which calls
-                    // cancelCloudAuth() and stops the background polling job.
-                    device.pressBack()
-                    SystemClock.sleep(300)
-                }
+                // topbar_home is always rendered in Settings' AppTopBar (TV/non-touch).
+                // Navigating Home clears SettingsViewModel → viewModelScope cancelled →
+                // cloudPollingJob cancelled. settings_screen appears at ~2s while
+                // tv-auth-start takes ~4.7s, so we leave before polling even starts.
                 composeTestRule.waitUntil(timeoutMillis = 10_000) {
                     composeTestRule.onAllNodesWithTag("topbar_home").fetchSemanticsNodes().isNotEmpty()
                 }
