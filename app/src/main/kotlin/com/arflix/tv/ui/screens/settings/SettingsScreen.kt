@@ -2558,6 +2558,11 @@ private fun CloudPairModal(
     }
     // Focus order: 0 cancel, 1 email/password
     var focusedIndex by remember { mutableIntStateOf(1) }
+    val modalFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        modalFocusRequester.requestFocus()
+    }
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -2582,6 +2587,8 @@ private fun CloudPairModal(
                     )
                     .background(BackgroundElevated, RoundedCornerShape(16.dp))
                     .padding(horizontal = if (isMobile) 20.dp else 24.dp, vertical = if (isMobile) 24.dp else 20.dp)
+                    .focusRequester(modalFocusRequester)
+                    .focusable()
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown) {
                             when (event.key) {
