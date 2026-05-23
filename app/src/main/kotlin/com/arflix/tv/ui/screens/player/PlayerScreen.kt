@@ -827,6 +827,7 @@ fun PlayerScreen(
                                     val lang = format.language ?: matched?.lang ?: "und"
                                     val label = format.label ?: matched?.label ?: getFullLanguageName(lang)
                                     val isExternal = matched?.url?.isNotBlank() == true
+                                    val isForced = format.selectionFlags and C.SELECTION_FLAG_FORCED != 0
                                     textTracks.add(Subtitle(
                                         id = matched?.id ?: formatTrackId.ifBlank { "embedded_${groupIndex}_$i" },
                                         url = matched?.url.orEmpty(),
@@ -835,7 +836,8 @@ fun PlayerScreen(
                                         provider = matched?.provider.orEmpty(),
                                         isEmbedded = !isExternal,
                                         groupIndex = groupIndex,
-                                        trackIndex = i
+                                        trackIndex = i,
+                                        isForced = isForced,
                                     ))
                                 }
                             }
@@ -3526,7 +3528,10 @@ private fun SubtitleMenu(
                                         val badge: String?
                                         val detail: String?
                                         if (subtitle.isEmbedded && subtitle.url.isBlank()) {
-                                            badge = "Built-in"
+                                            val langFullName = getFullLanguageName(subtitle.lang)
+                                            val trackLabel = subtitle.label.takeIf { it.isNotBlank() &&
+                                                !it.equals(langFullName, ignoreCase = true) }
+                                            badge = if (trackLabel != null) "Built-in · $trackLabel" else "Built-in"
                                             detail = null
                                         } else {
                                             badge = subtitle.provider.ifBlank { null }
@@ -3783,7 +3788,11 @@ private fun SubtitleMenu(
                                     val langFullName = getFullLanguageName(sub.lang)
                                     val displayName = if (score > 0) "$langFullName ($score%)" else langFullName
                                     val description = when {
-                                        sub.isEmbedded && sub.url.isBlank() -> "Built-in"
+                                        sub.isEmbedded && sub.url.isBlank() -> {
+                                            val trackLabel = sub.label.takeIf { it.isNotBlank() &&
+                                                !it.equals(langFullName, ignoreCase = true) }
+                                            if (trackLabel != null) "Built-in · $trackLabel" else "Built-in"
+                                        }
                                         sub.provider.isNotBlank() -> sub.provider
                                         else -> null
                                     }

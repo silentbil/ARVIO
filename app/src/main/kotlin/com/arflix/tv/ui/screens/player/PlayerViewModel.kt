@@ -1166,6 +1166,12 @@ class PlayerViewModel @Inject constructor(
             if (candidates.isEmpty()) return null
             val sorted = candidates.sortedWith(
                 compareByDescending<Subtitle> { if (it.isEmbedded) 1 else 0 }
+                    // Prefer plain subs over SDH (accessibility) over forced-only tracks
+                    .thenBy { when {
+                        it.isForced -> 2
+                        it.label.equals("SDH", ignoreCase = true) || it.label.equals("CC", ignoreCase = true) -> 1
+                        else -> 0
+                    }}
                     .thenByDescending { matchScore(it) }
                     .thenBy { it.groupIndex ?: Int.MAX_VALUE }
                     .thenBy { it.trackIndex ?: Int.MAX_VALUE }
@@ -1253,10 +1259,18 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun findAiSourceSubtitle(subtitles: List<Subtitle>): Subtitle? {
+        fun List<Subtitle>.bestEmbedded(): Subtitle? {
+            val embedded = filter { it.isEmbedded }
+            // Prefer plain > SDH/CC > forced-only
+            return embedded.firstOrNull { !it.isForced && !it.label.equals("SDH", ignoreCase = true) && !it.label.equals("CC", ignoreCase = true) }
+                ?: embedded.firstOrNull { !it.isForced }
+                ?: embedded.firstOrNull()
+        }
+
         // Prefer English embedded > any embedded with lang > any embedded > any subtitle
-        return subtitles.firstOrNull { it.isEmbedded && normalizeLanguage(it.lang) == "en" }
-            ?: subtitles.firstOrNull { it.isEmbedded && it.lang.isNotBlank() }
-            ?: subtitles.firstOrNull { it.isEmbedded }
+        return subtitles.filter { normalizeLanguage(it.lang) == "en" }.bestEmbedded()
+            ?: subtitles.filter { it.lang.isNotBlank() }.bestEmbedded()
+            ?: subtitles.bestEmbedded()
             ?: subtitles.firstOrNull()
     }
 
