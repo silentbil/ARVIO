@@ -63,6 +63,7 @@ data class DetailsUiState(
     val subtitles: List<Subtitle> = emptyList(),
     val isLoadingStreams: Boolean = false,
     val hasStreamingAddons: Boolean = true,
+    val addonOrderedIds: List<String> = emptyList(),
     val isInWatchlist: Boolean = false,
     // Toast
     val toastMessage: String? = null,
@@ -1353,10 +1354,14 @@ class DetailsViewModel @Inject constructor(
             }
             val resolvedImdbId = currentImdbId
 
+            val orderedAddonIds = streamRepository.installedAddons.first()
+                .filter { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                .map { it.id }
             _uiState.value = _uiState.value.copy(
                 isLoadingStreams = true,
                 streams = emptyList(),
-                subtitles = emptyList()
+                subtitles = emptyList(),
+                addonOrderedIds = orderedAddonIds
             )
 
             if (requestMediaType == MediaType.MOVIE) {

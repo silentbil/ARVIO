@@ -903,6 +903,7 @@ fun DetailsScreen(
             selectedStream = null,
             isLoading = uiState.isLoadingStreams,
             hasStreamingAddons = uiState.hasStreamingAddons,
+            addonOrderedIds = uiState.addonOrderedIds,
             onFocusedStream = { stream ->
                 viewModel.prewarmStreamsAround(stream, uiState.streams)
             },
