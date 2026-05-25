@@ -2612,7 +2612,7 @@ class TraktRepository @Inject constructor(
                 return@withContext WatchlistPageResult(emptyList(), totalPages = null, complete = false)
             }
             val body = response.body?.string().orEmpty()
-            val listType = object : TypeToken<List<TraktWatchlistItem>>() {}.type
+            val listType = TypeToken.getParameterized(List::class.java, TraktWatchlistItem::class.java).type
             val items: List<TraktWatchlistItem> = runCatching {
                 gson.fromJson<List<TraktWatchlistItem>>(body, listType)
             }.getOrNull().orEmpty()

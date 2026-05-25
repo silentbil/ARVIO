@@ -3249,7 +3249,7 @@ class MediaRepository @Inject constructor(
     }
 
     private fun parseMdblistJson(payload: String): List<Pair<MediaType, Int>> {
-        val type = object : TypeToken<List<Map<String, Any?>>>() {}.type
+        val type = TypeToken.getParameterized(List::class.java, TypeToken.getParameterized(Map::class.java, String::class.java, Any::class.java).type).type
         val rows = runCatching { gson.fromJson<List<Map<String, Any?>>>(payload, type) }.getOrNull()
             ?: return emptyList()
 

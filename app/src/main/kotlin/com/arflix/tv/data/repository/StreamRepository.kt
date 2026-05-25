@@ -198,7 +198,7 @@ class StreamRepository @Inject constructor(
             } else {
                 val filters = gson.fromJson<List<QualityFilterConfig>>(
                     json,
-                    object : TypeToken<List<QualityFilterConfig>>() {}.type
+                    TypeToken.getParameterized(List::class.java, QualityFilterConfig::class.java).type
                 ).orEmpty()
                     .filter { it.enabled && it.regexPattern.isNotBlank() }
                 val regexes = filters.mapNotNull { filter ->
@@ -3005,7 +3005,7 @@ class StreamRepository @Inject constructor(
             emptyMap()
         } else {
             runCatching {
-                val type = object : TypeToken<Map<String, AddonRuntimeHealth>>() {}.type
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, AddonRuntimeHealth::class.java).type
                 gson.fromJson<Map<String, AddonRuntimeHealth>>(raw, type)
             }.getOrNull().orEmpty()
         }

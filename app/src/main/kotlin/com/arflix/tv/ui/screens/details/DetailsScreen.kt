@@ -178,12 +178,6 @@ import java.util.Locale
 import kotlin.math.abs
 import androidx.compose.ui.res.stringResource
 
-
-private object DetailsRegexes {
-    val FOUR_K_REGEX = Regex("\\b4[kK]\\b")
-    val YEAR_REGEX = Regex("\\d{4}")
-}
-
 /**
  * Details screen for movies and TV shows
  */
@@ -1017,7 +1011,7 @@ private fun qualityScoreForAutoPlay(quality: String): Int {
 private fun qualityScoreForStream(stream: com.arflix.tv.data.model.StreamSource): Int {
     val combined = listOfNotNull(stream.quality, stream.source, stream.addonName).joinToString(" ")
     return when {
-        combined.contains("2160p", ignoreCase = true) || DetailsRegexes.FOUR_K_REGEX.containsMatchIn(combined) -> 4
+        combined.contains("2160p", ignoreCase = true) || Regex("\\b4[kK]\\b").containsMatchIn(combined) -> 4
         combined.contains("1080p", ignoreCase = true) -> 3
         combined.contains("720p", ignoreCase = true) -> 2
         combined.contains("480p", ignoreCase = true) -> 1
@@ -1197,7 +1191,7 @@ private fun DetailsContent(
         }
         val displayDate = item.year.takeIf { it.isNotBlank() }
             ?: item.releaseDate?.trim()?.takeIf { it.isNotEmpty() }?.let { date ->
-                DetailsRegexes.YEAR_REGEX.find(date)?.value ?: date
+                Regex("\\d{4}").find(date)?.value ?: date
             }
             ?: ""
         val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
