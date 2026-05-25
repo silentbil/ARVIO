@@ -135,8 +135,8 @@
     <string name="custom_user_agent">Custom User-Agent</string>
     <string name="custom_user_agent_desc">Leave blank to use ARVIO defaults. Custom values apply when a source does not provide its own User-Agent.</string>
     <string name="add_playlist">Add Playlist</string>
-    <string name="refresh_iptv">Refresh IPTV Data</string>
-    <string name="delete_iptv">Delete IPTV Playlists</string>
+    <string name="refresh_iptv">Refresh TV Data</string>
+    <string name="delete_iptv">Delete TV Playlists</string>
     <string name="add_catalog">Add Catalog</string>
     <string name="rename_catalog">Rename Catalog</string>
     <string name="addons">Addons</string>
@@ -200,8 +200,8 @@
 
     <!-- Settings labels -->
     <string name="app_update">App Update</string>
-    <string name="iptv">IPTV</string>
-    <string name="iptv_not_configured">IPTV is not configured</string>
+    <string name="iptv">TV</string>
+    <string name="iptv_not_configured">TV is not configured</string>
     <string name="enter_code">Enter code:</string>
     <string name="syncing">Syncing</string>
     <string name="sync">Sync</string>
