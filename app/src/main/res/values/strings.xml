@@ -219,6 +219,12 @@
     <string name="connect_to_cloud">Connect to ARVIO Cloud</string>
     <string name="view_collection">View Collection</string>
 
+    <!-- In-player subtitle settings panel -->
+    <string name="subtitle_settings_title">Subtitle Settings</string>
+    <string name="subtitle_delay">Delay</string>
+    <string name="subtitle_size_label">Size</string>
+    <string name="subtitle_vertical_position">Vertical Position</string>
+
     <!-- AI Subtitles -->
     <string name="ai_subtitles_section">AI Subtitles</string>
     <string name="ai_subtitle_translation_title">AI Subtitle Translation</string>

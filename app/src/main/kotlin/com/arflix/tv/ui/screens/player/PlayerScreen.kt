@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeMute
@@ -294,6 +295,7 @@ fun PlayerScreen(
     val nextEpisodeButtonFocusRequester = remember { FocusRequester() }
     val containerFocusRequester = remember { FocusRequester() }
     val skipIntroFocusRequester = remember { FocusRequester() }
+    val subtitleSettingsBtnFocusRequester = remember { FocusRequester() }
 
     // Focus state - 0=Play, 1=Subtitles
     var focusedButton by remember { mutableIntStateOf(0) }
@@ -316,6 +318,16 @@ fun PlayerScreen(
     var subtitleLangIndex by remember { mutableIntStateOf(0) }
     var subtitleTrackIndex by remember { mutableIntStateOf(0) }
     var subtitlePanelFocus by remember { mutableIntStateOf(0) } // 0=lang panel, 1=track panel
+    // In-player subtitle settings panel state
+    var showSubtitleSettings by remember { mutableStateOf(false) }
+    var subtitleSettingsRow by remember { mutableIntStateOf(0) }  // 0=Delay, 1=Size, 2=Vertical
+    var subtitleSyncOffsetMs by remember { mutableLongStateOf(0L) }
+    var subtitleSizePct by remember { mutableIntStateOf(100) }
+    var subtitleVerticalPct by remember {
+        mutableIntStateOf(when (uiState.subtitleOffset) {
+            "Bottom" -> 2; "Low" -> 8; "Medium" -> 15; "High" -> 25; else -> 8
+        })
+    }
     val subtitleGroups = remember(uiState.subtitles, uiState.preferredSubtitleLang, uiState.secondarySubtitleLang, uiState.selectedStream, uiState.isAiAvailable, uiState.aiTargetLanguageName) {
         val streamSource = uiState.selectedStream?.source ?: ""
         val primaryName = getFullLanguageName(uiState.preferredSubtitleLang)
@@ -538,6 +550,13 @@ fun PlayerScreen(
     // ExoPlayer - tuned for both small and very large (70GB+) files.
     // Byte cap is authoritative (prioritize size over time) so high-bitrate streams
     // cannot exhaust memory on TV devices with limited heap (384-512 MB).
+    val aiRenderersFactory = remember {
+        AiSubtitleRenderersFactory(
+            context = context,
+            translationManager = viewModel.translationManager,
+            scope = coroutineScope
+        )
+    }
     val exoPlayer = remember(isConstrainedPlaybackDevice, preferExtensionDecoder) {
         val targetBufferBytes = if (isConstrainedPlaybackDevice) {
             48 * 1024 * 1024
@@ -559,11 +578,7 @@ fun PlayerScreen(
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .setRenderersFactory(
-                AiSubtitleRenderersFactory(
-                    context = context,
-                    translationManager = viewModel.translationManager,
-                    scope = coroutineScope
-                )
+                aiRenderersFactory
                     // Use hardware decoders first; extension decoders only as fallback.
                     // On this SEI/Amlogic TV the C2 hardware decoder hangs during allocation,
                     // so prefer the bundled FFmpeg decoder while keeping the selected source.
@@ -1226,7 +1241,7 @@ fun PlayerScreen(
 
     // Auto-hide controls and return focus to container
     LaunchedEffect(showControls, isPlaying) {
-        if (showControls && isPlaying && !showSubtitleMenu && !showSourceMenu) {
+        if (showControls && isPlaying && !showSubtitleMenu && !showSourceMenu && !showSubtitleSettings) {
             delay(5000)
             showControls = false
             // Return focus to container so it can receive key events
@@ -1235,6 +1250,11 @@ fun PlayerScreen(
                 containerFocusRequester.requestFocus()
             } catch (_: Exception) {}
         }
+    }
+
+    // Sync in-player subtitle delay with the renderer factory (microseconds = ms * 1000)
+    LaunchedEffect(subtitleSyncOffsetMs) {
+        aiRenderersFactory.syncOffsetUs.set(subtitleSyncOffsetMs * 1000L)
     }
 
     // Request focus on play button when controls are shown.
@@ -1606,8 +1626,17 @@ fun PlayerScreen(
         }
     }
 
+    BackHandler(enabled = showSubtitleSettings) {
+        showSubtitleSettings = false
+        showControls = true
+        coroutineScope.launch {
+            delay(120)
+            runCatching { subtitleSettingsBtnFocusRequester.requestFocus() }
+        }
+    }
+
     BackHandler(
-        enabled = !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && uiState.error == null
+        enabled = !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && !showSubtitleSettings && uiState.error == null
     ) {
         if (showControls) {
             showControls = false
@@ -1775,7 +1804,7 @@ fun PlayerScreen(
                     }
 
                     if ((event.key == Key.Back || event.key == Key.Escape) &&
-                        !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && uiState.error == null
+                        !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && !showSubtitleSettings && uiState.error == null
                     ) {
                         if (showControls) {
                             showControls = false
@@ -1810,6 +1839,46 @@ fun PlayerScreen(
                                 true
                             }
                             else -> false
+                        }
+                    }
+
+                    // Handle subtitle settings panel
+                    if (showSubtitleSettings) {
+                        return@onKeyEvent when (event.key) {
+                            Key.DirectionUp -> {
+                                subtitleSettingsRow = (subtitleSettingsRow - 1).coerceAtLeast(0)
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                subtitleSettingsRow = (subtitleSettingsRow + 1).coerceAtMost(2)
+                                true
+                            }
+                            Key.DirectionLeft -> {
+                                when (subtitleSettingsRow) {
+                                    0 -> subtitleSyncOffsetMs = (subtitleSyncOffsetMs - 100L).coerceAtLeast(-10000L)
+                                    1 -> subtitleSizePct = (subtitleSizePct - 10).coerceAtLeast(50)
+                                    2 -> subtitleVerticalPct = (subtitleVerticalPct - 1).coerceAtLeast(0)
+                                }
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                when (subtitleSettingsRow) {
+                                    0 -> subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L)
+                                    1 -> subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300)
+                                    2 -> subtitleVerticalPct = (subtitleVerticalPct + 1).coerceAtMost(50)
+                                }
+                                true
+                            }
+                            Key.Back, Key.Escape -> {
+                                showSubtitleSettings = false
+                                showControls = true
+                                coroutineScope.launch {
+                                    delay(120)
+                                    runCatching { subtitleSettingsBtnFocusRequester.requestFocus() }
+                                }
+                                true
+                            }
+                            else -> true
                         }
                     }
 
@@ -2121,6 +2190,13 @@ fun PlayerScreen(
                 update = { playerView ->
                     playerView.player = exoPlayer
                     playerView.resizeMode = playerResizeMode
+                    playerView.subtitleView?.apply {
+                        val baseSizeSp = when (subtitleSizePref) {
+                            "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
+                        }
+                        setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, baseSizeSp * (subtitleSizePct / 100f))
+                        setBottomPaddingFraction((subtitleVerticalPct / 100f).coerceIn(0f, 0.5f))
+                    }
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -2414,6 +2490,26 @@ fun PlayerScreen(
                                 }
                             },
                             onLeftKey = { if (mediaType == MediaType.TV) nextEpisodeButtonFocusRequester.requestFocus() else aspectButtonFocusRequester.requestFocus() },
+                            onRightKey = { subtitleSettingsBtnFocusRequester.requestFocus() },
+                            onDownKey = { trackbarFocusRequester.requestFocus() })
+
+                        Spacer(modifier = Modifier.width(gap))
+
+                        // Subtitle settings (delay, size, vertical position)
+                        PlayerIconButton(icon = Icons.Default.Tune, contentDescription = "Subtitle Settings",
+                            focusRequester = subtitleSettingsBtnFocusRequester, size = smallBtn, iconSize = smallIcon,
+                            onFocusChanged = {},
+                            onClick = {
+                                showSubtitleSettings = !showSubtitleSettings
+                                if (showSubtitleSettings) {
+                                    subtitleSettingsRow = 0
+                                    coroutineScope.launch {
+                                        delay(50)
+                                        runCatching { containerFocusRequester.requestFocus() }
+                                    }
+                                }
+                            },
+                            onLeftKey = { subtitleButtonFocusRequester.requestFocus() },
                             onRightKey = { sourceButtonFocusRequester.requestFocus() },
                             onDownKey = { trackbarFocusRequester.requestFocus() })
 
@@ -2424,7 +2520,7 @@ fun PlayerScreen(
                             focusRequester = sourceButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
                             onFocusChanged = {},
                             onClick = { showSourceMenu = true; showControls = true },
-                            onLeftKey = { subtitleButtonFocusRequester.requestFocus() },
+                            onLeftKey = { subtitleSettingsBtnFocusRequester.requestFocus() },
                             onRightKey = { if (isTouchDevice) playButtonFocusRequester.requestFocus() else rewindButtonFocusRequester.requestFocus() },
                             onDownKey = { trackbarFocusRequester.requestFocus() })
 
@@ -2578,6 +2674,28 @@ fun PlayerScreen(
                     }
                 }
             }
+        }
+
+        // In-player subtitle settings panel (Delay, Size, Vertical Position)
+        AnimatedVisibility(
+            visible = showSubtitleSettings && hasPlaybackStarted,
+            enter = fadeIn(animTween(150)),
+            exit = fadeOut(animTween(150)),
+            modifier = Modifier.align(Alignment.Center).zIndex(8f)
+        ) {
+            PlayerSubtitleSettingsPanel(
+                selectedRow = subtitleSettingsRow,
+                syncOffsetMs = subtitleSyncOffsetMs,
+                sizePct = subtitleSizePct,
+                verticalPct = subtitleVerticalPct,
+                onRowSelect = { subtitleSettingsRow = it },
+                onOffsetDecrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs - 100L).coerceAtLeast(-10000L) },
+                onOffsetIncrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L) },
+                onSizeDecrease = { subtitleSizePct = (subtitleSizePct - 10).coerceAtLeast(50) },
+                onSizeIncrease = { subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300) },
+                onVerticalDecrease = { subtitleVerticalPct = (subtitleVerticalPct - 1).coerceAtLeast(0) },
+                onVerticalIncrease = { subtitleVerticalPct = (subtitleVerticalPct + 1).coerceAtMost(50) }
+            )
         }
 
         // Subtitle/Audio menu
@@ -4623,4 +4741,148 @@ private fun buildPlaybackMetaLine(
 private fun subtitleMatchScore(streamSource: String, subtitle: Subtitle): Int {
     if (subtitle.isEmbedded) return 100
     return weightedSubtitleScore(streamSource, subtitle.id)
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PlayerSubtitleSettingsPanel(
+    selectedRow: Int,
+    syncOffsetMs: Long,
+    sizePct: Int,
+    verticalPct: Int,
+    onRowSelect: (Int) -> Unit,
+    onOffsetDecrease: () -> Unit,
+    onOffsetIncrease: () -> Unit,
+    onSizeDecrease: () -> Unit,
+    onSizeIncrease: () -> Unit,
+    onVerticalDecrease: () -> Unit,
+    onVerticalIncrease: () -> Unit
+) {
+    val accent = LocalFocusBorderColorOverride.current ?: Color.White
+
+    val absMs = if (syncOffsetMs < 0) -syncOffsetMs else syncOffsetMs
+    val offsetLabel = if (syncOffsetMs == 0L) "0.0s"
+    else "${if (syncOffsetMs > 0) "+" else "-"}${absMs / 1000}.${(absMs % 1000) / 100}s"
+
+    Column(
+        modifier = Modifier
+            .width(280.dp)
+            .background(Color.Black.copy(alpha = 0.92f), RoundedCornerShape(16.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.subtitle_settings_title),
+            style = ArflixTypography.sectionTitle.copy(fontSize = 16.sp),
+            color = Color.White,
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
+        PlayerSubtitleSettingRow(
+            label = stringResource(R.string.subtitle_delay),
+            value = offsetLabel,
+            selected = selectedRow == 0,
+            accent = accent,
+            onClick = { onRowSelect(0) },
+            onDecrease = onOffsetDecrease,
+            onIncrease = onOffsetIncrease
+        )
+        PlayerSubtitleSettingRow(
+            label = stringResource(R.string.subtitle_size_label),
+            value = "${sizePct}%",
+            selected = selectedRow == 1,
+            accent = accent,
+            onClick = { onRowSelect(1) },
+            onDecrease = onSizeDecrease,
+            onIncrease = onSizeIncrease
+        )
+        PlayerSubtitleSettingRow(
+            label = stringResource(R.string.subtitle_vertical_position),
+            value = "${verticalPct}%",
+            selected = selectedRow == 2,
+            accent = accent,
+            onClick = { onRowSelect(2) },
+            onDecrease = onVerticalDecrease,
+            onIncrease = onVerticalIncrease
+        )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PlayerSubtitleSettingRow(
+    label: String,
+    value: String,
+    selected: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit
+) {
+    val rowBg = if (selected) Color.White.copy(alpha = 0.08f) else Color.Transparent
+    val valueColor = if (selected) accent else Color.White
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(rowBg, RoundedCornerShape(10.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = label,
+            style = ArflixTypography.label.copy(fontWeight = FontWeight.Normal),
+            color = Color.White.copy(alpha = 0.55f)
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(20.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDecrease
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "−",
+                    style = ArflixTypography.body.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                    color = Color.White
+                )
+            }
+            Text(
+                text = value,
+                style = ArflixTypography.body.copy(fontWeight = FontWeight.Bold, fontSize = 16.sp),
+                color = valueColor
+            )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(20.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onIncrease
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "+",
+                    style = ArflixTypography.body.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                    color = Color.White
+                )
+            }
+        }
+    }
 }
