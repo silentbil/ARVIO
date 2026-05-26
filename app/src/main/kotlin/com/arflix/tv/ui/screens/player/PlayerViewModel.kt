@@ -103,6 +103,9 @@ data class PlayerUiState(
     // Human-readable phase label for the loading UI (e.g. "Searching 3/8
     // sources"). Null when progress isn't meaningful.
     val streamLoadPhase: String? = null,
+    // True while source discovery can still add playback alternatives. This
+    // remains true after autoplay selects the first stream.
+    val sourceSearchActive: Boolean = false,
     // True while AI subtitle translation is active for this playback session
     val isAiTranslating: Boolean = false,
     // True when AI translation is available (settings enabled + source track exists), even if not currently active
@@ -342,6 +345,7 @@ class PlayerViewModel @Inject constructor(
             aiTargetLanguageName = "",
             streamProgress = null,
             streamLoadPhase = null,
+            sourceSearchActive = false,
             error = null,
             isSetupError = false
         )
@@ -393,6 +397,7 @@ class PlayerViewModel @Inject constructor(
             _uiState.value = PlayerUiState(
                 isLoading = true,
                 isLoadingStreams = true,
+                sourceSearchActive = true,
                 preferredAudioLanguage = preferredAudioLanguage,
                 preferredSubtitleLang = preferredSub,
                 secondarySubtitleLang = secondarySub,
@@ -450,6 +455,7 @@ class PlayerViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         isLoadingStreams = false,
+                        sourceSearchActive = false,
                         error = if (isMagnet) {
                             "Selected source is P2P (magnet) and not supported. Choose an HTTP/debrid source."
                         } else {
@@ -462,6 +468,7 @@ class PlayerViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isLoadingStreams = false,
+                    sourceSearchActive = true,
                     selectedStream = resolvedProvidedStream,
                     selectedStreamUrl = resolvedProvidedUrl,
                     savedPosition = resumeData.positionMs
@@ -599,6 +606,7 @@ class PlayerViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         isLoadingStreams = false,
+                        sourceSearchActive = false,
                         error = "Unable to resolve IMDB ID. Try again."
                     )
                     return@launch
@@ -645,6 +653,7 @@ class PlayerViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isLoadingStreams = true,
+                    sourceSearchActive = true,
                     savedPosition = resumeData.positionMs,
                     error = null,
                     isSetupError = false,
@@ -753,6 +762,7 @@ class PlayerViewModel @Inject constructor(
                         isLoading = false,
                         isLoadingStreams = mergedStreams.isEmpty() &&
                             (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
+                        sourceSearchActive = !progressive.isFinal || supplementalSourcesStillLoading,
                         streams = mergedStreams,
                         subtitles = filteredSubtitles,
                         error = errorMessage,
@@ -889,6 +899,7 @@ class PlayerViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isLoadingStreams = false,
+                    sourceSearchActive = false,
                     streamProgress = null,
                     streamLoadPhase = null,
                     error = e.message
@@ -1401,6 +1412,7 @@ class PlayerViewModel @Inject constructor(
                 isLoadingStreams = false,
                 streamProgress = null,
                 streamLoadPhase = null,
+                sourceSearchActive = false,
                 error = null
             )
         }
@@ -1904,6 +1916,7 @@ class PlayerViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isLoadingStreams = false,
+                    sourceSearchActive = false,
                     streamProgress = null,
                     streamLoadPhase = null,
                     error = if (isP2p) {
@@ -2079,6 +2092,7 @@ class PlayerViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
                 isLoadingStreams = false,
+                sourceSearchActive = false,
                 streamProgress = null,
                 streamLoadPhase = null,
                 error = message
@@ -2654,25 +2668,32 @@ class PlayerViewModel @Inject constructor(
     private var primaryStreamResolutionFinal: Boolean = false
     private var lastTopPrewarmKey: String = ""
 
+    private fun sourceLookupStillActive(currentJob: Job? = null): Boolean {
+        val supplementalStillLoading =
+            (homeServerAppendJob != null && homeServerAppendJob !== currentJob && homeServerAppendJob?.isActive == true) ||
+                (vodAppendJob != null && vodAppendJob !== currentJob && vodAppendJob?.isActive == true)
+        return !primaryStreamResolutionFinal || supplementalStillLoading
+    }
+
     private fun finishSupplementalSourceLookupIfReady(currentJob: Job?, errorMessage: String) {
         val state = _uiState.value
+        val stillActive = sourceLookupStillActive(currentJob)
         if (state.streams.isNotEmpty() || !state.selectedStreamUrl.isNullOrBlank()) {
             _uiState.value = state.copy(
                 isLoading = false,
                 isLoadingStreams = false,
+                sourceSearchActive = stillActive,
                 streamProgress = null,
                 streamLoadPhase = null
             )
             return
         }
 
-        val otherSupplementalStillLoading =
-            (homeServerAppendJob != null && homeServerAppendJob !== currentJob && homeServerAppendJob?.isActive == true) ||
-                (vodAppendJob != null && vodAppendJob !== currentJob && vodAppendJob?.isActive == true)
-        if (primaryStreamResolutionFinal && !otherSupplementalStillLoading) {
+        if (!stillActive) {
             _uiState.value = state.copy(
                 isLoading = false,
                 isLoadingStreams = false,
+                sourceSearchActive = false,
                 streamProgress = null,
                 streamLoadPhase = null,
                 error = state.error ?: errorMessage,
@@ -2727,9 +2748,11 @@ class PlayerViewModel @Inject constructor(
         val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
         val sortedStreams = sortStreamsByQualityAndSize(updated, preferredLanguage)
         val shouldAutoplayHomeServer = _uiState.value.selectedStreamUrl.isNullOrBlank()
+        val currentJob = currentCoroutineContext()[Job]
         _uiState.value = _uiState.value.copy(
             streams = sortedStreams,
             isLoadingStreams = false,
+            sourceSearchActive = sourceLookupStillActive(currentJob),
             error = null,
             isSetupError = false,
             streamProgress = null,
@@ -2787,9 +2810,11 @@ class PlayerViewModel @Inject constructor(
         val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
         val sortedStreams = sortStreamsByQualityAndSize(updated, preferredLanguage)
         val shouldAutoplayVod = _uiState.value.selectedStreamUrl.isNullOrBlank()
+        val currentJob = currentCoroutineContext()[Job]
         _uiState.value = _uiState.value.copy(
             streams = sortedStreams,
             isLoadingStreams = false,
+            sourceSearchActive = sourceLookupStillActive(currentJob),
             error = null,
             isSetupError = false,
             streamProgress = null,
@@ -2818,7 +2843,10 @@ class PlayerViewModel @Inject constructor(
             }
 
             if (imdbId.isNullOrBlank()) {
-                _uiState.value = _uiState.value.copy(isLoadingStreams = false)
+                _uiState.value = _uiState.value.copy(
+                    isLoadingStreams = false,
+                    sourceSearchActive = false
+                )
                 return
             }
 
@@ -2878,6 +2906,7 @@ class PlayerViewModel @Inject constructor(
                 streams = sortedStreams,
                 selectedStream = selectedForState,
                 isLoadingStreams = false,
+                sourceSearchActive = false,
                 streamProgress = null,
                 streamLoadPhase = null
             )
@@ -2890,7 +2919,10 @@ class PlayerViewModel @Inject constructor(
                 scheduleSubtitleSelection(currentOriginalLanguage)
             }
         } catch (_: Exception) {
-            _uiState.value = _uiState.value.copy(isLoadingStreams = false)
+            _uiState.value = _uiState.value.copy(
+                isLoadingStreams = false,
+                sourceSearchActive = false
+            )
         }
     }
 

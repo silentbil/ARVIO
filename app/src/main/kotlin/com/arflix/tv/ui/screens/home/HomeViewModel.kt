@@ -148,7 +148,8 @@ class HomeViewModel @Inject constructor(
         val tmdbRating: String,
         val budget: Long?,
         val overview: String,
-        val primaryNetworkLogo: String? = null
+        val primaryNetworkLogo: String? = null,
+        val fullyLoaded: Boolean = false
     )
 
     private data class CategoryPaginationState(
@@ -365,6 +366,96 @@ class HomeViewModel @Inject constructor(
             ?.firstOrNull()
             ?.logoUrl
             ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun heroDetailsKey(item: MediaItem): String = "${item.mediaType}_${item.id}"
+
+    private fun MediaItem.withHeroDetails(snapshot: HeroDetailsSnapshot): MediaItem {
+        return copy(
+            duration = snapshot.duration.ifEmpty { duration },
+            releaseDate = snapshot.releaseDate ?: releaseDate,
+            imdbRating = snapshot.imdbRating.ifEmpty { imdbRating },
+            tmdbRating = snapshot.tmdbRating.ifEmpty { tmdbRating },
+            budget = snapshot.budget ?: budget,
+            overview = snapshot.overview.ifBlank { overview },
+            primaryNetworkLogo = snapshot.primaryNetworkLogo ?: primaryNetworkLogo
+        )
+    }
+
+    private fun snapshotFromCachedFullItem(item: MediaItem): HeroDetailsSnapshot? {
+        val cached = mediaRepository.getCachedFullItem(item.mediaType, item.id) ?: return null
+        return HeroDetailsSnapshot(
+            duration = cached.duration,
+            releaseDate = cached.releaseDate,
+            imdbRating = cached.imdbRating,
+            tmdbRating = cached.tmdbRating,
+            budget = cached.budget,
+            overview = cached.overview,
+            primaryNetworkLogo = cached.primaryNetworkLogo,
+            fullyLoaded = false
+        )
+    }
+
+    private fun getCachedHeroDetailsSnapshot(item: MediaItem): HeroDetailsSnapshot? {
+        val key = heroDetailsKey(item)
+        return heroDetailsCache[key]
+            ?: snapshotFromCachedFullItem(item)?.also { heroDetailsCache[key] = it }
+    }
+
+    private fun applyHeroDetailsSnapshotIfCurrent(item: MediaItem, snapshot: HeroDetailsSnapshot): Boolean {
+        val currentHero = _uiState.value.heroItem
+        if (currentHero?.id != item.id || currentHero.mediaType != item.mediaType) return false
+
+        val updatedHero = currentHero.withHeroDetails(snapshot)
+        mediaRepository.cacheItem(updatedHero)
+        _uiState.value = _uiState.value.copy(
+            heroItem = updatedHero,
+            heroOverviewOverride = snapshot.overview.ifBlank { updatedHero.overview },
+            isHeroTransitioning = false
+        )
+        return true
+    }
+
+    private suspend fun loadHeroDetailsSnapshot(item: MediaItem): HeroDetailsSnapshot? {
+        if (!isActionableMediaItem(item) || isIptvItem(item) || isCollectionItem(item)) {
+            return null
+        }
+
+        return coroutineScope {
+            val detailsDeferred = async {
+                runCatching {
+                    if (item.mediaType == MediaType.MOVIE) {
+                        mediaRepository.getMovieDetails(item.id)
+                    } else {
+                        mediaRepository.getTvDetails(item.id)
+                    }
+                }.getOrNull()
+            }
+            val providerLogoDeferred = async {
+                resolvePrimaryNetworkLogo(item.mediaType, item.id)
+            }
+
+            val details = detailsDeferred.await()
+            val primaryNetworkLogo = providerLogoDeferred.await()
+            if (details == null && primaryNetworkLogo == null) {
+                return@coroutineScope null
+            }
+
+            val resolvedOverview = resolveBestOverview(
+                item = item,
+                candidateOverview = details?.overview?.ifBlank { item.overview } ?: item.overview
+            )
+            HeroDetailsSnapshot(
+                duration = details?.duration.orEmpty(),
+                releaseDate = details?.releaseDate,
+                imdbRating = details?.imdbRating.orEmpty(),
+                tmdbRating = details?.tmdbRating.orEmpty(),
+                budget = details?.budget,
+                overview = resolvedOverview,
+                primaryNetworkLogo = primaryNetworkLogo,
+                fullyLoaded = true
+            )
+        }
     }
 
     private fun isEpisodeAlreadyAired(rawAirDate: String): Boolean {
@@ -794,6 +885,8 @@ class HomeViewModel @Inject constructor(
     private var logoCacheDiskWriteJob: Job? = null
     private val logoFetchInFlight = Collections.synchronizedSet(mutableSetOf<String>())
     private val heroDetailsCache = ConcurrentHashMap<String, HeroDetailsSnapshot>()
+    private val heroDetailsFetchInFlight = Collections.synchronizedSet(mutableSetOf<String>())
+    private val heroDetailsPrefetchSemaphore = Semaphore(if (isLowRamDevice) 1 else 2)
     private val savedCatalogById = ConcurrentHashMap<String, CatalogConfig>()
     private val categoryPaginationStates = ConcurrentHashMap<String, CategoryPaginationState>()
     private val preloadedRequests: MutableSet<String> = run {
@@ -889,7 +982,7 @@ class HomeViewModel @Inject constructor(
     private fun scheduleStartupHeroHydration(item: MediaItem) {
         heroDetailsJob?.cancel()
         heroDetailsJob = viewModelScope.launch(networkDispatcher) {
-            delayUntilStartupSettled(900L)
+            delay(if (isLowRamDevice) 700L else 300L)
             val currentHero = _uiState.value.heroItem
             if (currentHero?.id == item.id && currentHero.mediaType == item.mediaType) {
                 hydrateHeroDetailsIfNeeded(item)
@@ -3299,11 +3392,16 @@ class HomeViewModel @Inject constructor(
     private fun performHeroUpdate(item: MediaItem, logoUrl: String?) {
         val currentState = _uiState.value
         val currentHero = currentState.heroItem
+        val cachedDetails = getCachedHeroDetailsSnapshot(item)
+        val heroItem = cachedDetails?.let { item.withHeroDetails(it) } ?: item
         if (currentHero?.id == item.id &&
             currentHero.mediaType == item.mediaType &&
             currentState.heroLogoUrl == logoUrl &&
             !currentState.isHeroTransitioning
         ) {
+            if (cachedDetails != null) {
+                applyHeroDetailsSnapshotIfCurrent(item, cachedDetails)
+            }
             return
         }
 
@@ -3311,9 +3409,9 @@ class HomeViewModel @Inject constructor(
         _uiState.value = currentState.copy(
             previousHeroItem = currentState.heroItem,
             previousHeroLogoUrl = currentState.heroLogoUrl,
-            heroItem = item,
+            heroItem = heroItem,
             heroLogoUrl = logoUrl,
-            heroOverviewOverride = null,
+            heroOverviewOverride = cachedDetails?.overview?.ifBlank { heroItem.overview },
             heroTrailerKey = null,
             isHeroTransitioning = true
         )
@@ -3342,62 +3440,24 @@ class HomeViewModel @Inject constructor(
 
         val normalizedOverview = item.overview.trim()
         val looksTruncated = normalizedOverview.endsWith("...") || normalizedOverview.length < 120
-        if (normalizedOverview.isNotBlank() && !looksTruncated && item.duration.isNotBlank() && item.duration != "0m") {
+        if (
+            normalizedOverview.isNotBlank() &&
+            !looksTruncated &&
+            item.duration.isNotBlank() &&
+            item.duration != "0m" &&
+            item.imdbRating.isNotBlank() &&
+            item.primaryNetworkLogo != null
+        ) {
             return
         }
 
         heroDetailsJob?.cancel()
         heroDetailsJob = viewModelScope.launch(networkDispatcher) {
             try {
-                // Fetch details and network logo concurrently to avoid ~1s delay
-                // on the clearlogo appearing after all other metadata.
-                val detailsDeferred = async {
-                    runCatching {
-                        if (item.mediaType == MediaType.MOVIE) {
-                            mediaRepository.getMovieDetails(item.id)
-                        } else {
-                            mediaRepository.getTvDetails(item.id)
-                        }
-                    }.getOrNull()
-                }
-                val logoDeferred = async {
-                    resolvePrimaryNetworkLogo(item.mediaType, item.id)
-                }
-                val details = detailsDeferred.await()
-                val primaryNetworkLogo = logoDeferred.await()
-                val resolvedOverview = resolveBestOverview(
-                    item = item,
-                    candidateOverview = details?.overview?.ifBlank { item.overview } ?: item.overview
-                )
-                val detailsKey = "${item.mediaType}_${item.id}"
-                heroDetailsCache[detailsKey] = HeroDetailsSnapshot(
-                    duration = details?.duration.orEmpty(),
-                    releaseDate = details?.releaseDate,
-                    imdbRating = details?.imdbRating.orEmpty(),
-                    tmdbRating = details?.tmdbRating.orEmpty(),
-                    budget = details?.budget,
-                    overview = resolvedOverview,
-                    primaryNetworkLogo = primaryNetworkLogo
-                )
-
-                val latestHero = _uiState.value.heroItem
-                if (latestHero?.id == item.id && latestHero.mediaType == item.mediaType) {
-                    val updatedHero = latestHero.copy(
-                        duration = details?.duration?.ifEmpty { latestHero.duration } ?: latestHero.duration,
-                        releaseDate = details?.releaseDate ?: latestHero.releaseDate,
-                        imdbRating = details?.imdbRating?.ifEmpty { latestHero.imdbRating } ?: latestHero.imdbRating,
-                        tmdbRating = details?.tmdbRating?.ifEmpty { latestHero.tmdbRating } ?: latestHero.tmdbRating,
-                        budget = details?.budget ?: latestHero.budget,
-                        overview = resolvedOverview.ifBlank { latestHero.overview },
-                        primaryNetworkLogo = primaryNetworkLogo ?: latestHero.primaryNetworkLogo
-                    )
-                    mediaRepository.cacheItem(updatedHero)
-                    _uiState.value = _uiState.value.copy(
-                        heroItem = updatedHero,
-                        heroOverviewOverride = resolvedOverview.ifBlank { updatedHero.overview },
-                        isHeroTransitioning = false
-                    )
-                }
+                val snapshot = loadHeroDetailsSnapshot(item) ?: return@launch
+                heroDetailsCache[heroDetailsKey(item)] = snapshot
+                applyHeroDetailsSnapshotIfCurrent(item, snapshot)
+                snapshot.primaryNetworkLogo?.let { preloadLogoImages(listOf(it)) }
 
                 // Fetch trailer key for hero (YouTube)
                 try {
@@ -3440,78 +3500,21 @@ class HomeViewModel @Inject constructor(
         }
 
         heroDetailsJob = viewModelScope.launch(networkDispatcher) {
-            val detailsKey = "${item.mediaType}_${item.id}"
-            val cachedDetails = heroDetailsCache[detailsKey]
+            val detailsKey = heroDetailsKey(item)
+            val cachedDetails = getCachedHeroDetailsSnapshot(item)
             if (cachedDetails != null) {
-                val currentHero = _uiState.value.heroItem
-                if (currentHero?.id == item.id && currentHero.mediaType == item.mediaType) {
-                    val updatedHero = currentHero.copy(
-                        duration = cachedDetails.duration.ifEmpty { currentHero.duration },
-                        releaseDate = cachedDetails.releaseDate ?: currentHero.releaseDate,
-                        imdbRating = cachedDetails.imdbRating.ifEmpty { currentHero.imdbRating },
-                        tmdbRating = cachedDetails.tmdbRating.ifEmpty { currentHero.tmdbRating },
-                        budget = cachedDetails.budget ?: currentHero.budget,
-                        overview = cachedDetails.overview.ifBlank { currentHero.overview },
-                        primaryNetworkLogo = cachedDetails.primaryNetworkLogo ?: currentHero.primaryNetworkLogo
-                    )
-                    mediaRepository.cacheItem(updatedHero)
-                    _uiState.value = _uiState.value.copy(
-                        heroItem = updatedHero,
-                        heroOverviewOverride = cachedDetails.overview.ifBlank { currentHero.overview },
-                        isHeroTransitioning = false
-                    )
-                }
-                return@launch
+                applyHeroDetailsSnapshotIfCurrent(item, cachedDetails)
+                if (cachedDetails.fullyLoaded) return@launch
             }
 
-            // Keep hero metadata (duration/budget/ratings) feeling immediate.
-            // Use a tiny settle delay for normal navigation and a short delay
-            // while fast-scrolling to avoid redundant network churn.
-            val detailsDelayMs = if (fastScrolling) 220L else 60L
-            if (detailsDelayMs > 0L) {
-                delay(detailsDelayMs)
-            }
             val currentHero = _uiState.value.heroItem
             if (currentHero?.id != item.id) return@launch
 
             try {
-                val details = runCatching {
-                    if (item.mediaType == MediaType.MOVIE) {
-                        mediaRepository.getMovieDetails(item.id)
-                    } else {
-                        mediaRepository.getTvDetails(item.id)
-                    }
-                }.getOrNull()
-                val primaryNetworkLogo = resolvePrimaryNetworkLogo(item.mediaType, item.id)
-                val resolvedOverview = resolveBestOverview(
-                    item = item,
-                    candidateOverview = details?.overview?.ifBlank { currentHero.overview } ?: currentHero.overview
-                )
-
-                val updatedItem = currentHero.copy(
-                    duration = details?.duration?.ifEmpty { currentHero.duration } ?: currentHero.duration,
-                    releaseDate = details?.releaseDate ?: currentHero.releaseDate,
-                    imdbRating = details?.imdbRating?.ifEmpty { currentHero.imdbRating } ?: currentHero.imdbRating,
-                    tmdbRating = details?.tmdbRating?.ifEmpty { currentHero.tmdbRating } ?: currentHero.tmdbRating,
-                    budget = details?.budget ?: currentHero.budget,
-                    overview = resolvedOverview.ifBlank { currentHero.overview },
-                    primaryNetworkLogo = primaryNetworkLogo ?: currentHero.primaryNetworkLogo
-                )
-                heroDetailsCache[detailsKey] = HeroDetailsSnapshot(
-                    duration = details?.duration.orEmpty(),
-                    releaseDate = details?.releaseDate,
-                    imdbRating = details?.imdbRating.orEmpty(),
-                    tmdbRating = details?.tmdbRating.orEmpty(),
-                    budget = details?.budget,
-                    overview = resolvedOverview,
-                    primaryNetworkLogo = primaryNetworkLogo
-                )
-                mediaRepository.cacheItem(updatedItem)
-                _uiState.value = _uiState.value.copy(
-                    heroItem = updatedItem,
-                    heroOverviewOverride = resolvedOverview.ifBlank { updatedItem.overview },
-                    isHeroTransitioning = false
-                )
+                val snapshot = loadHeroDetailsSnapshot(item) ?: return@launch
+                heroDetailsCache[detailsKey] = snapshot
+                applyHeroDetailsSnapshotIfCurrent(item, snapshot)
+                snapshot.primaryNetworkLogo?.let { preloadLogoImages(listOf(it)) }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isHeroTransitioning = false)
             }
@@ -3522,6 +3525,41 @@ class HomeViewModel @Inject constructor(
      * Phase 1.3: Ahead-of-focus preloading
      * Call this when focus changes to preload nearby items
      */
+    private suspend fun prefetchHeroDetailsForFocusWindow(items: List<MediaItem>) {
+        val itemsToLoad = items
+            .asSequence()
+            .filter { item -> !isIptvItem(item) && !isCollectionItem(item) }
+            .filter { item -> getCachedHeroDetailsSnapshot(item)?.fullyLoaded != true }
+            .filter { item -> heroDetailsFetchInFlight.add(heroDetailsKey(item)) }
+            .take(if (isLowRamDevice) 2 else 4)
+            .toList()
+
+        if (itemsToLoad.isEmpty()) return
+
+        val providerLogoUrls = coroutineScope {
+            itemsToLoad.map { item ->
+                async(networkDispatcher) {
+                    val key = heroDetailsKey(item)
+                    try {
+                        heroDetailsPrefetchSemaphore.withPermit {
+                            val snapshot = loadHeroDetailsSnapshot(item) ?: return@withPermit null
+                            heroDetailsCache[key] = snapshot
+                            snapshot.primaryNetworkLogo
+                        }
+                    } catch (_: Exception) {
+                        null
+                    } finally {
+                        heroDetailsFetchInFlight.remove(key)
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        if (providerLogoUrls.isNotEmpty()) {
+            preloadLogoImages(providerLogoUrls)
+        }
+    }
+
     fun onFocusChanged(rowIndex: Int, itemIndex: Int, shouldPrefetch: Boolean = true) {
         currentRowIndex = rowIndex
         currentItemIndex = itemIndex
@@ -3582,6 +3620,11 @@ class HomeViewModel @Inject constructor(
                     preloadLogoImages(newLogos.values.toList())
                 }
             }
+
+            // IMDb ratings and service/provider logos live in the hero metadata,
+            // not the card-logo cache. Warm the focused item and nearby cards so
+            // moving focus can render those fields from memory.
+            prefetchHeroDetailsForFocusWindow(focusWindowItems)
 
             // Keep extra backdrop decoding off the active DPAD path; focused
             // cards still request their own images while warmup waits for idle.

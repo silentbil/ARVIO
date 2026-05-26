@@ -4167,13 +4167,20 @@ class IptvRepository @Inject constructor(
                         continuation.resume(null)
                         return
                     }
-                    val body = it.body?.string()
-                    if (body.isNullOrBlank()) {
+                    val responseBody = it.body
+                    if (responseBody == null) {
                         continuation.resume(null)
                         return
                     }
-                    val result = runCatching { gson.fromJson<T>(body, type) }.getOrNull()
-                    continuation.resume(result)
+                    try {
+                        responseBody.charStream().use { reader ->
+                            val result = gson.fromJson<T>(reader, type)
+                            if (continuation.isActive) continuation.resume(result)
+                        }
+                    } catch (error: Throwable) {
+                        System.err.println("IptvRepository: JSON request failed for ${url.take(120)}: ${error.message}")
+                        if (continuation.isActive) continuation.resume(null)
+                    }
                 }
             }
         })

@@ -393,6 +393,9 @@ fun PlayerScreen(
     var startupSameSourceRetryCount by remember { mutableIntStateOf(0) }
     var startupSameSourceRefreshAttempted by remember { mutableStateOf(false) }
     var startupUrlLock by remember { mutableStateOf<String?>(null) }
+    var pendingStartupFailover by remember { mutableStateOf(false) }
+    var pendingStartupFailoverMessage by remember { mutableStateOf<String?>(null) }
+    var pendingStartupFailureRecorded by remember { mutableStateOf(false) }
     var dvStartupFallbackStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
     var midPlaybackRecoveryAttempts by remember { mutableIntStateOf(0) }
     var blackVideoRecoveryStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
@@ -417,6 +420,9 @@ fun PlayerScreen(
         startupSameSourceRetryCount = 0
         startupSameSourceRefreshAttempted = false
         startupUrlLock = null
+        pendingStartupFailover = false
+        pendingStartupFailoverMessage = null
+        pendingStartupFailureRecorded = false
         dvStartupFallbackStage = 0
         rebufferRecoverAttempted = false
         longRebufferCount = 0
@@ -440,7 +446,7 @@ fun PlayerScreen(
 
     // Track current stream index for auto-advancement on error
     var currentStreamIndex by remember { mutableIntStateOf(0) }
-    fun tryAdvanceToNextStream(skipAddonId: String? = null): Boolean {
+    fun tryAdvanceToNextStream(skipAddonId: String? = null, recordCurrentFailure: Boolean = true): Boolean {
         val streams = uiState.streams
         return if (streams.size <= 1) {
             viewModel.onFailoverAttempt(success = false)
@@ -467,7 +473,9 @@ fun PlayerScreen(
                         "from=${uiState.selectedStream?.addonId}/${uiState.selectedStream?.quality}/${uiState.selectedStream?.size} " +
                         "to=${streams[nextIndex].addonId}/${streams[nextIndex].quality}/${streams[nextIndex].size}"
                 )
-                viewModel.onSelectedStreamPlaybackFailure()
+                if (recordCurrentFailure) {
+                    viewModel.onSelectedStreamPlaybackFailure()
+                }
                 currentStreamIndex = nextIndex
                 triedStreamIndexes = triedStreamIndexes + nextIndex
                 userSelectedSourceManually = false
@@ -477,6 +485,9 @@ fun PlayerScreen(
                 startupSameSourceRetryCount = 0
                 startupSameSourceRefreshAttempted = false
                 startupUrlLock = null
+                pendingStartupFailover = false
+                pendingStartupFailoverMessage = null
+                pendingStartupFailureRecorded = false
                 dvStartupFallbackStage = 0
                 rebufferRecoverAttempted = false
                 longRebufferCount = 0
@@ -487,9 +498,38 @@ fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(
+        pendingStartupFailover,
+        uiState.streams,
+        uiState.sourceSearchActive,
+        uiState.streamSelectionNonce
+    ) {
+        if (!pendingStartupFailover || hasPlaybackStarted || userSelectedSourceManually) {
+            return@LaunchedEffect
+        }
+
+        if (tryAdvanceToNextStream(recordCurrentFailure = !pendingStartupFailureRecorded)) {
+            return@LaunchedEffect
+        }
+
+        val sourceSearchStillActive = uiState.sourceSearchActive ||
+            uiState.streamProgress != null ||
+            !uiState.streamLoadPhase.isNullOrBlank()
+        if (!sourceSearchStillActive && !playbackIssueReported) {
+            playbackIssueReported = true
+            pendingStartupFailover = false
+            viewModel.reportPlaybackError(
+                pendingStartupFailoverMessage ?: "Source failed during startup. Try another source."
+            )
+        }
+    }
+
     fun markPlaybackStarted(reason: String) {
         if (hasPlaybackStarted) return
         hasPlaybackStarted = true
+        pendingStartupFailover = false
+        pendingStartupFailoverMessage = null
+        pendingStartupFailureRecorded = false
         midPlaybackRecoveryAttempts = 0
         val startupMs = streamSelectedTime?.let { startedAt ->
             (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
@@ -738,6 +778,13 @@ fun PlayerScreen(
                                     "timed out" in timeoutMessage ||
                                     "sockettimeout" in timeoutMessage ||
                                     "etimedout" in timeoutMessage
+                            val isTransientStartupReadError =
+                                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+                                    error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ||
+                                    error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+                                    error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                                    error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+                                    isTimeoutError
 
                             // For heavy sources, retry same source first instead of failing immediately.
                             if (!hasPlaybackStarted && heavy && isTimeoutError && startupSameSourceRetryCount < heavyStartupMaxRetries) {
@@ -746,6 +793,26 @@ fun PlayerScreen(
                                 stop()
                                 prepare()
                                 playWhenReady = wasPlaying
+                                return
+                            }
+                            if (!hasPlaybackStarted && isTransientStartupReadError && startupSameSourceRetryCount < 1) {
+                                startupSameSourceRetryCount += 1
+                                val player = this@apply
+                                val wasPlaying = player.playWhenReady
+                                playbackStartupDiag(
+                                    "same-source startup retry code=${error.errorCode} " +
+                                        "streams=${latestUiState.streams.size} sourceSearch=${latestUiState.sourceSearchActive}"
+                                )
+                                coroutineScope.launch {
+                                    delay(650)
+                                    if (!playerReleasedAtomic.get() && !hasPlaybackStarted && latestUiState.selectedStreamUrl != null) {
+                                        runCatching {
+                                            player.stop()
+                                            player.prepare()
+                                            player.playWhenReady = wasPlaying
+                                        }
+                                    }
+                                }
                                 return
                             }
                             if (!hasPlaybackStarted && heavy && isTimeoutError) {
@@ -771,6 +838,26 @@ fun PlayerScreen(
                                 !userSelectedSourceManually &&
                                 tryAdvanceToNextStream(deadAddonId)
                             ) {
+                                return
+                            }
+                            val sourceSearchStillActive = latestUiState.sourceSearchActive ||
+                                latestUiState.streamProgress != null ||
+                                !latestUiState.streamLoadPhase.isNullOrBlank()
+                            if (!hasPlaybackStarted &&
+                                allowStartupSourceFallback &&
+                                !userSelectedSourceManually &&
+                                sourceSearchStillActive
+                            ) {
+                                pendingStartupFailover = true
+                                pendingStartupFailoverMessage = playbackErrorMessageFor(error, hasPlaybackStarted)
+                                if (!pendingStartupFailureRecorded) {
+                                    pendingStartupFailureRecorded = true
+                                    viewModel.onSelectedStreamPlaybackFailure()
+                                }
+                                playbackStartupDiag(
+                                    "waiting for more sources after startup error code=${error.errorCode} " +
+                                        "streams=${latestUiState.streams.size}"
+                                )
                                 return
                             }
                             if (!playbackIssueReported) {
@@ -1051,6 +1138,9 @@ fun PlayerScreen(
                 startupHardFailureReported = false
                 startupSameSourceRetryCount = 0
                 startupSameSourceRefreshAttempted = false
+                pendingStartupFailover = false
+                pendingStartupFailoverMessage = null
+                pendingStartupFailureRecorded = false
                 dvStartupFallbackStage = 0
                 blackVideoRecoveryStage = 0
                 blackVideoReadySinceMs = null
@@ -3732,7 +3822,7 @@ private fun SubtitleMenu(
                                         } else {
                                             badge = subtitle.provider.ifBlank { null }
                                             detail = subtitle.id
-                                                .replace(Regex("^\\[[^]]+]"), "").trim()
+                                                .replace(PlayerScreenRegexes.BRACKET_REGEX, "").trim()
                                                 .ifBlank { subtitle.id }
                                                 .ifBlank { null }
                                         }
@@ -4469,11 +4559,10 @@ private fun parseSizeToBytes(sizeStr: String): Long {
 
     val normalized = sizeStr.uppercase()
         .replace(",", ".")
-        .replace(Regex("\\s+"), " ")
+        .replace(PlayerScreenRegexes.MULTI_SPACE_REGEX, " ")
         .trim()
 
-    val pattern = Regex("""(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""")
-    val match = pattern.find(normalized) ?: return 0L
+    val match = PlayerScreenRegexes.SIZE_REGEX.find(normalized) ?: return 0L
     val number = match.groupValues[1].toDoubleOrNull() ?: return 0L
 
     val multiplier = when (match.groupValues[2]) {
@@ -4741,6 +4830,12 @@ private fun buildPlaybackMetaLine(
 private fun subtitleMatchScore(streamSource: String, subtitle: Subtitle): Int {
     if (subtitle.isEmbedded) return 100
     return weightedSubtitleScore(streamSource, subtitle.id)
+}
+
+private object PlayerScreenRegexes {
+    val BRACKET_REGEX = Regex("^\\[[^]]+]")
+    val MULTI_SPACE_REGEX = Regex("\\s+")
+    val SIZE_REGEX = Regex("""(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""")
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
