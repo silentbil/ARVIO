@@ -835,6 +835,8 @@ fun HomeScreen(
     var isTrailerPlaying by remember { mutableStateOf(false) }
     var trailerSuppressed by remember { mutableStateOf(false) }
     LaunchedEffect(displayHeroItem?.id) { trailerSuppressed = false }
+    val heroRowIsContinueWatching = latestDisplayCategories
+        .getOrNull(focusState.currentRowIndex)?.id == "continue_watching"
     val trailerOverlayAlpha = remember { Animatable(1f) }
     LaunchedEffect(isTrailerPlaying) {
         if (isTrailerPlaying) {
@@ -1002,7 +1004,7 @@ fun HomeScreen(
                 }
 
                 // YouTube trailer auto-play (sound controlled by trailerSoundEnabled setting)
-                if (heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null && !trailerSuppressed) {
+                if (heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null && !trailerSuppressed && !heroRowIsContinueWatching) {
                     TrailerPlayer(
                         youtubeKey = uiState.heroTrailerKey!!,
                         delayMs = uiState.trailerDelaySeconds * 1000L,

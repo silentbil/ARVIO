@@ -96,11 +96,17 @@ fun TrailerPlayer(
     ) {
         val player = remember(youtubeKey) {
             ExoPlayer.Builder(context).build().apply {
-                repeatMode = Player.REPEAT_MODE_ONE
+                repeatMode = Player.REPEAT_MODE_OFF
                 playWhenReady = true
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         extractor.evictCache(youtubeKey)
+                    }
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_ENDED) {
+                            shouldPlay = false
+                            onPlayingChanged(false)
+                        }
                     }
                 })
             }
