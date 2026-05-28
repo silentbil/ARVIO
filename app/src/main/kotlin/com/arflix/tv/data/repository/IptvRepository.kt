@@ -146,7 +146,8 @@ data class IptvTvSessionState(
     val lastChannelId: String = "",
     val lastGroupName: String = "",
     val lastFocusedZone: String = "GUIDE",
-    val lastOpenedAt: Long = 0L
+    val lastOpenedAt: Long = 0L,
+    val recentChannelIds: List<String> = emptyList()
 )
 
 @Singleton
@@ -329,7 +330,12 @@ class IptvRepository @Inject constructor(
                     state.copy(
                         lastChannelId = state.lastChannelId.trim(),
                         lastGroupName = state.lastGroupName.trim(),
-                        lastFocusedZone = state.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                        lastFocusedZone = state.lastFocusedZone.trim().ifBlank { "GUIDE" },
+                        recentChannelIds = state.recentChannelIds
+                            .map { it.trim() }
+                            .filter { it.isNotBlank() }
+                            .distinct()
+                            .takeLast(40)
                     )
                 )
             }
@@ -1836,7 +1842,14 @@ class IptvRepository @Inject constructor(
                 session.copy(
                     lastChannelId = session.lastChannelId.trim(),
                     lastGroupName = session.lastGroupName.trim(),
-                    lastFocusedZone = session.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                    lastFocusedZone = session.lastFocusedZone.trim().ifBlank { "GUIDE" },
+                    recentChannelIds = runCatching { session.recentChannelIds }
+                        .getOrNull()
+                        .orEmpty()
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                        .takeLast(40)
                 )
             } ?: IptvTvSessionState()
         }.getOrDefault(IptvTvSessionState())
@@ -1934,7 +1947,12 @@ class IptvRepository @Inject constructor(
                     state.tvSession.copy(
                         lastChannelId = state.tvSession.lastChannelId.trim(),
                         lastGroupName = state.tvSession.lastGroupName.trim(),
-                        lastFocusedZone = state.tvSession.lastFocusedZone.trim().ifBlank { "GUIDE" }
+                        lastFocusedZone = state.tvSession.lastFocusedZone.trim().ifBlank { "GUIDE" },
+                        recentChannelIds = state.tvSession.recentChannelIds
+                            .map { it.trim() }
+                            .filter { it.isNotBlank() }
+                            .distinct()
+                            .takeLast(40)
                     )
                 )
             } else {
@@ -4813,6 +4831,7 @@ class IptvRepository @Inject constructor(
         val channels = mutableListOf<IptvChannel>()
         val seenChannelIds = HashSet<String>()
         var pendingMetadata: String? = null
+        val pendingHeaders = linkedMapOf<String, String>()
         var parsedCount = 0
 
         BufferedReader(InputStreamReader(input, StandardCharsets.UTF_8), 256 * 1024).use { reader ->
@@ -4832,6 +4851,13 @@ class IptvRepository @Inject constructor(
 
                 if (line.startsWith("#EXTINF", ignoreCase = true)) {
                     pendingMetadata = line
+                    pendingHeaders.clear()
+                    mergeM3uHeaderOptions(pendingHeaders, line)
+                    continue
+                }
+
+                if (line.startsWith("#EXTVLCOPT", ignoreCase = true) || line.startsWith("#KODIPROP", ignoreCase = true)) {
+                    mergeM3uHeaderOptions(pendingHeaders, line)
                     continue
                 }
 
@@ -4842,14 +4868,31 @@ class IptvRepository @Inject constructor(
 
                 val epgId = extractAttr(metadata, "tvg-id")
                 val id = buildChannelId(line, epgId)
-                if (!seenChannelIds.add(id)) continue
+                if (!seenChannelIds.add(id)) {
+                    pendingHeaders.clear()
+                    continue
+                }
 
-                val channelName = extractChannelName(metadata)
+                val tvgName = extractAttr(metadata, "tvg-name")
+                val channelName = tvgName?.takeIf { it.isNotBlank() } ?: extractChannelName(metadata)
                 val groupTitle = extractAttr(metadata, "group-title")?.takeIf { it.isNotBlank() } ?: "Uncategorized"
                 val logo = extractAttr(metadata, "tvg-logo")
                 val catchupType = extractAttr(metadata, "catchup")
                 val catchupDays = extractAttr(metadata, "catchup-days")?.toIntOrNull() ?: 0
                 val catchupSource = extractAttr(metadata, "catchup-source")
+                val providerChannelNumber = extractFirstAttr(
+                    metadata,
+                    "tvg-chno",
+                    "tvg-ch-number",
+                    "channel-number",
+                    "ch-number",
+                    "number"
+                )
+                val language = extractFirstAttr(metadata, "tvg-language", "tvg-lang", "language", "lang")
+                val country = extractFirstAttr(metadata, "tvg-country", "country")
+                val qualityLabel = extractFirstAttr(metadata, "quality", "tvg-quality", "resolution")
+                    ?: inferQualityLabel(channelName, groupTitle)
+                val requestHeaders = (pendingHeaders + extractInlineRequestHeaders(metadata)).filterValues { it.isNotBlank() }
 
                 channels += IptvChannel(
                     id = id,
@@ -4861,8 +4904,16 @@ class IptvRepository @Inject constructor(
                     rawTitle = metadata ?: channelName,
                     catchupDays = catchupDays,
                     catchupType = catchupType,
-                    catchupSource = catchupSource
+                    catchupSource = catchupSource,
+                    tvgName = tvgName,
+                    providerChannelNumber = providerChannelNumber,
+                    requestHeaders = requestHeaders,
+                    language = language,
+                    country = country,
+                    qualityLabel = qualityLabel,
+                    variantKey = buildChannelVariantKey(tvgName ?: channelName, groupTitle, epgId)
                 )
+                pendingHeaders.clear()
                 parsedCount++
                 if (parsedCount % 5000 == 0) {
                     onProgress(IptvLoadProgress("Parsing channels... $parsedCount found", 85))
@@ -5347,6 +5398,94 @@ class IptvRepository @Inject constructor(
             .trim('"', '\'')
             .trim()
         return normalized.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractFirstAttr(metadata: String?, vararg attrs: String): String? {
+        attrs.forEach { attr ->
+            extractAttr(metadata, attr)?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return null
+    }
+
+    private fun mergeM3uHeaderOptions(target: MutableMap<String, String>, line: String) {
+        val value = line.substringAfter(':', missingDelimiterValue = "").trim()
+        if (value.isBlank()) return
+
+        when {
+            value.startsWith("http-user-agent=", ignoreCase = true) ->
+                target["User-Agent"] = value.substringAfter('=').trim()
+            value.startsWith("user-agent=", ignoreCase = true) ->
+                target["User-Agent"] = value.substringAfter('=').trim()
+            value.startsWith("http-referrer=", ignoreCase = true) ->
+                target["Referer"] = value.substringAfter('=').trim()
+            value.startsWith("http-referer=", ignoreCase = true) ->
+                target["Referer"] = value.substringAfter('=').trim()
+            value.startsWith("referer=", ignoreCase = true) ->
+                target["Referer"] = value.substringAfter('=').trim()
+            value.startsWith("referrer=", ignoreCase = true) ->
+                target["Referer"] = value.substringAfter('=').trim()
+            value.startsWith("inputstream.adaptive.stream_headers=", ignoreCase = true) ->
+                target.putAll(parseHeaderPairs(value.substringAfter('=')))
+            value.startsWith("inputstream.adaptive.manifest_headers=", ignoreCase = true) ->
+                target.putAll(parseHeaderPairs(value.substringAfter('=')))
+        }
+    }
+
+    private fun extractInlineRequestHeaders(metadata: String?): Map<String, String> {
+        if (metadata.isNullOrBlank()) return emptyMap()
+        val headers = linkedMapOf<String, String>()
+        extractFirstAttr(metadata, "http-user-agent", "user-agent")?.let { headers["User-Agent"] = it }
+        extractFirstAttr(metadata, "http-referrer", "http-referer", "referrer", "referer")?.let { headers["Referer"] = it }
+        return headers
+    }
+
+    private fun parseHeaderPairs(raw: String): Map<String, String> {
+        if (raw.isBlank()) return emptyMap()
+        return raw
+            .split('&', '|')
+            .mapNotNull { part ->
+                val decoded = runCatching { java.net.URLDecoder.decode(part.trim(), "UTF-8") }
+                    .getOrDefault(part.trim())
+                val separator = when {
+                    decoded.contains("=") -> "="
+                    decoded.contains(":") -> ":"
+                    else -> return@mapNotNull null
+                }
+                val name = decoded.substringBefore(separator).trim()
+                val value = decoded.substringAfter(separator).trim()
+                if (name.isBlank() || value.isBlank()) null else canonicalHeaderName(name) to value
+            }
+            .toMap()
+    }
+
+    private fun canonicalHeaderName(name: String): String {
+        return when (name.trim().lowercase(Locale.US)) {
+            "user-agent", "http-user-agent", "useragent" -> "User-Agent"
+            "referer", "referrer", "http-referer", "http-referrer" -> "Referer"
+            else -> name.trim()
+        }
+    }
+
+    private fun inferQualityLabel(name: String, group: String): String? {
+        val source = "$name $group".uppercase(Locale.US)
+        return when {
+            "4K" in source || "UHD" in source || "2160" in source -> "4K"
+            "FHD" in source || "1080" in source -> "FHD"
+            "HD" in source || "720" in source -> "HD"
+            "SD" in source || "576" in source || "480" in source -> "SD"
+            else -> null
+        }
+    }
+
+    private fun buildChannelVariantKey(name: String, group: String, epgId: String?): String {
+        val base = epgId?.takeIf { it.isNotBlank() } ?: name
+        val normalizedBase = normalizeLooseKey(
+            base
+                .replace(Regex("""\b(4K|UHD|FHD|HD|SD|2160P?|1080P?|720P?|576P?|480P?)\b""", RegexOption.IGNORE_CASE), " ")
+                .replace(Regex("""\[[^\]]*]|\([^)]*\)"""), " ")
+        )
+        val normalizedGroup = normalizeLooseKey(group)
+        return listOf(normalizedGroup, normalizedBase).filter { it.isNotBlank() }.joinToString(":")
     }
 
     private fun normalizeChannelKey(value: String): String = value.trim().lowercase(Locale.US)

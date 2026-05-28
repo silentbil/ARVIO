@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -37,6 +38,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -63,6 +65,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -96,6 +99,20 @@ private enum class LiveTvFocusZone {
     CATEGORY_LIST,
     CHANNEL_LIST,
     EPG,
+}
+
+private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
+    AndroidKeyEvent.KEYCODE_0, AndroidKeyEvent.KEYCODE_NUMPAD_0 -> 0
+    AndroidKeyEvent.KEYCODE_1, AndroidKeyEvent.KEYCODE_NUMPAD_1 -> 1
+    AndroidKeyEvent.KEYCODE_2, AndroidKeyEvent.KEYCODE_NUMPAD_2 -> 2
+    AndroidKeyEvent.KEYCODE_3, AndroidKeyEvent.KEYCODE_NUMPAD_3 -> 3
+    AndroidKeyEvent.KEYCODE_4, AndroidKeyEvent.KEYCODE_NUMPAD_4 -> 4
+    AndroidKeyEvent.KEYCODE_5, AndroidKeyEvent.KEYCODE_NUMPAD_5 -> 5
+    AndroidKeyEvent.KEYCODE_6, AndroidKeyEvent.KEYCODE_NUMPAD_6 -> 6
+    AndroidKeyEvent.KEYCODE_7, AndroidKeyEvent.KEYCODE_NUMPAD_7 -> 7
+    AndroidKeyEvent.KEYCODE_8, AndroidKeyEvent.KEYCODE_NUMPAD_8 -> 8
+    AndroidKeyEvent.KEYCODE_9, AndroidKeyEvent.KEYCODE_NUMPAD_9 -> 9
+    else -> null
 }
 
 private fun chooseStartupChannelId(
@@ -160,6 +177,7 @@ fun LiveTvScreen(
     val compactTouchLayout = isTouchDevice && configuration.screenWidthDp < 900
     val showTopBar = !isTouchDevice
     val contentTopPadding = if (showTopBar) AppTopBarHeight else 0.dp
+    val coroutineScope = rememberCoroutineScope()
     val guideClockMillis by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
             delay(30_000L)
@@ -170,11 +188,16 @@ fun LiveTvScreen(
     val recents = remember { mutableStateOf<LinkedHashSet<String>>(LinkedHashSet()) }
     val favSet = remember(state.snapshot.favoriteChannels) { state.snapshot.favoriteChannels.toSet() }
     val hiddenGroupSet = remember(state.snapshot.hiddenGroups) { state.snapshot.hiddenGroups.toSet() }
-    var seededRecentSessionChannel by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(state.tvSession.lastChannelId) {
-        if (!seededRecentSessionChannel && state.tvSession.lastChannelId.isNotBlank()) {
-            recents.value = LinkedHashSet<String>().apply { add(state.tvSession.lastChannelId) }
-            seededRecentSessionChannel = true
+    LaunchedEffect(state.tvSession.recentChannelIds, state.tvSession.lastChannelId) {
+        val persistedRecents = state.tvSession.recentChannelIds
+            .ifEmpty { listOfNotNull(state.tvSession.lastChannelId.takeIf { it.isNotBlank() }) }
+        if (persistedRecents.isNotEmpty()) {
+            recents.value = LinkedHashSet<String>().apply {
+                persistedRecents.forEach { id ->
+                    if (id.isNotBlank()) add(id)
+                }
+                while (size > 40) remove(first())
+            }
         }
     }
 
@@ -498,6 +521,47 @@ fun LiveTvScreen(
 
     // ExoPlayer lifecycle — mirrors the legacy screen's setup verbatim so live
     // IPTV behaviour (buffer, retries, chunkless HLS) stays identical.
+    var channelNumberBuffer by remember { mutableStateOf("") }
+    var lastChannelDigitAt by remember { mutableStateOf(0L) }
+
+    fun tuneChannelNumber(channel: EnrichedChannel) {
+        playingChannelId = channel.id
+        focusedChannelId = channel.id
+        playingCatchupProgram = null
+        rememberedChannelByCategory[selectedCategoryId] = channel.id
+        focusChannelList(channel.id)
+        hudPokeSignal++
+    }
+
+    fun handleChannelNumberDigit(digit: Int): Boolean {
+        val now = System.currentTimeMillis()
+        val prefix = if (now - lastChannelDigitAt > 1_500L) "" else channelNumberBuffer
+        channelNumberBuffer = (prefix + digit.toString()).takeLast(4)
+        lastChannelDigitAt = now
+        enrichedState.value.all
+            .firstOrNull { it.number.toString() == channelNumberBuffer }
+            ?.let {
+                tuneChannelNumber(it)
+                channelNumberBuffer = ""
+            }
+        return true
+    }
+
+    LaunchedEffect(channelNumberBuffer, enrichedState.value.all) {
+        val query = channelNumberBuffer
+        if (query.isBlank()) return@LaunchedEffect
+        delay(1_200L)
+        if (channelNumberBuffer != query) return@LaunchedEffect
+        val target = enrichedState.value.all
+            .filter { it.number.toString().startsWith(query) }
+            .take(2)
+            .singleOrNull()
+        if (target != null) {
+            tuneChannelNumber(target)
+        }
+        channelNumberBuffer = ""
+    }
+
     val iptvHttpClient = remember {
         OkHttpClient.Builder()
             .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
@@ -509,12 +573,21 @@ fun LiveTvScreen(
             .readTimeout(300, TimeUnit.SECONDS)
             .build()
     }
-    val mediaSourceFactory = remember(iptvHttpClient) {
+    val baseRequestHeaders = remember {
+        mapOf(
+            "Accept" to "*/*",
+            "Accept-Encoding" to "identity",
+            "Connection" to "keep-alive"
+        )
+    }
+    val iptvDataSourceFactory = remember(iptvHttpClient, baseRequestHeaders) {
+        OkHttpDataSource.Factory(iptvHttpClient)
+            .setUserAgent(OkHttpProvider.userAgent)
+            .setDefaultRequestProperties(baseRequestHeaders)
+    }
+    val mediaSourceFactory = remember(iptvDataSourceFactory) {
         DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(
-                OkHttpDataSource.Factory(iptvHttpClient)
-                    .setUserAgent("ARVIO/1.2.0 (Android TV)")
-            )
+            .setDataSourceFactory(iptvDataSourceFactory)
     }
     val exoPlayer = remember {
         val loadControl = DefaultLoadControl.Builder()
@@ -555,6 +628,41 @@ fun LiveTvScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
+    var lastPreparedStreamUrl by remember { mutableStateOf<String?>(null) }
+    var lastPreparedHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var playerRetryCount by remember { mutableIntStateOf(0) }
+
+    fun prepareStream(
+        stream: String,
+        headers: Map<String, String>,
+        resetRetry: Boolean,
+    ) {
+        val mergedHeaders = (baseRequestHeaders + headers).filterValues { it.isNotBlank() }
+        iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+        exoPlayer.setMediaItem(
+            MediaItem.Builder()
+                .setUri(stream)
+                .apply {
+                    if (playingCatchupProgram == null) {
+                        setLiveConfiguration(
+                            MediaItem.LiveConfiguration.Builder()
+                                .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
+                                .setTargetOffsetMs(4_000).build()
+                        )
+                    }
+                }
+                .build()
+        )
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
+        exoPlayer.play()
+        lastPreparedStreamUrl = stream
+        lastPreparedHeaders = headers
+        if (resetRetry) playerRetryCount = 0
+    }
+
     // When the selected channel changes, swap media item.
     val currentStreamUrl = remember(playingChannel, playingCatchupProgram) {
         val ch = playingChannel ?: return@remember initialStreamUrl
@@ -573,25 +681,18 @@ fun LiveTvScreen(
             }
         }
     }
-    LaunchedEffect(currentStreamUrl, playingCatchupProgram) {
-        val stream = currentStreamUrl ?: return@LaunchedEffect
+    LaunchedEffect(currentStreamUrl, playingCatchupProgram, playingChannel?.id) {
+        val rawStream = currentStreamUrl ?: return@LaunchedEffect
+        val sourceChannel = playingChannel?.source
+        val stream = if (sourceChannel != null) {
+            viewModel.resolvePlayableStreamUrl(sourceChannel, playingCatchupProgram)
+        } else {
+            rawStream
+        }
+        val headers = sourceChannel?.requestHeaders.orEmpty()
         delay(90L)
-        exoPlayer.setMediaItem(
-            MediaItem.Builder()
-                .setUri(stream)
-                .apply {
-                    if (playingCatchupProgram == null) {
-                        setLiveConfiguration(
-                            MediaItem.LiveConfiguration.Builder()
-                                .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
-                                .setTargetOffsetMs(4_000).build()
-                        )
-                    }
-                }
-                .build()
-        )
-        exoPlayer.prepare()
-        exoPlayer.play()
+        if (stream == lastPreparedStreamUrl && headers == lastPreparedHeaders) return@LaunchedEffect
+        prepareStream(stream, headers, resetRetry = true)
         // Persist "recent" as soon as playback starts.
         playingChannelId?.let { id ->
             val set = LinkedHashSet(recents.value)
@@ -605,6 +706,52 @@ fun LiveTvScreen(
                 markOpened = true,
             )
         }
+    }
+
+    DisposableEffect(
+        exoPlayer,
+        lastPreparedStreamUrl,
+        lastPreparedHeaders,
+        playingChannel?.id,
+        playingCatchupProgram
+    ) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                val prepared = lastPreparedStreamUrl ?: return
+                val nextAttempt = playerRetryCount + 1
+                playerRetryCount = nextAttempt
+                if (nextAttempt > 3) {
+                    System.err.println(
+                        "[IPTV] Live playback failed after retries code=${error.errorCode} " +
+                            "name=${error.errorCodeName} url=${prepared.take(180)}"
+                    )
+                    return
+                }
+                val retryChannel = playingChannel?.source
+                val retryProgram = playingCatchupProgram
+                val retryHeaders = retryChannel?.requestHeaders ?: lastPreparedHeaders
+                coroutineScope.launch {
+                    delay(350L * nextAttempt)
+                    val retryStream = if (retryChannel != null) {
+                        viewModel.resolvePlayableStreamUrl(
+                            channel = retryChannel,
+                            program = retryProgram,
+                            forceRefresh = true
+                        )
+                    } else {
+                        prepared
+                    }
+                    System.err.println(
+                        "[IPTV] Retrying live playback attempt=$nextAttempt " +
+                            "code=${error.errorCodeName} url=${retryStream.take(180)}"
+                    )
+                    prepareStream(retryStream, retryHeaders, resetRetry = false)
+                }
+            }
+
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
     }
 
     // Default IPTV entry is the playlist/category rail, focused on Search.
@@ -641,6 +788,11 @@ fun LiveTvScreen(
             .then(
                 if (!isTouchDevice) {
                     Modifier.onPreviewKeyEvent { event ->
+                        if (!searchOpen && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
+                            digitForTvKeyCode(event.nativeKeyEvent.keyCode)?.let { digit ->
+                                return@onPreviewKeyEvent handleChannelNumberDigit(digit)
+                            }
+                        }
                         if (searchOpen || isFullScreen || event.type != KeyEventType.KeyDown) {
                             return@onPreviewKeyEvent false
                         }
@@ -914,6 +1066,12 @@ fun LiveTvScreen(
                     .focusable()
                     .onPreviewKeyEvent { ev ->
                         if (!isFullScreen || ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        if (ev.nativeKeyEvent.repeatCount == 0) {
+                            digitForTvKeyCode(ev.nativeKeyEvent.keyCode)?.let { digit ->
+                                hudPokeSignal++
+                                return@onPreviewKeyEvent handleChannelNumberDigit(digit)
+                            }
+                        }
                         when (ev.key) {
                             Key.Back, Key.Escape -> { exitFullScreenPlayback(); true }
                             Key.DirectionUp -> { zap(+1); hudPokeSignal++; true }
@@ -988,6 +1146,7 @@ fun LiveTvScreen(
         ) {
             SearchOverlay(
                 channels = enrichedState.value.all,
+                nowNext = state.snapshot.nowNext,
                 onDismiss = { searchOpen = false },
                 onPick = { channel ->
                     selectedCategoryId = bestCategoryIdForChannel(channel, enrichedState.value.tree)

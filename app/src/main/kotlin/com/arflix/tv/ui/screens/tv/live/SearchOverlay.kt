@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.util.formatGenreName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -67,6 +68,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun SearchOverlay(
     channels: List<EnrichedChannel>,
+    nowNext: Map<String, IptvNowNext> = emptyMap(),
     onDismiss: () -> Unit,
     onPick: (EnrichedChannel) -> Unit,
 ) {
@@ -83,7 +85,7 @@ fun SearchOverlay(
         debounced = query.trim()
     }
 
-    LaunchedEffect(debounced, channels) {
+    LaunchedEffect(debounced, channels, nowNext) {
         val q = debounced.lowercase()
         if (q.isEmpty()) {
             // Show the first 60 by default — gives a preview list users can scroll.
@@ -94,11 +96,27 @@ fun SearchOverlay(
             channels.asSequence()
                 .map { ch ->
                     val nameLower = ch.name.lowercase()
+                    val guideScore = nowNext[ch.id]?.let { guide ->
+                        val titles = buildList {
+                            guide.now?.title?.let { add(it) }
+                            guide.next?.title?.let { add(it) }
+                            guide.later?.title?.let { add(it) }
+                            guide.upcoming.take(8).forEach { add(it.title) }
+                        }
+                        when {
+                            titles.any { it.equals(q, ignoreCase = true) } -> 640
+                            titles.any { it.lowercase().startsWith(q) } -> 420
+                            titles.any { it.lowercase().contains(q) } -> 320
+                            else -> 0
+                        }
+                    } ?: 0
                     val score = when {
                         ch.number.toString() == q -> 1000
+                        ch.source.providerChannelNumber?.lowercase() == q -> 980
                         nameLower == q -> 900
                         nameLower.startsWith(q) -> 700
                         nameLower.contains(q) -> 500
+                        guideScore > 0 -> guideScore
                         ch.genre.name.lowercase().contains(q) -> 250
                         ch.country?.lowercase() == q -> 200
                         else -> 0

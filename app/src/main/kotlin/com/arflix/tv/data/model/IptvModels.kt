@@ -16,7 +16,14 @@ data class IptvChannel(
     val xtreamStreamId: Int? = null,
     val catchupDays: Int = 0,
     val catchupType: String? = null,
-    val catchupSource: String? = null
+    val catchupSource: String? = null,
+    val tvgName: String? = null,
+    val providerChannelNumber: String? = null,
+    val requestHeaders: Map<String, String> = emptyMap(),
+    val language: String? = null,
+    val country: String? = null,
+    val qualityLabel: String? = null,
+    val variantKey: String? = null
 )
 
 /**

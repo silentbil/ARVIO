@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.tv
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
@@ -84,6 +85,7 @@ class TvViewModel @Inject constructor(
     private var lastCompleteEpgBackfillKey: String? = null
     private var preparedContentJob: Job? = null
     private var preparedContentRevision: Long = 0L
+    private val resolvedStalkerStreamCache = LinkedHashMap<String, String>()
 
     /**
      * In-memory cache of the live-TV enriched channel list + category tree.
@@ -894,11 +896,20 @@ class TvViewModel @Inject constructor(
         val normalizedGroupName = lastGroupName.orEmpty().trim().ifBlank { current.lastGroupName }
         val normalizedFocusZone = lastFocusedZone.trim().ifBlank { current.lastFocusedZone.ifBlank { "GUIDE" } }
         val channelChanged = normalizedChannelId.isNotBlank() && normalizedChannelId != current.lastChannelId
+        val recentChannelIds = if (normalizedChannelId.isNotBlank() && (markOpened || channelChanged)) {
+            current.recentChannelIds
+                .filterNot { it == normalizedChannelId }
+                .plus(normalizedChannelId)
+                .takeLast(40)
+        } else {
+            current.recentChannelIds
+        }
         val next = current.copy(
             lastChannelId = normalizedChannelId,
             lastGroupName = normalizedGroupName,
             lastFocusedZone = normalizedFocusZone,
-            lastOpenedAt = if (markOpened || channelChanged) System.currentTimeMillis() else current.lastOpenedAt
+            lastOpenedAt = if (markOpened || channelChanged) System.currentTimeMillis() else current.lastOpenedAt,
+            recentChannelIds = recentChannelIds
         )
         if (next == current) return
 
@@ -912,6 +923,45 @@ class TvViewModel @Inject constructor(
                 scheduleIptvCloudSync()
             }
         }
+    }
+
+    suspend fun resolvePlayableStreamUrl(
+        channel: IptvChannel,
+        program: IptvProgram? = null,
+        forceRefresh: Boolean = false
+    ): String {
+        val rawUrl = if (program != null) {
+            iptvRepository.getCatchupUrl(channel, program)
+        } else {
+            channel.streamUrl
+        }
+        return resolveStalkerStreamIfNeeded(rawUrl, forceRefresh)
+    }
+
+    private suspend fun resolveStalkerStreamIfNeeded(rawUrl: String, forceRefresh: Boolean): String {
+        val trimmed = rawUrl.trim()
+        if (!looksLikeStalkerStreamCommand(trimmed)) return trimmed
+
+        if (!forceRefresh) {
+            synchronized(resolvedStalkerStreamCache) {
+                resolvedStalkerStreamCache[trimmed]?.let { return it }
+            }
+        }
+
+        val resolved = withContext(Dispatchers.IO) {
+            iptvRepository.cachedStalkerApi?.resolveStreamUrl(trimmed)
+        }?.trim().orEmpty()
+        val playable = resolved.ifBlank { trimmed.removePrefix("ffmpeg").trim() }
+        if (playable.isNotBlank()) {
+            synchronized(resolvedStalkerStreamCache) {
+                resolvedStalkerStreamCache[trimmed] = playable
+                while (resolvedStalkerStreamCache.size > 200) {
+                    val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
+                    resolvedStalkerStreamCache.remove(firstKey)
+                }
+            }
+        }
+        return playable.ifBlank { trimmed }
     }
 
     private fun setUiState(nextState: TvUiState) {
@@ -1200,6 +1250,15 @@ private fun looksLikeXtream(url: String): Boolean {
     return url.contains("player_api.php", ignoreCase = true) ||
         url.contains("get.php", ignoreCase = true) ||
         url.contains("xmltv.php", ignoreCase = true)
+}
+
+private fun looksLikeStalkerStreamCommand(url: String): Boolean {
+    val trimmed = url.trim()
+    if (trimmed.startsWith("ffmpeg", ignoreCase = true)) return true
+    if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return true
+    return trimmed.startsWith("cmd=", ignoreCase = true) ||
+        trimmed.contains("type=itv", ignoreCase = true) &&
+        trimmed.contains("create_link", ignoreCase = true)
 }
 
 private fun IptvConfig.syncSignature(): String {

@@ -1916,10 +1916,26 @@ class SettingsViewModel @Inject constructor(
                         )
                     }
                 )
+                val epgCovered = snapshot.channels.count { channel ->
+                    val item = snapshot.nowNext[channel.id]
+                    item != null && (
+                        item.now != null ||
+                            item.next != null ||
+                            item.later != null ||
+                            item.upcoming.isNotEmpty() ||
+                            item.recent.isNotEmpty()
+                        )
+                }
+                val epgMissing = (snapshot.channels.size - epgCovered).coerceAtLeast(0)
+                val epgStatus = when {
+                    snapshot.channels.isEmpty() -> ""
+                    epgCovered > 0 -> " EPG: $epgCovered matched, $epgMissing missing."
+                    else -> " EPG: no guide data yet."
+                }
                 val doneMsg = if (configured) {
-                    snapshot.epgWarning ?: "Connected. Loaded ${snapshot.channels.size} channels."
+                    snapshot.epgWarning ?: "Connected. Loaded ${snapshot.channels.size} channels.$epgStatus"
                 } else {
-                    snapshot.epgWarning ?: "Refreshed ${snapshot.channels.size} channels."
+                    snapshot.epgWarning ?: "Refreshed ${snapshot.channels.size} channels.$epgStatus"
                 }
                 _uiState.value = _uiState.value.copy(
                     isIptvLoading = false,

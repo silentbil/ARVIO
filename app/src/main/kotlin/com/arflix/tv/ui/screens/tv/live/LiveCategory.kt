@@ -171,6 +171,12 @@ fun qualityFromText(text: String): Quality {
     }
 }
 
+private fun qualityFromLabel(label: String?): Quality? {
+    val normalized = label?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val quality = qualityFromText(normalized)
+    return if (quality != Quality.SD || normalized.equals("SD", ignoreCase = true)) quality else null
+}
+
 /** Extract a 2-letter bucket code from a group/channel name. Accepts ISO
  *  country codes or language prefixes (EN, JA, …) commonly used in IPTV. */
 fun countryFromText(text: String): String? {
@@ -209,10 +215,24 @@ fun brandForGenre(genre: Genre): LiveColors.Brand = when (genre) {
 
 private fun IptvChannel.traits(): ChannelTraits {
     val combined = "$group | $name"
-    val country = countryFromText(group) ?: countryFromText(name)
+    val country = this.country
+        ?.trim()
+        ?.uppercase()
+        ?.let { COUNTRY_ALIASES[it] ?: it }
+        ?.takeIf { it in KNOWN_COUNTRIES }
+        ?: countryFromText(group)
+        ?: countryFromText(name)
     val genre = genreFromText(combined)
-    val quality = qualityFromText(name).takeUnless { it == Quality.SD } ?: qualityFromText(group)
-    val lang = country ?: "EN"
+    val quality = qualityFromLabel(qualityLabel)
+        ?: qualityFromText(name).takeUnless { it == Quality.SD }
+        ?: qualityFromText(group)
+    val lang = this.language
+        ?.trim()
+        ?.uppercase()
+        ?.take(2)
+        ?.takeIf { it.length == 2 }
+        ?: country
+        ?: "EN"
     val brand = brandForGenre(genre)
     return ChannelTraits(
         country = country,
@@ -229,7 +249,7 @@ fun IptvChannel.enrich(number: Int): EnrichedChannel {
     val traits = traits()
     return EnrichedChannel(
         source = this,
-        number = number,
+        number = providerChannelNumber?.trim()?.toIntOrNull() ?: number,
         country = traits.country,
         genre = traits.genre,
         quality = traits.quality,
