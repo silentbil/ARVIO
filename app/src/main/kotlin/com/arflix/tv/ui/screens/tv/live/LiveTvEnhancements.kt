@@ -288,9 +288,9 @@ fun EpgStatusStrip(
     if (!visible) return
     val text = when {
         !warning.isNullOrBlank() -> warning
-        isLoading -> "Loading guide data..."
+        isLoading -> "Loading visible guide..."
         !hasGuideSource -> "No EPG source configured"
-        else -> "Guide data is still matching channels"
+        else -> "Guide data is still matching visible channels"
     }
     Box(
         modifier = modifier
@@ -312,7 +312,7 @@ fun EpgStatusStrip(
                 modifier = Modifier.size(14.dp),
             )
             Text(
-                text = "$text  |  matched $matchedCount/$totalChannels",
+                text = "$text  |  matched $matchedCount/$totalChannels visible",
                 style = LiveType.SectionTag.copy(color = LiveColors.FgDim),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

@@ -27,6 +27,9 @@ import javax.inject.Inject
 internal const val FAVORITES_GROUP_NAME = "My Favorites"
 private const val EpgLoadingStateLimit = 800
 private const val EpgAttemptedStateLimit = 2_400
+private const val LargeIptvListChannelCount = 10_000
+private const val StandardPriorityEpgLimit = 3_200
+private const val LargeListPriorityCacheLimit = 360
 
 data class TvUiState(
     val isLoading: Boolean = false,
@@ -401,7 +404,11 @@ class TvViewModel @Inject constructor(
         val state = _uiState.value
         val channelIds = buildPriorityEpgChannelIds(
             state = state,
-            maxChannels = if (state.snapshot.channels.size > 10_000) 1_800 else 3_200
+            maxChannels = if (isLargeIptvList(state.snapshot.channels.size)) {
+                LargeListPriorityCacheLimit
+            } else {
+                StandardPriorityEpgLimit
+            }
         )
         if (channelIds.isEmpty()) return
         val updated = withContext(Dispatchers.Default) {
@@ -494,9 +501,41 @@ class TvViewModel @Inject constructor(
         val state = _uiState.value
         val channels = state.snapshot.channels
         if (channels.isEmpty()) return
+        if (isLargeIptvList(channels.size)) {
+            val cacheWarmIds = buildPriorityEpgChannelIds(
+                state = state,
+                maxChannels = LargeListPriorityCacheLimit
+            )
+            if (cacheWarmIds.isEmpty()) return
+            val warmupKey = buildString {
+                append("large-cache-only|")
+                append(state.config.syncSignature())
+                append('|')
+                append(channels.size)
+                append('|')
+                append(cacheWarmIds.firstOrNull().orEmpty())
+                append('|')
+                append(cacheWarmIds.lastOrNull().orEmpty())
+            }
+            if (warmupKey == lastFullEpgWarmupKey) return
+            lastFullEpgWarmupKey = warmupKey
+
+            fullEpgWarmupJob?.cancel()
+            fullEpgWarmupJob = viewModelScope.launch(Dispatchers.IO) {
+                delay(800L)
+                refreshGuideFromCache(cacheWarmIds)
+            }.also { job ->
+                job.invokeOnCompletion {
+                    if (fullEpgWarmupJob === job) {
+                        fullEpgWarmupJob = null
+                    }
+                }
+            }
+            return
+        }
         val warmChannelIds = buildPriorityEpgChannelIds(
             state = state,
-            maxChannels = if (channels.size > 10_000) 1_600 else 3_200
+            maxChannels = StandardPriorityEpgLimit
         )
         if (warmChannelIds.isEmpty()) return
         val missingCount = warmChannelIds.count { id -> !hasProgramData(state.snapshot.nowNext[id]) }
@@ -518,7 +557,7 @@ class TvViewModel @Inject constructor(
 
         fullEpgWarmupJob?.cancel()
         fullEpgWarmupJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(if (channels.size > 10_000) 3_000L else 1_500L)
+            delay(1_500L)
             if (visibleEpgRefreshJob?.isActive == true) {
                 visibleEpgRefreshJob?.join()
             }
@@ -529,7 +568,7 @@ class TvViewModel @Inject constructor(
                 .asSequence()
                 .map { it.id }
                 .filter { id -> !hasProgramData(afterCache.snapshot.nowNext[id]) }
-                .take(if (channels.size > 10_000) 1_600 else 3_200)
+                .take(StandardPriorityEpgLimit)
                 .toCollection(LinkedHashSet())
             if (missingWarmIds.isEmpty()) return@launch
 
@@ -555,6 +594,12 @@ class TvViewModel @Inject constructor(
         val channels = state.snapshot.channels
         if (!state.isConfigured || channels.isEmpty()) return
         if (!hasNetworkEpgSource(state.config)) return
+        if (!force && isLargeIptvList(channels.size)) {
+            completeEpgBackfillJob?.cancel()
+            completeEpgBackfillJob = null
+            setEpgBackfillInProgress(false)
+            return
+        }
 
         val coverage = epgCoverageRatio(state.snapshot)
         val ageMs = iptvRepository.cachedEpgAgeMs()
@@ -576,7 +621,7 @@ class TvViewModel @Inject constructor(
 
         setEpgBackfillInProgress(true)
         completeEpgBackfillJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(if (channels.size > 10_000) 5_000L else 2_000L)
+            delay(2_000L)
             val backfillResult = runCatching {
                 kotlinx.coroutines.withTimeoutOrNull(900_000L) {
                     iptvRepository.loadSnapshot(
@@ -1015,12 +1060,18 @@ class TvViewModel @Inject constructor(
     private fun maybeWarmStartupGuide() {
         val state = _uiState.value
         if (state.channelsByGroup.isEmpty()) return
+        val largeList = isLargeIptvList(state.snapshot.channels.size)
 
         val warmGroups = buildStartupWarmGroups(state)
         if (warmGroups.isEmpty()) return
         val warmChannels = buildList {
             warmGroups.forEachIndexed { index, groupName ->
-                val limit = if (groupName == FAVORITES_GROUP_NAME || index == 0) 96 else 56
+                val limit = when {
+                    largeList && (groupName == FAVORITES_GROUP_NAME || index == 0) -> 48
+                    largeList -> 16
+                    groupName == FAVORITES_GROUP_NAME || index == 0 -> 96
+                    else -> 56
+                }
                 addAll(state.channelsByGroup[groupName].orEmpty().take(limit))
             }
         }
@@ -1028,7 +1079,7 @@ class TvViewModel @Inject constructor(
         if (warmChannels.isEmpty()) return
 
         val coverage = warmChannels.count { hasProgramData(state.snapshot.nowNext[it.id]) }
-        if (coverage >= minOf(warmChannels.size, 24)) return
+        if (coverage >= minOf(warmChannels.size, if (largeList) 12 else 24)) return
 
         val preferredSelectedId = state.tvSession.lastChannelId
             .takeIf { id -> id.isNotBlank() && warmChannels.any { channel -> channel.id == id } }
@@ -1048,8 +1099,8 @@ class TvViewModel @Inject constructor(
         prefetchVisibleCategoryEpg(
             channelIds = warmChannels.map { it.id },
             selectedChannelId = preferredSelectedId,
-            eagerLimit = minOf(warmChannels.size, 96),
-            backgroundLimit = minOf(warmChannels.size, 520)
+            eagerLimit = minOf(warmChannels.size, if (largeList) 32 else 96),
+            backgroundLimit = minOf(warmChannels.size, if (largeList) 96 else 520)
         )
     }
 
@@ -1118,6 +1169,10 @@ private fun buildPriorityEpgChannelIds(
             .forEach { result.add(it.id) }
     }
     return result
+}
+
+private fun isLargeIptvList(channelCount: Int): Boolean {
+    return channelCount > LargeIptvListChannelCount
 }
 
 private fun setPreparedContent(state: TvUiState): TvUiState {

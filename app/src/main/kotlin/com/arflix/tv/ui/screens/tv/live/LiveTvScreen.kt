@@ -363,16 +363,6 @@ fun LiveTvScreen(
         collapseChannelVariants(filteredChannelsState.value, variantGroups)
     }
     val visibleChannelsById = visibleEnrichedState.value.index.byId
-    val visibleChannelIdSet = remember(visibleChannels) { visibleChannels.mapTo(HashSet()) { it.id } }
-    val matchedGuideCount = remember(state.snapshot.nowNext, visibleChannelIdSet) {
-        visibleChannelIdSet.count { id ->
-            state.snapshot.nowNext[id]?.let { guide ->
-                guide.now != null || guide.next != null || guide.later != null ||
-                    guide.upcoming.isNotEmpty() || guide.recent.isNotEmpty()
-            } == true
-        }
-    }
-
     // Playing channel — default to the one we were navigated to, else the first
     // channel of the first non-empty category.
     var playingChannelId by rememberSaveable { mutableStateOf<String?>(initialChannelId) }
@@ -443,6 +433,22 @@ fun LiveTvScreen(
                 backgroundLimit = if (selectedCategoryId == "all") 120 else 240,
             )
         }
+    }
+    val guideStatusIds = remember(epgPrefetchIds, filteredChannels) {
+        epgPrefetchIds
+            .ifEmpty { filteredChannels.asSequence().map { it.id }.take(96).toList() }
+            .toCollection(HashSet())
+    }
+    val matchedGuideCount = remember(state.snapshot.nowNext, guideStatusIds) {
+        guideStatusIds.count { id ->
+            state.snapshot.nowNext[id]?.let { guide ->
+                guide.now != null || guide.next != null || guide.later != null ||
+                    guide.upcoming.isNotEmpty() || guide.recent.isNotEmpty()
+            } == true
+        }
+    }
+    val guideLoadingInScope = remember(state.epgBackfillInProgress, state.epgLoadingChannelIds, guideStatusIds) {
+        state.epgBackfillInProgress || state.epgLoadingChannelIds.any { it in guideStatusIds }
     }
 
     // Pick the startup channel only after saved IPTV preferences/session have
@@ -1031,10 +1037,10 @@ fun LiveTvScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     EpgStatusStrip(
-                        isLoading = state.epgBackfillInProgress || state.epgLoadingChannelIds.isNotEmpty(),
+                        isLoading = guideLoadingInScope,
                         warning = state.snapshot.epgWarning,
                         matchedCount = matchedGuideCount,
-                        totalChannels = visibleChannels.size,
+                        totalChannels = guideStatusIds.size,
                         hasGuideSource = state.hasPotentialGuideSource,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -1169,10 +1175,10 @@ fun LiveTvScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     EpgStatusStrip(
-                        isLoading = state.epgBackfillInProgress || state.epgLoadingChannelIds.isNotEmpty(),
+                        isLoading = guideLoadingInScope,
                         warning = state.snapshot.epgWarning,
                         matchedCount = matchedGuideCount,
-                        totalChannels = visibleChannels.size,
+                        totalChannels = guideStatusIds.size,
                         hasGuideSource = state.hasPotentialGuideSource,
                         modifier = Modifier.fillMaxWidth(),
                     )
