@@ -1839,7 +1839,8 @@ class StreamRepository @Inject constructor(
                         )
                     },
                     subtitles = embeddedSubs,
-                    sources = stream.sources ?: emptyList()
+                    sources = stream.sources ?: emptyList(),
+                    description = stream.description?.trim()?.takeIf { it.isNotBlank() }
                 )
             }
     }

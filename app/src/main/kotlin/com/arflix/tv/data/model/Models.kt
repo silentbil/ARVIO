@@ -162,7 +162,8 @@ data class StreamSource(
     val subtitles: List<Subtitle> = emptyList(),
     // Stremio "sources" are commonly tracker URLs. Keeping them helps P2P playback (TorrServer) work
     // across more addons.
-    val sources: List<String> = emptyList()
+    val sources: List<String> = emptyList(),
+    val description: String? = null
 ) : Serializable
 
 /**

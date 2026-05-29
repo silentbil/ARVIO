@@ -62,6 +62,8 @@ data class DetailsUiState(
     val streams: List<StreamSource> = emptyList(),
     val subtitles: List<Subtitle> = emptyList(),
     val isLoadingStreams: Boolean = false,
+    val completedAddons: Int = 0,
+    val totalAddons: Int = 0,
     val hasStreamingAddons: Boolean = true,
     val addonOrderedIds: List<String> = emptyList(),
     val isInWatchlist: Boolean = false,
@@ -1336,6 +1338,15 @@ class DetailsViewModel @Inject constructor(
         focusedStreamPrewarmJob?.cancel()
         streamListPrewarmJob?.cancel()
         homeServerAppendJob?.cancel()
+        // Reset synchronously so the modal opens in loading state immediately,
+        // before the coroutine below gets a chance to run.
+        _uiState.value = _uiState.value.copy(
+            isLoadingStreams = true,
+            completedAddons = 0,
+            totalAddons = 0,
+            streams = emptyList(),
+            subtitles = emptyList()
+        )
         val requestId = ++loadStreamsRequestId
         val requestMediaType = currentMediaType
         val requestMediaId = currentMediaId
@@ -1364,12 +1375,19 @@ class DetailsViewModel @Inject constructor(
                 }
             }
             val resolvedImdbId = currentImdbId
+            val effectiveStreamId: String? = when {
+                !resolvedImdbId.isNullOrBlank() -> resolvedImdbId
+                requestMediaId > 0 -> "tmdb:$requestMediaId"
+                else -> null
+            }
 
             val orderedAddonIds = streamRepository.installedAddons.first()
                 .filter { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
                 .map { it.id }
             _uiState.value = _uiState.value.copy(
                 isLoadingStreams = true,
+                completedAddons = 0,
+                totalAddons = 0,
                 streams = emptyList(),
                 subtitles = emptyList(),
                 addonOrderedIds = orderedAddonIds
@@ -1438,7 +1456,7 @@ class DetailsViewModel @Inject constructor(
                         )
                     }
 
-                    if (resolvedImdbId.isNullOrBlank()) {
+                    if (effectiveStreamId.isNullOrBlank()) {
                         Log.w(
                             TAG,
                             "[MovieSources] loadStreams skipped (missing imdbId) requestId=$requestId mediaId=$requestMediaId"
@@ -1454,7 +1472,7 @@ class DetailsViewModel @Inject constructor(
                         return@launch
                     }
                     streamRepository.resolveMovieStreamsProgressive(
-                        imdbId = resolvedImdbId,
+                        imdbId = effectiveStreamId,
                         title = item?.title.orEmpty(),
                         year = item?.year?.toIntOrNull()
                     ).collect { progressive ->
@@ -1476,6 +1494,8 @@ class DetailsViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = mergedStreams.isEmpty() &&
                                 (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
+                            completedAddons = progressive.completedAddons,
+                            totalAddons = progressive.totalAddons,
                             streams = mergedStreams,
                             subtitles = progressive.subtitles,
                             hasStreamingAddons = addonCount > 0 || hasHomeServerConnections
@@ -1490,7 +1510,7 @@ class DetailsViewModel @Inject constructor(
                     }
                     return@launch
                 } else {
-                    if (resolvedImdbId.isNullOrBlank()) {
+                    if (effectiveStreamId.isNullOrBlank()) {
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = false,
                             streams = emptyList(),
@@ -1507,7 +1527,7 @@ class DetailsViewModel @Inject constructor(
                         ?.airDate?.takeIf { it.isNotBlank() }
 
                     streamRepository.resolveEpisodeStreamsProgressive(
-                        imdbId = resolvedImdbId,
+                        imdbId = effectiveStreamId,
                         season = season ?: 1,
                         episode = episode ?: 1,
                         tmdbId = currentMediaId,
@@ -1530,6 +1550,8 @@ class DetailsViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = mergedStreams.isEmpty() &&
                                 (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
+                            completedAddons = progressive.completedAddons,
+                            totalAddons = progressive.totalAddons,
                             streams = mergedStreams,
                             subtitles = progressive.subtitles,
                             hasStreamingAddons = addonCount > 0 || hasHomeServerConnections

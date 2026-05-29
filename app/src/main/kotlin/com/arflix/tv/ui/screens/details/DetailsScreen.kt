@@ -313,7 +313,7 @@ fun DetailsScreen(
         val singleStream = validStreams.singleOrNull()
 
         when {
-            singleStream != null && qualityScoreForAutoPlay(singleStream.quality) >= minThreshold -> {
+            singleStream != null && uiState.autoPlaySingleSource && qualityScoreForAutoPlay(singleStream.quality) >= minThreshold -> {
                 onNavigateToPlayer(
                     mediaType,
                     mediaId,
@@ -624,10 +624,15 @@ fun DetailsScreen(
                                 FocusSection.EPISODES -> {
                                     val ep = uiState.episodes.getOrNull(episodeIndex)
                                     if (ep != null) {
-                                        onNavigateToPlayer(
-                                            mediaType, mediaId,
-                                            ep.seasonNumber, ep.episodeNumber, uiState.imdbId, null, null, null, null
-                                        )
+                                        if (!uiState.autoPlaySingleSource) {
+                                            showStreamSelector = true
+                                            viewModel.loadStreams(uiState.imdbId, ep.seasonNumber, ep.episodeNumber)
+                                        } else {
+                                            onNavigateToPlayer(
+                                                mediaType, mediaId,
+                                                ep.seasonNumber, ep.episodeNumber, uiState.imdbId, null, null, null, null
+                                            )
+                                        }
                                     }
                                 }
                                 FocusSection.SEASONS -> {
@@ -800,7 +805,7 @@ fun DetailsScreen(
                         val ep = uiState.episodes.getOrNull(idx)
                         if (ep != null) {
                             episodeIndex = idx
-                            if (isMobile) {
+                            if (isMobile || !uiState.autoPlaySingleSource) {
                                 showStreamSelector = true
                                 viewModel.loadStreams(uiState.imdbId, ep.seasonNumber, ep.episodeNumber)
                             } else {
@@ -899,6 +904,8 @@ fun DetailsScreen(
             isLoading = uiState.isLoadingStreams,
             hasStreamingAddons = uiState.hasStreamingAddons,
             addonOrderedIds = uiState.addonOrderedIds,
+            completedAddons = uiState.completedAddons,
+            totalAddons = uiState.totalAddons,
             onFocusedStream = { stream ->
                 viewModel.prewarmStreamsAround(stream, uiState.streams)
             },

@@ -598,27 +598,31 @@ class PlayerViewModel @Inject constructor(
                     currentTvdbId = externalIds.tvdbId
                     imdbId = externalIds.imdbId
                 }
-                if (imdbId.isNullOrBlank()) {
-                    AppLogger.recordException(
-                        throwable = IllegalStateException("Playback IMDB ID missing"),
-                        context = playbackDiagnosticContext("missing_imdb_id")
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        isLoadingStreams = false,
-                        sourceSearchActive = false,
-                        error = "Unable to resolve IMDB ID. Try again."
-                    )
-                    return@launch
+                val effectiveStreamId: String = when {
+                    !imdbId.isNullOrBlank() -> imdbId
+                    mediaId > 0 -> "tmdb:$mediaId"
+                    else -> {
+                        AppLogger.recordException(
+                            throwable = IllegalStateException("Playback IMDB ID missing"),
+                            context = playbackDiagnosticContext("missing_imdb_id")
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            isLoadingStreams = false,
+                            sourceSearchActive = false,
+                            error = "Unable to resolve IMDB ID. Try again."
+                        )
+                        return@launch
+                    }
                 }
-                if (cachedImdbId.isNullOrBlank()) {
+                if (!imdbId.isNullOrBlank() && cachedImdbId.isNullOrBlank()) {
                     mediaRepository.cacheImdbId(mediaType, mediaId, imdbId)
                 }
                 currentImdbId = imdbId
                 // Never block source loading on title hydration from TMDB.
                 // Fetch skip intervals in background. This should never block playback.
                 launch {
-                    if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
+                    if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null && !imdbId.isNullOrBlank()) {
                         fetchSkipIntervals(imdbId, seasonNumber, episodeNumber)
                     }
                 }
@@ -664,13 +668,13 @@ class PlayerViewModel @Inject constructor(
                 val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { resolvePreferredAudioLanguage() }
                 val progressiveFlow = if (mediaType == MediaType.MOVIE) {
                     streamRepository.resolveMovieStreamsProgressive(
-                        imdbId = imdbId,
+                        imdbId = effectiveStreamId,
                         title = currentItemTitle,
                         year = null
                     )
                 } else {
                     streamRepository.resolveEpisodeStreamsProgressive(
-                        imdbId = imdbId,
+                        imdbId = effectiveStreamId,
                         season = seasonNumber ?: 1,
                         episode = episodeNumber ?: 1,
                         tmdbId = mediaId,
@@ -871,7 +875,7 @@ class PlayerViewModel @Inject constructor(
                     val fetchedSubs = runCatching {
                         streamRepository.fetchSubtitlesForSelectedStream(
                             mediaType = mediaType,
-                            imdbId = imdbId,
+                            imdbId = effectiveStreamId,
                             season = seasonNumber,
                             episode = episodeNumber,
                             stream = null

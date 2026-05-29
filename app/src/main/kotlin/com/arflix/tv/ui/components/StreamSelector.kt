@@ -106,6 +106,8 @@ fun StreamSelector(
     subtitle: String = "",
     hasStreamingAddons: Boolean = true,
     addonOrderedIds: List<String> = emptyList(),
+    completedAddons: Int = 0,
+    totalAddons: Int = 0,
     onFocusedStream: (StreamSource) -> Unit = {},
     onSelect: (StreamSource) -> Unit = {},
     onClose: () -> Unit = {}
@@ -435,22 +437,8 @@ fun StreamSelector(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)
                     )
 
-                    if (isLoading) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                LoadingIndicator(color = Pink, size = 48.dp)
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = stringResource(R.string.finding_sources),
-                                    style = ArflixTypography.body.copy(fontSize = 14.sp),
-                                    color = TextSecondary
-                                )
-                            }
-                        }
-                    } else if (streams.isEmpty()) {
+                    if (streams.isEmpty()) {
+                        val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0)
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
@@ -462,39 +450,52 @@ fun StreamSelector(
                                     .border(1.dp, GlassBorder, RoundedCornerShape(20.dp))
                                     .padding(40.dp)
                             ) {
-                                val iconColor = if (!hasStreamingAddons) Color(0xFF3B82F6) else TextSecondary.copy(alpha = 0.5f)
-                                Box(
-                                    modifier = Modifier
-                                        .size(64.dp)
-                                        .background(iconColor.copy(alpha = 0.1f), CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = if (!hasStreamingAddons) Icons.Default.Settings else Icons.Default.Cloud,
-                                        contentDescription = null,
-                                        tint = iconColor,
-                                        modifier = Modifier.size(32.dp)
+                                if (stillSearching) {
+                                    LoadingIndicator(color = Pink, size = 48.dp)
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if (totalAddons > 0) "Searching addons ($completedAddons/$totalAddons)..." else stringResource(R.string.finding_sources),
+                                        style = ArflixTypography.body.copy(
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Medium
+                                        ),
+                                        color = TextSecondary
+                                    )
+                                } else {
+                                    val iconColor = if (!hasStreamingAddons) Color(0xFF3B82F6) else TextSecondary.copy(alpha = 0.5f)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .background(iconColor.copy(alpha = 0.1f), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (!hasStreamingAddons) Icons.Default.Settings else Icons.Default.Cloud,
+                                            contentDescription = null,
+                                            tint = iconColor,
+                                            modifier = Modifier.size(32.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if (!hasStreamingAddons) "No Streaming Addons" else "No sources found",
+                                        style = ArflixTypography.body.copy(
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Medium
+                                        ),
+                                        color = TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = if (!hasStreamingAddons)
+                                            "Go to Settings \u2192 Addons to add\na streaming addon"
+                                        else
+                                            "Try adding more addons",
+                                        style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                                        color = TextSecondary.copy(alpha = 0.6f),
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = if (!hasStreamingAddons) "No Streaming Addons" else "No sources found",
-                                    style = ArflixTypography.body.copy(
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Medium
-                                    ),
-                                    color = TextSecondary
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = if (!hasStreamingAddons)
-                                        "Go to Settings \u2192 Addons to add\na streaming addon"
-                                    else
-                                        "Try adding more addons",
-                                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                                    color = TextSecondary.copy(alpha = 0.6f),
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
                             }
                         }
                     } else {
@@ -612,24 +613,8 @@ fun StreamSelector(
                     }
 
                     // Stream list or loading/empty states
-                    if (isLoading) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                LoadingIndicator(color = Pink, size = 40.dp)
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = stringResource(R.string.finding_sources),
-                                    style = ArflixTypography.body.copy(fontSize = 14.sp),
-                                    color = TextSecondary
-                                )
-                            }
-                        }
-                    } else if (streams.isEmpty()) {
+                    if (streams.isEmpty()) {
+                        val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0)
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -643,39 +628,52 @@ fun StreamSelector(
                                     .border(1.dp, GlassBorder, RoundedCornerShape(16.dp))
                                     .padding(32.dp)
                             ) {
-                                val iconColor = if (!hasStreamingAddons) Color(0xFF3B82F6) else TextSecondary.copy(alpha = 0.5f)
-                                Box(
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .background(iconColor.copy(alpha = 0.1f), CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = if (!hasStreamingAddons) Icons.Default.Settings else Icons.Default.Cloud,
-                                        contentDescription = null,
-                                        tint = iconColor,
-                                        modifier = Modifier.size(24.dp)
+                                if (stillSearching) {
+                                    LoadingIndicator(color = Pink, size = 40.dp)
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = if (totalAddons > 0) "Searching addons ($completedAddons/$totalAddons)..." else stringResource(R.string.finding_sources),
+                                        style = ArflixTypography.body.copy(
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium
+                                        ),
+                                        color = TextSecondary
+                                    )
+                                } else {
+                                    val iconColor = if (!hasStreamingAddons) Color(0xFF3B82F6) else TextSecondary.copy(alpha = 0.5f)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .background(iconColor.copy(alpha = 0.1f), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (!hasStreamingAddons) Icons.Default.Settings else Icons.Default.Cloud,
+                                            contentDescription = null,
+                                            tint = iconColor,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = if (!hasStreamingAddons) "No Streaming Addons" else "No sources found",
+                                        style = ArflixTypography.body.copy(
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium
+                                        ),
+                                        color = TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = if (!hasStreamingAddons)
+                                            "Go to Settings \u2192 Addons to add\na streaming addon"
+                                        else
+                                            "Try adding more addons",
+                                        style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                                        color = TextSecondary.copy(alpha = 0.6f),
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = if (!hasStreamingAddons) "No Streaming Addons" else "No sources found",
-                                    style = ArflixTypography.body.copy(
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium
-                                    ),
-                                    color = TextSecondary
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = if (!hasStreamingAddons)
-                                        "Go to Settings \u2192 Addons to add\na streaming addon"
-                                    else
-                                        "Try adding more addons",
-                                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                                    color = TextSecondary.copy(alpha = 0.6f),
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
                             }
                         }
                     } else {
@@ -721,7 +719,8 @@ private data class SourcePresentation(
     val qualityColor: Color,
     val sizeBytes: Long,
     val sortCached: Boolean,
-    val sortDirect: Boolean
+    val sortDirect: Boolean,
+    val description: String? = null
 )
 
 
@@ -900,8 +899,28 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         qualityColor = qualityColor,
         sizeBytes = getSizeBytes(stream),
         sortCached = stream.behaviorHints?.cached == true,
-        sortDirect = !stream.url.isNullOrBlank() && stream.url.startsWith("http", true)
+        sortDirect = !stream.url.isNullOrBlank() && stream.url.startsWith("http", true),
+        description = cleanStreamDescription(stream.description, title)
     )
+}
+
+private fun cleanStreamDescription(raw: String?, title: String): String? {
+    if (raw.isNullOrBlank()) return null
+    val sizeLinePattern = Regex("""^[╰└].*\d+(\.\d+)?\s*(GB|MB|KB|TB).*$""", RegexOption.IGNORE_CASE)
+    val channelTagPattern = Regex("""^\[.+]$""")
+    val mdNoise = Regex("""[`*_]{1,4}""")
+    val cleaned = raw.lines()
+        .map { it.trim() }
+        .filter { line ->
+            line.isNotBlank() &&
+            line != "None" &&
+            !line.equals(title, ignoreCase = true) &&
+            !sizeLinePattern.matches(line) &&
+            !channelTagPattern.matches(line)
+        }
+        .joinToString("\n") { line -> line.replace(mdNoise, "").trim() }
+        .trim()
+    return cleaned.takeIf { it.isNotBlank() }
 }
 
 @Composable
@@ -996,6 +1015,16 @@ private fun MobileStreamCard(
 
             Spacer(modifier = Modifier.height(8.dp))
             SourceMetadataChips(presentation = presentation, compact = true)
+            if (!presentation.description.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = presentation.description,
+                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                    color = TextSecondary.copy(alpha = 0.75f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
         if (isSelected) {
@@ -1159,6 +1188,16 @@ private fun GlassyStreamCard(
 
                 Spacer(modifier = Modifier.height(8.dp))
                 SourceMetadataChips(presentation = presentation, compact = false)
+                if (!presentation.description.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = presentation.description,
+                        style = ArflixTypography.caption.copy(fontSize = 11.sp),
+                        color = TextSecondary.copy(alpha = 0.7f),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             if (isSelected) {
