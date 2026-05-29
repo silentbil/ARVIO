@@ -10,6 +10,8 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -393,7 +395,10 @@ private suspend fun androidx.compose.foundation.lazy.LazyListState.animateHomeSc
         animate(
             initialValue = 0f,
             targetValue = deltaPx,
-            animationSpec = tween(durationMillis = durationMillis, easing = FastOutSlowInEasing)
+            animationSpec = spring(
+                dampingRatio = 0.85f,
+                stiffness = 200f
+            )
         ) { value, _ ->
             val step = value - previousValue
             if (abs(step) > 0.01f) {
@@ -1119,6 +1124,9 @@ fun HomeScreen(
             clockFormat = uiState.clockFormat,
             syncStatus = uiState.syncStatus,
             hasUpdateBadge = uiState.hasUpdateBadge,
+            categoryHasMoreMap = uiState.categoryHasMoreMap,
+            smoothScrolling = uiState.smoothScrolling,
+            onLoadMoreCategory = { viewModel.loadNextPageForCategory(it) },
             onItemFocusedPrefetch = {},
             onMobileCategoryVisiblePosition = { categoryId, lastVisibleItemIndex ->
                 viewModel.onMobileCategoryVisiblePosition(categoryId, lastVisibleItemIndex)
@@ -2246,6 +2254,9 @@ private fun HomeInputLayer(
     clockFormat: String = "24h",
     syncStatus: com.arflix.tv.data.repository.CloudSyncStatus = com.arflix.tv.data.repository.CloudSyncStatus.NOT_SIGNED_IN,
     hasUpdateBadge: Boolean = false,
+    categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
+    smoothScrolling: Boolean = true,
+    onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
     onMobileCategoryVisiblePosition: (String, Int) -> Unit = { _, _ -> },
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit,
@@ -2341,7 +2352,8 @@ private fun HomeInputLayer(
         }
     }
 
-    val focusedRowItemCount = categories.getOrNull(focusState.currentRowIndex)?.items?.size ?: 0
+    val focusedCategory = categories.getOrNull(focusState.currentRowIndex)
+    val focusedRowItemCount = focusedCategory?.items?.size ?: 0
     LaunchedEffect(focusState.currentRowIndex, focusedRowItemCount) {
         if (focusedRowItemCount <= 0) {
             if (focusState.currentItemIndex != 0) focusState.currentItemIndex = 0
@@ -2596,6 +2608,9 @@ private fun HomeInputLayer(
             fastScrollThresholdMs = fastScrollThresholdMs,
             usePosterCards = usePosterCards,
             isMobile = isMobile,
+            categoryHasMoreMap = categoryHasMoreMap,
+            smoothScrolling = smoothScrolling,
+            onLoadMoreCategory = onLoadMoreCategory,
             onItemFocusedPrefetch = onItemFocusedPrefetch,
             heroItem = heroItem,
             heroOverviewOverride = heroOverviewOverride,
@@ -2632,6 +2647,9 @@ private fun HomeRowsLayer(
     fastScrollThresholdMs: Long,
     usePosterCards: Boolean,
     isMobile: Boolean = false,
+    categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
+    smoothScrolling: Boolean = true,
+    onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
     heroItem: MediaItem? = null,
     heroOverviewOverride: String? = null,
@@ -2648,6 +2666,8 @@ private fun HomeRowsLayer(
             cardLogoUrls = cardLogoUrls,
             contentStartPadding = contentStartPadding,
             usePosterCards = usePosterCards,
+            categoryHasMoreMap = categoryHasMoreMap,
+            onLoadMoreCategory = onLoadMoreCategory,
             onNavigateToDetails = onNavigateToDetails,
             onItemClick = onItemClick,
             onItemLongClick = onItemLongClick,
@@ -2670,6 +2690,9 @@ private fun HomeRowsLayer(
             contentStartPadding = contentStartPadding,
             fastScrollThresholdMs = fastScrollThresholdMs,
             usePosterCards = usePosterCards,
+            categoryHasMoreMap = categoryHasMoreMap,
+            smoothScrolling = smoothScrolling,
+            onLoadMoreCategory = onLoadMoreCategory,
             onItemFocusedPrefetch = onItemFocusedPrefetch,
             onItemClick = onItemClick
         )
@@ -2683,6 +2706,8 @@ private fun MobileHomeRowsLayer(
     cardLogoUrls: Map<String, String>,
     contentStartPadding: androidx.compose.ui.unit.Dp,
     usePosterCards: Boolean,
+    categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
+    onLoadMoreCategory: (String) -> Unit = {},
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onItemClick: (MediaItem) -> Unit,
     onItemLongClick: ((MediaItem, Boolean) -> Unit)? = null,
@@ -2749,6 +2774,27 @@ private fun MobileHomeRowsLayer(
                     )
                 }
 
+                val rowHasMore = categoryHasMoreMap[category.id] == true
+                val isPortrait = if (isCollectionRow) {
+                    category.items.firstOrNull()?.collectionTileShape == CollectionTileShape.POSTER
+                } else {
+                    rowUsePosterCards
+                }
+                val skeletonCount = if (isPortrait) 12 else 7
+                val itemsToRender = remember(category.items, rowHasMore, isPortrait) {
+                    if (rowHasMore) {
+                        category.items + List(skeletonCount) { idx ->
+                            MediaItem(
+                                id = -1000 - idx,
+                                title = "",
+                                isPlaceholder = true
+                            )
+                        }
+                    } else {
+                        category.items
+                    }
+                }
+
                 // Horizontal card row with touch scrolling
                 LazyRow(
                     state = rowState,
@@ -2762,13 +2808,25 @@ private fun MobileHomeRowsLayer(
                     horizontalArrangement = Arrangement.spacedBy(mobileItemSpacing)
                 ) {
                     itemsIndexed(
-                        category.items,
+                        itemsToRender,
                         key = { _, item ->
-                            val episodeSuffix = if (item.nextEpisode != null) "_S${item.nextEpisode.seasonNumber}E${item.nextEpisode.episodeNumber}" else ""
-                            "${item.mediaType.name}-${item.id}${episodeSuffix}"
+                            if (item.isPlaceholder) "placeholder_${category.id}_${item.id}"
+                            else {
+                                val episodeSuffix = if (item.nextEpisode != null) "_S${item.nextEpisode.seasonNumber}E${item.nextEpisode.episodeNumber}" else ""
+                                "${item.mediaType.name}-${item.id}${episodeSuffix}"
+                            }
                         },
-                        contentType = { _, item -> "${item.mediaType.name}_mobile_card" }
+                        contentType = { _, item -> if (item.isPlaceholder) "placeholder_card" else "${item.mediaType.name}_mobile_card" }
                     ) { index, item ->
+                        if (item.isPlaceholder) {
+                            LaunchedEffect(item.id) {
+                                onLoadMoreCategory(category.id)
+                            }
+                        } else if (rowHasMore && index >= category.items.size - 5) {
+                            LaunchedEffect(category.items.size) {
+                                onLoadMoreCategory(category.id)
+                            }
+                        }
                         if (isRanked && index < 10) {
                             Box(
                                 modifier = Modifier.width(rowMobileItemWidth)
@@ -2832,6 +2890,9 @@ private fun TvHomeRowsLayer(
     contentStartPadding: androidx.compose.ui.unit.Dp,
     fastScrollThresholdMs: Long,
     usePosterCards: Boolean,
+    categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
+    smoothScrolling: Boolean = true,
+    onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
     onItemClick: (MediaItem) -> Unit
 ) {
@@ -2881,6 +2942,18 @@ private fun TvHomeRowsLayer(
     val localCurrentRowIndex = (currentRowIndex - rowWindowStart)
         .coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
 
+    val density = LocalDensity.current
+    val rowLayoutModes = renderedCategories.map { category ->
+        rememberCatalogueRowLayoutMode("home:${category.id}") == CardLayoutMode.POSTER
+    }
+    val categoryHeightsPx = remember(renderedCategories, rowLayoutModes, density) {
+        renderedCategories.mapIndexed { idx, category ->
+            val usePoster = rowLayoutModes.getOrNull(idx) ?: false
+            val heightDp = if (usePoster) 252.dp else 202.dp
+            with(density) { heightDp.toPx() }
+        }
+    }
+
     var isFastScrolling by remember { mutableStateOf(false) }
     LaunchedEffect(focusState) {
         snapshotFlow { focusState.lastNavEventTime }
@@ -2924,11 +2997,26 @@ private fun TvHomeRowsLayer(
             if (initialPlacement || jumpDistance > 7) {
                 listState.scrollToItem(index = targetIndex, scrollOffset = 0)
             } else {
-                val visibleTarget = listState.layoutInfo.visibleItemsInfo
-                    .firstOrNull { it.index == targetIndex }
-                if (visibleTarget != null) {
+                if (smoothScrolling) {
+                    val visibleTarget = listState.layoutInfo.visibleItemsInfo
+                        .firstOrNull { it.index == targetIndex }
+                    val deltaPx = if (visibleTarget != null) {
+                        visibleTarget.offset.toFloat()
+                    } else {
+                        if (targetIndex < currentIndex) {
+                            val intermediateSum = (targetIndex until currentIndex).sumOf { idx ->
+                                categoryHeightsPx.getOrNull(idx)?.toDouble() ?: (202.0 * density.density)
+                            }.toFloat()
+                            -(intermediateSum + currentOffset)
+                        } else {
+                            val intermediateSum = (currentIndex until targetIndex).sumOf { idx ->
+                                categoryHeightsPx.getOrNull(idx)?.toDouble() ?: (202.0 * density.density)
+                            }.toFloat()
+                            intermediateSum - currentOffset
+                        }
+                    }
                     listState.animateHomeScrollDelta(
-                        deltaPx = visibleTarget.offset.toFloat(),
+                        deltaPx = deltaPx,
                         durationMillis = if (jumpDistance >= 3) 180 else 150
                     )
                     if (
@@ -2991,13 +3079,11 @@ private fun TvHomeRowsLayer(
                             isRanked = category.title.contains("Top 10", ignoreCase = true),
                             usePosterCards = rowUsePosterCards,
                             startPadding = contentStartPadding,
+                            categoryHasMore = categoryHasMoreMap[category.id] == true,
+                            smoothScrolling = smoothScrolling,
+                            onLoadMore = { onLoadMoreCategory(category.id) },
                             focusedItemIndex = if (rowIsFocused) focusState.currentItemIndex else -1,
                             isFastScrolling = rowIsFocused && isFastScrolling,
-                            useViewportFocusOverlay = rowIsFocused && homeViewportFocusOverlayActive(
-                                category = category,
-                                focusedItemIndex = focusState.currentItemIndex,
-                                usePosterCards = rowUsePosterCards
-                            ),
                             onItemClick = onItemClick,
                             onItemFocused = { item, itemIdx ->
                                 focusState.currentRowIndex = actualRowIndex
@@ -3009,38 +3095,8 @@ private fun TvHomeRowsLayer(
                     }
                 }
             }
-            val focusedCategory = categories.getOrNull(focusState.currentRowIndex)
-            if (
-                !focusState.isSidebarFocused &&
-                focusedCategory != null
-            ) {
-                val focusedRowKey = remember(focusedCategory.id) { "home:${focusedCategory.id}" }
-                val focusedRowUsePosterCards = rememberCatalogueRowLayoutMode(focusedRowKey) == CardLayoutMode.POSTER
-                
-                if (homeViewportFocusOverlayActive(
-                    category = focusedCategory,
-                    focusedItemIndex = focusState.currentItemIndex,
-                    usePosterCards = focusedRowUsePosterCards
-                )) {
-                    HomeViewportRailFocusOverlay(
-                        category = focusedCategory,
-                        usePosterCards = focusedRowUsePosterCards,
-                        startPadding = contentStartPadding
-                    )
-                }
-            }
         }
     }
-}
-
-@Composable
-private fun homeViewportFocusOverlayActive(
-    category: Category,
-    focusedItemIndex: Int,
-    usePosterCards: Boolean
-): Boolean {
-    if (focusedItemIndex < 0 || category.items.isEmpty()) return false
-    return category.items.size > 1 && focusedItemIndex <= category.items.lastIndex
 }
 
 @Composable
@@ -3052,40 +3108,6 @@ private fun lockedHomeRailEndPadding(
     val configuration = LocalConfiguration.current
     return (configuration.screenWidthDp.dp - startPadding - itemWidth)
         .coerceAtLeast(minimum)
-}
-
-@Composable
-private fun HomeViewportRailFocusOverlay(
-    category: Category,
-    usePosterCards: Boolean,
-    startPadding: androidx.compose.ui.unit.Dp
-) {
-    val isCollectionRow = category.id.startsWith("collection_row_")
-    val effectivePosterMode = if (isCollectionRow) {
-        category.items.firstOrNull()?.collectionTileShape == CollectionTileShape.POSTER
-    } else {
-        usePosterCards
-    }
-    val targetWidth = if (effectivePosterMode) 119.dp else 210.dp
-    val targetHeight = if (effectivePosterMode) 119.dp * (3f/2f) else 210.dp * (9f/16f)
-
-    ArvioFocusableSurface(
-        modifier = Modifier
-            .padding(start = startPadding, top = 48.dp)
-            .size(width = targetWidth, height = targetHeight)
-            .zIndex(8f),
-        shape = rememberArvioCardShape(ArvioSkin.radius.md),
-        backgroundColor = Color.Transparent,
-        outlineColor = ArvioSkin.colors.focusOutline,
-        outlineWidth = 2.5.dp,
-        focusedScale = 1f,
-        pressedScale = 0.97f,
-        animateFocus = false,
-        enableSystemFocus = false,
-        isFocusedOverride = true
-    ) {
-        // Viewport-level focus lane: rows and cards move under this ring.
-    }
 }
 
 @Composable
@@ -3267,9 +3289,11 @@ private fun ContentRow(
     isRanked: Boolean = false,
     usePosterCards: Boolean = false,
     startPadding: androidx.compose.ui.unit.Dp = 12.dp,
+    categoryHasMore: Boolean = false,
+    smoothScrolling: Boolean = true,
+    onLoadMore: () -> Unit = {},
     focusedItemIndex: Int,
     isFastScrolling: Boolean,
-    useViewportFocusOverlay: Boolean = false,
     onItemClick: (MediaItem) -> Unit,
     onItemFocused: (MediaItem, Int) -> Unit
 ) {
@@ -3297,10 +3321,11 @@ private fun ContentRow(
     val itemSpanPx = remember(density, itemWidth, itemSpacing) {
         with(density) { (itemWidth + itemSpacing).toPx().coerceAtLeast(1f) }
     }
-    val railFocusOverlayActive = !useViewportFocusOverlay &&
-        isCurrentRow && isScrollable && focusedItemIndex >= 0 && totalItems > 0 &&
-        focusedItemIndex <= maxFirstIndex
-    val focusedCardIndex = if (railFocusOverlayActive || useViewportFocusOverlay) {
+    val railFocusOverlayActive = isCurrentRow && isScrollable && focusedItemIndex >= 0 && totalItems > 0 &&
+        focusedItemIndex <= maxFirstIndex &&
+        focusedItemIndex == rowState.firstVisibleItemIndex &&
+        rowState.firstVisibleItemScrollOffset == 0
+    val focusedCardIndex = if (railFocusOverlayActive) {
         -1
     } else {
         focusedItemIndex
@@ -3338,11 +3363,13 @@ private fun ContentRow(
         val extraOffset = 0
 
         if (lastScrollIndex == scrollTargetIndex && lastScrollOffset == extraOffset) return@LaunchedEffect
-        if (lastScrollIndex == -1) {
+        val isFirstScroll = lastScrollIndex == -1
+        lastScrollIndex = scrollTargetIndex
+        lastScrollOffset = extraOffset
+
+        if (isFirstScroll) {
             // First time we jump directly to the correct position (no animation)
             rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-            lastScrollIndex = scrollTargetIndex
-            lastScrollOffset = extraOffset
             return@LaunchedEffect
         }
 
@@ -3357,28 +3384,30 @@ private fun ContentRow(
             targetOutsideViewport ||
             offsetDelta > 1
         ) {
-            val deltaPx = ((scrollTargetIndex - currentFirstIndex) * itemSpanPx) + (extraOffset - currentFirstOffset)
-            rowState.animateHomeScrollDelta(
-                deltaPx = deltaPx,
-                durationMillis = when {
-                    isFastScrolling -> 115
-                    jumpDistance >= 3 -> 180
-                    else -> 150
+            if (smoothScrolling) {
+                val deltaPx = ((scrollTargetIndex - currentFirstIndex) * itemSpanPx) + (extraOffset - currentFirstOffset)
+                rowState.animateHomeScrollDelta(
+                    deltaPx = deltaPx,
+                    durationMillis = when {
+                        isFastScrolling -> 115
+                        jumpDistance >= 3 -> 180
+                        else -> 150
+                    }
+                )
+                if (
+                    !isFastScrolling && (
+                        rowState.firstVisibleItemIndex != scrollTargetIndex ||
+                            abs(rowState.firstVisibleItemScrollOffset - extraOffset) > 6
+                        )
+                ) {
+                    rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
                 }
-            )
-            if (
-                !isFastScrolling && (
-                    rowState.firstVisibleItemIndex != scrollTargetIndex ||
-                        abs(rowState.firstVisibleItemScrollOffset - extraOffset) > 6
-                    )
-            ) {
-                rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+            } else {
+                rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
             }
         } else {
             rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
         }
-        lastScrollIndex = scrollTargetIndex
-        lastScrollOffset = extraOffset
     }
 
     Column(
@@ -3396,6 +3425,21 @@ private fun ContentRow(
                 style = ArflixTypography.sectionTitle.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold),
                 color = Color.White
             )
+        }
+
+        val skeletonCount = if (effectivePosterMode) 12 else 7
+        val itemsToRender = remember(category.items, categoryHasMore, effectivePosterMode) {
+            if (categoryHasMore) {
+                category.items + List(skeletonCount) { idx ->
+                    MediaItem(
+                        id = -1000 - idx,
+                        title = "",
+                        isPlaceholder = true
+                    )
+                }
+            } else {
+                category.items
+            }
         }
 
         // Cards row - clipped to hide previous items when scrolling
@@ -3419,18 +3463,29 @@ private fun ContentRow(
                 userScrollEnabled = false
             ) {
                 itemsIndexed(
-                    category.items,
+                    itemsToRender,
                     key = { _, item ->
-                        homeRowItemKey(item)
+                        if (item.isPlaceholder) "placeholder_${category.id}_${item.id}"
+                        else homeRowItemKey(item)
                     },
                     contentType = { index, item ->
                         when {
+                            item.isPlaceholder -> "placeholder_card"
                             isCollectionRow -> "collection_tile"
                             isRanked && index < 10 -> "${item.mediaType.name}_ranked_card"
                             else -> "${item.mediaType.name}_card"
                         }
                     }
                 ) { index, item ->
+                if (item.isPlaceholder) {
+                    LaunchedEffect(item.id) {
+                        onLoadMore()
+                    }
+                } else if (categoryHasMore && index >= category.items.size - 5) {
+                    LaunchedEffect(category.items.size) {
+                        onLoadMore()
+                    }
+                }
                 val itemIsFocused = isCurrentRow && index == focusedCardIndex
                 val onCardFocused = remember(item, index) {
                     { latestOnItemFocused.value(item, index) }
@@ -3457,7 +3512,7 @@ private fun ContentRow(
                             raiseOnFocus = !isFastScrolling,
                             showProgress = false,
                             showTitle = isCollectionRow && !item.collectionHideTitle,
-                            isFocusedOverride = itemIsFocused && !railFocusOverlayActive && !useViewportFocusOverlay,
+                            isFocusedOverride = itemIsFocused && !railFocusOverlayActive,
                             focusedScale = 1f,
                             enableFocusedImageSwap = !isCollectionRow && !isFastScrolling,
                             animateFocus = false,
@@ -3488,7 +3543,7 @@ private fun ContentRow(
                         raiseOnFocus = !isFastScrolling,
                         showProgress = isContinueWatching,
                         showTitle = isCollectionRow && !item.collectionHideTitle,
-                        isFocusedOverride = itemIsFocused && !railFocusOverlayActive && !useViewportFocusOverlay,
+                        isFocusedOverride = itemIsFocused && !railFocusOverlayActive,
                         focusedScale = 1f,
                         enableFocusedImageSwap = !isCollectionRow && !isFastScrolling,
                         animateFocus = false,
