@@ -717,15 +717,18 @@ class IptvRepository @Inject constructor(
         val ordered = candidates.drop(safeAttempt) + candidates.take(safeAttempt)
         return withContext(Dispatchers.IO) {
             ordered.take(10).forEach { candidate ->
-                val status = probePlaybackUrl(candidate, channel.requestHeaders)
-                if (status in 200..399) {
+                val probe = probePlaybackUrl(candidate, channel.requestHeaders)
+                if (probe != null && probe.isPlayable) {
                     if (candidate != ordered.firstOrNull()) {
-                        System.err.println("[IPTV-Catchup] selected fallback status=$status url=${redactIptvUrl(candidate)}")
+                        System.err.println("[IPTV-Catchup] selected fallback status=${probe.statusCode} url=${redactIptvUrl(candidate)}")
                     }
                     return@withContext candidate
                 }
-                if (status != null) {
-                    System.err.println("[IPTV-Catchup] rejected status=$status url=${redactIptvUrl(candidate)}")
+                if (probe != null) {
+                    System.err.println(
+                        "[IPTV-Catchup] rejected status=${probe.statusCode} reason=${probe.reason} " +
+                            "url=${redactIptvUrl(candidate)}"
+                    )
                 }
             }
             candidates.getOrNull(safeAttempt) ?: candidates.first()
@@ -992,7 +995,13 @@ class IptvRepository @Inject constructor(
             "&$streamParameter=$streamId&start=${urlEncodeQuery(startStr)}&duration=$durationMin"
     }
 
-    private fun probePlaybackUrl(url: String, headers: Map<String, String>): Int? {
+    private data class PlaybackProbeResult(
+        val statusCode: Int,
+        val isPlayable: Boolean,
+        val reason: String
+    )
+
+    private fun probePlaybackUrl(url: String, headers: Map<String, String>): PlaybackProbeResult? {
         return runCatching {
             val builder = Request.Builder()
                 .url(url)
@@ -1007,7 +1016,17 @@ class IptvRepository @Inject constructor(
                 }
             }
             xtreamGuideHttpClient.newCall(builder.build()).execute().use { response ->
-                response.code
+                val statusCode = response.code
+                if (statusCode !in 200..399) {
+                    return@use PlaybackProbeResult(statusCode, isPlayable = false, reason = "http")
+                }
+
+                val contentType = response.header("Content-Type").orEmpty().lowercase(Locale.US)
+                if (contentType.contains("text/html") || contentType.contains("application/json")) {
+                    return@use PlaybackProbeResult(statusCode, isPlayable = false, reason = "content-type:$contentType")
+                }
+
+                PlaybackProbeResult(statusCode, isPlayable = true, reason = "ok")
             }
         }.getOrNull()
     }
@@ -4443,10 +4462,14 @@ class IptvRepository @Inject constructor(
             ?: parsed.queryParameter("pwd")?.trim()?.ifBlank { null }
             ?: ""
 
-        // Try extracting from path if query params are missing (common for /live/user/pass/id format)
+        // Try extracting from path if query params are missing.
         if (username.isBlank() || password.isBlank()) {
             val segments = parsed.pathSegments
-            if (segments.size >= 4) {
+            val knownPrefix = segments.firstOrNull()?.lowercase(Locale.US)
+            if (segments.size >= 4 && knownPrefix in setOf("live", "movie", "series")) {
+                username = segments[1]
+                password = segments[2]
+            } else if (segments.size >= 3 && segments.last().substringBefore('.').toIntOrNull() != null) {
                 username = segments[segments.size - 3]
                 password = segments[segments.size - 2]
             }
@@ -4835,11 +4858,20 @@ class IptvRepository @Inject constructor(
         if (ch.id.startsWith("xtream:")) {
             return ch.id.removePrefix("xtream:").toIntOrNull()
         }
-        val path = ch.streamUrl.substringBefore('?').substringBefore('#')
-        if (path.contains("/live/", ignoreCase = true)) {
-            return path.substringAfterLast('/')
-                .substringBefore('.')
-                .toIntOrNull()
+        val parsed = ch.streamUrl.toHttpUrlOrNull()
+        if (parsed != null) {
+            val segments = parsed.pathSegments
+            val knownPrefix = segments.firstOrNull()?.lowercase(Locale.US)
+            if (knownPrefix in setOf("live", "movie", "series") && segments.size >= 4) {
+                return segments.lastOrNull()
+                    ?.substringBefore('.')
+                    ?.toIntOrNull()
+            }
+            if (resolveXtreamCredentials(ch.streamUrl) != null && segments.size >= 3) {
+                return segments.lastOrNull()
+                    ?.substringBefore('.')
+                    ?.toIntOrNull()
+            }
         }
         return null
     }
