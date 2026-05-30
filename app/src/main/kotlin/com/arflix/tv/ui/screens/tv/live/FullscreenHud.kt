@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +44,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.coroutines.delay
 
 /**
@@ -55,8 +61,15 @@ fun FullscreenHud(
     channel: EnrichedChannel?,
     nowNext: IptvNowNext?,
     pokeSignal: Int,
+    isCatchupMode: Boolean = false,
+    isPlaying: Boolean = true,
+    playbackPositionMs: Long = 0L,
+    playbackDurationMs: Long = 0L,
     onBackClick: (() -> Unit)? = null,
     onGuideClick: (() -> Unit)? = null,
+    onPlayPauseClick: (() -> Unit)? = null,
+    onSeekBy: ((Long) -> Unit)? = null,
+    onGoLiveClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var visible by remember { mutableStateOf(true) }
@@ -169,16 +182,23 @@ fun FullscreenHud(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text("NOW", style = LiveType.SectionTag.copy(color = LiveColors.Accent))
+                        Text(
+                            text = if (isCatchupMode) "CATCHUP" else "NOW",
+                            style = LiveType.SectionTag.copy(color = LiveColors.Accent),
+                        )
                         Text(
                             text = formatTimeWindow(now),
                             style = LiveType.TimeMono.copy(color = LiveColors.Fg),
                         )
                         Spacer(Modifier.weight(1f))
-                        val remaining = remainingLabel(now)
-                        if (remaining.isNotBlank()) {
+                        val positionLabel = if (isCatchupMode && playbackDurationMs > 0L) {
+                            "${formatPlaybackDuration(playbackPositionMs)} / ${formatPlaybackDuration(playbackDurationMs)}"
+                        } else {
+                            remainingLabel(now)
+                        }
+                        if (positionLabel.isNotBlank()) {
                             Text(
-                                text = remaining,
+                                text = positionLabel,
                                 style = LiveType.TimeMono.copy(color = LiveColors.Accent),
                             )
                         }
@@ -208,7 +228,11 @@ fun FullscreenHud(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    val progress = progressOf(now)
+                    val progress = if (isCatchupMode && playbackDurationMs > 0L) {
+                        (playbackPositionMs.toFloat() / playbackDurationMs.toFloat()).coerceIn(0f, 1f)
+                    } else {
+                        progressOf(now)
+                    }
                     if (progress != null) {
                         LinearProgressIndicator(
                             progress = { progress },
@@ -220,7 +244,34 @@ fun FullscreenHud(
                             trackColor = LiveColors.Panel,
                         )
                     }
-                    if (next != null) {
+                    if (isCatchupMode) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            HudIconButton(
+                                icon = Icons.Filled.FastRewind,
+                                contentDescription = "Rewind 30 seconds",
+                                onClick = { onSeekBy?.invoke(-30_000L) },
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            HudIconButton(
+                                icon = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                emphasis = true,
+                                onClick = { onPlayPauseClick?.invoke() },
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            HudIconButton(
+                                icon = Icons.Filled.FastForward,
+                                contentDescription = "Forward 30 seconds",
+                                onClick = { onSeekBy?.invoke(30_000L) },
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            HudActionButton("LIVE", onClick = { onGoLiveClick?.invoke() })
+                        }
+                    } else if (next != null) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -270,6 +321,42 @@ fun FullscreenHud(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HudIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    emphasis: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(if (emphasis) 42.dp else 36.dp)
+            .clip(CircleShape)
+            .background(if (emphasis) LiveColors.Accent else LiveColors.Panel)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (emphasis) LiveColors.Bg else LiveColors.Fg,
+            modifier = Modifier.size(if (emphasis) 24.dp else 20.dp),
+        )
+    }
+}
+
+private fun formatPlaybackDuration(ms: Long): String {
+    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%02d:%02d".format(minutes, seconds)
     }
 }
 

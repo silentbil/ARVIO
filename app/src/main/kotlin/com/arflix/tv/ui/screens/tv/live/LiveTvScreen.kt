@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -768,6 +769,27 @@ fun LiveTvScreen(
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
+    var playerPositionMs by remember { mutableLongStateOf(0L) }
+    var playerDurationMs by remember { mutableLongStateOf(0L) }
+    var playerIsPlaying by remember { mutableStateOf(false) }
+    LaunchedEffect(exoPlayer, playingCatchupProgram) {
+        while (true) {
+            val programDuration = playingCatchupProgram
+                ?.let { (it.endUtcMillis - it.startUtcMillis).coerceAtLeast(0L) }
+                ?: 0L
+            val exoDuration = exoPlayer.duration
+                .takeIf { it > 0L && it != C.TIME_UNSET }
+                ?: 0L
+            val duration = maxOf(programDuration, exoDuration)
+            playerDurationMs = duration
+            playerPositionMs = exoPlayer.currentPosition
+                .coerceAtLeast(0L)
+                .let { position -> if (duration > 0L) position.coerceAtMost(duration) else position }
+            playerIsPlaying = exoPlayer.isPlaying
+            delay(if (playingCatchupProgram != null) 500L else 1_500L)
+        }
+    }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, ev ->
@@ -830,6 +852,35 @@ fun LiveTvScreen(
                 severity = PlaybackDiagnosticSeverity.Info,
             )
         }
+    }
+
+    fun toggleCatchupPlayback() {
+        if (playingCatchupProgram == null) return
+        if (exoPlayer.isPlaying) {
+            exoPlayer.pause()
+        } else {
+            exoPlayer.play()
+        }
+        hudPokeSignal++
+    }
+
+    fun seekCatchupBy(deltaMs: Long) {
+        if (playingCatchupProgram == null) return
+        val duration = playerDurationMs
+        val target = (exoPlayer.currentPosition + deltaMs)
+            .coerceAtLeast(0L)
+            .let { if (duration > 0L) it.coerceAtMost(duration) else it }
+        exoPlayer.seekTo(target)
+        exoPlayer.play()
+        hudPokeSignal++
+    }
+
+    fun returnCatchupToLive() {
+        if (playingCatchupProgram == null) return
+        playingCatchupProgram = null
+        fullscreenGuideOpen = false
+        exoPlayer.play()
+        hudPokeSignal++
     }
 
     // When the selected channel changes, swap media item.
@@ -1335,6 +1386,33 @@ fun LiveTvScreen(
                                 else -> false
                             }
                         } else {
+                        if (playingCatchupProgram != null && ev.nativeKeyEvent.repeatCount == 0) {
+                            when (ev.nativeKeyEvent.keyCode) {
+                                AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                                AndroidKeyEvent.KEYCODE_SPACE -> {
+                                    toggleCatchupPlayback()
+                                    return@onPreviewKeyEvent true
+                                }
+                                AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                    exoPlayer.play()
+                                    hudPokeSignal++
+                                    return@onPreviewKeyEvent true
+                                }
+                                AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                    exoPlayer.pause()
+                                    hudPokeSignal++
+                                    return@onPreviewKeyEvent true
+                                }
+                                AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
+                                    seekCatchupBy(-30_000L)
+                                    return@onPreviewKeyEvent true
+                                }
+                                AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                                    seekCatchupBy(30_000L)
+                                    return@onPreviewKeyEvent true
+                                }
+                            }
+                        }
                         if (ev.nativeKeyEvent.repeatCount == 0) {
                             digitForTvKeyCode(ev.nativeKeyEvent.keyCode)?.let { digit ->
                                 hudPokeSignal++
@@ -1346,7 +1424,24 @@ fun LiveTvScreen(
                             Key.DirectionUp -> { zap(+1); hudPokeSignal++; true }
                             Key.DirectionDown -> { zap(-1); hudPokeSignal++; true }
                             Key.DirectionCenter, Key.Enter -> { openFullscreenGuide(); true }
-                            Key.DirectionLeft, Key.DirectionRight -> { hudPokeSignal++; false }
+                            Key.DirectionLeft -> {
+                                if (playingCatchupProgram != null) {
+                                    seekCatchupBy(-10_000L)
+                                    true
+                                } else {
+                                    hudPokeSignal++
+                                    false
+                                }
+                            }
+                            Key.DirectionRight -> {
+                                if (playingCatchupProgram != null) {
+                                    seekCatchupBy(10_000L)
+                                    true
+                                } else {
+                                    hudPokeSignal++
+                                    false
+                                }
+                            }
                             else -> false
                         }
                         }
@@ -1380,8 +1475,15 @@ fun LiveTvScreen(
                         channel = playingChannel,
                         nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
+                        isCatchupMode = playingCatchupProgram != null,
+                        isPlaying = playerIsPlaying,
+                        playbackPositionMs = playerPositionMs,
+                        playbackDurationMs = playerDurationMs,
                         onBackClick = if (isTouchDevice) { { exitFullScreenPlayback() } } else null,
                         onGuideClick = { openFullscreenGuide() },
+                        onPlayPauseClick = { toggleCatchupPlayback() },
+                        onSeekBy = { delta -> seekCatchupBy(delta) },
+                        onGoLiveClick = { returnCatchupToLive() },
                         modifier = Modifier,
                     )
                 }
