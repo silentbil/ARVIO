@@ -267,31 +267,15 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
 
-        val initialChannels = withContext(Dispatchers.Default) {
-            buildInitialCategoryChannels(
+        val initialValue = withContext(Dispatchers.Default) {
+            buildFastStartupChannelState(
                 channels = snapshot,
-                categoryId = selectedCategoryId,
                 favorites = favSet,
                 recents = recents.value,
-                hiddenGroups = hiddenGroupSet,
-                limit = snapshot.size,
-            )
-        }
-        val initialIndex = withContext(Dispatchers.Default) { buildCategoryIndex(initialChannels, hiddenGroupSet) }
-        val initialTree = withContext(Dispatchers.Default) {
-            buildCategoryTree(
-                channels = initialChannels,
-                favoritesCount = favSet.count { initialIndex.isVisibleNonAdultChannel(it) },
-                recentCount = recents.value.count { initialIndex.isVisibleNonAdultChannel(it) },
                 hiddenGroups = hiddenGroupSet,
                 groupOrder = state.snapshot.groupOrder,
             )
         }
-        val initialValue = EnrichedChannels(
-            all = initialChannels,
-            tree = initialTree,
-            index = initialIndex,
-        )
         enrichedState.value = initialValue
         if (snapshot.size > 10_000) {
             viewModel.cachedEnrichedChannels = initialValue

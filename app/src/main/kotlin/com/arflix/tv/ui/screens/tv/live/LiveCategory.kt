@@ -271,7 +271,31 @@ fun IptvChannel.enrich(number: Int): EnrichedChannel {
 // ─────────────────────────────────────────────────────────────────────────
 
 fun IptvChannel.enrichForFastStartup(number: Int): EnrichedChannel {
-    return enrich(number)
+    val rawCountry = country
+        ?.trim()
+        ?.uppercase()
+        ?.let { COUNTRY_ALIASES[it] ?: it }
+        ?.takeIf { it in KNOWN_COUNTRIES }
+    val lang = language
+        ?.trim()
+        ?.uppercase()
+        ?.take(2)
+        ?.takeIf { it.length == 2 }
+        ?: rawCountry
+        ?: "EN"
+    val quality = qualityFromLabel(qualityLabel) ?: qualityFromText(name)
+    val brand = LiveColors.BrandGeneral
+    return EnrichedChannel(
+        source = this,
+        number = providerChannelNumber?.trim()?.toIntOrNull() ?: number,
+        country = rawCountry,
+        genre = Genre.General,
+        quality = quality,
+        lang = lang,
+        brandBg = brand.bg,
+        brandFg = brand.fg,
+        isAdult = isAdultGroup(group, name),
+    )
 }
 
 data class LiveCategory(
@@ -768,6 +792,128 @@ private fun rawCategoryMatcher(
         }
     }
     return { ch -> !ch.traits().isAdult }
+}
+
+fun buildFastStartupChannelState(
+    channels: List<IptvChannel>,
+    favorites: Set<String>,
+    recents: Set<String>,
+    hiddenGroups: Set<String> = emptySet(),
+    groupOrder: List<String> = emptyList(),
+): EnrichedChannels {
+    if (channels.isEmpty()) return EnrichedChannels.Empty
+
+    val allChannels = ArrayList<EnrichedChannel>(channels.size)
+    val byId = LinkedHashMap<String, EnrichedChannel>(channels.size)
+    val buckets = LinkedHashMap<String, MutableList<EnrichedChannel>>()
+    val hiddenIds = LinkedHashSet<String>()
+    val playlistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
+    val hiddenPlaylistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
+    val hiddenPlaylistGroups = hiddenGroups.toHashSet()
+    val favoritesSet = favorites.toHashSet()
+    val recentsSet = recents.toHashSet()
+
+    var allCount = 0
+    var favoriteCount = 0
+    var recentCount = 0
+    var adultCount = 0
+    var ultraHdCount = 0
+
+    fun add(categoryId: String, channel: EnrichedChannel) {
+        buckets.getOrPut(categoryId) { ArrayList() }.add(channel)
+    }
+
+    channels.forEachIndexed { index, rawChannel ->
+        val channel = rawChannel.enrichForFastStartup(100 + index)
+        val playlistId = rawChannel.id.substringBefore(':')
+        val groupLabel = playlistGroupLabel(rawChannel.group)
+        val groupKey = playlistGroupKey(playlistId, groupLabel)
+        val groupId = playlistGroupCategoryId(playlistId, rawChannel.group)
+        val hidden = groupKey in hiddenPlaylistGroups
+
+        allChannels += channel
+        byId[channel.id] = channel
+        add(groupId, channel)
+
+        val targetCounts = if (hidden) hiddenPlaylistGroupCounts else playlistGroupCounts
+        val groupCount = targetCounts[groupId]?.second ?: 0
+        targetCounts[groupId] = groupLabel to (groupCount + 1)
+
+        if (hidden) {
+            hiddenIds += channel.id
+            return@forEachIndexed
+        }
+        if (channel.isAdult) {
+            adultCount += 1
+            add("adult", channel)
+            return@forEachIndexed
+        }
+
+        allCount += 1
+        add("all", channel)
+        if (channel.id in favoritesSet) favoriteCount += 1
+        if (channel.id in recentsSet) recentCount += 1
+        if (channel.quality == Quality.K4) {
+            ultraHdCount += 1
+            add("g-4k", channel)
+        }
+        channel.country?.takeIf { it.isNotBlank() }?.let { country ->
+            add(country, channel)
+        }
+    }
+
+    val autoGlobal = listOf(
+        LiveCategory("g-4k", "4K | Ultra HD", ultraHdCount, CategoryIcon.Grid),
+    ).filter { it.count > 0 }
+    val adultCategories = listOf(
+        LiveCategory("adult", "Adult", adultCount, CategoryIcon.Lock),
+    ).filter { it.count > 0 }
+    val top = listOf(
+        LiveCategory("fav", "Favorites", favoriteCount, CategoryIcon.Favorite),
+        LiveCategory("recent", "Recently Watched", recentCount, CategoryIcon.Recent),
+        LiveCategory(
+            id = "all",
+            label = "All Channels",
+            count = allCount,
+            iconToken = CategoryIcon.All,
+            children = autoGlobal + adultCategories,
+        ),
+    )
+    val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
+        LiveCategory(
+            id = id,
+            label = value.first,
+            count = value.second,
+            iconToken = CategoryIcon.Grid,
+            playlistGroupName = value.first,
+            playlistId = playlistIdFromGroupCategoryId(id),
+        )
+    }
+    val hidden = orderPlaylistGroups(hiddenPlaylistGroupCounts, groupOrder).map { (id, value) ->
+        LiveCategory(
+            id = id,
+            label = value.first,
+            count = value.second,
+            iconToken = CategoryIcon.Grid,
+            playlistGroupName = value.first,
+            playlistId = playlistIdFromGroupCategoryId(id),
+        )
+    }
+    return EnrichedChannels(
+        all = allChannels,
+        tree = LiveCategoryTree(
+            top = top,
+            global = LiveSection("playlist", "PLAYLIST", playlistGroups),
+            countries = LiveSection("matched", "MATCHED", emptyList()),
+            adult = LiveSection("adult", "ADULT", emptyList()),
+            hidden = LiveSection("hidden", "HIDDEN", hidden),
+        ),
+        index = LiveCategoryIndex(
+            byCategory = buckets.mapValues { (_, value) -> value.toList() },
+            byId = byId,
+            hiddenIds = hiddenIds,
+        ),
+    )
 }
 
 fun buildInitialCategoryChannels(
