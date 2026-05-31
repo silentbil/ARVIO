@@ -50,9 +50,7 @@ fun TrailerPlayer(
     modifier: Modifier = Modifier,
     delayMs: Long = 0L,
     volume: Float = 0f,
-    onPlayingChanged: (Boolean) -> Unit = {},
-    onFirstFrameRendered: () -> Unit = {},
-    onEnded: () -> Unit = {}
+    onPlayingChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     var shouldPlay by remember { mutableStateOf(false) }
@@ -84,6 +82,7 @@ fun TrailerPlayer(
         }
         if (videoUrl != null) {
             shouldPlay = true
+            onPlayingChanged(true)
         } else {
             onPlayingChanged(false)
         }
@@ -107,12 +106,7 @@ fun TrailerPlayer(
                         if (playbackState == Player.STATE_ENDED) {
                             shouldPlay = false
                             onPlayingChanged(false)
-                            onEnded()
                         }
-                    }
-                    override fun onRenderedFirstFrame() {
-                        onPlayingChanged(true)
-                        onFirstFrameRendered()
                     }
                 })
             }
