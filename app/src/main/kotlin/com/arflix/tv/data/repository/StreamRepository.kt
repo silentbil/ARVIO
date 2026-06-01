@@ -1403,7 +1403,6 @@ class StreamRepository @Inject constructor(
                     TAG,
                     "[StreamFetch][Episode] response addon=${addon.name} addonId=${addon.id} streams=${addonStreams.size} elapsedMs=${System.currentTimeMillis() - startedAt}"
                 )
-
                 if (addonStreams.isEmpty() && useKitsuFallback) {
                     val fallbackUrl = streamUrl(animeQuery)
                     Log.d(

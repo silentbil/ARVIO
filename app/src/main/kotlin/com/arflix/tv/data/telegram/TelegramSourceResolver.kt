@@ -64,20 +64,16 @@ class TelegramSourceResolver @Inject constructor(
     ): List<StreamSource> {
         val excludedIds = repository.getExcludedChatIds().first()
         val hebrewTitle = fetchHebrewTitle(imdbId, isMovie)
-        if (hebrewTitle != null) Log.d(TAG, "Hebrew title for '$title': '$hebrewTitle'")
 
         val queries = if (season != null && episode != null)
             matcher.buildSeriesQueries(title, season, episode, hebrewTitle)
         else
             matcher.buildMovieQueries(title, year, hebrewTitle)
 
-        Log.d(TAG, "Searching ${queries.size} queries for '$title' s=$season e=$episode")
-
         val seen = mutableSetOf<Pair<String, Long>>()
         val allMessages = mutableListOf<TelegramVideoMessage>()
 
         for (query in queries) {
-            Log.d(TAG, "Query: '$query'")
             try {
                 val results = repository.searchVideoMessages(query, MAX_RESULTS)
                     .filter { it.chatId !in excludedIds }
@@ -85,15 +81,13 @@ class TelegramSourceResolver @Inject constructor(
                     if (seen.add(msg.fileName to msg.fileSize)) allMessages.add(msg)
                 }
             } catch (e: TelegramApiException) {
-                throw e  // propagate flood-wait / API errors up to resolve()
+                throw e
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Search failed for '$query'", e)
             }
         }
-
-        Log.d(TAG, "Found ${allMessages.size} candidate files")
 
         return allMessages
             .mapNotNull { msg ->
@@ -106,7 +100,6 @@ class TelegramSourceResolver @Inject constructor(
                     season = season,
                     episode = episode
                 )
-                Log.d(TAG, "Score=$score file='${msg.fileName}' title='$title' year=$year s=$season e=$episode")
                 if (score < SCORE_THRESHOLD) null else msg
             }
             .map { msg ->
@@ -139,7 +132,6 @@ class TelegramSourceResolver @Inject constructor(
                 compareByDescending<StreamSource> { qualityTier(it.quality) }
                     .thenByDescending { it.sizeBytes ?: 0L }
             )
-            .also { Log.d(TAG, "Returning ${it.size} Telegram sources for '$title'") }
     }
 
     private fun showToast(message: String) {
