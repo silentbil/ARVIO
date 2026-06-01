@@ -401,7 +401,7 @@ tasks.register("downloadTdlibNatives") {
     onlyIf { !marker.exists() }
 
     doLast {
-        val base = "https://github.com/FaiBah/tdlib-android-prebuilt/releases/download/v1.8.64-e0943d068-Java"
+        val base = "https://github.com/FaiBah/tdlib-android-prebuilt/releases/download/v1.8.64-e0943d0-Java"
 
         fun fetch(urlStr: String, dest: File) {
             dest.parentFile.mkdirs()

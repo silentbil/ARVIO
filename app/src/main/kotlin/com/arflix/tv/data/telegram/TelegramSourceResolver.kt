@@ -1,12 +1,14 @@
 package com.arflix.tv.data.telegram
 
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.util.Constants
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
@@ -16,22 +18,18 @@ import javax.inject.Singleton
 class TelegramSourceResolver @Inject constructor(
     private val repository: TelegramRepository,
     private val matcher: TelegramSearchMatcher,
-    private val tmdbApi: TmdbApi
+    private val tmdbApi: TmdbApi,
+    @ApplicationContext private val context: Context
 ) {
     companion object {
         private const val TAG = "TelegramResolver"
         private const val SCORE_THRESHOLD = 55
         private const val SEARCH_TIMEOUT_MS = 20_000L
-        private const val MAX_RESULTS_PER_CHAT = 30
+        private const val MAX_RESULTS = 50
     }
 
     fun isEnabled(): Boolean = repository.isAuthenticated()
 
-    /**
-     * Search the user's Telegram channels/groups for video files matching the title.
-     * Returns a list of StreamSource objects ready for the source selector.
-     * Returns empty if Telegram is not authenticated or TDLib is unavailable.
-     */
     suspend fun resolve(
         title: String,
         year: Int?,
@@ -42,10 +40,17 @@ class TelegramSourceResolver @Inject constructor(
     ): List<StreamSource> {
         if (!repository.isAuthenticated()) return emptyList()
 
-        return withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-            resolveInternal(title, year, season, episode, imdbId, isMovie)
-        } ?: emptyList<StreamSource>().also {
-            Log.w(TAG, "Telegram search timed out for '$title'")
+        return try {
+            withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                resolveInternal(title, year, season, episode, imdbId, isMovie)
+            } ?: emptyList<StreamSource>().also {
+                Log.w(TAG, "Telegram search timed out for '$title'")
+                showToast("Telegram search timed out")
+            }
+        } catch (e: TelegramApiException) {
+            Log.w(TAG, "Telegram API error for '$title': ${e.message}")
+            showToast("Telegram: ${e.message}")
+            emptyList()
         }
     }
 
@@ -71,15 +76,16 @@ class TelegramSourceResolver @Inject constructor(
         val seen = mutableSetOf<Pair<String, Long>>()
         val allMessages = mutableListOf<TelegramVideoMessage>()
 
-        // Phase 1: global search with episode-specific queries
         for (query in queries) {
             Log.d(TAG, "Query: '$query'")
             try {
-                val results = repository.searchVideoMessages(query, MAX_RESULTS_PER_CHAT)
+                val results = repository.searchVideoMessages(query, MAX_RESULTS)
                     .filter { it.chatId !in excludedIds }
                 for (msg in results) {
                     if (seen.add(msg.fileName to msg.fileSize)) allMessages.add(msg)
                 }
+            } catch (e: TelegramApiException) {
+                throw e  // propagate flood-wait / API errors up to resolve()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -87,32 +93,7 @@ class TelegramSourceResolver @Inject constructor(
             }
         }
 
-        // Phase 2: per-channel search with title-only query to catch channels missed by global search
-        val titleOnlyQuery = matcher.buildMovieQueries(title, null).first()
-        val channels = try { repository.getChats() } catch (e: Exception) { emptyList() }
-        Log.d(TAG, "Per-channel search in ${channels.size} channels")
-        coroutineScope {
-            channels
-                .filter { it.id !in excludedIds }
-                .take(40)
-                .map { chat ->
-                    async {
-                        try {
-                            repository.searchVideoMessagesInChat(chat.id, titleOnlyQuery, limit = 20)
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) { emptyList() }
-                    }
-                }
-                .awaitAll()
-                .flatten()
-                .filter { it.chatId !in excludedIds }
-                .forEach { msg ->
-                    if (seen.add(msg.fileName to msg.fileSize)) allMessages.add(msg)
-                }
-        }
-
-        Log.d(TAG, "Found ${allMessages.size} candidate files after global + per-channel search")
+        Log.d(TAG, "Found ${allMessages.size} candidate files")
 
         return allMessages
             .mapNotNull { msg ->
@@ -159,6 +140,12 @@ class TelegramSourceResolver @Inject constructor(
                     .thenByDescending { it.sizeBytes ?: 0L }
             )
             .also { Log.d(TAG, "Returning ${it.size} Telegram sources for '$title'") }
+    }
+
+    private fun showToast(message: String) {
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun qualityTier(quality: String): Int = when (quality) {

@@ -18,6 +18,9 @@ import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+class TelegramApiException(message: String) : Exception(message)
 
 @Singleton
 class TelegramClient @Inject constructor(
@@ -187,7 +190,8 @@ class TelegramClient @Inject constructor(
             }
             c.send(function) { result ->
                 if (cont.isActive) {
-                    cont.resume(if (result is TdApi.Error) null else result)
+                    if (result is TdApi.Error) cont.resumeWithException(TelegramApiException(result.message))
+                    else cont.resume(result)
                 }
             }
         }
