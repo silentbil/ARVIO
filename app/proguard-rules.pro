@@ -200,6 +200,13 @@
 -keepattributes Signature,*Annotation*,InnerClasses,EnclosingMethod,Exceptions,SourceFile,LineNumberTable
 
 # ============================================
+# TDLib — preserve all JNI callback classes
+# The native layer calls back into Java by exact name; obfuscation breaks it.
+# ============================================
+-keep class org.drinkless.tdlib.** { *; }
+-dontwarn org.drinkless.tdlib.**
+
+# ============================================
 # App-specific keeps
 # ============================================
 # Keep app exception classes for crash reporting

@@ -1,3 +1,5 @@
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Properties
 
 plugins {
@@ -162,6 +164,12 @@ android {
     baselineProfile {
         mergeIntoMain = true
     }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDir("src/main/tdlib-java")
+        }
+    }
 }
 
 // Kotlin 2.0+ Compose compiler plugin config. The stability config file
@@ -264,6 +272,11 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:postgrest-kt:2.0.4")
     implementation("io.github.jan-tennert.supabase:gotrue-kt:2.0.4")
     implementation("io.ktor:ktor-client-android:2.3.7")
+
+    // Telegram native integration — local HTTP streaming proxy + TDLib Java API
+    // libtdjni.so and TdApi.java are downloaded automatically by the downloadTdlibNatives task
+    implementation("io.ktor:ktor-server-cio:2.3.7")
+    implementation("io.ktor:ktor-server-core:2.3.7")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
@@ -379,6 +392,76 @@ tasks.configureEach {
     ) {
         dependsOn(validateReleaseSupabaseSecrets)
     }
+}
+
+// Downloads prebuilt TDLib Android natives + Java API sources on first build.
+// Files are cached — re-download only if arm64-v8a libtdjni.so is missing.
+tasks.register("downloadTdlibNatives") {
+    val marker = project.file("src/main/jniLibs/arm64-v8a/libtdjni.so")
+    onlyIf { !marker.exists() }
+
+    doLast {
+        val base = "https://github.com/FaiBah/tdlib-android-prebuilt/releases/download/v1.8.64-e0943d068-Java"
+
+        fun fetch(urlStr: String, dest: File) {
+            dest.parentFile.mkdirs()
+            var url = URL(urlStr)
+            var conn = url.openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connect()
+            while (conn.responseCode in 300..399) {
+                url = URL(conn.getHeaderField("Location"))
+                conn = url.openConnection() as HttpURLConnection
+                conn.instanceFollowRedirects = true
+                conn.connect()
+            }
+            conn.inputStream.use { inp -> dest.outputStream().use { inp.copyTo(it) } }
+        }
+
+        // arm64-v8a: .so + Java source files
+        val arm64Zip = File(temporaryDir, "tdlib-arm64-v8a.zip")
+        logger.lifecycle("Downloading TDLib arm64-v8a (~22 MB)...")
+        fetch("$base/tdlib-arm64-v8a.zip", arm64Zip)
+        project.copy {
+            from(project.zipTree(arm64Zip)) {
+                include("libs/arm64-v8a/libtdjni.so")
+                eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
+                includeEmptyDirs = false
+            }
+            into("src/main/jniLibs")
+        }
+        project.copy {
+            from(project.zipTree(arm64Zip)) {
+                include("java/org/drinkless/tdlib/*.java")
+                eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
+                includeEmptyDirs = false
+            }
+            into("src/main/tdlib-java")
+        }
+        arm64Zip.delete()
+
+        // remaining ABIs: .so only
+        listOf("armeabi-v7a", "x86", "x86_64").forEach { abi ->
+            val zipFile = File(temporaryDir, "tdlib-$abi.zip")
+            logger.lifecycle("Downloading TDLib $abi...")
+            fetch("$base/tdlib-$abi.zip", zipFile)
+            project.copy {
+                from(project.zipTree(zipFile)) {
+                    include("libs/$abi/libtdjni.so")
+                    eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
+                    includeEmptyDirs = false
+                }
+                into("src/main/jniLibs")
+            }
+            zipFile.delete()
+        }
+
+        logger.lifecycle("TDLib natives ready.")
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn("downloadTdlibNatives")
 }
 
 detekt {

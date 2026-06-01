@@ -273,6 +273,7 @@ fun SettingsScreen(
     onNavigateToSearch: () -> Unit = {},
     onNavigateToTv: () -> Unit = {},
     onNavigateToWatchlist: () -> Unit = {},
+    onNavigateToTelegramSettings: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     onBack: () -> Unit = {}
 ) {
@@ -387,7 +388,7 @@ fun SettingsScreen(
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
-            "accounts" -> 4 // Cloud + Trakt + Force Sync + App Update + Privacy/Data
+            "accounts" -> 5 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data
             else -> 0
         }
     }
@@ -1012,10 +1013,9 @@ fun SettingsScreen(
                                                         viewModel.startTraktAuth()
                                                     }
                                                 }
-                                                2 -> {
-                                                    viewModel.forceCloudSyncNow()
-                                                }
-                                                3 -> {
+                                                2 -> onNavigateToTelegramSettings()
+                                                3 -> viewModel.forceCloudSyncNow()
+                                                4 -> {
                                                     if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) {
                                                         viewModel.installAppUpdateOrRequestPermission()
                                                     } else {
@@ -1076,7 +1076,8 @@ fun SettingsScreen(
                     showPlexHomeServerInput = true
                 },
                 onAddCustomAddonClick = { showCustomAddonInput = true },
-                openCustomUserAgentDialog = { showCustomUserAgentDialog = true }
+                openCustomUserAgentDialog = { showCustomUserAgentDialog = true },
+                onNavigateToTelegram = onNavigateToTelegramSettings
             )
         } else {
             AppTopBar(
@@ -1493,7 +1494,8 @@ fun SettingsScreen(
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
                             onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
-                            onOpenDataDeletion = { openExternalUrl(context, ACCOUNT_DELETION_URL) }
+                            onOpenDataDeletion = { openExternalUrl(context, ACCOUNT_DELETION_URL) },
+                            onNavigateToTelegram = onNavigateToTelegramSettings
                         )
                     }
                   }
@@ -3158,7 +3160,8 @@ private fun MobileSettingsLayout(
     onConnectHomeServerClick: () -> Unit,
     onConnectPlexHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
-    openCustomUserAgentDialog: () -> Unit = {}
+    openCustomUserAgentDialog: () -> Unit = {},
+    onNavigateToTelegram: () -> Unit = {}
 ) {
     BackHandler(enabled = page != "MAIN") {
         onNavigate("MAIN")
@@ -3199,7 +3202,8 @@ private fun MobileSettingsLayout(
                 openSubtitlePicker = openSubtitlePicker,
                 openSecondarySubtitlePicker = openSecondarySubtitlePicker,
                 openAudioLanguagePicker = openAudioLanguagePicker,
-                onSwitchProfile = onSwitchProfile
+                onSwitchProfile = onSwitchProfile,
+                onNavigateToTelegram = onNavigateToTelegram
             )
         } else {
             Row(
@@ -3258,7 +3262,8 @@ private fun MobileSettingsMainPage(
     openSubtitlePicker: () -> Unit,
     openSecondarySubtitlePicker: () -> Unit = {},
     openAudioLanguagePicker: () -> Unit,
-    onSwitchProfile: () -> Unit
+    onSwitchProfile: () -> Unit,
+    onNavigateToTelegram: () -> Unit = {}
 ) {
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -3372,6 +3377,13 @@ private fun MobileSettingsMainPage(
                     value = if (uiState.isTraktAuthenticated) "Disconnect" else "Connect",
                     isFocused = false,
                     onClick = { if (uiState.isTraktAuthenticated) viewModel.disconnectTrakt() else viewModel.startTraktAuth() }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.QrCode,
+                    title = "Telegram",
+                    value = "Open",
+                    isFocused = false,
+                    onClick = onNavigateToTelegram
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.SystemUpdate,
@@ -7223,7 +7235,8 @@ private fun AccountsSettings(
     onSwitchProfile: () -> Unit,
     onCheckUpdates: () -> Unit,
     onInstallUpdate: () -> Unit,
-    onOpenDataDeletion: () -> Unit
+    onOpenDataDeletion: () -> Unit,
+    onNavigateToTelegram: () -> Unit = {}
 ) {
     Column {
         if (LocalDeviceType.current.isTouchDevice()) {
@@ -7270,6 +7283,18 @@ private fun AccountsSettings(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Telegram
+        SettingsActionRow(
+            title = "Telegram",
+            description = "Search your channels and groups for video files",
+            actionLabel = "OPEN",
+            isFocused = focusedIndex == 2,
+            onClick = onNavigateToTelegram,
+            modifier = Modifier.settingsFocusSlot(2)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         SettingsActionRow(
             title = stringResource(R.string.force_cloud_sync),
             description = if (isForceCloudSyncing) {
@@ -7280,9 +7305,9 @@ private fun AccountsSettings(
                 "Sign in to ARVIO Cloud to force sync"
             },
             actionLabel = if (isForceCloudSyncing) "SYNCING" else "SYNC",
-            isFocused = focusedIndex == 2,
+            isFocused = focusedIndex == 3,
             onClick = { if (!isForceCloudSyncing) onForceCloudSync() },
-            modifier = Modifier.settingsFocusSlot(2)
+            modifier = Modifier.settingsFocusSlot(3)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -7304,11 +7329,11 @@ private fun AccountsSettings(
                 updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable -> "UPDATE"
                 else -> "CHECK"
             },
-            isFocused = focusedIndex == 3,
+            isFocused = focusedIndex == 4,
             onClick = {
                 if (updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) onInstallUpdate() else onCheckUpdates()
             },
-            modifier = Modifier.settingsFocusSlot(3)
+            modifier = Modifier.settingsFocusSlot(4)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -7317,9 +7342,9 @@ private fun AccountsSettings(
             title = "Privacy and data deletion",
             description = "Open privacy and ARVIO Cloud account deletion instructions",
             actionLabel = "OPEN",
-            isFocused = focusedIndex == 4,
+            isFocused = focusedIndex == 5,
             onClick = onOpenDataDeletion,
-            modifier = Modifier.settingsFocusSlot(4)
+            modifier = Modifier.settingsFocusSlot(5)
         )
     }
 }
