@@ -35,6 +35,7 @@ import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.util.Constants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -44,6 +45,7 @@ import org.json.JSONObject
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.arflix.tv.network.OkHttpProvider
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLDecoder
@@ -119,6 +121,8 @@ class MediaRepository @Inject constructor(
     private val seasonEpisodesCache = mutableMapOf<String, CacheEntry<List<Episode>>>()
     private val imdbRatingCache = ConcurrentHashMap<String, CacheEntry<String>>()
     private val imdbEpisodeRatingsCache = ConcurrentHashMap<String, CacheEntry<Map<Pair<Int, Int>, String>>>()
+    private val imdbRatingsByIdCache = ConcurrentHashMap<String, CacheEntry<String>>()
+    private val episodeImdbIdCache = ConcurrentHashMap<String, CacheEntry<String>>()
     private val imdbIdCache = ConcurrentHashMap<String, String>()
     private val addonImdbToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val addonTitleToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
@@ -319,7 +323,10 @@ class MediaRepository @Inject constructor(
         val resolvedImdbId = resolveImdbId(mediaType, mediaId, imdbId)
 
         val rating = resolvedImdbId
-            ?.let { fetchCinemetaImdbRating(mediaType, it) }
+            ?.let { imdbIdValue ->
+                fetchCinemetaImdbRating(mediaType, imdbIdValue)
+                    ?: getAgregarrImdbRatings(listOf(imdbIdValue))[imdbIdValue]
+            }
             ?.let { normalizeRating(it) }
             ?: return null
 
@@ -382,7 +389,36 @@ class MediaRepository @Inject constructor(
         return null
     }
 
-    private suspend fun getSeriesEpisodeImdbRatings(tvId: Int, imdbId: String? = null): Map<Pair<Int, Int>, String> {
+    private suspend fun getSeasonEpisodeImdbRatings(
+        tvId: Int,
+        seasonNumber: Int,
+        episodeNumbers: List<Int>,
+        imdbId: String? = null
+    ): Map<Pair<Int, Int>, String> {
+        if (episodeNumbers.isEmpty()) return emptyMap()
+        val result = getSeriesCinemetaEpisodeRatings(tvId, imdbId)
+            .filterKeys { (season, episode) -> season == seasonNumber && episode in episodeNumbers }
+            .toMutableMap()
+
+        val missingEpisodeNumbers = episodeNumbers
+            .distinct()
+            .filter { episode -> result[seasonNumber to episode].isNullOrBlank() }
+        if (missingEpisodeNumbers.isEmpty()) return result
+
+        val episodeImdbIds = resolveEpisodeImdbIds(tvId, seasonNumber, missingEpisodeNumbers)
+        if (episodeImdbIds.isEmpty()) return result
+
+        val ratingsByImdbId = getAgregarrImdbRatings(episodeImdbIds.values.toList())
+        episodeImdbIds.forEach { (episodeNumber, episodeImdbId) ->
+            val rating = ratingsByImdbId[episodeImdbId]
+            if (!rating.isNullOrBlank()) {
+                result[seasonNumber to episodeNumber] = rating
+            }
+        }
+        return result
+    }
+
+    private suspend fun getSeriesCinemetaEpisodeRatings(tvId: Int, imdbId: String? = null): Map<Pair<Int, Int>, String> {
         val resolvedImdbId = resolveImdbId(MediaType.TV, tvId, imdbId) ?: return emptyMap()
         val cacheKey = "series_$resolvedImdbId"
         getFromCache(imdbEpisodeRatingsCache, cacheKey)?.let { return it }
@@ -390,6 +426,89 @@ class MediaRepository @Inject constructor(
         val ratings = fetchCinemetaEpisodeRatings(resolvedImdbId)
         imdbEpisodeRatingsCache[cacheKey] = CacheEntry(ratings, System.currentTimeMillis())
         return ratings
+    }
+
+    private suspend fun resolveEpisodeImdbIds(
+        tvId: Int,
+        seasonNumber: Int,
+        episodeNumbers: List<Int>
+    ): Map<Int, String> = coroutineScope {
+        val limiter = Semaphore(8)
+        episodeNumbers.distinct().map { episodeNumber ->
+            async(Dispatchers.IO) {
+                val cacheKey = "tv_${tvId}_s${seasonNumber}_e$episodeNumber"
+                getFromCache(episodeImdbIdCache, cacheKey)?.let { return@async episodeNumber to it }
+                val episodeImdbId = limiter.withPermit {
+                    runCatching {
+                        tmdbApi.getTvEpisodeExternalIds(tvId, seasonNumber, episodeNumber, apiKey)
+                            .imdbId
+                            ?.trim()
+                            ?.takeIf { it.startsWith("tt", ignoreCase = true) }
+                    }.getOrNull()
+                }
+                if (!episodeImdbId.isNullOrBlank()) {
+                    episodeImdbIdCache[cacheKey] = CacheEntry(episodeImdbId, System.currentTimeMillis())
+                    episodeNumber to episodeImdbId
+                } else {
+                    null
+                }
+            }
+        }.awaitAll().filterNotNull().toMap()
+    }
+
+    private suspend fun getAgregarrImdbRatings(imdbIds: List<String>): Map<String, String> = withContext(Dispatchers.IO) {
+        val uniqueIds = imdbIds
+            .map { it.trim() }
+            .filter { it.startsWith("tt", ignoreCase = true) }
+            .distinct()
+        if (uniqueIds.isEmpty()) return@withContext emptyMap()
+
+        val now = System.currentTimeMillis()
+        val result = mutableMapOf<String, String>()
+        val idsToFetch = uniqueIds.filter { imdbId ->
+            val cached = getFromCache(imdbRatingsByIdCache, imdbId)
+            if (!cached.isNullOrBlank()) {
+                result[imdbId] = cached
+                false
+            } else {
+                true
+            }
+        }
+        if (idsToFetch.isEmpty()) return@withContext result
+
+        idsToFetch.chunked(100).forEach { chunk ->
+            val url = "https://api.agregarr.org/api/ratings".toHttpUrl().newBuilder().apply {
+                chunk.forEach { addQueryParameter("id", it) }
+            }.build()
+            val request = Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
+                .build()
+
+            val fetched = runCatching {
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use emptyMap<String, String>()
+                    val body = response.body?.string().orEmpty()
+                    val array = JSONArray(body)
+                    buildMap {
+                        for (index in 0 until array.length()) {
+                            val item = array.optJSONObject(index) ?: continue
+                            val imdbId = item.optString("imdbId").trim()
+                            if (imdbId.isBlank() || item.isNull("rating")) continue
+                            val rating = normalizeRating(item.optDouble("rating", 0.0).toString())
+                            if (!rating.isNullOrBlank()) put(imdbId, rating)
+                        }
+                    }
+                }
+            }.getOrDefault(emptyMap())
+
+            fetched.forEach { (imdbId, rating) ->
+                imdbRatingsByIdCache[imdbId] = CacheEntry(rating, now)
+                result[imdbId] = rating
+            }
+        }
+        result
     }
 
     private suspend fun fetchCinemetaEpisodeRatings(imdbId: String): Map<Pair<Int, Int>, String> = withContext(Dispatchers.IO) {
@@ -2734,7 +2853,11 @@ class MediaRepository @Inject constructor(
         // Re-apply watched status on cached episodes so stale season cache doesn't hide badges.
         if (cachedEpisodes != null) {
             val episodeImdbRatings = if (cachedEpisodes.any { it.imdbRating.isBlank() }) {
-                getSeriesEpisodeImdbRatings(tvId)
+                getSeasonEpisodeImdbRatings(
+                    tvId = tvId,
+                    seasonNumber = seasonNumber,
+                    episodeNumbers = cachedEpisodes.map { it.episodeNumber }
+                )
             } else {
                 emptyMap()
             }
@@ -2749,11 +2872,12 @@ class MediaRepository @Inject constructor(
             }
         }
 
-        val (season, episodeImdbRatings) = coroutineScope {
-            val seasonDeferred = async { tmdbApi.getTvSeason(tvId, seasonNumber, apiKey, language = contentLanguage) }
-            val ratingsDeferred = async { getSeriesEpisodeImdbRatings(tvId) }
-            seasonDeferred.await() to ratingsDeferred.await()
-        }
+        val season = tmdbApi.getTvSeason(tvId, seasonNumber, apiKey, language = contentLanguage)
+        val episodeImdbRatings = getSeasonEpisodeImdbRatings(
+            tvId = tvId,
+            seasonNumber = seasonNumber,
+            episodeNumbers = season.episodes.map { it.episodeNumber }
+        )
 
         val episodes = season.episodes.map { episode ->
             val episodeKey = "show_tmdb:$tvId:$seasonNumber:${episode.episodeNumber}"

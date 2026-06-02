@@ -81,6 +81,14 @@ interface TmdbApi {
         @Query("api_key") apiKey: String,
         @Query("language") language: String? = null
     ): TmdbSeasonDetails
+
+    @GET("tv/{tv_id}/season/{season_number}/episode/{episode_number}/external_ids")
+    suspend fun getTvEpisodeExternalIds(
+        @Path("tv_id") tvId: Int,
+        @Path("season_number") seasonNumber: Int,
+        @Path("episode_number") episodeNumber: Int,
+        @Query("api_key") apiKey: String
+    ): TmdbExternalIds
     
     @GET("{media_type}/{id}/credits")
     suspend fun getCredits(
