@@ -9,6 +9,9 @@ import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.util.Constants
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
@@ -25,7 +28,7 @@ class TelegramSourceResolver @Inject constructor(
         private const val TAG = "TelegramResolver"
         private const val SCORE_THRESHOLD = 55
         private const val SEARCH_TIMEOUT_MS = 20_000L
-        private const val MAX_RESULTS = 50
+        private const val MAX_RESULTS = 100
     }
 
     fun isEnabled(): Boolean = repository.isAuthenticated()
@@ -63,29 +66,33 @@ class TelegramSourceResolver @Inject constructor(
         isMovie: Boolean
     ): List<StreamSource> {
         val excludedIds = repository.getExcludedChatIds().first()
-        val hebrewTitle = fetchHebrewTitle(imdbId, isMovie)
+        val (englishTitle, hebrewTitle) = fetchTitles(imdbId, isMovie)
 
         val queries = if (season != null && episode != null)
-            matcher.buildSeriesQueries(title, season, episode, hebrewTitle)
+            matcher.buildSeriesQueries(title, season, episode, hebrewTitle, englishTitle)
         else
-            matcher.buildMovieQueries(title, year, hebrewTitle)
+            matcher.buildMovieQueries(title, year, hebrewTitle, englishTitle)
 
         val seen = mutableSetOf<Pair<String, Long>>()
         val allMessages = mutableListOf<TelegramVideoMessage>()
 
-        for (query in queries) {
-            try {
-                val results = repository.searchVideoMessages(query, MAX_RESULTS)
-                    .filter { it.chatId !in excludedIds }
-                for (msg in results) {
-                    if (seen.add(msg.fileName to msg.fileSize)) allMessages.add(msg)
+        coroutineScope {
+            queries.map { query ->
+                async {
+                    try {
+                        repository.searchVideoMessages(query, MAX_RESULTS)
+                            .filter { it.chatId !in excludedIds }
+                    } catch (e: TelegramApiException) {
+                        throw e
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Search failed for '$query'", e)
+                        emptyList()
+                    }
                 }
-            } catch (e: TelegramApiException) {
-                throw e
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Search failed for '$query'", e)
+            }.awaitAll().flatten().forEach { msg ->
+                if (seen.add(msg.fileName to msg.fileSize)) allMessages.add(msg)
             }
         }
 
@@ -96,6 +103,7 @@ class TelegramSourceResolver @Inject constructor(
                     caption = msg.caption,
                     title = title,
                     hebrewTitle = hebrewTitle,
+                    englishTitle = englishTitle,
                     year = year,
                     season = season,
                     episode = episode
@@ -129,7 +137,8 @@ class TelegramSourceResolver @Inject constructor(
                 )
             }
             .sortedWith(
-                compareByDescending<StreamSource> { qualityTier(it.quality) }
+                compareByDescending<StreamSource> { matcher.isHebrew(it.source) }
+                    .thenByDescending { qualityTier(it.quality) }
                     .thenByDescending { it.sizeBytes ?: 0L }
             )
     }
@@ -141,40 +150,50 @@ class TelegramSourceResolver @Inject constructor(
     }
 
     private fun qualityTier(quality: String): Int = when (quality) {
-        "4K" -> 4
-        "1080p" -> 3
-        "720p" -> 2
-        "480p" -> 1
+        "4K" -> 6
+        "1080p" -> 5
+        "720p" -> 4
+        "480p" -> 3
+        "360p" -> 2
+        "CAM" -> 1
+        "SCR" -> 1
         else -> 0
     }
 
-    private suspend fun fetchHebrewTitle(imdbId: String, isMovie: Boolean): String? {
-        if (imdbId.isBlank()) return null
+    private suspend fun fetchTitles(imdbId: String, isMovie: Boolean): Pair<String?, String?> {
+        if (imdbId.isBlank()) return null to null
         return try {
             val findResult = tmdbApi.findByExternalId(imdbId, Constants.TMDB_API_KEY)
-            val tmdbId = if (isMovie)
-                findResult.movieResults.firstOrNull()?.id
-            else
-                findResult.tvResults.firstOrNull()?.id
-            tmdbId ?: return null
-            if (isMovie)
+            val findItem = if (isMovie) findResult.movieResults.firstOrNull()
+                           else findResult.tvResults.firstOrNull()
+            val tmdbId = findItem?.id ?: return null to null
+            val englishTitle = (if (isMovie) findItem.title else findItem.name).takeIf { it.isNotBlank() }
+            val hebrewTitle = if (isMovie)
                 tmdbApi.getMovieDetails(tmdbId, Constants.TMDB_API_KEY, language = "he").title
                     .takeIf { it.isNotBlank() }
             else
                 tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY, language = "he").name
                     .takeIf { it.isNotBlank() }
+            englishTitle to hebrewTitle
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch Hebrew title for $imdbId: ${e.message}")
-            null
+            Log.w(TAG, "Failed to fetch titles for $imdbId: ${e.message}")
+            null to null
         }
     }
 
-    private fun parseQuality(fileName: String): String = when {
-        fileName.contains("2160p", ignoreCase = true) || fileName.contains("4K", ignoreCase = true) -> "4K"
-        fileName.contains("1080p", ignoreCase = true) -> "1080p"
-        fileName.contains("720p", ignoreCase = true) -> "720p"
-        fileName.contains("480p", ignoreCase = true) -> "480p"
-        else -> "Unknown"
+    private fun parseQuality(raw: String): String {
+        val t = raw.lowercase().replace(' ', '.')
+        fun has(vararg xs: String) = xs.any { it in t }
+        return when {
+            has("dvdscr", "screener", ".scr.")                          -> "SCR"
+            has(".cam.", "camrip", "hdcam", "hdts", "telesync")         -> "CAM"
+            has("360", "36o")                                           -> "360p"
+            has("480", "48o")                                           -> "480p"
+            has("720", "72o")                                           -> "720p"
+            has("1080", "1o8o", "108o", "1o80", ".fhd.")               -> "1080p"
+            has("2160", "216o", ".4k.", ".uhd.", "ultrahd")             -> "4K"
+            else -> "Unknown"
+        }
     }
 
     private fun formatBytes(bytes: Long): String = when {

@@ -7,17 +7,20 @@ import javax.inject.Singleton
 class TelegramSearchMatcher @Inject constructor() {
 
     companion object {
-        private const val SEP = """[\s._\-]{0,2}"""
-        private const val SEP_MID = """[\s._\-]{0,4}"""
+        private const val SEP = """[\s._\-x+,&:]{0,2}"""
+        private const val SEP_MID = """[\s._\-x+,&:]{0,4}"""
         private val EPISODE_PATTERN = Regex(
-            """[Ss](?:eason)?$SEP(\d{1,2})${SEP_MID}[Ee](?:pisode)?$SEP(\d{1,4})""" +
+            """[Ss][e]?(?:ason)?$SEP(\d{1,2})${SEP_MID}[Ee][p]?(?:isode)?$SEP(\d{1,4})""" +
             """|ע(?:ונה)?$SEP(\d{1,2})${SEP_MID}פ(?:רק)?$SEP(\d{1,4})""",
             RegexOption.IGNORE_CASE
         )
+        // Season-1 fallback: episode-only Hebrew marker (פרק 5 / פ5) with no season prefix
+        private val EPISODE_ONLY_PATTERN = Regex("""פ(?:רק)?[\s._\-x+,&:]{0,2}(\d{1,4})""")
         private val YEAR_PATTERN = Regex("""\b(19|20)\d{2}\b""")
         private val NOISE = Regex("""[._\-\[\]()'",!?:]""")
         private val MULTI_SPACE = Regex("""\s+""")
         private val SIZE_SUFFIX = Regex("""\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts)$""", RegexOption.IGNORE_CASE)
+        private val HEBREW_RANGE = 0x0590..0x05FF
     }
 
     fun score(
@@ -25,19 +28,23 @@ class TelegramSearchMatcher @Inject constructor() {
         caption: String,
         title: String,
         hebrewTitle: String? = null,
+        englishTitle: String? = null,
         year: Int?,
         season: Int?,
         episode: Int?
     ): Int {
         val combined = "$fileName $caption"
-        val normalizedFile = normalize(combined)
+        val normalizedCombined = normalize(combined)
         val normalizedTitle = normalize(title)
         val normalizedHebrew = hebrewTitle?.let { normalize(it) }
+        val normalizedEnglish = englishTitle?.let { normalize(it) }
 
-        val engMatch = normalizedFile.contains(normalizedTitle)
-        val hebMatch = normalizedHebrew != null && normalizedHebrew.isNotBlank() && normalizedFile.contains(normalizedHebrew)
+        // Primary match: TMDB English title, TMDB Hebrew title, or app title (in that priority)
+        val engMatch = normalizedEnglish != null && normalizedEnglish.isNotBlank() && normalizedCombined.contains(normalizedEnglish)
+        val hebMatch = normalizedHebrew != null && normalizedHebrew.isNotBlank() && normalizedCombined.contains(normalizedHebrew)
+        val appMatch = normalizedCombined.contains(normalizedTitle)
 
-        if (!engMatch && !hebMatch) return 0
+        if (!engMatch && !hebMatch && !appMatch) return 0
 
         var score = 60
 
@@ -52,20 +59,29 @@ class TelegramSearchMatcher @Inject constructor() {
         }
 
         if (season != null && episode != null) {
-            val match = EPISODE_PATTERN.find(combined) ?: EPISODE_PATTERN.find(normalizedFile)
-            if (match != null) {
-                val fileSeason = (match.groupValues[1].toIntOrNull() ?: match.groupValues[3].toIntOrNull()) ?: -1
-                val fileEp = (match.groupValues[2].toIntOrNull() ?: match.groupValues[4].toIntOrNull()) ?: -1
-                when {
-                    fileSeason == season && fileEp == episode -> score += 20
-                    fileSeason == season && fileEp == -1 -> score -= 5
-                    else -> return 0
+            // Check filename and caption independently (mirrors Stremiogram: accept if either has
+            // the right S/E, even if the other text has a different marker).
+            val seFile    = extractSeasonEpisode(fileName)
+            val seCaption = extractSeasonEpisode(caption)
+            val rightSE   = (seFile?.first == season && seFile.second == episode) ||
+                            (seCaption?.first == season && seCaption.second == episode)
+            when {
+                rightSE -> score += 20
+                seFile != null || seCaption != null -> return 0  // pattern found but wrong S/E
+                season == 1 -> {
+                    // Season-1 files often omit the season marker — try episode-only Hebrew marker
+                    val epFile    = extractEpisodeOnly(fileName)
+                    val epCaption = extractEpisodeOnly(caption)
+                    when {
+                        epFile == episode || epCaption == episode -> score += 20
+                        epFile != null || epCaption != null -> return 0
+                        else -> score -= 10
+                    }
                 }
-            } else {
-                score -= 10
+                else -> score -= 10
             }
         } else if (season == null) {
-            if (EPISODE_PATTERN.containsMatchIn(combined) || EPISODE_PATTERN.containsMatchIn(normalizedFile)) {
+            if (EPISODE_PATTERN.containsMatchIn(combined) || EPISODE_PATTERN.containsMatchIn(normalizedCombined)) {
                 score -= 20
             }
         }
@@ -73,47 +89,71 @@ class TelegramSearchMatcher @Inject constructor() {
         return score.coerceIn(0, 100)
     }
 
-    fun buildMovieQueries(title: String, year: Int?, hebrewTitle: String? = null): List<String> {
-        val base = cleanTitle(title)
-        val hebrewBase = hebrewTitle?.let { cleanTitle(it) }
+    private fun extractSeasonEpisode(text: String): Pair<Int, Int>? {
+        val m = EPISODE_PATTERN.find(text) ?: EPISODE_PATTERN.find(normalize(text)) ?: return null
+        val s = m.groupValues[1].toIntOrNull() ?: m.groupValues[3].toIntOrNull() ?: return null
+        val e = m.groupValues[2].toIntOrNull() ?: m.groupValues[4].toIntOrNull() ?: return null
+        return s to e
+    }
+
+    private fun extractEpisodeOnly(text: String): Int? {
+        val m = EPISODE_ONLY_PATTERN.find(text) ?: EPISODE_ONLY_PATTERN.find(normalize(text)) ?: return null
+        return m.groupValues[1].toIntOrNull()
+    }
+
+    fun buildMovieQueries(title: String, year: Int?, hebrewTitle: String? = null, englishTitle: String? = null): List<String> {
+        // Prefer TMDB English title as primary; fall back to app title
+        val primary = englishTitle?.let { cleanTitle(it) } ?: cleanTitle(title)
+        val hebrew = hebrewTitle?.let { cleanTitle(it) }
         val queries = mutableListOf<String>()
-        if (year != null) queries.add("$base $year") else queries.add(base)
-        if (year != null) queries.add(base)
-        if (hebrewBase != null) {
-            if (year != null) queries.add("$hebrewBase $year")
-            queries.add(hebrewBase)
+        if (year != null) queries.add("$primary $year")
+        queries.add(primary)
+        if (hebrew != null && !hebrew.equals(primary, ignoreCase = true)) {
+            if (year != null) queries.add("$hebrew $year")
+            queries.add(hebrew)
         }
         return queries.distinct()
     }
 
-    fun buildSeriesQueries(title: String, season: Int, episode: Int, hebrewTitle: String? = null): List<String> {
-        val base = cleanTitle(title)
-        val hebrewBase = hebrewTitle?.let { cleanTitle(it) }
+    fun buildSeriesQueries(title: String, season: Int, episode: Int, hebrewTitle: String? = null, englishTitle: String? = null): List<String> {
+        // Prefer TMDB English as primary for English patterns; TMDB Hebrew for Hebrew patterns
+        val engBase = englishTitle?.let { cleanTitle(it) } ?: cleanTitle(title)
+        val hebBase = hebrewTitle?.let { cleanTitle(it) }
+        val titlesAreSame = hebBase == null || hebBase.equals(engBase, ignoreCase = true)
         val s = season.toString()
         val e = episode.toString()
         val s2 = season.toString().padStart(2, '0')
         val e2 = episode.toString().padStart(2, '0')
-        val queries = mutableListOf(
-            "$base ע$s פ$e",
-            "$base ע${s}פ${e}",
-            "$base עונה $s פרק $e",
-            "$base s${s}e${e}",
-            "$base s${s2}e${e2}"
+
+        val queries = mutableListOf<String>()
+
+        // Hebrew patterns with Hebrew title (or engBase if same)
+        val hebTitle = if (titlesAreSame) engBase else hebBase!!
+        queries += listOf(
+            "$hebTitle ע$s פ$e",
+            "$hebTitle ע${s}פ${e}",
+            "$hebTitle עונה $s פרק $e",
         )
-        if (hebrewBase != null) {
-            queries.addAll(listOf(
-                "$hebrewBase ע$s פ$e",
-                "$hebrewBase ע${s}פ${e}",
-                "$hebrewBase עונה $s פרק $e",
-                "$hebrewBase s${s}e${e}",
-                "$hebrewBase s${s2}e${e2}"
-            ))
-        }
+        if (season == 1) queries += listOf("$hebTitle פ$e", "$hebTitle פרק $e")
+
+        // English patterns with English title
+        queries += listOf(
+            "$engBase s${s}e${e}",
+            "$engBase s${s2}e${e2}",
+            "$engBase s$s e$e",
+            "$engBase s$s2 e$e2",
+        )
+
         return queries.map { it.lowercase() }.distinct()
     }
 
-    private fun cleanTitle(title: String) =
-        title.replace(":", "").replace("  ", " ").trim()
+    fun isHebrew(s: String) = s.any { it.code in HEBREW_RANGE }
+
+    private fun cleanTitle(title: String): String {
+        val stripped = title.replace(":", "").replace("  ", " ").trim()
+        return java.text.Normalizer.normalize(stripped, java.text.Normalizer.Form.NFKD)
+            .replace("\\p{Mn}+".toRegex(), "")
+    }
 
     private fun normalize(text: String): String =
         text.replace(SIZE_SUFFIX, "")
