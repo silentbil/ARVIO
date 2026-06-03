@@ -268,6 +268,21 @@ private fun generateQrBitmap(content: String, size: Int): Bitmap? = try {
 @Composable
 private fun PhoneContent(onSubmit: (String) -> Unit) {
     var phone by remember { mutableStateOf("+") }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var showValidation by remember { mutableStateOf(false) }
+
+    val digits = phone.filter { it.isDigit() }
+    val isValid = phone.startsWith("+") && digits.length >= 7
+    val showError = showValidation && !isValid
+
+    fun trySubmit() {
+        showValidation = true
+        if (isValid && !isSubmitting) {
+            isSubmitting = true
+            onSubmit(phone)
+        }
+    }
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -291,17 +306,36 @@ private fun PhoneContent(onSubmit: (String) -> Unit) {
             value = phone,
             onValueChange = { phone = it },
             label = { Text("Phone number") },
+            placeholder = { Text("+1 650 555 1234", color = TextSecondary.copy(alpha = 0.35f)) },
+            supportingText = {
+                if (showError) {
+                    Text("Must start with + and include country code, e.g. +1 for US, +44 for UK", color = Pink)
+                } else {
+                    Text("International format: +[country code][number]", color = TextSecondary.copy(alpha = 0.5f))
+                }
+            },
+            isError = showError,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Phone,
                 imeAction = ImeAction.Done
             ),
-            keyboardActions = KeyboardActions(onDone = { if (phone.length > 4) onSubmit(phone) }),
+            keyboardActions = KeyboardActions(onDone = { trySubmit() }),
             singleLine = true,
             colors = inputColors(),
             modifier = Modifier.fillMaxWidth(0.75f)
         )
         Spacer(modifier = Modifier.height(20.dp))
-        ActionButton(label = "SEND CODE") { if (phone.length > 4) onSubmit(phone) }
+        if (isSubmitting) {
+            LoadingIndicator(color = Pink, size = 32.dp, strokeWidth = 2.5.dp)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Sending code...",
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                color = TextSecondary
+            )
+        } else {
+            ActionButton(label = "SEND CODE", onClick = ::trySubmit)
+        }
     }
 }
 
@@ -314,6 +348,22 @@ private fun CodeContent(codeLength: Int, onSubmit: (String) -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(40.dp))
+        Row(
+            modifier = Modifier
+                .background(SuccessGreen.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                .border(1.dp, SuccessGreen.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(text = "✓  ", style = ArflixTypography.caption.copy(fontSize = 14.sp), color = SuccessGreen)
+            Text(
+                text = "Code sent to your Telegram app",
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                color = SuccessGreen
+            )
+        }
+        Spacer(modifier = Modifier.height(20.dp))
         Text(
             text = "Enter Code",
             style = ArflixTypography.cardTitle.copy(fontSize = 22.sp),
@@ -321,7 +371,7 @@ private fun CodeContent(codeLength: Int, onSubmit: (String) -> Unit) {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Telegram sent a $codeLength-digit code to your Telegram app.",
+            text = "Check your Telegram app for a $codeLength-digit code.",
             style = ArflixTypography.caption.copy(fontSize = 13.sp),
             color = TextSecondary,
             textAlign = TextAlign.Center,
