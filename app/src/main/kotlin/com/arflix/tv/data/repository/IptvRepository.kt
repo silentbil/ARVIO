@@ -5829,9 +5829,11 @@ class IptvRepository @Inject constructor(
                     val p = sorted[i]
                     when {
                         p.endUtcMillis <= nowMs && p.endUtcMillis > recentCutoff -> {
-                            if (p.catchupAvailable != false) {
-                                addRecentCandidate(recent, p, recentProgramLimitForChannel(channelsById[channelId], forceCatchupHistory))
-                            }
+                            addRecentCandidate(
+                                recent = recent,
+                                candidate = p,
+                                limit = recentProgramLimitForChannel(channelsById[channelId], forceCatchupHistory)
+                            )
                         }
                         p.isLive(nowMs) -> now = p
                         p.startUtcMillis > nowMs && next == null -> next = p
@@ -6494,7 +6496,6 @@ class IptvRepository @Inject constructor(
         val targetWindowMs = minOf(catchupGuideHistoryWindowMs, days * 24L * 60L * 60_000L)
         val recent = item.recent
             .asSequence()
-            .filter { it.catchupAvailable != false }
             .filter { it.endUtcMillis <= nowMs && it.endUtcMillis >= nowMs - targetWindowMs }
             .toList()
         if (recent.size < 6) return false
