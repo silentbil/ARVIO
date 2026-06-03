@@ -14,6 +14,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -29,9 +30,26 @@ class TelegramSourceResolver @Inject constructor(
         private const val SCORE_THRESHOLD = 55
         private const val SEARCH_TIMEOUT_MS = 20_000L
         private const val MAX_RESULTS = 100
+        private const val CACHE_TTL_SHORT_MS = 2  * 60 * 60 * 1_000L
+        private const val CACHE_TTL_LONG_MS  = 24 * 60 * 60 * 1_000L
     }
 
+    private data class CacheEntry(val results: List<StreamSource>, val expiresAt: Long)
+    private val cache = ConcurrentHashMap<String, CacheEntry>()
+
+    private fun cacheKey(imdbId: String, title: String, season: Int?, episode: Int?) =
+        if (imdbId.isNotBlank()) "$imdbId:${season ?: ""}:${episode ?: ""}"
+        else "$title:${season ?: ""}:${episode ?: ""}"
+
     fun isEnabled(): Boolean = repository.isAuthenticated()
+
+    // Old movies (released 2+ years ago) are stable — cache longer.
+    // Series always use the short TTL since new episodes may appear at any time.
+    private fun cacheTtl(year: Int?, isMovie: Boolean): Long {
+        if (!isMovie) return CACHE_TTL_SHORT_MS
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        return if (year != null && year < currentYear - 1) CACHE_TTL_LONG_MS else CACHE_TTL_SHORT_MS
+    }
 
     suspend fun resolve(
         title: String,
@@ -43,16 +61,24 @@ class TelegramSourceResolver @Inject constructor(
     ): List<StreamSource> {
         if (!repository.isAuthenticated()) return emptyList()
 
+        val key = cacheKey(imdbId, title, season, episode)
+        cache[key]?.let { entry ->
+            if (System.currentTimeMillis() < entry.expiresAt) return entry.results
+        }
+
         return try {
-            withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+            val results = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
                 resolveInternal(title, year, season, episode, imdbId, isMovie)
             } ?: emptyList<StreamSource>().also {
                 Log.w(TAG, "Telegram search timed out for '$title'")
                 showToast("Telegram search timed out")
             }
+
+            cache[key] = CacheEntry(results, System.currentTimeMillis() + cacheTtl(year, isMovie))
+            results
         } catch (e: TelegramApiException) {
             Log.w(TAG, "Telegram API error for '$title': ${e.message}")
-            showToast("Telegram: ${e.message}")
+            showToast(friendlyError(e.message))
             emptyList()
         }
     }
@@ -141,6 +167,15 @@ class TelegramSourceResolver @Inject constructor(
                     .thenByDescending { qualityTier(it.quality) }
                     .thenByDescending { it.sizeBytes ?: 0L }
             )
+    }
+
+    private fun friendlyError(raw: String?): String {
+        if (raw == null) return "Telegram search failed"
+        val waitSeconds = raw.removePrefix("FLOOD_WAIT_").toIntOrNull()
+        return if (waitSeconds != null)
+            "Too many searches — please wait ${waitSeconds}s before retrying"
+        else
+            "Telegram: $raw"
     }
 
     private fun showToast(message: String) {

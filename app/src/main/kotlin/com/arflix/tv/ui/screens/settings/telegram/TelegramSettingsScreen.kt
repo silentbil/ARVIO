@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -25,8 +23,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -46,7 +42,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -72,9 +67,6 @@ fun TelegramSettingsScreen(
     viewModel: TelegramSettingsViewModel = hiltViewModel()
 ) {
     val authState by viewModel.authState.collectAsState()
-    val chats by viewModel.chats.collectAsState()
-    val isLoadingChats by viewModel.isLoadingChats.collectAsState()
-    val excludedChatIds by viewModel.excludedChatIds.collectAsState(initial = emptySet())
 
     Box(
         modifier = Modifier
@@ -132,10 +124,6 @@ fun TelegramSettingsScreen(
                 )
                 is TelegramAuthState.Ready -> ConnectedContent(
                     firstName = state.firstName,
-                    chats = chats,
-                    isLoadingChats = isLoadingChats,
-                    excludedChatIds = excludedChatIds,
-                    onToggleChat = { chatId, exclude -> viewModel.toggleChatExclusion(chatId, exclude) },
                     onDisconnect = { viewModel.disconnect() }
                 )
                 is TelegramAuthState.Error -> ErrorContent(
@@ -440,13 +428,13 @@ private fun PasswordContent(onSubmit: (String) -> Unit) {
 @Composable
 private fun ConnectedContent(
     firstName: String,
-    chats: List<com.arflix.tv.data.telegram.TelegramChat>,
-    isLoadingChats: Boolean,
-    excludedChatIds: Set<Long>,
-    onToggleChat: (Long, Boolean) -> Unit,
     onDisconnect: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(40.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -479,89 +467,6 @@ private fun ConnectedContent(
                     style = ArflixTypography.label.copy(fontSize = 11.sp),
                     color = TextSecondary
                 )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-        Text(
-            text = "Channels & Groups",
-            style = ArflixTypography.sectionTitle.copy(fontSize = 15.sp),
-            color = TextPrimary
-        )
-        Text(
-            text = "All are searched by default — toggle to exclude",
-            style = ArflixTypography.caption.copy(fontSize = 12.sp),
-            color = TextSecondary,
-            modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
-        )
-
-        if (isLoadingChats) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                LoadingIndicator(color = Pink, size = 20.dp, strokeWidth = 2.dp)
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = "Loading channels...",
-                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
-                    color = TextSecondary
-                )
-            }
-        } else if (chats.isEmpty()) {
-            Text(
-                text = "No channels or groups found",
-                style = ArflixTypography.caption.copy(fontSize = 13.sp),
-                color = TextSecondary
-            )
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(chats, key = { it.id }) { chat ->
-                    val isIncluded = chat.id !in excludedChatIds
-                    var isFocused by remember { mutableStateOf(false) }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onFocusChanged { isFocused = it.isFocused }
-                            .background(
-                                if (isFocused) Pink.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
-                                RoundedCornerShape(10.dp)
-                            )
-                            .border(
-                                width = if (isFocused) 1.5.dp else 0.dp,
-                                color = if (isFocused) Pink.copy(alpha = 0.7f) else Color.Transparent,
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = chat.title,
-                                style = ArflixTypography.cardTitle.copy(fontSize = 14.sp),
-                                color = if (isIncluded) TextPrimary else TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            val subtitle = buildString {
-                                append(if (chat.isChannel) "Channel" else "Group")
-                                if (chat.memberCount > 0) append(" · ${chat.memberCount} members")
-                            }
-                            Text(
-                                text = subtitle,
-                                style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                                color = TextSecondary
-                            )
-                        }
-                        Switch(
-                            checked = isIncluded,
-                            onCheckedChange = { onToggleChat(chat.id, !it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = Pink,
-                                uncheckedThumbColor = TextSecondary,
-                                uncheckedTrackColor = Color.White.copy(alpha = 0.1f)
-                            )
-                        )
-                    }
-                }
             }
         }
     }
