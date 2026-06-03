@@ -170,6 +170,19 @@ android {
             java.srcDir("src/main/tdlib-java")
         }
     }
+
+    // Per-ABI APKs for sideload distribution. Disabled for AAB/Play Store builds because
+    // Google Play handles ABI splits in the cloud via Dynamic Delivery.
+    // x86/x86_64 splits are for emulator/debug only (those .so files live in src/debug/jniLibs).
+    val buildingAppBundle = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+    splits {
+        abi {
+            isEnable = !buildingAppBundle
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
 }
 
 // Kotlin 2.0+ Compose compiler plugin config. The stability config file
