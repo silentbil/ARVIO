@@ -172,13 +172,13 @@ android {
         }
     }
 
-    // Per-ABI APKs for sideload distribution. Disabled for AAB/Play Store builds because
-    // Google Play handles ABI splits in the cloud via Dynamic Delivery.
-    // x86/x86_64 splits are for emulator/debug only (those .so files live in src/debug/jniLibs).
-    val buildingAppBundle = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+    // Per-ABI APKs for sideload distribution only.
+    // Play builds are distributed via AAB (Google Play handles splitting) so splits are not needed.
+    // x86/x86_64 splits are emulator/debug use only.
+    val isSideloadBuild = gradle.startParameter.taskNames.any { it.contains("sideload", ignoreCase = true) }
     splits {
         abi {
-            isEnable = !buildingAppBundle
+            isEnable = isSideloadBuild
             reset()
             include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
             isUniversalApk = true
