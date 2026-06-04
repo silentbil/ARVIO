@@ -2156,16 +2156,21 @@ class IptvRepository @Inject constructor(
             }
             if (mergedNowNext.isEmpty()) return@withContext null
 
-            // Merge into cache (in-place, no copy)
-            cachedNowNext.putAll(mergedNowNext)
+            // Merge into cache (in-place, no copy). Visible short EPG refreshes
+            // only carry now/next/later slices, so replacing the whole entry
+            // would wipe the richer catch-up history loaded for archive rows.
+            val mergedForCache = mergedNowNext.mapValues { (channelId, fresh) ->
+                mergeCachedGuideSlice(cachedNowNext[channelId], fresh)
+            }
+            cachedNowNext.putAll(mergedForCache)
             cachedEpgAt = System.currentTimeMillis()
-            persistEpgIndexChannels(config, mergedNowNext, cachedEpgAt)
+            persistEpgIndexChannels(config, mergedForCache, cachedEpgAt)
 
             System.err.println(
-                "[EPG-Refresh] Updated ${mergedNowNext.size} channels in cache " +
+                "[EPG-Refresh] Updated ${mergedForCache.size} channels in cache " +
                     "from $totalListings listings, $totalErrors errors"
             )
-            mergedNowNext
+            mergedForCache
         }
     }
 
