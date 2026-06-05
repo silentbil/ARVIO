@@ -187,7 +187,7 @@ class IptvRepository @Inject constructor(
 
     private val guideKeyCandidatesCache = java.util.Collections.synchronizedMap(
         object : java.util.LinkedHashMap<String, Set<String>>(512, 0.75f, true) {
-            override fun removeEldestEntry(eldest: Map.Entry<String, Set<String>>?): Boolean = size > 16384
+            override fun removeEldestEntry(eldest: Map.Entry<String, Set<String>>?): Boolean = size > 4096
         }
     )
 
@@ -1442,13 +1442,13 @@ class IptvRepository @Inject constructor(
                                 )
                             }
                             if (playlistChannels.isNotEmpty()) {
-                                aggregatedChannels += playlistChannels
-                                val currentList = synchronized(aggregatedChannels) { aggregatedChannels.toList() }
+                                aggregatedChannels.addAll(playlistChannels)
+                                val currentList = synchronized(aggregatedChannels) { ArrayList(aggregatedChannels) }
                                 runCatching { onChannelsReady(currentList) }
                             }
-                            playlistChannels
                         }
-                    }.awaitAll().flatten()
+                    }.awaitAll()
+                    synchronized(aggregatedChannels) { ArrayList(aggregatedChannels) }
                 }.also {
                     cachedChannels = it
                     cachedGroupedChannels = buildGroupedChannels(it)
@@ -1637,7 +1637,7 @@ class IptvRepository @Inject constructor(
                     if (resolved) {
                         shortEpgResult?.let { mergedXmlNowNext.putAll(it) } // Short EPG wins for channels it covers
                         resolvedNowNext = mergedXmlNowNext
-                        cachedNowNext = ConcurrentHashMap(mergedXmlNowNext)
+                        cachedNowNext = mergedXmlNowNext
                         cachedEpgAt = System.currentTimeMillis()
                         if (xmltvChanged) {
                             persistEpgIndexAll(config, mergedXmlNowNext, cachedEpgAt)
@@ -2447,6 +2447,8 @@ class IptvRepository @Inject constructor(
 
     fun invalidateCache() {
         cachedChannels = emptyList()
+        cachedChannelsLookupSource = null
+        cachedChannelsById = emptyMap()
         cachedGroupedChannels = emptyMap()
         cachedNowNext = ConcurrentHashMap()
         cachedPlaylistAt = 0L
@@ -6235,7 +6237,20 @@ class IptvRepository @Inject constructor(
                 val country = extractFirstAttr(metadata, "tvg-country", "country")
                 val qualityLabel = extractFirstAttr(metadata, "quality", "tvg-quality", "resolution")
                     ?: inferQualityLabel(channelName, groupTitle)
-                val requestHeaders = (pendingHeaders + extractInlineRequestHeaders(metadata)).filterValues { it.isNotBlank() }
+                val inlineHeaders = extractInlineRequestHeaders(metadata)
+                val requestHeaders = if (pendingHeaders.isEmpty()) {
+                    if (inlineHeaders.isEmpty()) {
+                        emptyMap()
+                    } else {
+                        inlineHeaders.filterValues { it.isNotBlank() }
+                    }
+                } else {
+                    if (inlineHeaders.isEmpty()) {
+                        pendingHeaders.filterValues { it.isNotBlank() }
+                    } else {
+                        (pendingHeaders + inlineHeaders).filterValues { it.isNotBlank() }
+                    }
+                }
 
                 channels += IptvChannel(
                     id = id,
@@ -6320,7 +6335,10 @@ class IptvRepository @Inject constructor(
                             if (!xmlId.isNullOrBlank()) {
                                 val display = normalizeChannelKey(parser.nextText().orEmpty())
                                 if (display.isNotBlank()) {
-                                    xmlChannelNameMap.getOrPut(xmlId) { mutableSetOf() }.add(display)
+                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup }
+                                    if (isUseful) {
+                                        xmlChannelNameMap.getOrPut(xmlId) { mutableSetOf() }.add(display)
+                                    }
                                 }
                             }
                         }
@@ -6490,7 +6508,10 @@ class IptvRepository @Inject constructor(
                             if (!xmlId.isNullOrBlank()) {
                                 val display = normalizeChannelKey(textBuffer.toString())
                                 if (display.isNotBlank()) {
-                                    xmlChannelNameMap.getOrPut(xmlId) { mutableSetOf() }.add(display)
+                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup }
+                                    if (isUseful) {
+                                        xmlChannelNameMap.getOrPut(xmlId) { mutableSetOf() }.add(display)
+                                    }
                                 }
                             }
                             readingDisplayName = false
@@ -6561,8 +6582,9 @@ class IptvRepository @Inject constructor(
         nowCandidates: Map<String, IptvProgram?>,
         upcomingCandidates: Map<String, List<IptvProgram>>,
         recentCandidates: Map<String, List<IptvProgram>>
-    ): Map<String, IptvNowNext> {
-        return channels.mapNotNull { channel ->
+    ): ConcurrentHashMap<String, IptvNowNext> {
+        val result = ConcurrentHashMap<String, IptvNowNext>(channels.size)
+        channels.forEach { channel ->
             val future = upcomingCandidates[channel.id].orEmpty()
             val recent = recentCandidates[channel.id].orEmpty().sortedBy { it.startUtcMillis }
             val nowNext = IptvNowNext(
@@ -6572,8 +6594,11 @@ class IptvRepository @Inject constructor(
                 upcoming = future,
                 recent = recent
             )
-            if (hasProgramData(nowNext)) channel.id to nowNext else null
-        }.toMap()
+            if (hasProgramData(nowNext)) {
+                result[channel.id] = nowNext
+            }
+        }
+        return result
     }
 
     private fun pickNow(existing: IptvProgram?, candidate: IptvProgram, nowUtcMillis: Long): IptvProgram? {
@@ -6909,9 +6934,12 @@ class IptvRepository @Inject constructor(
 
     private fun extractInlineRequestHeaders(metadata: String?): Map<String, String> {
         if (metadata.isNullOrBlank()) return emptyMap()
-        val headers = linkedMapOf<String, String>()
-        extractFirstAttr(metadata, "http-user-agent", "user-agent")?.let { headers["User-Agent"] = it }
-        extractFirstAttr(metadata, "http-referrer", "http-referer", "referrer", "referer")?.let { headers["Referer"] = it }
+        val userAgent = extractFirstAttr(metadata, "http-user-agent", "user-agent")
+        val referrer = extractFirstAttr(metadata, "http-referrer", "http-referer", "referrer", "referer")
+        if (userAgent == null && referrer == null) return emptyMap()
+        val headers = LinkedHashMap<String, String>(2)
+        userAgent?.let { headers["User-Agent"] = it }
+        referrer?.let { headers["Referer"] = it }
         return headers
     }
 
