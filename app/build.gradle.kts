@@ -271,6 +271,11 @@ dependencies {
 
     // HTML parsing for catalog discovery.
     implementation("org.jsoup:jsoup:1.17.2")
+    // Runtime helpers used by the sideload plugin extractor stack.
+    // NewPipe/cloudstream evaluate some packed JavaScript with Rhino, while
+    // newer jsoup exposes an optional RE2J regex adapter referenced during R8.
+    add("sideloadImplementation", "org.mozilla:rhino:1.8.1")
+    add("sideloadImplementation", "com.google.re2j:re2j:1.8")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

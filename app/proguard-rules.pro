@@ -108,6 +108,19 @@
 -dontwarn org.jellyfin.media3.**
 
 # ============================================
+# Sideload plugin runtime / extractor stack
+# ============================================
+# CloudStream/NewPipe/Jackson pull a few optional JVM helper integrations that
+# are not available or not needed on Android release builds. Keep R8 strict for
+# app code, but suppress those optional adapter references so sideload release
+# minification can complete.
+-dontwarn com.google.re2j.**
+-dontwarn com.sun.jna.**
+-dontwarn edu.umd.cs.findbugs.annotations.**
+-dontwarn javax.script.**
+-dontwarn org.mozilla.javascript.**
+
+# ============================================
 # Hilt / Dagger - KEEP EVERYTHING
 # ============================================
 # Keep ALL app classes to prevent Hilt/Dagger issues
