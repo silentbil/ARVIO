@@ -174,6 +174,7 @@ class PlayerViewModel @Inject constructor(
     private var lastIsPlaying: Boolean = false
     private var hasMarkedWatched: Boolean = false
     private var hasManualSubtitleSelection: Boolean = false
+    private var playbackSessionStartTime: Long = 0L
 
     // AI subtitle settings (read once per video load)
     private var aiSubtitleEnabled = false
@@ -314,6 +315,7 @@ class PlayerViewModel @Inject constructor(
         currentPreferredAddonId = preferredAddonId?.trim()?.takeIf { it.isNotBlank() }
         currentPreferredSourceName = preferredSourceName?.trim()?.takeIf { it.isNotBlank() }
         currentPreferredBingeGroup = preferredBingeGroup?.trim()?.takeIf { it.isNotBlank() }
+        playbackSessionStartTime = System.currentTimeMillis()
         playbackDiag(
             "loadMedia type=$mediaType id=$mediaId season=$seasonNumber episode=$episodeNumber " +
                 "providedUrl=${!providedStreamUrl.isNullOrBlank()} preferredAddon=${currentPreferredAddonId.orEmpty()} " +
@@ -2533,7 +2535,8 @@ class PlayerViewModel @Inject constructor(
                     position = positionSeconds,
                     streamKey = streamKey,
                     streamAddonId = streamAddonId,
-                    streamTitle = streamTitle
+                    streamTitle = streamTitle,
+                    sessionStartTime = playbackSessionStartTime
                 )
 
                 // Also save to local Continue Watching (profile-scoped, for profiles without Trakt).
