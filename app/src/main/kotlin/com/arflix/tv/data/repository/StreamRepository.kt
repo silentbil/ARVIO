@@ -1076,16 +1076,13 @@ class StreamRepository @Inject constructor(
                     (resource.name.equals("stream", ignoreCase = true) ||
                         resource.name.equals("streams", ignoreCase = true)) &&
                         supportsResourceType(resource.types, normalizedType) &&
-                        (resource.idPrefixes == null || resource.idPrefixes.isEmpty() ||
-                            resource.idPrefixes.any { id.startsWith(it) })
+                        idMatchesAnyPrefix(id, resource.idPrefixes)
                 }
                 if (hasMatchingResource) return@filter true
             }
             // Check global idPrefixes if present
             val idPrefixes = manifest?.idPrefixes
-            if (idPrefixes != null && idPrefixes.isNotEmpty()) {
-                if (!idPrefixes.any { id.startsWith(it) }) return@filter false
-            }
+            if (!idMatchesAnyPrefix(id, idPrefixes)) return@filter false
             true
         }
     }
@@ -1121,10 +1118,65 @@ class StreamRepository @Inject constructor(
         val normalized = resourceTypes.map { it.trim().lowercase(Locale.US) }
         val aliases = when (requestedType) {
             "series", "tv", "show" -> setOf("series", "tv", "show")
+            "anime" -> setOf("anime", "series", "tv", "show")
             "movie", "film" -> setOf("movie", "film")
             else -> setOf(requestedType)
         }
         return normalized.any { it in aliases }
+    }
+
+    private fun idMatchesAnyPrefix(id: String, prefixes: List<String>?): Boolean {
+        if (prefixes.isNullOrEmpty()) return true
+        return prefixes.any { prefix ->
+            val normalizedPrefix = prefix.trim()
+            normalizedPrefix.isBlank() ||
+                id.startsWith(normalizedPrefix, ignoreCase = true) ||
+                (!normalizedPrefix.endsWith(":") && id.startsWith("$normalizedPrefix:", ignoreCase = true))
+        }
+    }
+
+    private fun addonSupportsStreamRequest(addon: Addon, type: String, id: String): Boolean {
+        if (addon.type == AddonType.CUSTOM) return true
+        val manifest = addon.manifest ?: return true
+        val hasMatchingResource = manifest.resources.isEmpty() || manifest.resources.any { resource ->
+            (resource.name.equals("stream", ignoreCase = true) ||
+                resource.name.equals("streams", ignoreCase = true)) &&
+                supportsResourceType(resource.types, type.trim().lowercase(Locale.US)) &&
+                idMatchesAnyPrefix(id, resource.idPrefixes)
+        }
+        return hasMatchingResource && idMatchesAnyPrefix(id, manifest.idPrefixes)
+    }
+
+    private fun addonSupportsIdFamily(addon: Addon, family: String): Boolean {
+        val manifest = addon.manifest ?: return true
+        val normalizedFamily = family.trim().trimEnd(':').lowercase(Locale.US)
+        if (normalizedFamily.isBlank()) return true
+        val prefixes = buildList {
+            addAll(manifest.idPrefixes.orEmpty())
+            manifest.resources.forEach { resource -> addAll(resource.idPrefixes.orEmpty()) }
+        }
+        if (prefixes.isEmpty()) return true
+        return prefixes.any { prefix ->
+            prefix.trim().trimEnd(':').equals(normalizedFamily, ignoreCase = true)
+        }
+    }
+
+    private fun getEpisodeStreamAddons(
+        addons: List<Addon>,
+        imdbId: String,
+        tmdbId: Int?,
+        isAnime: Boolean
+    ): List<Addon> {
+        val seriesAddons = getStreamAddons(addons, "series", imdbId)
+        if (!isAnime) return seriesAddons
+
+        val animeIds = buildList {
+            add(imdbId)
+            add("kitsu:")
+            if (tmdbId != null) add("tmdb:$tmdbId")
+        }
+        val animeAddons = animeIds.flatMap { id -> getStreamAddons(addons, "anime", id) }
+        return (seriesAddons + animeAddons).distinctBy { it.id }
     }
 
     // Stream source requests — generous timeouts to accommodate slow wifi and
@@ -1372,61 +1424,101 @@ class StreamRepository @Inject constructor(
                 } else null
 
                 val seriesId = "$imdbId:$season:$episode"
-                val supportsKitsu = addon.manifest?.idPrefixes?.contains("kitsu") == true ||
+                val supportsKitsu = addonSupportsIdFamily(addon, "kitsu") ||
                     addon.url.contains("torrentio") ||
                     addon.url.contains("aiostreams") ||
                     addon.url.contains("mediafusion") ||
                     addon.url.contains("comet")
 
                 val useKitsuFallback = isAnime && supportsKitsu && animeQuery != null && animeQuery != seriesId
-                fun streamUrl(contentId: String): String {
+                fun streamUrl(type: String, contentId: String): String {
                     return if (queryParams != null) {
-                        "$baseUrl/stream/series/$contentId.json?$queryParams"
+                        "$baseUrl/stream/$type/$contentId.json?$queryParams"
                     } else {
-                        "$baseUrl/stream/series/$contentId.json"
+                        "$baseUrl/stream/$type/$contentId.json"
                     }
                 }
 
                 // For anime debrid addons, prefer the exact app season/episode request first.
                 // Kitsu mappings are still useful as fallback, but split cours can remap
                 // episodes like TMDB S4E29 to Kitsu E7 and surface the wrong debrid files.
-                val url = streamUrl(seriesId)
+                fun streamRequestTypes(contentId: String, preferAnimePath: Boolean): List<String> {
+                    val types = mutableListOf<String>()
+                    if (preferAnimePath && addonSupportsStreamRequest(addon, "anime", contentId)) {
+                        types += "anime"
+                    }
+                    if (addonSupportsStreamRequest(addon, "series", contentId)) {
+                        types += "series"
+                    }
+                    if (!preferAnimePath && addonSupportsStreamRequest(addon, "anime", contentId)) {
+                        types += "anime"
+                    }
+                    return types.distinct().ifEmpty { listOf("series") }
+                }
 
-                Log.d(
-                    TAG,
-                    "[StreamFetch][Episode] request addon=${addon.name} addonId=${addon.id} url=${sanitizeLogUrl(url)} kitsu=false"
-                )
-
-                val response = streamApi.getAddonStreams(url)
-                var addonStreams = processStreams(response.streams ?: emptyList(), addon)
-                Log.d(
-                    TAG,
-                    "[StreamFetch][Episode] response addon=${addon.name} addonId=${addon.id} streams=${addonStreams.size} elapsedMs=${System.currentTimeMillis() - startedAt}"
-                )
-                if (addonStreams.isEmpty() && useKitsuFallback) {
-                    val fallbackUrl = streamUrl(animeQuery)
-                    Log.d(
-                        TAG,
-                        "[StreamFetch][Episode] kitsu fallback request addon=${addon.name} addonId=${addon.id} url=${sanitizeLogUrl(fallbackUrl)}"
-                    )
-                    try {
-                        val fallbackResponse = streamApi.getAddonStreams(fallbackUrl)
-                        addonStreams = processStreams(fallbackResponse.streams ?: emptyList(), addon)
+                suspend fun requestEpisodeId(
+                    contentId: String,
+                    label: String,
+                    preferAnimePath: Boolean
+                ): List<StreamSource> {
+                    var lastError: Exception? = null
+                    for (requestType in streamRequestTypes(contentId, preferAnimePath)) {
+                        val requestUrl = streamUrl(requestType, contentId)
                         Log.d(
                             TAG,
-                            "[StreamFetch][Episode] kitsu fallback response addon=${addon.name} addonId=${addon.id} streams=${addonStreams.size}"
+                            "[StreamFetch][Episode] $label request addon=${addon.name} addonId=${addon.id} type=$requestType url=${sanitizeLogUrl(requestUrl)}"
                         )
-                    } catch (fallbackError: Exception) {
-                        Log.w(
-                            TAG,
-                            "[StreamFetch][Episode] kitsu fallback failure addon=${addon.name} addonId=${addon.id} error=${fallbackError.toShortLogMessage()}"
-                        )
+                        try {
+                            val response = streamApi.getAddonStreams(requestUrl)
+                            val streams = processStreams(response.streams ?: emptyList(), addon)
+                            Log.d(
+                                TAG,
+                                "[StreamFetch][Episode] $label response addon=${addon.name} addonId=${addon.id} type=$requestType streams=${streams.size} elapsedMs=${System.currentTimeMillis() - startedAt}"
+                            )
+                            if (streams.isNotEmpty()) return streams
+                        } catch (timeout: TimeoutCancellationException) {
+                            throw timeout
+                        } catch (error: Exception) {
+                            lastError = error
+                            Log.w(
+                                TAG,
+                                "[StreamFetch][Episode] $label failure addon=${addon.name} addonId=${addon.id} type=$requestType error=${error.toShortLogMessage()}"
+                            )
+                        }
+                    }
+                    if (lastError != null) {
                         AppLogger.breadcrumb(
                             tag = "Sources",
-                            message = "episode_kitsu_fallback_failed addon=${addon.id} error=${fallbackError::class.java.simpleName}",
+                            message = "episode_${label}_failed addon=${addon.id} error=${lastError::class.java.simpleName}",
                             severity = "warning"
                         )
                     }
+                    return emptyList()
+                }
+
+                var addonStreams = requestEpisodeId(
+                    contentId = seriesId,
+                    label = "imdb",
+                    preferAnimePath = false
+                )
+
+                if (addonStreams.isEmpty() && useKitsuFallback) {
+                    addonStreams = requestEpisodeId(
+                        contentId = animeQuery,
+                        label = "kitsu",
+                        preferAnimePath = true
+                    )
+                }
+
+                val tmdbEpisodeId = if (isAnime && tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
+                    "tmdb:$tmdbId:$season:$episode"
+                } else null
+                if (addonStreams.isEmpty() && tmdbEpisodeId != null) {
+                    addonStreams = requestEpisodeId(
+                        contentId = tmdbEpisodeId,
+                        label = "tmdb",
+                        preferAnimePath = true
+                    )
                 }
 
                 // Daily show fallback: try air-date-based numbering (S{year}E{dayOfYear})
@@ -1447,11 +1539,7 @@ class StreamRepository @Inject constructor(
                                 }
                                 val dayOfYear = cal.get(java.util.Calendar.DAY_OF_YEAR)
                                 val airDateId = "$imdbId:$year:$dayOfYear"
-                                val airDateUrl = if (queryParams != null) {
-                                    "$baseUrl/stream/series/$airDateId.json?$queryParams"
-                                } else {
-                                    "$baseUrl/stream/series/$airDateId.json"
-                                }
+                                val airDateUrl = streamUrl("series", airDateId)
                                 Log.d(
                                     TAG,
                                     "[StreamFetch][Episode] airDate request addon=${addon.name} addonId=${addon.id} url=${sanitizeLogUrl(airDateUrl)}"
@@ -1906,7 +1994,13 @@ class StreamRepository @Inject constructor(
         ensureAddonHealthLoaded()
         val subtitles = mutableListOf<Subtitle>()
         val allAddons = installedAddonsForSourceResolution()
-        val streamAddons = getStreamAddons(allAddons, "series", imdbId)
+        val isAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)
+        val streamAddons = getEpisodeStreamAddons(
+            addons = allAddons,
+            imdbId = imdbId,
+            tmdbId = tmdbId,
+            isAnime = isAnime
+        )
         val cacheKey = streamCacheKey(
             profileId = profileManager.getProfileIdSync(),
             type = EPISODE_STREAM_CACHE_TYPE,
@@ -1966,7 +2060,13 @@ class StreamRepository @Inject constructor(
         repositoryScope.launch {
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
-            val streamAddons = getStreamAddons(allAddons, "series", imdbId)
+            val isAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)
+            val streamAddons = getEpisodeStreamAddons(
+                addons = allAddons,
+                imdbId = imdbId,
+                tmdbId = tmdbId,
+                isAnime = isAnime
+            )
             val cacheKey = streamCacheKey(
                 profileId = profileManager.getProfileIdSync(),
                 type = EPISODE_STREAM_CACHE_TYPE,
