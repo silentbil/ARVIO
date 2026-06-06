@@ -74,13 +74,13 @@ class IptvRepositoryOptimizationTest {
         assertEquals(2, read1)
         // Since '\' is followed by 'n', our stream reads lookahead 'n' from the underlying stream,
         // maps it to '\n' and puts it into buffer[1]. So buffer should have ['A', '\n'].
-        assertEquals('A', buffer[0].toChar())
-        assertEquals('\n', buffer[1].toChar())
+        assertEquals('A', buffer[0].toInt().toChar())
+        assertEquals('\n', buffer[1].toInt().toChar())
 
         // Next read should get the remaining 'B'
         val read2 = sanitizingStream.read(buffer, 0, 2)
         assertEquals(1, read2)
-        assertEquals('B', buffer[0].toChar())
+        assertEquals('B', buffer[0].toInt().toChar())
     }
 
     @Test
@@ -92,8 +92,8 @@ class IptvRepositoryOptimizationTest {
         val buffer = ByteArray(5)
         val read = sanitizingStream.read(buffer, 0, 5)
         assertEquals(2, read)
-        assertEquals('A', buffer[0].toChar())
-        assertEquals('\\', buffer[1].toChar())
+        assertEquals('A', buffer[0].toInt().toChar())
+        assertEquals('\\', buffer[1].toInt().toChar())
     }
 
     @Test

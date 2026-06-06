@@ -67,6 +67,35 @@ private val Context.streamDataStore: DataStore<Preferences> by preferencesDataSt
  */
 typealias StreamCallback = (streams: List<StreamSource>?, addonId: String, addonName: String, error: Exception?) -> Unit
 
+internal data class EpisodeIdCandidate(
+    val contentId: String,
+    val label: String,
+    val preferAnimePath: Boolean
+)
+
+internal fun buildEpisodeIdCandidates(
+    seriesId: String,
+    animeQuery: String?,
+    tmdbEpisodeId: String?,
+    preferNativeAnimeIds: Boolean
+): List<EpisodeIdCandidate> {
+    val animeCandidate = animeQuery
+        ?.takeIf { it.isNotBlank() && it != seriesId }
+        ?.let { EpisodeIdCandidate(it, "kitsu", preferAnimePath = true) }
+    val tmdbCandidate = tmdbEpisodeId
+        ?.takeIf { it.isNotBlank() && it != seriesId && it != animeQuery }
+        ?.let { EpisodeIdCandidate(it, "tmdb", preferAnimePath = true) }
+    val imdbCandidate = EpisodeIdCandidate(seriesId, "imdb", preferAnimePath = false)
+
+    val ordered = if (preferNativeAnimeIds) {
+        listOfNotNull(animeCandidate, tmdbCandidate, imdbCandidate)
+    } else {
+        listOfNotNull(imdbCandidate, animeCandidate, tmdbCandidate)
+    }
+
+    return ordered.distinctBy { "${it.contentId}|${it.preferAnimePath}" }
+}
+
 /**
  * Repository for stream resolution from Stremio addons
  * Enhanced with addon management
@@ -1161,6 +1190,25 @@ class StreamRepository @Inject constructor(
         }
     }
 
+    private fun manifestDeclaresExactType(addon: Addon, type: String): Boolean {
+        val manifest = addon.manifest ?: return false
+        val normalizedType = type.trim().lowercase(Locale.US)
+        if (normalizedType.isBlank()) return false
+        if (manifest.types.any { it.trim().equals(normalizedType, ignoreCase = true) }) return true
+        if (manifest.catalogs.any { it.type.trim().equals(normalizedType, ignoreCase = true) }) return true
+        return manifest.resources.any { resource ->
+            resource.types.any { it.trim().equals(normalizedType, ignoreCase = true) }
+        }
+    }
+
+    private fun shouldPreferNativeAnimeIds(addon: Addon): Boolean {
+        val declaresAnime = manifestDeclaresExactType(addon, "anime")
+        if (!declaresAnime) return false
+        return addonSupportsIdFamily(addon, "kitsu") ||
+            addonSupportsIdFamily(addon, "aniways") ||
+            addonSupportsIdFamily(addon, "kisskh")
+    }
+
     private fun getEpisodeStreamAddons(
         addons: List<Addon>,
         imdbId: String,
@@ -1182,6 +1230,8 @@ class StreamRepository @Inject constructor(
     // Stream source requests — generous timeouts to accommodate slow wifi and
     // debrid-backed addons (Torrentio, MediaFusion, etc.) that resolve remotely.
     private val ADDON_TIMEOUT_MS = 6_000L
+    private val ADDON_EPISODE_TIMEOUT_MS = 10_000L
+    private val ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 4_000L
     // Subtitles should not block playback but need enough time on slow connections.
     private val SUBTITLE_TIMEOUT_MS = 6_000L
     // If addons return nothing, allow Xtream VOD lookup to recover playback.
@@ -1390,7 +1440,7 @@ class StreamRepository @Inject constructor(
     ): List<StreamSource> {
         val startedAt = System.currentTimeMillis()
         return try {
-            withTimeout(ADDON_TIMEOUT_MS) {
+            withTimeout(ADDON_EPISODE_TIMEOUT_MS) {
                 if (httpLocalScraperRuntime.canHandle(addon)) {
                     val streams = httpLocalScraperRuntime.resolveEpisodeStreams(
                         addon = addon,
@@ -1431,6 +1481,7 @@ class StreamRepository @Inject constructor(
                     addon.url.contains("comet")
 
                 val useKitsuFallback = isAnime && supportsKitsu && animeQuery != null && animeQuery != seriesId
+                val preferNativeAnimeIds = isAnime && useKitsuFallback && shouldPreferNativeAnimeIds(addon)
                 fun streamUrl(type: String, contentId: String): String {
                     return if (queryParams != null) {
                         "$baseUrl/stream/$type/$contentId.json?$queryParams"
@@ -1469,7 +1520,16 @@ class StreamRepository @Inject constructor(
                             "[StreamFetch][Episode] $label request addon=${addon.name} addonId=${addon.id} type=$requestType url=${sanitizeLogUrl(requestUrl)}"
                         )
                         try {
-                            val response = streamApi.getAddonStreams(requestUrl)
+                            val response = withTimeoutOrNull(ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS) {
+                                streamApi.getAddonStreams(requestUrl)
+                            }
+                            if (response == null) {
+                                Log.w(
+                                    TAG,
+                                    "[StreamFetch][Episode] $label request timeout addon=${addon.name} addonId=${addon.id} type=$requestType timeoutMs=$ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS"
+                                )
+                                continue
+                            }
                             val streams = processStreams(response.streams ?: emptyList(), addon)
                             Log.d(
                                 TAG,
@@ -1496,29 +1556,23 @@ class StreamRepository @Inject constructor(
                     return emptyList()
                 }
 
-                var addonStreams = requestEpisodeId(
-                    contentId = seriesId,
-                    label = "imdb",
-                    preferAnimePath = false
-                )
-
-                if (addonStreams.isEmpty() && useKitsuFallback) {
-                    addonStreams = requestEpisodeId(
-                        contentId = animeQuery,
-                        label = "kitsu",
-                        preferAnimePath = true
-                    )
-                }
-
                 val tmdbEpisodeId = if (isAnime && tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
                     "tmdb:$tmdbId:$season:$episode"
                 } else null
-                if (addonStreams.isEmpty() && tmdbEpisodeId != null) {
+
+                var addonStreams = emptyList<StreamSource>()
+                for (candidate in buildEpisodeIdCandidates(
+                    seriesId = seriesId,
+                    animeQuery = if (useKitsuFallback) animeQuery else null,
+                    tmdbEpisodeId = tmdbEpisodeId,
+                    preferNativeAnimeIds = preferNativeAnimeIds
+                )) {
                     addonStreams = requestEpisodeId(
-                        contentId = tmdbEpisodeId,
-                        label = "tmdb",
-                        preferAnimePath = true
+                        contentId = candidate.contentId,
+                        label = candidate.label,
+                        preferAnimePath = candidate.preferAnimePath
                     )
+                    if (addonStreams.isNotEmpty()) break
                 }
 
                 // Daily show fallback: try air-date-based numbering (S{year}E{dayOfYear})
