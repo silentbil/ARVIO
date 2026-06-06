@@ -252,4 +252,32 @@
     <string name="ai_qr_scan_hint">Scan with your phone — choose Groq or Gemini</string>
     <string name="smooth_scrolling">Smoother Scrolling</string>
     <string name="smooth_scrolling_desc">Use premium smooth transitions when navigating poster rows</string>
+
+    <string name="plugin_providers_count">%1$d Providers</string>
+    <string name="plugin_updated_format">Updated: %1$s</string>
+    <string name="cd_refresh">Refresh Repository</string>
+    <string name="cd_remove">Remove Repository</string>
+    <string name="plugin_version">Version: %1$s</string>
+    <string name="cd_test">Test Plugin</string>
+    <string name="plugin_test_btn">Test</string>
+    <string name="plugin_diagnostics_collapse">Hide Diagnostics</string>
+    <string name="plugin_diagnostics_expand">Show Diagnostics</string>
+    <string name="plugin_test_results">Results: %1$d</string>
+    <string name="plugin_and_more">+ %1$d more</string>
+    <string name="error_unknown">Unknown error</string>
+    <string name="plugin_error_invalid_url">Invalid Repository URL</string>
+    <string name="plugin_repo_added_with_providers">Repository added with %1$d providers</string>
+    <string name="plugin_error_add_repo">Error adding repository</string>
+    <string name="plugin_repo_removed">Repository removed</string>
+    <string name="plugin_repo_refreshed">Repository refreshed successfully</string>
+    <string name="plugin_error_refresh">Error refreshing repository</string>
+    <string name="plugin_test_no_results">No results found</string>
+    <string name="plugin_test_found_streams">Found %1$d streams</string>
+    <string name="plugin_error_test">Error testing plugin</string>
+
+    <string name="plugin_confirm_confirm">Confirm</string>
+    <string name="plugin_risky_enable_title">Warning</string>
+    <string name="plugin_risky_enable_message">This plugin may be risky.</string>
+    <string name="plugin_risky_enable_cancel">Cancel</string>
+    <string name="plugin_risky_enable_confirm">Enable</string>
 </resources>

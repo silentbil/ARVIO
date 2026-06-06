@@ -12,8 +12,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import com.arflix.tv.worker.CloudSyncWorker
+
 @Singleton
 class CloudSyncCoordinator @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val invalidationBus: CloudSyncInvalidationBus,
     private val cloudSyncRepository: CloudSyncRepository,
     private val authRepository: AuthRepository
@@ -54,13 +59,21 @@ class CloudSyncCoordinator @Inject constructor(
             if (!started.get()) return
             flushJob?.cancel()
             flushJob = scope.launch {
-                delay(debounceMsFor(invalidation.scope))
+                val backoffMs = if (cloudSyncRepository.pushFailureCount > 0) {
+                    // Exponential backoff: 2s, 4s, 8s, 16s... max 1 minute (for active app)
+                    (2_000L * (1 shl (cloudSyncRepository.pushFailureCount - 1).coerceAtMost(5))).coerceAtMost(60_000L)
+                } else {
+                    debounceMsFor(invalidation.scope)
+                }
+                delay(backoffMs)
+
                 val userId = runCatching { authRepository.getCurrentUserId() }.getOrNull()
                 if (userId.isNullOrBlank()) return@launch
                 runCatching { cloudSyncRepository.pushToCloud() }
                     .onFailure { error ->
                         Log.w("CloudSyncCoordinator", "Cloud push failed after ${invalidation.scope}: ${error.message}")
                         cloudSyncRepository.markLocalStateDirty()
+                        CloudSyncWorker.enqueueRecovery(context)
                     }
             }
         }

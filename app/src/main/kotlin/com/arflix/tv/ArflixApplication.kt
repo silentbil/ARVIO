@@ -285,7 +285,3 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         }
     }
 }
-
-
-
-

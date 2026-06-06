@@ -23,7 +23,7 @@ plugins {
 
 android {
     namespace = "com.arflix.tv"
-    compileSdk = 35
+    compileSdk = 36
 
     flavorDimensions += "distribution"
 
@@ -56,10 +56,12 @@ android {
         create("play") {
             dimension = "distribution"
             buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "false")
+            buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
         }
         create("sideload") {
             dimension = "distribution"
             buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "true")
+            buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "true")
         }
     }
 
@@ -140,9 +142,7 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+
 
     buildFeatures {
         compose = true
@@ -154,8 +154,7 @@ android {
             excludes += setOf(
                 "/META-INF/{AL2.0,LGPL2.1}",
                 "/META-INF/LICENSE*",
-                "/META-INF/NOTICE*",
-            )
+                "/META-INF/NOTICE*", "META-INF/versions/9/OSGI-INF/MANIFEST.MF")
         }
         jniLibs {
             useLegacyPackaging = false  // Required for 16KB page size support
@@ -190,6 +189,17 @@ android {
 // is the same as before — marks domain models as stable to avoid
 // unnecessary recompositions — but fed through a first-class plugin
 // extension instead of a raw -P freeCompilerArg.
+configurations.configureEach {
+    exclude(group = "org.json", module = "json")
+
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.jetbrains.kotlinx" && requested.name.startsWith("kotlinx-coroutines")) {
+            useVersion("1.7.3")
+            because("Ktor 2.3.7 used by Supabase and the Telegram proxy crashes with coroutines 1.10.x on Android TV.")
+        }
+    }
+}
+
 composeCompiler {
     stabilityConfigurationFile = rootProject.layout.projectDirectory
         .file("app/compose_stability_config.conf")
@@ -240,8 +250,8 @@ dependencies {
     // with "Unable to read Kotlin metadata due to unsupported metadata
     // version" because Hilt parses generated `@Module` classes that carry
     // Kotlin 2.1's newer metadata format.
-    implementation("com.google.dagger:hilt-android:2.54")
-    ksp("com.google.dagger:hilt-compiler:2.54")
+    implementation("com.google.dagger:hilt-android:2.57")
+    ksp("com.google.dagger:hilt-compiler:2.57")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
 
     // Leanback (TV compliance, browse fragments if needed)
@@ -272,6 +282,11 @@ dependencies {
 
     // HTML parsing for catalog discovery.
     implementation("org.jsoup:jsoup:1.17.2")
+    // Runtime helpers used by the sideload plugin extractor stack.
+    // NewPipe/cloudstream evaluate some packed JavaScript with Rhino, while
+    // newer jsoup exposes an optional RE2J regex adapter referenced during R8.
+    add("sideloadImplementation", "org.mozilla:rhino:1.8.1")
+    add("sideloadImplementation", "com.google.re2j:re2j:1.8")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
@@ -535,4 +550,33 @@ detekt {
 
     // Don't fail build on issues (use baseline instead)
     ignoreFailures = true
+}
+
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        freeCompilerArgs.add("-Xskip-metadata-version-check")
+    }
+}
+
+dependencies {
+    ksp("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
+    annotationProcessor("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
+
+    // Plugin system dependencies (Sideload flavor only)
+    add("sideloadImplementation", files("libs/quickjs-kt-android-1.0.5-nuvio.aar"))
+    add("sideloadImplementation", "com.fasterxml.jackson.core:jackson-databind:2.17.0")
+    add("sideloadImplementation", "com.fasterxml.jackson.module:jackson-module-kotlin:2.17.0")
+    add("sideloadImplementation", "com.github.Blatzar:NiceHttp:0.4.11")
+    add("sideloadImplementation", "org.conscrypt:conscrypt-android:2.5.3")
+    add("sideloadImplementation", "com.github.recloudstream.cloudstream:library:v4.7.0") {
+        exclude(group = "org.mozilla", module = "rhino")
+    }
+    add("sideloadImplementation", "org.webjars.npm:crypto-js:4.2.0")
+
+    // Moshi - used in both sideload plugins and main data store
+    implementation("com.squareup.moshi:moshi:1.15.1")
+    implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
+    ksp("com.squareup.moshi:moshi-kotlin-codegen:1.15.1")
 }

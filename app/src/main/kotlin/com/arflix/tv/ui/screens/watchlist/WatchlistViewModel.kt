@@ -333,5 +333,3 @@ class WatchlistViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(toastMessage = null)
     }
 }
-
-

@@ -133,4 +133,3 @@ class StartupViewModel @Inject constructor(
         }
     }
 }
-

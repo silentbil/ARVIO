@@ -631,7 +631,7 @@ private fun HorizontalKnownForCard(
                     }
                 }
             }
-            
+
             // Focus glow effect
             if (isFocused) {
                 Box(

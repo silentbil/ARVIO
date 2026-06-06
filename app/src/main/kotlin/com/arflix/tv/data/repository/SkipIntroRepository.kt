@@ -131,4 +131,3 @@ class SkipIntroRepository @Inject constructor(
         private const val NO_MAL_ID = "__none__"
     }
 }
-

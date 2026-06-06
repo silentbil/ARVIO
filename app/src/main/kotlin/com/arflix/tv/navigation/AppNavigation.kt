@@ -57,7 +57,7 @@ sealed class Screen(val route: String) {
     object Settings : Screen("settings")
     object TelegramSettings : Screen("telegram_settings")
     object ProfileSelection : Screen("profile_selection")
-    
+
     object Details : Screen("details/{mediaType}/{mediaId}?initialSeason={initialSeason}&initialEpisode={initialEpisode}") {
         fun createRoute(
             mediaType: MediaType,
@@ -72,7 +72,7 @@ sealed class Screen(val route: String) {
             return if (params.isNotEmpty()) "$base?${params.joinToString("&")}" else base
         }
     }
-    
+
     object Player : Screen("player/{mediaType}/{mediaId}?seasonNumber={seasonNumber}&episodeNumber={episodeNumber}&imdbId={imdbId}&streamUrl={streamUrl}&preferredAddonId={preferredAddonId}&preferredSourceName={preferredSourceName}&preferredBingeGroup={preferredBingeGroup}&startPositionMs={startPositionMs}") {
         fun createRoute(
             mediaType: MediaType,
@@ -160,7 +160,7 @@ fun AppNavigation(
                 }
             )
         }
-        
+
         // Home screen
         composable(Screen.Home.route) {
             HomeScreen(
@@ -196,7 +196,7 @@ fun AppNavigation(
                 onExitApp = onExitApp
             )
         }
-        
+
         // Search screen
         composable(Screen.Search.route) {
             SearchScreen(
@@ -420,18 +420,18 @@ fun AppNavigation(
                 onBack = { navController.popBackStack() }
             )
         }
-        
+
         // Player screen
         composable(
             route = Screen.Player.route,
             arguments = listOf(
                 navArgument("mediaType") { type = NavType.StringType },
                 navArgument("mediaId") { type = NavType.IntType },
-                navArgument("seasonNumber") { 
+                navArgument("seasonNumber") {
                     type = NavType.IntType
                     defaultValue = -1
                 },
-                navArgument("episodeNumber") { 
+                navArgument("episodeNumber") {
                     type = NavType.IntType
                     defaultValue = -1
                 },
@@ -439,7 +439,7 @@ fun AppNavigation(
                     type = NavType.StringType
                     defaultValue = ""
                 },
-                navArgument("streamUrl") { 
+                navArgument("streamUrl") {
                     type = NavType.StringType
                     defaultValue = ""
                 },
@@ -472,7 +472,7 @@ fun AppNavigation(
             val preferredBingeGroup = backStackEntry.arguments?.getString("preferredBingeGroup")?.takeIf { it.isNotBlank() }
             val startPositionMs = backStackEntry.arguments?.getLong("startPositionMs")?.takeIf { it >= 0L }
             val mediaType = if (mediaTypeStr == "tv") MediaType.TV else MediaType.MOVIE
-            
+
             PlayerScreen(
                 mediaType = mediaType,
                 mediaId = mediaId,

@@ -218,7 +218,7 @@ class HomeViewModel @Inject constructor(
             try {
                 val prefs = context.settingsDataStore.data.first()
                 val profileId = profileManager.getProfileIdSync().ifBlank { "default" }
-                
+
                 // 1. Check specific row layout mode
                 val rowKey = "home:$catalogId"
                 val normalizedRowKey = com.arflix.tv.ui.components.normalizeCatalogueRowLayoutKey(rowKey)
@@ -229,21 +229,21 @@ class HomeViewModel @Inject constructor(
                 if (rowValue != null) {
                     return@withContext rowValue.trim().equals("Poster", ignoreCase = true)
                 }
-                
+
                 // 2. Check profile global default card layout mode
                 val profilePrefKey = stringPreferencesKey("profile_${profileId}_card_layout_mode")
                 val profileValue = prefs[profilePrefKey]
                 if (profileValue != null) {
                     return@withContext profileValue.trim().equals("Poster", ignoreCase = true)
                 }
-                
+
                 // 3. Check legacy global default card layout mode
                 val legacyPrefKey = stringPreferencesKey("card_layout_mode")
                 val legacyValue = prefs[legacyPrefKey]
                 if (legacyValue != null) {
                     return@withContext legacyValue.trim().equals("Poster", ignoreCase = true)
                 }
-                
+
                 // Default fallback
                 false
             } catch (_: Exception) {
@@ -254,21 +254,21 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun catalogInitialLimit(catalog: CatalogConfig): Int {
         if (isHardCappedTop10Catalog(catalog.id)) return TOP_10_ITEM_LIMIT
-        
+
         if (isCatalogPosterMode(catalog.id)) {
             // Dynamic limit calculation for portrait (poster) catalogs
             val screenWidthDp = context.resources.configuration.screenWidthDp
             val posterWidth = if (isTvDevice) 119 else 124
             val posterSpacing = if (isTvDevice) 14 else 10
             val padding = 16
-            
+
             // Calculate how many items fit on the screen
             val fitCount = (screenWidthDp - padding) / (posterWidth + posterSpacing)
-            
+
             // We want to load at least 12 items, or fitCount + 2 (comfort items), whichever is larger
             return maxOf(12, fitCount + 2)
         }
-        
+
         return initialCategoryItemCap
     }
 
@@ -279,10 +279,10 @@ class HomeViewModel @Inject constructor(
             val posterWidth = if (isTvDevice) 119 else 124
             val posterSpacing = if (isTvDevice) 14 else 10
             val padding = 16
-            
+
             // Calculate how many items fit on the screen
             val fitCount = (screenWidthDp - padding) / (posterWidth + posterSpacing)
-            
+
             // We want to load at least 12 items, or fitCount + 2 (comfort items), whichever is larger
             return maxOf(12, fitCount + 2)
         }

@@ -1051,7 +1051,7 @@ fun PlayerScreen(
                                 selectedAudioIndex = extractedAudioTracks.indexOf(matchingTrack)
                             }
                         }
-                        
+
                         // Extract embedded subtitles
                         val textTracks = mutableListOf<Subtitle>()
                         val subtitleByTrackId = latestUiState.subtitles.associateBy { subtitleTrackId(it) }

@@ -386,6 +386,9 @@ fun SettingsScreen(
             add("stremio")
             add("catalogs")
             add("home_server")
+            if (BuildConfig.FEATURE_PLUGINS_ENABLED) {
+                add("plugins")
+            }
             add("appearance")
             add("network")
         }
@@ -509,7 +512,7 @@ fun SettingsScreen(
             dnsProviderPickerIndex = if (targetIndex >= 0) targetIndex else dnsProviderPickerIndex.coerceIn(0, maxIndex)
         }
     }
-    
+
     // Reset content scroll AND position cache when switching sections.
     LaunchedEffect(sectionIndex) {
         focusTracker.clear()
@@ -662,6 +665,7 @@ fun SettingsScreen(
 
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
+                    if (currentSection == "plugins" && activeZone == Zone.CONTENT) return@onPreviewKeyEvent false
                     val focusedStremioAddon = stremioAddons.getOrNull(contentFocusIndex)
                     val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
                         !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
@@ -1188,7 +1192,7 @@ fun SettingsScreen(
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    
+
                     Text(
                         text = "ARVIO V${BuildConfig.VERSION_NAME}",
                         style = ArflixTypography.caption,
@@ -1482,6 +1486,14 @@ fun SettingsScreen(
                             onDeleteAddon = { viewModel.removeAddon(it) },
                             onAddCustomAddon = { showCustomAddonInput = true }
                         )
+                        "plugins" -> {
+                            com.arflix.tv.ui.screens.plugin.PluginScreen(
+                                onBackPressed = { activeZone = Zone.SECTION },
+                                onNavigateToSection = {
+                                    activeZone = Zone.SECTION
+                                }
+                            )
+                        }
                         "accounts" -> AccountsSettings(
                             isCloudAuthenticated = uiState.isLoggedIn,
                             cloudEmail = uiState.accountEmail,
@@ -1696,7 +1708,7 @@ fun SettingsScreen(
             )
         }
 
-        
+
 
         if (showCatalogInput) {
             CatalogDiscoveryModal(
@@ -3329,15 +3341,17 @@ private fun MobileSettingsMainPage(
 
         item {
             MobileSettingsCategory(title = "CATEGORIES") {
-                val categories = listOf(
-                    "Playback & Controls" to Icons.Default.PlayArrow,
-                    "Audio & Subtitles" to Icons.Default.Speaker,
-                    "Appearance" to Icons.Default.Palette,
-                    "Plugins & Extensions" to Icons.Default.Extension,
-                    "Catalogs" to Icons.Default.Widgets,
-                    "TV" to Icons.Default.LiveTv,
-                    "Home Server" to Icons.Default.Cloud
-                )
+                val categories = buildList {
+                    add("Playback & Controls" to Icons.Default.PlayArrow)
+                    add("Audio & Subtitles" to Icons.Default.Speaker)
+                    add("Appearance" to Icons.Default.Palette)
+                    if (BuildConfig.FEATURE_PLUGINS_ENABLED) {
+                        add("Plugins & Extensions" to Icons.Default.Extension)
+                    }
+                    add("Catalogs" to Icons.Default.Widgets)
+                    add("TV" to Icons.Default.LiveTv)
+                    add("Home Server" to Icons.Default.Cloud)
+                }
                 categories.forEachIndexed { index, (name, icon) ->
                     Column {
                         Row(
@@ -4102,7 +4116,7 @@ private fun SettingsSectionItem(
         else -> TextSecondary
     }
     val accentColor = resolveAccentColor(fallback = Pink)
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -7570,7 +7584,7 @@ private fun AccountRow(
                 }
             }
             Spacer(modifier = Modifier.width(12.dp))
-            
+
             if (isConnected) {
                 Box(
                     modifier = Modifier
@@ -7609,7 +7623,7 @@ private fun AccountRow(
                 }
             }
         }
-        
+
         // Show expiration date when connected
         if (isConnected && expirationText != null) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -8840,7 +8854,7 @@ private fun IptvCategoriesSettings(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
-        
+
         SettingsRow(
             icon = Icons.Default.Refresh,
             title = "Reset Order",
@@ -8850,7 +8864,7 @@ private fun IptvCategoriesSettings(
             onClick = onReset,
             modifier = Modifier.settingsFocusSlot(0)
         )
-        
+
         Spacer(modifier = Modifier.height(16.dp))
 
         if (isMobile) {

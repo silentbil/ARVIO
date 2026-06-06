@@ -172,15 +172,15 @@ class AuthRepository @Inject constructor(
             install(Postgrest)
         }
     }
-    
+
     // Auth state
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
-    
+
     // User profile
     private val _userProfile = MutableStateFlow<UserProfile?>(null)
     val userProfile: StateFlow<UserProfile?> = _userProfile.asStateFlow()
-    
+
     /**
      * Check if user is logged in on app start
      * Note: Supabase SDK requires main thread for initialization (lifecycle observers)
@@ -267,7 +267,7 @@ class AuthRepository @Inject constructor(
             _authState.value = AuthState.NotAuthenticated
         }
     }
-    
+
     /**
      * Sign in with email and password
      */
@@ -561,7 +561,7 @@ class AuthRepository @Inject constructor(
         _userProfile.value = null
         _authState.value = AuthState.NotAuthenticated
     }
-    
+
     /**
      * Load user profile from Supabase
      */
@@ -591,7 +591,7 @@ class AuthRepository @Inject constructor(
             null
         }
     }
-    
+
     /**
      * Create default profile for new user
      */
@@ -629,7 +629,7 @@ class AuthRepository @Inject constructor(
             else -> fallback
         }
     }
-    
+
     /**
      * Update user profile
      */
@@ -640,28 +640,28 @@ class AuthRepository @Inject constructor(
                 .update(profile) {
                     filter { eq("id", profile.id) }
                 }
-            
+
             _userProfile.value = profile
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
-    
+
     /**
      * Get Trakt token from profile
      */
     fun getTraktAccessToken(): String? {
         return _userProfile.value?.trakt_token?.get("access_token")?.jsonPrimitive?.content
     }
-    
+
     /**
      * Check if user has Trakt linked
      */
     fun isTraktLinked(): Boolean {
         return _userProfile.value?.trakt_token != null
     }
-    
+
     /**
      * Get current user ID
      */
@@ -1222,5 +1222,3 @@ class AuthRepository @Inject constructor(
         }
     }
 }
-
-

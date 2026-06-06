@@ -97,7 +97,7 @@ fun NextEpisodeOverlay(
             runCatching { overlayFocusRequester.requestFocus() }
         }
     }
-    
+
     // Countdown timer
     LaunchedEffect(isVisible) {
         if (isVisible) {
@@ -112,7 +112,7 @@ fun NextEpisodeOverlay(
             }
         }
     }
-    
+
     AnimatedVisibility(
         visible = isVisible,
         enter = fadeIn() + slideInHorizontally(initialOffsetX = { it }),
@@ -192,9 +192,9 @@ fun NextEpisodeOverlay(
                             color = TextSecondary
                         )
                     }
-                    
+
                     Spacer(modifier = Modifier.height(16.dp))
-                    
+
                     // Episode preview
                     Row(
                         verticalAlignment = Alignment.CenterVertically
@@ -228,7 +228,7 @@ fun NextEpisodeOverlay(
                                     )
                                 }
                             }
-                            
+
                             // Progress bar at bottom
                             Box(
                                 modifier = Modifier
@@ -250,9 +250,9 @@ fun NextEpisodeOverlay(
                                 )
                             }
                         }
-                        
+
                         Spacer(modifier = Modifier.width(16.dp))
-                        
+
                         // Episode info
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -275,9 +275,9 @@ fun NextEpisodeOverlay(
                             )
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.height(20.dp))
-                    
+
                     // Buttons
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -316,7 +316,7 @@ fun NextEpisodeOverlay(
                                 )
                             }
                         }
-                        
+
                         // Cancel button
                         Box(
                             modifier = Modifier

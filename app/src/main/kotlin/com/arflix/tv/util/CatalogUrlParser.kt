@@ -70,4 +70,3 @@ object CatalogUrlParser {
         return host == "mdblist.com" || host.endsWith(".mdblist.com")
     }
 }
-

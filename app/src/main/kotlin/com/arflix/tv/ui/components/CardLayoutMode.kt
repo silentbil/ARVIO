@@ -211,7 +211,7 @@ fun CatalogueRowLayoutToggleButton(
             visualFocused -> Color.Black
             else -> Color.White.copy(alpha = 0.7f)
         }
-        
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -229,15 +229,15 @@ fun CatalogueRowLayoutToggleButton(
                 val path = androidx.compose.ui.graphics.Path()
                 val w = size.width
                 val h = size.height
-                
+
                 val rectW = if (isPoster) w * 0.60f else w
                 val rectH = if (isPoster) h else h * 0.60f
-                
+
                 val left = (w - rectW) / 2f
                 val top = (h - rectH) / 2f
                 val right = left + rectW
                 val bottom = top + rectH
-                
+
                 path.moveTo(left, top)
                 if (isPoster) {
                     val curve = rectW * 0.20f
@@ -253,7 +253,7 @@ fun CatalogueRowLayoutToggleButton(
                     path.lineTo(left, top)
                 }
                 path.close()
-                
+
                 drawPath(
                     path = path,
                     color = canvasColor,

@@ -8,7 +8,7 @@ import androidx.compose.ui.unit.sp
  * Arflix typography - TV-optimized text styles (scaled for 1080p TV)
  */
 object ArflixTypography {
-    
+
     // Hero title (large display) - reduced from 72sp
     val heroTitle = TextStyle(
         fontFamily = InterFontFamily,
@@ -17,7 +17,7 @@ object ArflixTypography {
         letterSpacing = (-1).sp,
         lineHeight = 52.sp
     )
-    
+
     // Section headers - reduced from 28sp
     val sectionTitle = TextStyle(
         fontFamily = InterFontFamily,
@@ -26,7 +26,7 @@ object ArflixTypography {
         letterSpacing = 0.5.sp,  // Added letter spacing for premium feel
         lineHeight = 26.sp
     )
-    
+
     // Card titles - slightly larger for TV visibility
     val cardTitle = TextStyle(
         fontFamily = InterFontFamily,
@@ -35,7 +35,7 @@ object ArflixTypography {
         letterSpacing = 0.sp,
         lineHeight = 20.sp
     )
-    
+
     // Body text - reduced from 16sp
     val body = TextStyle(
         fontFamily = InterFontFamily,
@@ -44,7 +44,7 @@ object ArflixTypography {
         letterSpacing = 0.sp,
         lineHeight = 20.sp
     )
-    
+
     // Body large (for hero overview) - reduced from 24sp
     val bodyLarge = TextStyle(
         fontFamily = InterFontFamily,
@@ -53,7 +53,7 @@ object ArflixTypography {
         letterSpacing = 0.sp,
         lineHeight = 24.sp
     )
-    
+
     // Caption / small text - reduced from 12sp
     val caption = TextStyle(
         fontFamily = InterFontFamily,
@@ -62,7 +62,7 @@ object ArflixTypography {
         letterSpacing = 0.4.sp,
         lineHeight = 14.sp
     )
-    
+
     // Label (metadata pills) - reduced from 14sp
     val label = TextStyle(
         fontFamily = InterFontFamily,
@@ -71,7 +71,7 @@ object ArflixTypography {
         letterSpacing = 0.4.sp,
         lineHeight = 16.sp
     )
-    
+
     // Button text
     val button = TextStyle(
         fontFamily = InterFontFamily,
@@ -80,7 +80,7 @@ object ArflixTypography {
         letterSpacing = 0.5.sp,
         lineHeight = 20.sp
     )
-    
+
     // Clock display - reduced from 32sp
     val clock = TextStyle(
         fontFamily = InterFontFamily,
@@ -89,7 +89,7 @@ object ArflixTypography {
         letterSpacing = 0.sp,
         lineHeight = 30.sp
     )
-    
+
     // Episode number badge - reduced from 11sp
     val badge = TextStyle(
         fontFamily = InterFontFamily,
@@ -99,4 +99,3 @@ object ArflixTypography {
         lineHeight = 12.sp
     )
 }
-

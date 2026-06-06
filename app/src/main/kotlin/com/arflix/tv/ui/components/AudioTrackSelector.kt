@@ -72,7 +72,7 @@ fun AudioTrackSelector(
     onClose: () -> Unit
 ) {
     var focusedIndex by remember(isVisible) { mutableIntStateOf(0) }
-    
+
     AnimatedVisibility(
         visible = isVisible,
         enter = fadeIn(),
@@ -133,7 +133,7 @@ fun AudioTrackSelector(
                         color = TextPrimary
                     )
                 }
-                
+
                 // Track list
                 if (audioTracks.isEmpty()) {
                     Box(
@@ -164,9 +164,9 @@ fun AudioTrackSelector(
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
                 // Help text
                 Text(
                     text = stringResource(R.string.press_back_to_close),
@@ -214,11 +214,11 @@ private fun AudioTrackItem(
                 style = ArflixTypography.body,
                 color = if (isFocused) Color.White else if (isSelected) TextPrimary else TextSecondary
             )
-            
+
             // Show codec/channel info if available
             val metadata = buildList {
                 track.codec?.let { add(it.uppercase()) }
-                track.channels?.let { 
+                track.channels?.let {
                     add(when (it) {
                         1 -> "Mono"
                         2 -> "Stereo"
@@ -229,7 +229,7 @@ private fun AudioTrackItem(
                 }
                 if (track.isDefault) add("Default")
             }
-            
+
             if (metadata.isNotEmpty()) {
                 Text(
                     text = metadata.joinToString(" • "),
@@ -238,7 +238,7 @@ private fun AudioTrackItem(
                 )
             }
         }
-        
+
         if (isSelected) {
             Icon(
                 imageVector = Icons.Default.Check,

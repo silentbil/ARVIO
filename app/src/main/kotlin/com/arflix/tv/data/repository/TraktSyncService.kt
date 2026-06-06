@@ -1934,4 +1934,3 @@ sealed class SyncResult {
     data class Success(val moviesSynced: Int, val episodesSynced: Int) : SyncResult()
     data class Error(val message: String) : SyncResult()
 }
-

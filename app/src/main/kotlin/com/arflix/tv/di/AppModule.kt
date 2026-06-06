@@ -41,7 +41,7 @@ object AppModule {
             .build()
             .create(TmdbApi::class.java)
     }
-    
+
     @Provides
     @Singleton
     fun provideTraktApi(okHttpClient: OkHttpClient): TraktApi {
@@ -52,7 +52,7 @@ object AppModule {
             .build()
             .create(TraktApi::class.java)
     }
-    
+
     @Provides
     @Singleton
     fun provideSupabaseApi(okHttpClient: OkHttpClient): SupabaseApi {
@@ -68,7 +68,7 @@ object AppModule {
             .build()
             .create(SupabaseApi::class.java)
     }
-    
+
     @Provides
     @Singleton
     fun provideStreamApi(okHttpClient: OkHttpClient): StreamApi {
@@ -149,5 +149,12 @@ object AppModule {
     @Singleton
     fun provideJikanApi(@Named("jikan") retrofit: Retrofit): com.arflix.tv.data.api.JikanApi {
         return retrofit.create(com.arflix.tv.data.api.JikanApi::class.java)
+    }
+    @Provides
+    @Singleton
+    fun provideMoshi(): com.squareup.moshi.Moshi {
+        return com.squareup.moshi.Moshi.Builder()
+            .add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
+            .build()
     }
 }

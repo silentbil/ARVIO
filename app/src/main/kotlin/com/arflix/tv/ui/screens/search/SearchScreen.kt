@@ -274,7 +274,7 @@ fun SearchScreen(
             // This prevents the "back to keyboard" issue when returning from details
         }
     }
-    
+
     LaunchedEffect(isTouchDevice) {
         // FocusRequester can throw IllegalStateException if the target composable
         // hasn't been placed yet (e.g. zero-sized keyboard on cold start, or when

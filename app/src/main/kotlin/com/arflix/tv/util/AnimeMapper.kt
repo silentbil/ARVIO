@@ -1078,4 +1078,3 @@ class AnimeMapper @Inject constructor(
         )
     }
 }
-

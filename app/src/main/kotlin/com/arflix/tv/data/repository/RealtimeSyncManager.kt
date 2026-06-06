@@ -1,6 +1,8 @@
 package com.arflix.tv.data.repository
 
 import android.util.Log
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.arflix.tv.util.Constants
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -47,6 +49,7 @@ enum class CloudSyncStatus { CONNECTED, RECONNECTING, NOT_SIGNED_IN }
  */
 @Singleton
 class RealtimeSyncManager @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val cloudSyncRepository: CloudSyncRepository,
     private val authRepository: AuthRepository
 ) {
@@ -460,7 +463,10 @@ class RealtimeSyncManager @Inject constructor(
                 if (cloudSyncRepository.isPushDirty) {
                     Log.i(TAG, "Periodic sync: retrying dirty push")
                     runCatching { cloudSyncRepository.pushToCloud() }
-                        .onFailure { Log.w(TAG, "Dirty push retry failed: ${it.message}") }
+                        .onFailure {
+                            Log.w(TAG, "Dirty push retry failed: ${it.message}")
+                            com.arflix.tv.worker.CloudSyncWorker.enqueueRecovery(context)
+                        }
                 }
                 Log.d(TAG, "Periodic sync tick")
                 runCatching { cloudSyncRepository.pullFromCloud() }

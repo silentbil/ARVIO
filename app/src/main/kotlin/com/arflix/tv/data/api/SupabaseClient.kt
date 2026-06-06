@@ -36,7 +36,7 @@ interface SupabaseApi {
         @Query("limit") limit: Int = 50,
         @Query("offset") offset: Int? = null
     ): List<WatchHistoryRecord>
-    
+
     @POST("rest/v1/watch_history")
     suspend fun upsertWatchHistory(
         @Header("Authorization") auth: String,
@@ -44,7 +44,7 @@ interface SupabaseApi {
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
         @Body item: WatchHistoryRecord
     )
-    
+
     @GET("rest/v1/watch_history")
     suspend fun getWatchHistoryItem(
         @Header("Authorization") auth: String,
@@ -73,7 +73,7 @@ interface SupabaseApi {
         @Query("episode") episode: String? = null,
         @Query("source") source: String? = null
     )
-    
+
     @retrofit2.http.HTTP(method = "DELETE", path = "rest/v1/watch_history", hasBody = false)
     suspend fun deleteWatchHistoryByIds(
         @Header("Authorization") auth: String,
@@ -82,7 +82,7 @@ interface SupabaseApi {
     )
 
     // ========== User Profiles ==========
-    
+
     @GET("rest/v1/profiles")
     suspend fun getProfile(
         @Header("Authorization") auth: String,
@@ -90,7 +90,7 @@ interface SupabaseApi {
         @Query("id") userId: String,
         @Query("select") select: String = "*"
     ): List<UserProfile>
-    
+
     @PATCH("rest/v1/profiles")
     suspend fun updateProfile(
         @Header("Authorization") auth: String,
@@ -98,7 +98,7 @@ interface SupabaseApi {
         @Query("id") userId: String,
         @Body profile: UserProfileUpdate
     )
-    
+
     // ========== Watchlist ==========
 
     @GET("rest/v1/watchlist")
@@ -130,7 +130,7 @@ interface SupabaseApi {
     )
 
     // ========== Watched Status (from Trakt sync) ==========
-    
+
     @GET("rest/v1/watched_movies")
     suspend fun getWatchedMovies(
         @Header("Authorization") auth: String,
@@ -142,7 +142,7 @@ interface SupabaseApi {
         @Query("offset") offset: Int = 0,
         @Query("limit") limit: Int = 1000
     ): List<WatchedMovieRecord>
-    
+
     @GET("rest/v1/watched_episodes")
     suspend fun getWatchedEpisodes(
         @Header("Authorization") auth: String,
@@ -165,7 +165,7 @@ interface SupabaseApi {
         @Query("tmdb_id") tmdbId: String,
         @Query("select") select: String = "user_id,profile_id,tmdb_id,show_trakt_id,season,episode,trakt_episode_id,tmdb_episode_id,watched_at,updated_at,source"
     ): List<WatchedEpisodeRecord>
-    
+
     @POST("rest/v1/watched_movies")
     suspend fun markMovieWatched(
         @Header("Authorization") auth: String,
@@ -173,7 +173,7 @@ interface SupabaseApi {
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
         @Body record: WatchedMovieRecord
     )
-    
+
     @POST("rest/v1/watched_episodes")
     suspend fun markEpisodeWatched(
         @Header("Authorization") auth: String,
@@ -406,5 +406,3 @@ data class SyncStateRecord(
     @SerializedName("last_error") val lastError: String? = null,
     @SerializedName("updated_at") val updatedAt: String? = null
 )
-
-

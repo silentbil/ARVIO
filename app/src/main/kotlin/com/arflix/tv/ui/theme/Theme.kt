@@ -23,7 +23,7 @@ data class ArvioColors(
     val arcticWhite50: androidx.compose.ui.graphics.Color = ArcticWhite50,
     val arcticBlack: androidx.compose.ui.graphics.Color = ArcticBlack,
     val arcticGray: androidx.compose.ui.graphics.Color = ArcticGray,
-    
+
     // Legacy gradient colors (mapped to Arctic style)
     val cyan: androidx.compose.ui.graphics.Color = ArcticWhite,
     val cyanDark: androidx.compose.ui.graphics.Color = ArcticGray,

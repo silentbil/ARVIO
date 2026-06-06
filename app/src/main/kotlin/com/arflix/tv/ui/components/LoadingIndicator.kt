@@ -31,7 +31,7 @@ fun LoadingIndicator(
     strokeWidth: Dp = 4.dp
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "loading")
-    
+
     val rotation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
@@ -41,13 +41,13 @@ fun LoadingIndicator(
         ),
         label = "rotation"
     )
-    
+
     Canvas(
         modifier = modifier.size(size)
     ) {
         val strokeWidthPx = strokeWidth.toPx()
         val arcSize = Size(this.size.width - strokeWidthPx, this.size.height - strokeWidthPx)
-        
+
         // Background arc
         drawArc(
             color = color.copy(alpha = 0.2f),
@@ -58,7 +58,7 @@ fun LoadingIndicator(
             size = arcSize,
             style = Stroke(width = strokeWidthPx, cap = StrokeCap.Round)
         )
-        
+
         // Animated arc
         drawArc(
             color = color,
@@ -82,7 +82,7 @@ fun PulsingLoadingIndicator(
     color: Color = Pink
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulsing")
-    
+
     val scale by infiniteTransition.animateFloat(
         initialValue = 0.8f,
         targetValue = 1.2f,
@@ -92,7 +92,7 @@ fun PulsingLoadingIndicator(
         ),
         label = "scale"
     )
-    
+
     val alpha by infiniteTransition.animateFloat(
         initialValue = 0.3f,
         targetValue = 1f,
@@ -102,7 +102,7 @@ fun PulsingLoadingIndicator(
         ),
         label = "alpha"
     )
-    
+
     Canvas(
         modifier = modifier.size(size)
     ) {
@@ -117,5 +117,3 @@ fun PulsingLoadingIndicator(
         )
     }
 }
-
-

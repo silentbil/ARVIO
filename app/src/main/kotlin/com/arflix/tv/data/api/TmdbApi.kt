@@ -9,7 +9,7 @@ import retrofit2.http.Query
  * TMDB API interface
  */
 interface TmdbApi {
-    
+
     @GET("trending/movie/day")
     suspend fun getTrendingMovies(
         @Query("api_key") apiKey: String,
@@ -23,7 +23,7 @@ interface TmdbApi {
         @Query("language") language: String? = null,
         @Query("page") page: Int = 1
     ): TmdbListResponse
-    
+
     @GET("discover/tv")
     suspend fun discoverTv(
         @Query("api_key") apiKey: String,
@@ -59,21 +59,21 @@ interface TmdbApi {
         @Query("language") language: String? = null,
         @Query("page") page: Int = 1
     ): TmdbListResponse
-    
+
     @GET("movie/{movie_id}")
     suspend fun getMovieDetails(
         @Path("movie_id") movieId: Int,
         @Query("api_key") apiKey: String,
         @Query("language") language: String? = null
     ): TmdbMovieDetails
-    
+
     @GET("tv/{tv_id}")
     suspend fun getTvDetails(
         @Path("tv_id") tvId: Int,
         @Query("api_key") apiKey: String,
         @Query("language") language: String? = null
     ): TmdbTvDetails
-    
+
     @GET("tv/{tv_id}/season/{season_number}")
     suspend fun getTvSeason(
         @Path("tv_id") tvId: Int,
@@ -89,7 +89,7 @@ interface TmdbApi {
         @Path("episode_number") episodeNumber: Int,
         @Query("api_key") apiKey: String
     ): TmdbExternalIds
-    
+
     @GET("{media_type}/{id}/credits")
     suspend fun getCredits(
         @Path("media_type") mediaType: String,
@@ -97,7 +97,7 @@ interface TmdbApi {
         @Query("api_key") apiKey: String,
         @Query("language") language: String? = null
     ): TmdbCreditsResponse
-    
+
     @GET("{media_type}/{id}/similar")
     suspend fun getSimilar(
         @Path("media_type") mediaType: String,
@@ -120,7 +120,7 @@ interface TmdbApi {
         @Path("id") id: Int,
         @Query("api_key") apiKey: String
     ): TmdbImagesResponse
-    
+
     @GET("{media_type}/{id}/videos")
     suspend fun getVideos(
         @Path("media_type") mediaType: String,
@@ -128,7 +128,7 @@ interface TmdbApi {
         @Query("api_key") apiKey: String,
         @Query("language") language: String? = null
     ): TmdbVideosResponse
-    
+
     @GET("person/{person_id}")
     suspend fun getPersonDetails(
         @Path("person_id") personId: Int,
@@ -160,7 +160,7 @@ interface TmdbApi {
         @Path("tv_id") tvId: Int,
         @Query("api_key") apiKey: String
     ): TmdbWatchProvidersResponse
-    
+
     @GET("search/multi")
     suspend fun searchMulti(
         @Query("api_key") apiKey: String,

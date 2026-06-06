@@ -22,9 +22,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+
+
+
 
     buildTypes {
         create("benchmark") {
@@ -58,4 +58,9 @@ dependencies {
     implementation("androidx.test:runner:1.5.2")
     implementation("androidx.test:rules:1.5.0")
     implementation("androidx.test.uiautomator:uiautomator:2.2.0")
+}
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }

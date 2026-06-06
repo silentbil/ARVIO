@@ -158,10 +158,11 @@ class CloudSyncRepository @Inject constructor(
         return isPushDirty || latestLocalDirtyAt > 0L || storedDirtyAt > 0L
     }
 
-    private suspend fun markCloudPayloadApplied(payload: String) {
+    private suspend fun markCloudPayloadApplied(payload: String, payloadHash: Int) {
         val cloudUpdatedAt = runCatching { JSONObject(payload).optLong("updatedAt", 0L) }.getOrDefault(0L)
         context.settingsDataStore.edit { prefs ->
             prefs[cloudSyncLastAppliedAtKey] = cloudUpdatedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            prefs[androidx.datastore.preferences.core.intPreferencesKey("cloud_sync_last_applied_hash")] = payloadHash
         }
     }
 
@@ -542,6 +543,16 @@ class CloudSyncRepository @Inject constructor(
         return root.toString()
     }
 
+    @Volatile
+    private var lastPushedPayloadHash: Int? = null
+
+    @Volatile
+    var pushFailureCount: Int = 0
+        private set
+
+    @Volatile
+    private var lastPushAttemptAt: Long = 0L
+
     // ══════════════════════════════════════════════════════════
     //  PUSH LOCAL STATE TO CLOUD
     // ══════════════════════════════════════════════════════════
@@ -551,6 +562,20 @@ class CloudSyncRepository @Inject constructor(
     }
 
     private suspend fun pushToCloudLocked(): Result<Unit> {
+        val now = System.currentTimeMillis()
+        if (pushFailureCount > 0) {
+            val requiredBackoffMs = (2_000L * (1 shl (pushFailureCount - 1).coerceAtMost(6))).coerceAtMost(300_000L)
+            if (now - lastPushAttemptAt < requiredBackoffMs) {
+                AppLogger.breadcrumb(
+                    tag = "CloudSync",
+                    message = "push_skipped_backoff delay=${requiredBackoffMs}",
+                    severity = "info"
+                )
+                return Result.failure(IllegalStateException("Exponential backoff active: wait ${requiredBackoffMs}ms"))
+            }
+        }
+        lastPushAttemptAt = now
+
         if (authRepository.getCurrentUserId().isNullOrBlank()) {
             AppLogger.breadcrumb(
                 tag = "CloudSync",
@@ -561,6 +586,7 @@ class CloudSyncRepository @Inject constructor(
         }
         val payload = runCatching { buildCloudSnapshotJson() }.getOrElse {
             markPushFailedDirty()
+            pushFailureCount++
             AppLogger.recordException(
                 throwable = it,
                 context = mapOf(
@@ -571,9 +597,25 @@ class CloudSyncRepository @Inject constructor(
             )
             return Result.failure(it)
         }
+
+        val payloadHash = runCatching {
+            JSONObject(payload).apply { remove("updatedAt") }.toString().hashCode()
+        }.getOrNull()
+
+        if (payloadHash != null && payloadHash == lastPushedPayloadHash && !isPushDirty && pushFailureCount == 0) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "push_skipped_duplicate_hash",
+                severity = "info"
+            )
+            return Result.success(Unit)
+        }
+
         val result = authRepository.saveAccountSyncPayload(payload)
         if (result.isSuccess) {
             clearLocalDirtyAfterSuccessfulPush()
+            lastPushedPayloadHash = payloadHash
+            pushFailureCount = 0
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "push_success size=${payloadSizeBucket(payload)}",
@@ -585,13 +627,15 @@ class CloudSyncRepository @Inject constructor(
             // Without this, a single network hiccup would permanently diverge the
             // cloud state until the user explicitly changes another setting.
             markPushFailedDirty()
+            pushFailureCount++
             AppLogger.recordException(
                 throwable = result.exceptionOrNull() ?: IllegalStateException("Cloud push failed"),
                 context = mapOf(
                     "error_area" to "CloudSync",
                     "cloud_flow" to "push_save_payload",
                     "dirty" to isPushDirty.toString(),
-                    "payload_size" to payloadSizeBucket(payload)
+                    "payload_size" to payloadSizeBucket(payload),
+                    "failure_count" to pushFailureCount.toString()
                 )
             )
         }
@@ -648,11 +692,24 @@ class CloudSyncRepository @Inject constructor(
             return@withLock RestoreResult.NO_BACKUP
         }
 
+        val prefs = context.settingsDataStore.data.first()
+        val lastAppliedHash = prefs[androidx.datastore.preferences.core.intPreferencesKey("cloud_sync_last_applied_hash")]
+        val payloadHash = payload.hashCode()
+
+        if (lastAppliedHash == payloadHash) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_skipped_identical_payload",
+                severity = "info"
+            )
+            return@withLock RestoreResult.RESTORED
+        }
+
         runCatching {
             invalidationBus.suppressDuringRemoteApply {
                 applyCloudPayload(payload)
             }
-            markCloudPayloadApplied(payload)
+            markCloudPayloadApplied(payload, payloadHash)
         }.fold(
             onSuccess = {
                 AppLogger.breadcrumb(
@@ -941,207 +998,222 @@ class CloudSyncRepository @Inject constructor(
         authRepository.saveAutoPlayNextToProfile(fallbackAutoPlayNext)
 
         // ── Trakt tokens ──
-        root.optJSONObject("traktTokens")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TraktRepository.CloudTraktToken::class.java).type
-            val tokens: Map<String, TraktRepository.CloudTraktToken> = gson.fromJson(json, type) ?: emptyMap()
-            traktRepository.importTokensForProfiles(tokens)
-        }
+        runCatching {
+            root.optJSONObject("traktTokens")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TraktRepository.CloudTraktToken::class.java).type
+                val tokens: Map<String, TraktRepository.CloudTraktToken> = gson.fromJson(json, type) ?: emptyMap()
+                traktRepository.importTokensForProfiles(tokens)
+            }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_trakt_tokens")) }
 
         // ── Addons ──
-        root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Addon::class.java).type).type
-            val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
-            val sharedAddons = mergeAddonsForSharedRestore(map.values)
-            if (sharedAddons.isNotEmpty()) {
-                streamRepository.replaceSharedAddonsFromCloud(sharedAddons)
-            }
-        }
-        root.optJSONArray("addons")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            if (!root.has("addonsByProfile")) {
-                val type = TypeToken.getParameterized(List::class.java, Addon::class.java).type
-                val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
-                if (addons.isNotEmpty()) {
-                    streamRepository.replaceSharedAddonsFromCloud(addons)
+        runCatching {
+            root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Addon::class.java).type).type
+                val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
+                val sharedAddons = mergeAddonsForSharedRestore(map.values)
+                if (sharedAddons.isNotEmpty()) {
+                    streamRepository.replaceSharedAddonsFromCloud(sharedAddons)
                 }
             }
-        }
+            root.optJSONArray("addons")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                if (!root.has("addonsByProfile")) {
+                    val type = TypeToken.getParameterized(List::class.java, Addon::class.java).type
+                    val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
+                    if (addons.isNotEmpty()) {
+                        streamRepository.replaceSharedAddonsFromCloud(addons)
+                    }
+                }
+            }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_addons")) }
 
         // ── Catalogs ──
-        root.optJSONObject("catalogsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, CatalogConfig::class.java).type).type
-            val map: Map<String, List<CatalogConfig>> = gson.fromJson(json, type) ?: emptyMap()
-            map.forEach { (profileId, catalogs) ->
-                catalogRepository.replaceCatalogsForProfile(profileId, catalogs)
-            }
-        }
-        root.optJSONArray("catalogs")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            if (!root.has("catalogsByProfile")) {
-                val type = TypeToken.getParameterized(List::class.java, CatalogConfig::class.java).type
-                val catalogs: List<CatalogConfig> = gson.fromJson(json, type) ?: emptyList()
-                if (catalogs.isNotEmpty()) {
-                    catalogRepository.replaceCatalogsForProfile(activeProfileId, catalogs)
+        runCatching {
+            root.optJSONObject("catalogsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, CatalogConfig::class.java).type).type
+                val map: Map<String, List<CatalogConfig>> = gson.fromJson(json, type) ?: emptyMap()
+                map.forEach { (profileId, catalogs) ->
+                    catalogRepository.replaceCatalogsForProfile(profileId, catalogs)
                 }
             }
-        }
+            root.optJSONArray("catalogs")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                if (!root.has("catalogsByProfile")) {
+                    val type = TypeToken.getParameterized(List::class.java, CatalogConfig::class.java).type
+                    val catalogs: List<CatalogConfig> = gson.fromJson(json, type) ?: emptyList()
+                    if (catalogs.isNotEmpty()) {
+                        catalogRepository.replaceCatalogsForProfile(activeProfileId, catalogs)
+                    }
+                }
+            }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_catalogs")) }
 
         // ── Hidden preinstalled catalogs ──
-        root.optJSONObject("hiddenPreinstalledByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
-            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
-            map.forEach { (profileId, hidden) ->
-                catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(profileId, hidden)
-            }
-        }
-        root.optJSONArray("hiddenPreinstalledCatalogs")?.toString()?.let { json ->
-            if (!root.has("hiddenPreinstalledByProfile")) {
-                val hidden = if (json.isBlank()) {
-                    emptyList()
-                } else {
-                    val type = TypeToken.getParameterized(List::class.java, String::class.java).type
-                    gson.fromJson<List<String>>(json, type) ?: emptyList()
+        runCatching {
+            root.optJSONObject("hiddenPreinstalledByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
+                val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
+                map.forEach { (profileId, hidden) ->
+                    catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(profileId, hidden)
                 }
-                catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(activeProfileId, hidden)
             }
-        }
+            root.optJSONArray("hiddenPreinstalledCatalogs")?.toString()?.let { json ->
+                if (!root.has("hiddenPreinstalledByProfile")) {
+                    val hidden = if (json.isBlank()) {
+                        emptyList()
+                    } else {
+                        val type = TypeToken.getParameterized(List::class.java, String::class.java).type
+                        gson.fromJson<List<String>>(json, type) ?: emptyList()
+                    }
+                    catalogRepository.setHiddenPreinstalledCatalogIdsForProfile(activeProfileId, hidden)
+                }
+            }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_preinstalled")) }
 
         // ── Hidden addon catalogs ──
-        root.optJSONObject("hiddenAddonByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
-            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
-            map.forEach { (profileId, hidden) ->
-                catalogRepository.setHiddenAddonCatalogIdsForProfile(profileId, hidden)
+        runCatching {
+            root.optJSONObject("hiddenAddonByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
+                val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
+                map.forEach { (profileId, hidden) ->
+                    catalogRepository.setHiddenAddonCatalogIdsForProfile(profileId, hidden)
+                }
             }
-        }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_addons")) }
+
+        // ── Hidden Home Server catalogs ──
+        runCatching {
+            root.optJSONObject("hiddenHomeServerByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
+                val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
+                map.forEach { (profileId, hidden) ->
+                    catalogRepository.setHiddenHomeServerCatalogIdsForProfile(profileId, hidden)
+                }
+            }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_hidden_home_server")) }
 
         // ── IPTV config + favorites ──
-        root.optJSONObject("hiddenHomeServerByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
-            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
-            map.forEach { (profileId, hidden) ->
-                catalogRepository.setHiddenHomeServerCatalogIdsForProfile(profileId, hidden)
-            }
-        }
-
-        var importedActiveProfileIptv = false
-        root.optJSONObject("iptvByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, IptvCloudProfileState::class.java).type
-            val map: Map<String, IptvCloudProfileState> = gson.fromJson(json, type) ?: emptyMap()
-            map.forEach { (profileId, state) ->
-                iptvRepository.importCloudConfigForProfile(profileId, state)
-                if (profileId == activeProfileId) {
-                    importedActiveProfileIptv = true
+        runCatching {
+            var importedActiveProfileIptv = false
+            root.optJSONObject("iptvByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, IptvCloudProfileState::class.java).type
+                val map: Map<String, IptvCloudProfileState> = gson.fromJson(json, type) ?: emptyMap()
+                map.forEach { (profileId, state) ->
+                    iptvRepository.importCloudConfigForProfile(profileId, state)
+                    if (profileId == activeProfileId) {
+                        importedActiveProfileIptv = true
+                    }
                 }
             }
-        }
 
-        // Legacy IPTV flat fields (only used if iptvByProfile is absent)
-        val cloudHasIptvKeys = root.has("iptvM3uUrl") || root.has("iptvEpgUrl") ||
-            root.has("iptvFavoriteGroups") || root.has("iptvFavoriteChannels")
-        val m3u = root.optString("iptvM3uUrl")
-        val epg = root.optString("iptvEpgUrl")
-        val favorites = root.optJSONArray("iptvFavoriteGroups")?.toString().orEmpty().let { j ->
-            if (j.isBlank()) emptyList() else {
-                val type = TypeToken.getParameterized(List::class.java, String::class.java).type
-                gson.fromJson<List<String>>(j, type) ?: emptyList()
+            // Legacy IPTV flat fields (only used if iptvByProfile is absent)
+            val cloudHasIptvKeys = root.has("iptvM3uUrl") || root.has("iptvEpgUrl") ||
+                root.has("iptvFavoriteGroups") || root.has("iptvFavoriteChannels")
+            val m3u = root.optString("iptvM3uUrl")
+            val epg = root.optString("iptvEpgUrl")
+            val favorites = root.optJSONArray("iptvFavoriteGroups")?.toString().orEmpty().let { j ->
+                if (j.isBlank()) emptyList() else {
+                    val type = TypeToken.getParameterized(List::class.java, String::class.java).type
+                    gson.fromJson<List<String>>(j, type) ?: emptyList()
+                }
             }
-        }
-        val favoriteChannels = root.optJSONArray("iptvFavoriteChannels")?.toString().orEmpty().let { j ->
-            if (j.isBlank()) emptyList() else {
-                val type = TypeToken.getParameterized(List::class.java, String::class.java).type
-                gson.fromJson<List<String>>(j, type) ?: emptyList()
+            val favoriteChannels = root.optJSONArray("iptvFavoriteChannels")?.toString().orEmpty().let { j ->
+                if (j.isBlank()) emptyList() else {
+                    val type = TypeToken.getParameterized(List::class.java, String::class.java).type
+                    gson.fromJson<List<String>>(j, type) ?: emptyList()
+                }
             }
-        }
-        val localIptv = iptvRepository.observeConfig().first()
-        val cloudHasIptvData = m3u.isNotBlank() || epg.isNotBlank() || favorites.isNotEmpty() || favoriteChannels.isNotEmpty()
-        val localHasIptvData = localIptv.m3uUrl.isNotBlank() || localIptv.epgUrl.isNotBlank()
-        var importedLegacyIptv = false
-        if (!root.has("iptvByProfile") && cloudHasIptvKeys && (cloudHasIptvData || !localHasIptvData)) {
-            iptvRepository.importCloudConfig(m3u, epg, favorites, favoriteChannels)
-            importedLegacyIptv = true
-        }
+            val localIptv = iptvRepository.observeConfig().first()
+            val cloudHasIptvData = m3u.isNotBlank() || epg.isNotBlank() || favorites.isNotEmpty() || favoriteChannels.isNotEmpty()
+            val localHasIptvData = localIptv.m3uUrl.isNotBlank() || localIptv.epgUrl.isNotBlank()
+            var importedLegacyIptv = false
+            if (!root.has("iptvByProfile") && cloudHasIptvKeys && (cloudHasIptvData || !localHasIptvData)) {
+                iptvRepository.importCloudConfig(m3u, epg, favorites, favoriteChannels)
+                importedLegacyIptv = true
+            }
 
-        if (importedActiveProfileIptv || importedLegacyIptv) {
-            runCatching {
-                iptvRepository.invalidateCache()
+            if (importedActiveProfileIptv || importedLegacyIptv) {
+                runCatching {
+                    iptvRepository.invalidateCache()
+                }
             }
-        }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_iptv")) }
 
         // ── Watchlist ──
-        root.optJSONObject("watchlistByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, LocalWatchlistItem::class.java).type).type
-            val map: Map<String, List<LocalWatchlistItem>> = gson.fromJson(json, type) ?: emptyMap()
-            map.forEach { (profileId, items) ->
-                // Restore the cloud mirror for every profile, including Trakt profiles.
-                // Trakt remains the source of truth after a successful live sync, but
-                // skipping this cache made fresh installs show an empty watchlist while
-                // auth/network refresh was still settling or failed.
-                watchlistRepository.importWatchlistForProfile(profileId, items)
+        runCatching {
+            root.optJSONObject("watchlistByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, LocalWatchlistItem::class.java).type).type
+                val map: Map<String, List<LocalWatchlistItem>> = gson.fromJson(json, type) ?: emptyMap()
+                map.forEach { (profileId, items) ->
+                    // Restore the cloud mirror for every profile, including Trakt profiles.
+                    // Trakt remains the source of truth after a successful live sync, but
+                    // skipping this cache made fresh installs show an empty watchlist while
+                    // auth/network refresh was still settling or failed.
+                    watchlistRepository.importWatchlistForProfile(profileId, items)
+                }
             }
-        }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_watchlist")) }
 
         // ── Dismissed Continue Watching ──
-        root.optJSONObject("dismissedContinueWatchingByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, String::class.java).type
-            val map: Map<String, String> = gson.fromJson(json, type) ?: emptyMap()
-            traktRepository.importDismissedContinueWatchingForProfiles(map)
-        }
+        runCatching {
+            root.optJSONObject("dismissedContinueWatchingByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, String::class.java).type
+                val map: Map<String, String> = gson.fromJson(json, type) ?: emptyMap()
+                traktRepository.importDismissedContinueWatchingForProfiles(map)
+            }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_dismissed_cw")) }
 
-        // Only import local CW for profiles that DON'T have Trakt connected.
-        // For Trakt profiles, CW is sourced exclusively from Trakt's progress API.
-        // The previous code imported local CW unconditionally, which meant every
-        // show ever partially watched in ARVIO (written to cloud by
-        // saveLocalContinueWatching during playback) got restored to local DataStore
-        // on cloud pull — polluting the CW row with non-Trakt items that persisted
-        // even after app reinstall.
-        // Only import local CW for profiles that DON'T have Trakt connected.
-        // For Trakt profiles, CW is sourced exclusively from Trakt's progress API.
-        // Only import local CW for profiles that DON'T have Trakt connected.
-        // For Trakt profiles, CW is sourced exclusively from Trakt's progress API.
-        root.optJSONObject("localContinueWatchingByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, ContinueWatchingItem::class.java).type).type
-            val map: Map<String, List<ContinueWatchingItem>> = gson.fromJson(json, type) ?: emptyMap()
-            val traktProfiles = mutableSetOf<String>()
+        // ── Local Continue Watching ──
+        runCatching {
+            // Only import local CW for profiles that DON'T have Trakt connected.
+            // For Trakt profiles, CW is sourced exclusively from Trakt's progress API.
+            root.optJSONObject("localContinueWatchingByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, ContinueWatchingItem::class.java).type).type
+                val map: Map<String, List<ContinueWatchingItem>> = gson.fromJson(json, type) ?: emptyMap()
+                val traktProfiles = mutableSetOf<String>()
 
-            val traktTokenType = TypeToken.getParameterized(Map::class.java, String::class.java, TraktRepository.CloudTraktToken::class.java).type
-            val traktTokens = root.optJSONObject("traktTokens")
-                ?.toString()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { tokenJson ->
-                    runCatching {
-                        gson.fromJson<Map<String, TraktRepository.CloudTraktToken>>(tokenJson, traktTokenType)
-                    }.getOrNull()
+                val traktTokenType = TypeToken.getParameterized(Map::class.java, String::class.java, TraktRepository.CloudTraktToken::class.java).type
+                val traktTokens = root.optJSONObject("traktTokens")
+                    ?.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { tokenJson ->
+                        runCatching {
+                            gson.fromJson<Map<String, TraktRepository.CloudTraktToken>>(tokenJson, traktTokenType)
+                        }.getOrNull()
+                    }
+                    .orEmpty()
+
+                traktTokens.forEach { (profileId, token) ->
+                    if (profileId.isNotBlank() && token.accessToken.isNotBlank()) {
+                        traktProfiles.add(profileId)
+                    }
                 }
-                .orEmpty()
 
-            traktTokens.forEach { (profileId, token) ->
-                if (profileId.isNotBlank() && token.accessToken.isNotBlank()) {
-                    traktProfiles.add(profileId)
+                val isActiveProfileTrakt = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val activeProfileIdLocal = profileManager.getProfileIdSync().ifBlank { null }
+                if (isActiveProfileTrakt && activeProfileIdLocal != null) {
+                    traktProfiles.add(activeProfileIdLocal)
+                }
+
+                val nonTraktOnly = map.filterKeys { it !in traktProfiles }
+                if (nonTraktOnly.isNotEmpty()) {
+                    traktRepository.importLocalContinueWatchingForProfiles(nonTraktOnly)
                 }
             }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_local_cw")) }
 
-            val isActiveProfileTrakt = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
-            val activeProfileId = profileManager.getProfileIdSync().ifBlank { null }
-            if (isActiveProfileTrakt && activeProfileId != null) {
-                traktProfiles.add(activeProfileId)
+        runCatching {
+            root.optJSONObject("localWatchedMoviesByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Int::class.javaObjectType).type).type
+                val map: Map<String, List<Int>> = gson.fromJson(json, type) ?: emptyMap()
+                traktRepository.importLocalWatchedMoviesForProfiles(map)
             }
 
-            val nonTraktOnly = map.filterKeys { it !in traktProfiles }
-            if (nonTraktOnly.isNotEmpty()) {
-                traktRepository.importLocalContinueWatchingForProfiles(nonTraktOnly)
+            root.optJSONObject("localWatchedEpisodesByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
+                val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
+                traktRepository.importLocalWatchedEpisodesForProfiles(map)
             }
-        }
-
-        root.optJSONObject("localWatchedMoviesByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Int::class.javaObjectType).type).type
-            val map: Map<String, List<Int>> = gson.fromJson(json, type) ?: emptyMap()
-            traktRepository.importLocalWatchedMoviesForProfiles(map)
-        }
-
-        root.optJSONObject("localWatchedEpisodesByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
-            val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, String::class.java).type).type
-            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
-            traktRepository.importLocalWatchedEpisodesForProfiles(map)
-        }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_local_watched")) }
 
         traktRepository.clearAllProfileCaches()
         watchHistoryRepository.clearProfileCaches()

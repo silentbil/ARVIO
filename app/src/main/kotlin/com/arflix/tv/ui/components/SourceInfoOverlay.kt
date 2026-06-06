@@ -89,9 +89,9 @@ fun SourceInfoOverlay(
                             color = getQualityColor(source.quality)
                         )
                     }
-                    
+
                     Spacer(modifier = Modifier.height(4.dp))
-                    
+
                     // Source indicator
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -110,7 +110,7 @@ fun SourceInfoOverlay(
                             color = TextSecondary
                         )
                     }
-                    
+
                     // Size info
                     if (source.size.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(4.dp))
@@ -166,7 +166,7 @@ fun PlayerInfoBar(
                 )
             }
         }
-        
+
         if (isLive) {
             Row(
                 modifier = Modifier
@@ -196,7 +196,7 @@ fun PlayerInfoBar(
  */
 private fun getQualityColor(quality: String): Color {
     return when {
-        quality.contains("4K", ignoreCase = true) || 
+        quality.contains("4K", ignoreCase = true) ||
         quality.contains("2160p", ignoreCase = true) -> Color(0xFFFFD700) // Gold
         quality.contains("1080p", ignoreCase = true) -> Pink
         quality.contains("720p", ignoreCase = true) -> Color(0xFF3B82F6) // Blue

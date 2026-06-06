@@ -125,9 +125,25 @@ class WatchHistoryRepository @Inject constructor(
         position: Long,
         streamKey: String? = null,
         streamAddonId: String? = null,
-        streamTitle: String? = null
+        streamTitle: String? = null,
+        sessionStartTime: Long = 0L
     ) {
         val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+
+        if (sessionStartTime > 0L) {
+            val existingProgress = getProgress(mediaType, tmdbId, season, episode)
+            if (existingProgress != null) {
+                val cloudUpdatedAt = parseEpoch(existingProgress.updated_at)
+                if (cloudUpdatedAt > sessionStartTime + 10_000L) {
+                    com.arflix.tv.util.AppLogger.breadcrumb(
+                        tag = "WatchHistory",
+                        message = "Rejected stale push for $tmdbId. Cloud updated $cloudUpdatedAt, session start $sessionStartTime",
+                        severity = "warning"
+                    )
+                    return
+                }
+            }
+        }
 
         val entry = WatchHistoryEntry(
                 user_id = userId,

@@ -32,10 +32,10 @@ class LoginViewModel @Inject constructor(
     private val cloudSyncRepository: CloudSyncRepository
 ) : ViewModel() {
     private var lastSignUpAttemptMs: Long = 0L
-    
+
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
-    
+
     init {
         // Observe auth state
         viewModelScope.launch {
@@ -44,7 +44,7 @@ class LoginViewModel @Inject constructor(
             }
         }
     }
-    
+
     fun signIn(email: String, password: String) {
         val normalizedEmail = AuthEmailValidator.normalize(email)
         AuthEmailValidator.validate(normalizedEmail, rejectDisposable = false)?.let { message ->
@@ -80,7 +80,7 @@ class LoginViewModel @Inject constructor(
             }
         }
     }
-    
+
     fun signUp(email: String, password: String) {
         val normalizedEmail = AuthEmailValidator.normalize(email)
         AuthEmailValidator.validate(normalizedEmail)?.let { message ->
@@ -161,5 +161,3 @@ class LoginViewModel @Inject constructor(
         _uiState.update { it.copy(isLoading = false, error = error) }
     }
 }
-
-

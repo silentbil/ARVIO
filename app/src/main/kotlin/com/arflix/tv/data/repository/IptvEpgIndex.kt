@@ -54,20 +54,16 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
 
     fun replaceAll(sourceKey: String, nowNext: Map<String, IptvNowNext>, updatedAtMs: Long) {
         if (sourceKey.isBlank() || nowNext.isEmpty()) return
-        val rows = flatten(nowNext)
-        if (rows.isEmpty()) return
 
         writableDatabase.runInTransaction {
             delete("epg_programs", "source_key = ?", arrayOf(sourceKey))
-            insertRows(sourceKey, rows)
+            insertNowNextRows(sourceKey, nowNext)
             upsertSource(sourceKey, updatedAtMs)
         }
     }
 
     fun replaceChannels(sourceKey: String, nowNext: Map<String, IptvNowNext>, updatedAtMs: Long) {
         if (sourceKey.isBlank() || nowNext.isEmpty()) return
-        val rows = flatten(nowNext)
-        if (rows.isEmpty()) return
 
         writableDatabase.runInTransaction {
             nowNext.keys
@@ -79,7 +75,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     val args = arrayOf(sourceKey) + channelIds.toTypedArray()
                     delete("epg_programs", "source_key = ? AND channel_id IN ($placeholders)", args)
                 }
-            insertRows(sourceKey, rows)
+            insertNowNextRows(sourceKey, nowNext)
             upsertSource(sourceKey, updatedAtMs)
         }
     }
@@ -197,7 +193,21 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             }
     }
 
-    private fun SQLiteDatabase.insertRows(sourceKey: String, rows: List<ProgramRow>) {
+    private class ProgramDedupKey(val start: Long, val end: Long, val title: String) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is ProgramDedupKey) return false
+            return start == other.start && end == other.end && title == other.title
+        }
+        override fun hashCode(): Int {
+            var result = start.hashCode()
+            result = 31 * result + end.hashCode()
+            result = 31 * result + title.hashCode()
+            return result
+        }
+    }
+
+    private fun SQLiteDatabase.insertNowNextRows(sourceKey: String, nowNext: Map<String, IptvNowNext>) {
         val statement = compileStatement(
             """
             INSERT OR REPLACE INTO epg_programs
@@ -206,20 +216,38 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             """.trimIndent()
         )
         try {
-            rows.forEach { row ->
-                statement.clearBindings()
-                statement.bindString(1, sourceKey)
-                statement.bindString(2, row.channelId)
-                statement.bindLong(3, row.program.startUtcMillis)
-                statement.bindLong(4, row.program.endUtcMillis)
-                statement.bindString(5, row.program.title)
-                val description = row.program.description
-                if (description.isNullOrBlank()) {
-                    statement.bindNull(6)
-                } else {
-                    statement.bindString(6, description)
+            val seenPrograms = HashSet<ProgramDedupKey>(128)
+            nowNext.forEach { (channelId, item) ->
+                val normalizedId = channelId.trim()
+                if (normalizedId.isBlank()) return@forEach
+                seenPrograms.clear()
+
+                fun insertProgram(program: IptvProgram) {
+                    if (program.title.isBlank() || program.endUtcMillis <= program.startUtcMillis) return
+                    val titleTrimmed = program.title.trim()
+                    val key = ProgramDedupKey(program.startUtcMillis, program.endUtcMillis, titleTrimmed)
+                    if (!seenPrograms.add(key)) return
+
+                    val description = program.description?.trim()?.take(MAX_DESCRIPTION_CHARS)
+                    statement.clearBindings()
+                    statement.bindString(1, sourceKey)
+                    statement.bindString(2, normalizedId)
+                    statement.bindLong(3, program.startUtcMillis)
+                    statement.bindLong(4, program.endUtcMillis)
+                    statement.bindString(5, titleTrimmed)
+                    if (description.isNullOrBlank()) {
+                        statement.bindNull(6)
+                    } else {
+                        statement.bindString(6, description)
+                    }
+                    statement.executeInsert()
                 }
-                statement.executeInsert()
+
+                item.now?.let(::insertProgram)
+                item.next?.let(::insertProgram)
+                item.later?.let(::insertProgram)
+                item.upcoming.forEach(::insertProgram)
+                item.recent.forEach(::insertProgram)
             }
         } finally {
             statement.close()
@@ -235,35 +263,6 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             statement.executeInsert()
         }
     }
-
-    private fun flatten(nowNext: Map<String, IptvNowNext>): List<ProgramRow> {
-        return buildList {
-            nowNext.forEach { (channelId, item) ->
-                val normalizedId = channelId.trim()
-                if (normalizedId.isBlank()) return@forEach
-                item.allPrograms()
-                    .filter { it.title.isNotBlank() && it.endUtcMillis > it.startUtcMillis }
-                    .distinctBy { "${it.startUtcMillis}|${it.endUtcMillis}|${it.title}" }
-                    .forEach { program -> add(ProgramRow(normalizedId, program.compactForIndex())) }
-            }
-        }
-    }
-
-    private fun IptvNowNext.allPrograms(): List<IptvProgram> {
-        return buildList {
-            now?.let(::add)
-            next?.let(::add)
-            later?.let(::add)
-            addAll(upcoming)
-            addAll(recent)
-        }
-    }
-
-    private fun IptvProgram.compactForIndex(): IptvProgram =
-        copy(
-            title = title.trim(),
-            description = description?.trim()?.take(MAX_DESCRIPTION_CHARS)
-        )
 
     private fun buildNowNext(programs: List<IptvProgram>, nowMs: Long): IptvNowNext? {
         if (programs.isEmpty()) return null
@@ -315,10 +314,6 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    private data class ProgramRow(
-        val channelId: String,
-        val program: IptvProgram
-    )
 
     private companion object {
         const val DATABASE_NAME = "arvio_iptv_epg_index.db"

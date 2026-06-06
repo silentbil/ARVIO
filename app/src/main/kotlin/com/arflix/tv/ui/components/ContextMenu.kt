@@ -169,7 +169,7 @@ fun ContextMenu(
                         style = ArflixTypography.sectionTitle,
                         color = TextPrimary
                     )
-                    
+
                     // Subtitle
                     if (subtitle != null) {
                         Spacer(modifier = Modifier.height(8.dp))
@@ -179,9 +179,9 @@ fun ContextMenu(
                             color = TextSecondary
                         )
                     }
-                    
+
                     Spacer(modifier = Modifier.height(16.dp))
-                    
+
                     // Divider
                     Box(
                         modifier = Modifier
@@ -189,9 +189,9 @@ fun ContextMenu(
                             .height(1.dp)
                             .background(Color.White.copy(alpha = 0.1f))
                     )
-                    
+
                     Spacer(modifier = Modifier.height(12.dp))
-                    
+
                     // Actions
                     Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -203,9 +203,9 @@ fun ContextMenu(
                             )
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.height(14.dp))
-                    
+
                     // Close hint
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -362,7 +362,7 @@ private fun ContextMenuItem(
 ) {
     val bgColor = if (isFocused) Color.White.copy(alpha = 0.1f) else Color.Transparent
     val borderColor = if (isFocused) Pink else Color.Transparent
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -381,17 +381,17 @@ private fun ContextMenuItem(
             tint = if (isFocused) Pink else action.color,
             modifier = Modifier.size(24.dp)
         )
-        
+
         Spacer(modifier = Modifier.width(16.dp))
-        
+
         Text(
             text = action.label,
             style = ArflixTypography.body,
             color = if (isFocused) TextPrimary else action.color
         )
-        
+
         Spacer(modifier = Modifier.weight(1f))
-        
+
         if (isFocused) {
             Box(
                 modifier = Modifier
@@ -429,7 +429,7 @@ fun EpisodeContextMenu(
         ContextActions.selectSource,
         if (isWatched) ContextActions.markUnwatched else ContextActions.markWatched
     )
-    
+
     ContextMenu(
         isVisible = isVisible,
         title = episodeName,
@@ -498,7 +498,7 @@ fun MediaContextMenu(
         if (isInWatchlist) ContextActions.removeWatchlist else ContextActions.addWatchlist,
         ContextActions.viewDetails
     )
-    
+
     ContextMenu(
         isVisible = isVisible,
         title = title,

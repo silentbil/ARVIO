@@ -56,7 +56,7 @@ fun Toast(
     onDismiss: () -> Unit = {}
 ) {
     var visible by remember(isVisible, message, type) { mutableStateOf(isVisible) }
-    
+
     LaunchedEffect(isVisible, message, type) {
         if (isVisible) {
             visible = true
@@ -65,7 +65,7 @@ fun Toast(
             onDismiss()
         }
     }
-    
+
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.BottomCenter

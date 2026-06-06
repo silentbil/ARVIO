@@ -19,4 +19,3 @@ val InterFontFamily = FontFamily(
     Font(R.font.inter_variablefont_opsz_wght, weight = FontWeight.Bold),
     Font(R.font.inter_variablefont_opsz_wght, weight = FontWeight.Black),
 )
-

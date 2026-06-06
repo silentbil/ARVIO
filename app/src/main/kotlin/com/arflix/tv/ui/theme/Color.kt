@@ -143,4 +143,3 @@ val ParticlePurpleDark = ArcticBlack50
 val ArvioAccent = ArcticWhite
 val ArvioPurple = ArcticBlack
 val ArvioLight = ArcticWhite70
-

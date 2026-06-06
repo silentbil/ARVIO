@@ -63,7 +63,7 @@ import javax.inject.Singleton
 private val Context.streamDataStore: DataStore<Preferences> by preferencesDataStore(name = "stream_prefs")
 
 /**
- * Callback for streaming results as they arrive - 
+ * Callback for streaming results as they arrive -
  */
 typealias StreamCallback = (streams: List<StreamSource>?, addonId: String, addonName: String, error: Exception?) -> Unit
 
@@ -389,7 +389,7 @@ class StreamRepository @Inject constructor(
     }
 
     /**
-     * Add a custom Stremio addon from URL - 
+     * Add a custom Stremio addon from URL -
      * Fetches manifest and stores addon info
      */
     suspend fun addCustomAddon(url: String, customName: String? = null): Result<Addon> = withContext(Dispatchers.IO) {
@@ -816,7 +816,7 @@ class StreamRepository @Inject constructor(
     }
 
     /**
-     * Get transport URL (base URL without manifest.json) - 
+     * Get transport URL (base URL without manifest.json) -
      */
     private fun getTransportUrl(url: String): String {
         var cleanUrl = normalizeAddonInputUrl(url)
@@ -1003,7 +1003,7 @@ class StreamRepository @Inject constructor(
     // ========== Stream Resolution ==========
 
     /**
-     * Filter addons that support streaming for the given content type - 
+     * Filter addons that support streaming for the given content type -
      * More lenient filtering to ensure custom addons work
      */
     /**

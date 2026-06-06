@@ -83,23 +83,23 @@ object AnimationConstants {
     /** Scroll spring for smooth deceleration */
     const val SPRING_STIFFNESS_SCROLL = 300f
     const val SPRING_DAMPING_SCROLL = 0.9f
-    
+
     // ============================================
     // EASING CURVES
     // ============================================
-    
+
     /** Standard easing - ease out for responsive feel */
     val EaseOut = CubicBezierEasing(0.0f, 0.0f, 0.2f, 1.0f)
-    
+
     /** Fast out, slow in - for emphasis */
     val FastOutSlowIn = CubicBezierEasing(0.4f, 0.0f, 0.2f, 1.0f)
-    
+
     /** Ease in out - for symmetric animations */
     val EaseInOut = CubicBezierEasing(0.42f, 0.0f, 0.58f, 1.0f)
-    
+
     /** Sharp ease - for quick snappy movements */
     val Sharp = CubicBezierEasing(0.4f, 0.0f, 0.6f, 1.0f)
-    
+
     /** Decelerate - for elements coming to rest */
     val Decelerate = CubicBezierEasing(0.0f, 0.0f, 0.2f, 1.0f)
 
@@ -118,17 +118,17 @@ object AnimationConstants {
 
     /** Modal/overlay elevation */
     const val ELEVATION_MODAL = 48
-    
+
     // ============================================
     // BORDER & GLOW
     // ============================================
-    
+
     /** Focus ring width */
     const val BORDER_FOCUS_WIDTH = 3
-    
+
     /** Glow blur radius for focus effect */
     const val GLOW_RADIUS_FOCUS = 16
-    
+
     /** Ambient glow radius */
     const val GLOW_RADIUS_AMBIENT = 8
 }

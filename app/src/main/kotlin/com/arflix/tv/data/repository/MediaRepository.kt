@@ -2889,7 +2889,7 @@ class MediaRepository @Inject constructor(
         seasonEpisodesCache[cacheKey] = CacheEntry(episodes, System.currentTimeMillis())
         return episodes
     }
-    
+
     /**
      * Get cast members (cached)
      */
@@ -2995,7 +2995,7 @@ class MediaRepository @Inject constructor(
         val cacheKey = "tv_${tvId}_season_$seasonNumber"
         return getFromCache(seasonEpisodesCache, cacheKey)
     }
-    
+
     /**
      * Get trailer key (YouTube)
      */
@@ -3025,7 +3025,7 @@ class MediaRepository @Inject constructor(
         val person = tmdbApi.getPersonDetails(personId, apiKey, language = contentLanguage)
         return person.toPersonDetails()
     }
-    
+
     /**
      * Search media
      */
@@ -3591,10 +3591,10 @@ private fun TmdbMediaItem.toMediaItem(defaultType: MediaType): MediaItem {
         "movie" -> MediaType.MOVIE
         else -> defaultType
     }
-    
+
     val dateStr = releaseDate ?: firstAirDate ?: ""
     val year = dateStr.take(4)
-    
+
     return MediaItem(
         id = id,
         title = title ?: name ?: "Unknown",
@@ -3621,7 +3621,7 @@ private fun TmdbMovieDetails.toMediaItem(): MediaItem {
     val hours = (runtime ?: 0) / 60
     val minutes = (runtime ?: 0) % 60
     val duration = if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
-    
+
     return MediaItem(
         id = id,
         title = title,
@@ -3656,7 +3656,7 @@ private fun TmdbTvDetails.toMediaItem(): MediaItem {
         .count()
         .takeIf { it > 0 }
         ?: numberOfSeasons.coerceAtLeast(1)
-    
+
     return MediaItem(
         id = id,
         title = name,
@@ -3717,12 +3717,12 @@ private fun TmdbPersonDetails.toPersonDetails(): PersonDetails {
         ?.filter { it.posterPath != null && (it.mediaType == "movie" || it.mediaType == "tv") }
         ?.sortedByDescending { it.voteCount }
         ?.take(20)
-        ?.map { 
+        ?.map {
             it.toMediaItem(
                 if (it.mediaType == "tv") MediaType.TV else MediaType.MOVIE
             )
         } ?: emptyList()
-    
+
     return PersonDetails(
         id = id,
         name = name,

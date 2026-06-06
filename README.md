@@ -38,6 +38,14 @@ ARVIO is available on Google Play:
 
 [<img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="160">](https://play.google.com/store/apps/details?id=com.arvio.tv)
 
+## Support ARVIO
+
+ARVIO is a free hobby project built and maintained with a lot of time, testing, hosting, and service costs. The goal is to keep ARVIO free as it grows, but running and improving it still costs money every month.
+
+If ARVIO helps you and you want to support development, donations are appreciated:
+
+[Support ARVIO on Ko-fi](https://ko-fi.com/arvio)
+
 ## Screenshots
 
 | Home | Details |

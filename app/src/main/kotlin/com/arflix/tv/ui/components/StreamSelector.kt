@@ -1438,4 +1438,3 @@ private fun qualityScore(quality: String): Int {
         else -> 0
     }
 }
-

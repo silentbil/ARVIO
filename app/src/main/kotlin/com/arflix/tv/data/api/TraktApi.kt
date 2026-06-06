@@ -14,27 +14,27 @@ import retrofit2.Response
  * Trakt.tv API interface
  */
 interface TraktApi {
-    
+
     // ========== Authentication ==========
-    
+
     @POST("oauth/device/code")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun getDeviceCode(
         @Body request: DeviceCodeRequest
     ): TraktDeviceCode
-    
+
     @POST("oauth/device/token")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun pollToken(
         @Body request: TokenPollRequest
     ): TraktToken
-    
+
     @POST("oauth/token")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun refreshToken(
         @Body request: RefreshTokenRequest
     ): TraktToken
-    
+
     // ========== Sync ==========
 
     @GET("sync/last_activities")
@@ -52,7 +52,7 @@ interface TraktApi {
         @Header("trakt-api-key") clientId: String,
         @Header("trakt-api-version") version: String = "2"
     ): List<TraktWatchedMovie>
-    
+
     @GET("sync/watched/shows")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun getWatchedShows(
@@ -60,7 +60,7 @@ interface TraktApi {
         @Header("trakt-api-key") clientId: String,
         @Header("trakt-api-version") version: String = "2"
     ): List<TraktWatchedShow>
-    
+
     @GET("sync/playback")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun getPlaybackProgress(
@@ -71,7 +71,7 @@ interface TraktApi {
         @Query("page") page: Int? = null,
         @Query("limit") limit: Int? = null
     ): List<TraktPlaybackItem>
-    
+
     @DELETE("sync/playback/{id}")
     suspend fun removePlaybackItem(
         @Header("Authorization") auth: String,
@@ -79,7 +79,7 @@ interface TraktApi {
         @Header("trakt-api-version") version: String = "2",
         @Path("id") id: Long
     )
-    
+
     @POST("sync/history")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun addToHistory(
@@ -88,7 +88,7 @@ interface TraktApi {
         @Header("trakt-api-version") version: String = "2",
         @Body body: TraktHistoryBody
     ): TraktSyncResponse
-    
+
     @POST("sync/history/remove")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun removeFromHistory(
@@ -97,7 +97,7 @@ interface TraktApi {
         @Header("trakt-api-version") version: String = "2",
         @Body body: TraktHistoryBody
     ): TraktSyncResponse
-    
+
     @POST("scrobble/start")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun scrobbleStart(
@@ -300,7 +300,7 @@ interface TraktApi {
     ): TraktSyncResponse
 
     // ========== Watchlist ==========
-    
+
     @GET("users/me/watchlist")
     suspend fun getWatchlist(
         @Header("Authorization") auth: String,
@@ -331,7 +331,7 @@ interface TraktApi {
         @Query("page") page: Int,
         @Query("limit") limit: Int
     ): Response<List<TraktWatchlistItem>>
-    
+
     @POST("sync/watchlist")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun addToWatchlist(
@@ -340,7 +340,7 @@ interface TraktApi {
         @Header("trakt-api-version") version: String = "2",
         @Body body: TraktWatchlistBody
     ): TraktSyncResponse
-    
+
     @POST("sync/watchlist/remove")
     @retrofit2.http.Headers("Content-Type: application/json")
     suspend fun removeFromWatchlist(
@@ -349,7 +349,7 @@ interface TraktApi {
         @Header("trakt-api-version") version: String = "2",
         @Body body: TraktWatchlistBody
     ): TraktSyncResponse
-    
+
     // ========== Up Next ==========
 
     @GET("shows/{id}/progress/watched")
@@ -362,7 +362,7 @@ interface TraktApi {
         @Query("specials") specials: String = "false",
         @Query("count_specials") countSpecials: String = "false"
     ): TraktShowProgress
-    
+
     // ========== Hidden Items ==========
 
     @GET("users/hidden/progress_watched")
@@ -919,5 +919,3 @@ data class TraktBulkEpisodeItem(
     val number: Int,
     @SerializedName("watched_at") val watchedAt: String? = null
 )
-
-
