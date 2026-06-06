@@ -1274,19 +1274,20 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun findAiSourceSubtitle(subtitles: List<Subtitle>): Subtitle? {
+        // Some files label forced tracks "SUBFORCED" without setting SELECTION_FLAG_FORCED
+        fun Subtitle.isEffectivelyForced() = isForced || label.contains("forced", ignoreCase = true)
         fun List<Subtitle>.bestEmbedded(): Subtitle? {
             val embedded = filter { it.isEmbedded }
-            // Prefer plain > SDH/CC > forced-only
-            return embedded.firstOrNull { !it.isForced && !it.label.equals("SDH", ignoreCase = true) && !it.label.equals("CC", ignoreCase = true) }
-                ?: embedded.firstOrNull { !it.isForced }
-                ?: embedded.firstOrNull()
+            // Prefer plain > SDH/CC; never use forced-only tracks as AI source
+            return embedded.firstOrNull { !it.isEffectivelyForced() && !it.label.equals("SDH", ignoreCase = true) && !it.label.equals("CC", ignoreCase = true) }
+                ?: embedded.firstOrNull { !it.isEffectivelyForced() }
         }
 
-        // Prefer English embedded > any embedded with lang > any embedded > any subtitle
+        // Prefer English embedded > any embedded with lang > any embedded > any non-forced subtitle
         return subtitles.filter { normalizeLanguage(it.lang) == "en" }.bestEmbedded()
             ?: subtitles.filter { it.lang.isNotBlank() }.bestEmbedded()
             ?: subtitles.bestEmbedded()
-            ?: subtitles.firstOrNull()
+            ?: subtitles.firstOrNull { !it.isEffectivelyForced() }
     }
 
     private fun languageCodeToName(code: String): String {
