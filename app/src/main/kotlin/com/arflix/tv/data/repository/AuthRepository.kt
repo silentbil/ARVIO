@@ -22,6 +22,7 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
+import com.google.gson.JsonParser
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
@@ -112,6 +113,144 @@ private data class AccountSyncPayloadCandidate(
     val payload: String,
     val updatedAtMillis: Long
 )
+
+internal fun accountSyncPayloadRestoreRank(payload: String): Int {
+    val root = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull() ?: return 0
+    val profiles = root.get("profiles")
+        ?.takeIf { !it.isJsonNull && it.isJsonArray }
+        ?.asJsonArray
+    val profileCount = if (root.has("profiles")) profiles?.size() ?: 0 else null
+    val hasUsefulProfiles = when {
+        profileCount == null -> false
+        profileCount > 1 -> true
+        profileCount == 1 -> profiles?.get(0)
+            ?.takeIf { !it.isJsonNull && it.isJsonObject }
+            ?.asJsonObject
+            ?.let { !it.isPlaceholderCloudProfile() }
+            ?: false
+        else -> false
+    }
+    val hasConfiguredState = root.hasConfiguredAccountState()
+    val hasFullSnapshotShape = root.hasFullAccountSnapshotShape()
+
+    return when {
+        profileCount != null && profileCount <= 0 -> 0
+        (hasUsefulProfiles || hasConfiguredState) && hasFullSnapshotShape -> 50
+        hasUsefulProfiles || hasConfiguredState -> 40
+        profileCount == null && hasFullSnapshotShape -> 30
+        profileCount == null -> 20
+        else -> 10
+    }
+}
+
+private fun com.google.gson.JsonObject.isPlaceholderCloudProfile(): Boolean {
+    val name = stringValue("name").trim()
+    val avatarId = intValue("avatarId")
+    val avatarImageVersion = longValue("avatarImageVersion")
+    val isKidsProfile = booleanValue("isKidsProfile")
+    val isLocked = booleanValue("isLocked")
+    val pin = stringValue("pin").trim()
+
+    return name.equals("Profile 1", ignoreCase = true) &&
+        avatarId == 0 &&
+        avatarImageVersion <= 0L &&
+        !isKidsProfile &&
+        !isLocked &&
+        pin.isBlank()
+}
+
+private fun com.google.gson.JsonObject.hasFullAccountSnapshotShape(): Boolean {
+    return has("profileSettingsById") ||
+        has("addonsByProfile") ||
+        has("catalogsByProfile") ||
+        has("iptvByProfile") ||
+        has("watchlistByProfile")
+}
+
+private fun com.google.gson.JsonObject.hasConfiguredAccountState(): Boolean {
+    if (arraySize("addons") > 0) return true
+    if (stringValue("iptvM3uUrl").isNotBlank()) return true
+
+    return objectHasNonEmptyArray("addonsByProfile") ||
+        objectHasNonEmptyArray("watchlistByProfile") ||
+        objectHasConfiguredIptvProfile("iptvByProfile")
+}
+
+private fun com.google.gson.JsonObject.objectHasNonEmptyArray(key: String): Boolean {
+    val obj = getObject(key) ?: return false
+    obj.entrySet().forEach { (_, value) ->
+        if (value != null && !value.isJsonNull && value.isJsonArray && value.asJsonArray.size() > 0) {
+            return true
+        }
+    }
+    return false
+}
+
+private fun com.google.gson.JsonObject.objectHasConfiguredIptvProfile(key: String): Boolean {
+    val obj = getObject(key) ?: return false
+    obj.entrySet().forEach { (_, rawValue) ->
+        val value = rawValue
+            ?.takeIf { !it.isJsonNull && it.isJsonObject }
+            ?.asJsonObject
+            ?: return@forEach
+        if (value.stringValue("m3uUrl").isNotBlank()) return true
+        if (value.stringValue("epgUrl").isNotBlank()) return true
+        if (value.arraySize("playlists") > 0) return true
+        if (value.arraySize("favoriteChannels") > 0) return true
+        if (value.arraySize("favoriteGroups") > 0) return true
+    }
+    return false
+}
+
+private fun com.google.gson.JsonObject.getObject(key: String): com.google.gson.JsonObject? {
+    return get(key)
+        ?.takeIf { !it.isJsonNull && it.isJsonObject }
+        ?.asJsonObject
+}
+
+private fun com.google.gson.JsonObject.arraySize(key: String): Int {
+    return get(key)
+        ?.takeIf { !it.isJsonNull && it.isJsonArray }
+        ?.asJsonArray
+        ?.size()
+        ?: 0
+}
+
+private fun com.google.gson.JsonObject.stringValue(key: String): String {
+    return runCatching {
+        get(key)
+            ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
+            ?.asString
+            .orEmpty()
+    }.getOrDefault("")
+}
+
+private fun com.google.gson.JsonObject.intValue(key: String): Int {
+    return runCatching {
+        get(key)
+            ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
+            ?.asInt
+            ?: 0
+    }.getOrDefault(0)
+}
+
+private fun com.google.gson.JsonObject.longValue(key: String): Long {
+    return runCatching {
+        get(key)
+            ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
+            ?.asLong
+            ?: 0L
+    }.getOrDefault(0L)
+}
+
+private fun com.google.gson.JsonObject.booleanValue(key: String): Boolean {
+    return runCatching {
+        get(key)
+            ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
+            ?.asBoolean
+            ?: false
+    }.getOrDefault(false)
+}
 
 /**
  * Authentication state
@@ -976,7 +1115,7 @@ class AuthRepository @Inject constructor(
             .mapNotNull { it.getOrNull() }
             .filter { it.payload.isNotBlank() }
             .maxWithOrNull(
-                compareBy<AccountSyncPayloadCandidate> { accountSyncPayloadProfileRank(it.payload) }
+                compareBy<AccountSyncPayloadCandidate> { accountSyncPayloadRestoreRank(it.payload) }
                     .thenBy { it.updatedAtMillis }
             )
 
@@ -994,18 +1133,6 @@ class AuthRepository @Inject constructor(
                 ?: profileResult.exceptionOrNull()
                 ?: IllegalStateException("Cloud sync payload unavailable")
         )
-    }
-
-    private fun accountSyncPayloadProfileRank(payload: String): Int {
-        val profileCount = runCatching {
-            val root = JSONObject(payload)
-            if (!root.has("profiles")) null else root.optJSONArray("profiles")?.length() ?: 0
-        }.getOrNull()
-        return when {
-            profileCount == null -> 1
-            profileCount > 0 -> 2
-            else -> 0
-        }
     }
 
     private suspend fun loadAccountSyncPayloadFromAccountSyncState(userId: String): Result<AccountSyncPayloadCandidate?> {

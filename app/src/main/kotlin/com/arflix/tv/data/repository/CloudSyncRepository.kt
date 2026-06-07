@@ -772,6 +772,20 @@ class CloudSyncRepository @Inject constructor(
             return@withLock RestoreResult.NO_BACKUP
         }
 
+        val remoteRestoreRank = accountSyncPayloadRestoreRank(payload)
+        val localRestoreRank = runCatching {
+            accountSyncPayloadRestoreRank(buildCloudSnapshotJson())
+        }.getOrDefault(0)
+        if (localRestoreRank > remoteRestoreRank && remoteRestoreRank <= 10) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_remote_placeholder_seed_local local_rank=$localRestoreRank remote_rank=$remoteRestoreRank",
+                severity = "warning"
+            )
+            val pushResult = pushToCloudLocked()
+            return@withLock if (pushResult.isSuccess) RestoreResult.RESTORED else RestoreResult.FAILED
+        }
+
         val cloudProfileCount = cloudPayloadProfileCount(payload)
         if (!pushPendingLocalFirst && cloudProfileCount != null && cloudProfileCount <= 0) {
             val localProfiles = profileRepository.getProfiles()

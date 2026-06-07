@@ -119,7 +119,7 @@ class ProfileViewModel @Inject constructor(
                 }
 
                 val userId = state.userId
-                if (lastInitialRestoreUserId == userId || profileRepository.getProfiles().isNotEmpty()) {
+                if (lastInitialRestoreUserId == userId || cloudSyncRepository.hasMeaningfulLocalProfiles()) {
                     return@collect
                 }
 
