@@ -975,7 +975,10 @@ class AuthRepository @Inject constructor(
         val bestPayload = listOf(accountSyncResult, userSettingsResult, profileResult)
             .mapNotNull { it.getOrNull() }
             .filter { it.payload.isNotBlank() }
-            .maxByOrNull { it.updatedAtMillis }
+            .maxWithOrNull(
+                compareBy<AccountSyncPayloadCandidate> { accountSyncPayloadProfileRank(it.payload) }
+                    .thenBy { it.updatedAtMillis }
+            )
 
         if (bestPayload != null) {
             return Result.success(bestPayload.payload)
@@ -991,6 +994,18 @@ class AuthRepository @Inject constructor(
                 ?: profileResult.exceptionOrNull()
                 ?: IllegalStateException("Cloud sync payload unavailable")
         )
+    }
+
+    private fun accountSyncPayloadProfileRank(payload: String): Int {
+        val profileCount = runCatching {
+            val root = JSONObject(payload)
+            if (!root.has("profiles")) null else root.optJSONArray("profiles")?.length() ?: 0
+        }.getOrNull()
+        return when {
+            profileCount == null -> 1
+            profileCount > 0 -> 2
+            else -> 0
+        }
     }
 
     private suspend fun loadAccountSyncPayloadFromAccountSyncState(userId: String): Result<AccountSyncPayloadCandidate?> {

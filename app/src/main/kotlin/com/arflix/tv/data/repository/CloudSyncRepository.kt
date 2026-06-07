@@ -184,6 +184,14 @@ class CloudSyncRepository @Inject constructor(
         }
     }
 
+    private suspend fun clearStaleLocalDirtyBeforeRemoteRestore() {
+        latestLocalDirtyAt = 0L
+        isPushDirty = false
+        context.settingsDataStore.edit { prefs ->
+            prefs.remove(cloudSyncLocalDirtyAtKey)
+        }
+    }
+
     suspend fun hasPendingLocalChanges(): Boolean {
         val storedDirtyAt = context.settingsDataStore.data.first()[cloudSyncLocalDirtyAtKey] ?: 0L
         if (storedDirtyAt > 0L) {
@@ -689,8 +697,9 @@ class CloudSyncRepository @Inject constructor(
      * Restores the full cloud state to local repositories.
      * Returns [RestoreResult] indicating what happened.
      */
-    suspend fun pullFromCloud(): RestoreResult = cloudSyncMutex.withLock {
-        if (hasPendingLocalChanges()) {
+    suspend fun pullFromCloud(pushPendingLocalFirst: Boolean = true): RestoreResult = cloudSyncMutex.withLock {
+        val hasPendingLocalChanges = hasPendingLocalChanges()
+        if (pushPendingLocalFirst && hasPendingLocalChanges) {
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "pull_pushes_pending_local_first",
@@ -707,6 +716,12 @@ class CloudSyncRepository @Inject constructor(
                 )
                 return@withLock RestoreResult.FAILED
             }
+        } else if (!pushPendingLocalFirst && hasPendingLocalChanges) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_remote_first_skips_pending_local_push",
+                severity = "info"
+            )
         }
 
         val payloadResult = authRepository.loadAccountSyncPayload()
@@ -748,6 +763,9 @@ class CloudSyncRepository @Inject constructor(
 
         runCatching {
             invalidationBus.suppressDuringRemoteApply {
+                if (!pushPendingLocalFirst) {
+                    clearStaleLocalDirtyBeforeRemoteRestore()
+                }
                 applyCloudPayload(payload)
             }
             markCloudPayloadApplied(payload, payloadHash)

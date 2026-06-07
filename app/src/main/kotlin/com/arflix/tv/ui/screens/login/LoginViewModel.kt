@@ -67,7 +67,7 @@ class LoginViewModel @Inject constructor(
             // down on a fresh login. This is why TV-side changes weren't visible
             // on the phone even after logout/login.
             if (result.isSuccess) {
-                runCatching { cloudSyncRepository.pullFromCloud() }
+                runCatching { cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = false) }
                 runCatching { streamRepository.syncAddonsFromCloud() }
             }
 
@@ -136,7 +136,7 @@ class LoginViewModel @Inject constructor(
             val authResult = authRepository.handleGoogleSignInResult(result)
 
             if (authResult.isSuccess) {
-                runCatching { cloudSyncRepository.pullFromCloud() }
+                runCatching { cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = false) }
                 runCatching { streamRepository.syncAddonsFromCloud() }
             }
 

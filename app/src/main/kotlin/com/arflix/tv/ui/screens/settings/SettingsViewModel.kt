@@ -1567,7 +1567,10 @@ class SettingsViewModel @Inject constructor(
                 )
                 if (!userId.isNullOrBlank() && lastCloudSyncedUserId != userId) {
                     lastCloudSyncedUserId = userId
-                    val restoreResult = restoreCloudStateToLocalInternal(silent = true)
+                    val restoreResult = restoreCloudStateToLocalInternal(
+                        silent = true,
+                        pushPendingLocalFirst = false
+                    )
                     // Only seed cloud when there is truly no backup yet.
                     if (restoreResult == CloudRestoreResult.NO_BACKUP) {
                         syncLocalStateToCloud(silent = true, force = true)
@@ -2207,12 +2210,18 @@ class SettingsViewModel @Inject constructor(
                             // freshly signed-in device with empty addons/settings/CW.
                             // Now with timeout protection and retry.
                             var restoreResult = withTimeoutOrNull(15_000L) {
-                                restoreCloudStateToLocalInternal(silent = true)
+                                restoreCloudStateToLocalInternal(
+                                    silent = true,
+                                    pushPendingLocalFirst = false
+                                )
                             } ?: CloudRestoreResult.FAILED
                             if (restoreResult == CloudRestoreResult.FAILED) {
                                 delay(1200)
                                 restoreResult = withTimeoutOrNull(15_000L) {
-                                    restoreCloudStateToLocalInternal(silent = true)
+                                    restoreCloudStateToLocalInternal(
+                                        silent = true,
+                                        pushPendingLocalFirst = false
+                                    )
                                 } ?: CloudRestoreResult.FAILED
                             }
 
@@ -2658,8 +2667,11 @@ class SettingsViewModel @Inject constructor(
         return authRepository.getCurrentUserId().isNullOrBlank().not()
     }
 
-    private suspend fun restoreCloudStateToLocalInternal(silent: Boolean): CloudRestoreResult {
-        return when (cloudSyncRepository.pullFromCloud()) {
+    private suspend fun restoreCloudStateToLocalInternal(
+        silent: Boolean,
+        pushPendingLocalFirst: Boolean = true
+    ): CloudRestoreResult {
+        return when (cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = pushPendingLocalFirst)) {
             CloudSyncRepository.RestoreResult.RESTORED -> {
                 loadSettings()
                 runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
