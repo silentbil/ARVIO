@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { getStreams, installAddon as installAddonManifest, loadLocalAddons, saveLocalAddons } from "./addons";
 import { AuthClient } from "./auth";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
-import { getContinueWatching, pullCloudPayload, saveCloudAddons, saveCloudSettings } from "./cloud";
+import { getContinueWatching, pullCloudPayload, pullCloudProfiles, saveCloudAddons, saveCloudProfiles, saveCloudSettings } from "./cloud";
 import { loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia } from "./mappers";
 import { loadStored, saveStored } from "./storage";
@@ -20,6 +20,7 @@ import type {
   IptvSnapshot,
   MediaItem,
   NavSection,
+  Profile,
   StreamSource
 } from "./types";
 
@@ -27,6 +28,31 @@ export const authClient = new AuthClient();
 export const traktClient = new TraktClient();
 
 const settingsKey = "arvio.web.settings";
+const PROFILES_KEY = "arvio.web.profiles";
+const ACTIVE_PROFILE_KEY = "arvio.web.activeProfileId";
+
+export type AppView = "profiles" | "login" | "app";
+
+function randomProfileColor() {
+  const colors = [0xffe50914, 0xff1db954, 0xff3b82f6, 0xfff59e0b, 0xff8b5cf6, 0xffec4899, 0xff14b8a6, 0xff6366f1];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
+function makeProfile(name: string, avatarColor: number, avatarId = 0): Profile {
+  const now = Date.now();
+  return {
+    id: (globalThis.crypto?.randomUUID?.() ?? `p_${now}_${Math.floor(Math.random() * 1e6)}`),
+    name,
+    avatarColor,
+    avatarId,
+    avatarImageVersion: 0,
+    isKidsProfile: false,
+    pin: null,
+    isLocked: false,
+    createdAt: now,
+    lastUsedAt: now
+  };
+}
 
 export const defaultSettings: AppSettings = {
   defaultSubtitle: "en",
@@ -64,6 +90,20 @@ const emptyIptv: IptvSnapshot = {
 };
 
 export interface AppStore {
+  view: AppView;
+  profiles: Profile[];
+  activeProfile: Profile | null;
+  avatarImages: Record<string, string>;
+  manageMode: boolean;
+  setManageMode: (value: boolean) => void;
+  selectProfile: (profile: Profile) => Promise<void>;
+  createProfile: (name: string, avatarColor: number, avatarId: number) => Promise<void>;
+  updateProfile: (profile: Profile) => Promise<void>;
+  deleteProfile: (id: string) => Promise<void>;
+  switchProfile: () => void;
+  goToLogin: () => void;
+  backToProfiles: () => void;
+
   section: NavSection;
   setSection: (section: NavSection) => void;
   categories: Category[];
@@ -140,6 +180,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [deviceCode, setDeviceCode] = useState<TraktDeviceCode | null>(null);
   const [busy, setBusy] = useState("Loading ARVIO");
   const [toast, setToast] = useState<string | null>(null);
+
+  const [profiles, setProfiles] = useState<Profile[]>(() => {
+    const stored = loadStored<Profile[]>(PROFILES_KEY, []);
+    return stored.length ? stored : [makeProfile("Profile 1", 0xffe50914, 0)];
+  });
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(() => loadStored<string | null>(ACTIVE_PROFILE_KEY, null));
+  const [avatarImages, setAvatarImages] = useState<Record<string, string>>({});
+  const [manageMode, setManageMode] = useState(false);
+  const [view, setView] = useState<AppView>(() => {
+    const stored = loadStored<Profile[]>(PROFILES_KEY, []);
+    const activeId = loadStored<string | null>(ACTIVE_PROFILE_KEY, null);
+    const skip = loadStored<AppSettings>(settingsKey, defaultSettings).skipProfileSelection;
+    if (skip && activeId && stored.some((p) => p.id === activeId)) return "app";
+    return "profiles";
+  });
+
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
 
   const hero = selected ?? continueWatching[0] ?? categories[0]?.items[0] ?? null;
 
@@ -223,6 +280,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     void saveCloudSettings(authClient, settings, addons).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
+
+  useEffect(() => {
+    saveStored(PROFILES_KEY, profiles);
+    saveStored(ACTIVE_PROFILE_KEY, activeProfileId);
+  }, [profiles, activeProfileId]);
+
+  // When signed in, pull the shared profiles from the same account_sync_state
+  // payload Android writes to (cloud wins, matching replaceProfilesFromCloud).
+  useEffect(() => {
+    if (!authClient.session) return;
+    let cancelled = false;
+    void pullCloudProfiles(authClient)
+      .then((cloud) => {
+        if (cancelled || !cloud.profiles.length) return;
+        setProfiles(cloud.profiles);
+        setAvatarImages(cloud.avatarImages);
+        if (cloud.activeProfileId) setActiveProfileId(cloud.activeProfileId);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [auth]);
 
   useEffect(() => {
     const handle = setTimeout(async () => {
@@ -325,7 +405,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTraktConnected(false);
   }, []);
 
+  const persistProfiles = useCallback((next: Profile[], activeId: string | null) => {
+    setProfiles(next);
+    setActiveProfileId(activeId);
+    saveStored(PROFILES_KEY, next);
+    saveStored(ACTIVE_PROFILE_KEY, activeId);
+    void saveCloudProfiles(authClient, next, activeId).catch(() => undefined);
+  }, []);
+
+  const selectProfile = useCallback(async (profile: Profile) => {
+    const updated = profiles.map((p) => (p.id === profile.id ? { ...p, lastUsedAt: Date.now() } : p));
+    persistProfiles(updated, profile.id);
+    setManageMode(false);
+    setView("app");
+    setSection("home");
+    await refreshData();
+  }, [profiles, persistProfiles, refreshData]);
+
+  const createProfile = useCallback(async (name: string, avatarColor: number, avatarId: number) => {
+    const profile = makeProfile(name || "Profile", avatarColor || randomProfileColor(), avatarId);
+    persistProfiles([...profiles, profile], activeProfileId);
+  }, [profiles, activeProfileId, persistProfiles]);
+
+  const updateProfileAction = useCallback(async (profile: Profile) => {
+    persistProfiles(profiles.map((p) => (p.id === profile.id ? profile : p)), activeProfileId);
+  }, [profiles, activeProfileId, persistProfiles]);
+
+  const deleteProfileAction = useCallback(async (id: string) => {
+    const next = profiles.filter((p) => p.id !== id);
+    persistProfiles(next, activeProfileId === id ? null : activeProfileId);
+  }, [profiles, activeProfileId, persistProfiles]);
+
+  const switchProfile = useCallback(() => {
+    setManageMode(false);
+    setView("profiles");
+  }, []);
+
+  const goToLogin = useCallback(() => setView("login"), []);
+  const backToProfiles = useCallback(() => setView("profiles"), []);
+
   const value = useMemo<AppStore>(() => ({
+    view,
+    profiles,
+    activeProfile,
+    avatarImages,
+    manageMode,
+    setManageMode,
+    selectProfile,
+    createProfile,
+    updateProfile: updateProfileAction,
+    deleteProfile: deleteProfileAction,
+    switchProfile,
+    goToLogin,
+    backToProfiles,
     section,
     setSection,
     categories,
@@ -365,6 +497,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     pollTrakt,
     disconnectTrakt
   }), [
+    view, profiles, activeProfile, avatarImages, manageMode,
+    selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
     section, categories, continueWatching, watchlist, hero, selected, streams, activeStream, activeChannel,
     addons, iptvSnapshot, query, results, settings, auth, traktConnected, deviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playChannel, closePlayer,

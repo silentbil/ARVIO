@@ -147,6 +147,25 @@ export interface AuthSession {
   expiresAt: number;
 }
 
+/**
+ * Mirrors the Android `Profile` data model (com.arflix.tv.data.model.Profile).
+ * Serialized identically inside account_sync_state.payload.profiles, so the web
+ * reads/writes the same profiles the Android app created.
+ */
+export interface Profile {
+  id: string;
+  name: string;
+  avatarColor: number;        // ARGB long, e.g. 0xFFE50914
+  avatarId: number;           // 0 = legacy letter+color, 1-84 = fluent emoji avatar
+  avatarImageVersion?: number; // 0 = no custom uploaded photo
+  avatarImageStoragePath?: string | null;
+  isKidsProfile?: boolean;
+  pin?: string | null;
+  isLocked?: boolean;
+  createdAt?: number;
+  lastUsedAt?: number;
+}
+
 export interface UserProfile {
   id: string;
   email?: string | null;

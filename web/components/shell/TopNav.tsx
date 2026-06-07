@@ -2,6 +2,7 @@
 
 import { Bookmark, Home, Search, Settings, Tv } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { ProfileAvatarVisual } from "@/components/profile/ProfileAvatar";
 import type { NavSection } from "@/lib/types";
 
 const nav = [
@@ -12,15 +13,15 @@ const nav = [
 ] satisfies Array<{ id: NavSection; label: string; icon: typeof Home }>;
 
 export function TopNav() {
-  const { section, setSection, auth } = useApp();
+  const { section, setSection, switchProfile, activeProfile, avatarImages } = useApp();
 
   return (
     <aside className="sidebar" aria-label="ARVIO navigation">
       <div className="profile-cluster">
-        <button className="brand" onClick={() => setSection("settings")} aria-label="Profile">
-          <img src="/arvio-logo.svg" alt="" />
+        <button className="brand" onClick={switchProfile} aria-label="Switch profile">
+          {activeProfile ? <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} /> : <img src="/arvio-logo.svg" alt="" />}
         </button>
-        <span className="profile-name">{auth?.email?.split("@")[0] ?? ""}</span>
+        <span className="profile-name-text">{activeProfile?.name ?? ""}</span>
       </div>
       <nav>
         {nav.map((item) => {
