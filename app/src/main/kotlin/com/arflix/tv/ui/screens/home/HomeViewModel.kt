@@ -80,6 +80,7 @@ data class HomeUiState(
     val trailerAutoPlay: Boolean = false,
     val trailerSoundEnabled: Boolean = false,
     val trailerDelaySeconds: Int = 2,
+    val trailerInCards: Boolean = true,
     // Home hero metadata visibility toggles (issue #72)
     val showBudget: Boolean = true,
     val heroOverviewOverride: String? = null,
@@ -1285,6 +1286,9 @@ class HomeViewModel @Inject constructor(
                 val trailerDelaySeconds = (prefs.asMap().entries
                     .firstOrNull { (key, _) -> key.name.endsWith("_trailer_delay_seconds") }
                     ?.value as? String)?.toIntOrNull() ?: 2
+                val trailerInCards = prefs.asMap().entries
+                    .firstOrNull { (key, _) -> key.name.endsWith("_trailer_in_cards") }
+                    ?.value as? Boolean ?: true
                 val smoothScrollingExplicit = prefs.asMap().entries
                     .firstOrNull { (key, _) -> key.name.endsWith("_smooth_scrolling") }
                     ?.value as? Boolean
@@ -1293,6 +1297,7 @@ class HomeViewModel @Inject constructor(
                     trailerAutoPlay = trailerEnabled,
                     trailerSoundEnabled = trailerSoundEnabled,
                     trailerDelaySeconds = trailerDelaySeconds,
+                    trailerInCards = trailerInCards,
                     showBudget = showBudget,
                     clockFormat = clockFormat,
                     smoothScrolling = smoothScrolling

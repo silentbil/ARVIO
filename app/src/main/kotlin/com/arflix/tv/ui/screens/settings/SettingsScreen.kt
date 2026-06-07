@@ -214,7 +214,7 @@ private fun tvGeneralRowsForSection(section: String): List<Int> {
         "language" -> listOf(0, 3)
         "subtitles" -> listOf(1, 2, 4, 5, 6, 7, 8, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
-        "playback" -> listOf(10, 11, 12, 13, 14, 34, 16, 15, 27)
+        "playback" -> listOf(10, 11, 12, 13, 14, 37, 34, 16, 15, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 36)
         "profiles" -> listOf(19)
         "network" -> listOf(25, 26, 35)
@@ -869,6 +869,7 @@ fun SettingsScreen(
                                                 32 -> showAiApiKeyDialog = true
                                                 33 -> viewModel.startAiKeyServer()
                                                 34 -> viewModel.cycleTrailerDelay()
+                                                37 -> viewModel.setTrailerInCards(!uiState.trailerInCards)
                                             }
                                         }
                                         "iptv" -> {
@@ -1255,6 +1256,8 @@ fun SettingsScreen(
                             onTrailerAutoPlayToggle = { viewModel.setTrailerAutoPlay(it) },
                             trailerSoundEnabled = uiState.trailerSoundEnabled,
                             onTrailerSoundEnabledToggle = { viewModel.setTrailerSoundEnabled(it) },
+                            trailerInCards = uiState.trailerInCards,
+                            onTrailerInCardsToggle = { viewModel.setTrailerInCards(it) },
                             trailerDelaySeconds = uiState.trailerDelaySeconds,
                             onTrailerDelayClick = { viewModel.cycleTrailerDelay() },
                             onDeviceModeClick = openUiModeWarningDialog,
@@ -3505,6 +3508,13 @@ private fun MobileSettingsSubPage(
                         onClick = { viewModel.cycleTrailerDelay() }
                     )
                     MobileSettingsRow(
+                        icon = Icons.Default.Movie,
+                        title = stringResource(R.string.trailer_in_cards),
+                        value = if (uiState.trailerInCards) "On" else "Off",
+                        isFocused = false,
+                        onClick = { viewModel.setTrailerInCards(!uiState.trailerInCards) }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.Settings,
                         title = stringResource(R.string.frame_rate),
                         value = uiState.frameRateMatchingMode,
@@ -4615,6 +4625,8 @@ private fun TvGeneralSettingsRows(
     onFilterSubtitlesByLanguageToggle: (Boolean) -> Unit = {},
     onTrailerAutoPlayToggle: (Boolean) -> Unit = {},
     onTrailerSoundEnabledToggle: (Boolean) -> Unit = {},
+    trailerInCards: Boolean = true,
+    onTrailerInCardsToggle: (Boolean) -> Unit = {},
     trailerDelaySeconds: Int = 1,
     onTrailerDelayClick: () -> Unit = {},
     qualityFilterValue: String = "OFF",
@@ -4738,6 +4750,7 @@ private fun TvGeneralSettingsRows(
                 33 -> SettingsRow(Icons.Default.QrCode, stringResource(R.string.ai_scan_qr_title), stringResource(R.string.ai_scan_qr_desc), "", focusedIndex == localIndex, onSubtitleAiQrClick, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
                 34 -> SettingsRow(Icons.Default.Schedule, stringResource(R.string.trailer_delay), stringResource(R.string.trailer_delay_desc), "${trailerDelaySeconds}s", focusedIndex == localIndex, onTrailerDelayClick, Modifier.settingsFocusSlot(localIndex))
                 35 -> SettingsRow(Icons.Default.Language, stringResource(R.string.custom_user_agent), stringResource(R.string.custom_user_agent_desc), formatUserAgentPreview(customUserAgent, 30), focusedIndex == localIndex, onCustomUserAgentClick, Modifier.settingsFocusSlot(localIndex))
+                37 -> SettingsToggleRow(stringResource(R.string.trailer_in_cards), stringResource(R.string.trailer_in_cards_desc), trailerInCards, focusedIndex == localIndex, onTrailerInCardsToggle, Modifier.settingsFocusSlot(localIndex))
             }
         }
     }

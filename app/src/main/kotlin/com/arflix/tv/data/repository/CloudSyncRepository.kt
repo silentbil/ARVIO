@@ -221,6 +221,7 @@ class CloudSyncRepository @Inject constructor(
         val trailerAutoPlay: Boolean = false,
         val trailerSoundEnabled: Boolean = false,
         val trailerDelaySeconds: Int = 2,
+        val trailerInCards: Boolean = true,
         val clockFormat: String = "24h",
         val showBudget: Boolean = true,
         val showLoadingStats: Boolean? = null,
@@ -245,6 +246,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileBooleanKeyFor(profileId, "trailer_auto_play")
     private fun trailerSoundEnabledKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "trailer_sound_enabled")
+    private fun trailerInCardsKeyFor(profileId: String) =
+        profileManager.profileBooleanKeyFor(profileId, "trailer_in_cards")
     private fun trailerDelayKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "trailer_delay_seconds")
     private fun clockFormatKeyFor(profileId: String) =
@@ -382,6 +385,7 @@ class CloudSyncRepository @Inject constructor(
                         trailerAutoPlay = prefs[trailerAutoPlayKeyFor(profile.id)] ?: false,
                         trailerSoundEnabled = prefs[trailerSoundEnabledKeyFor(profile.id)] ?: false,
                         trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 2,
+                        trailerInCards = prefs[trailerInCardsKeyFor(profile.id)] ?: true,
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
                         showLoadingStats = prefs[showLoadingStatsKeyFor(profile.id)] ?: true,
@@ -893,6 +897,7 @@ class CloudSyncRepository @Inject constructor(
                         prefs[trailerAutoPlayKeyFor(profileId)] = state.trailerAutoPlay
                         prefs[trailerSoundEnabledKeyFor(profileId)] = state.trailerSoundEnabled
                         prefs[trailerDelayKeyFor(profileId)] = state.trailerDelaySeconds.toString()
+                        prefs[trailerInCardsKeyFor(profileId)] = state.trailerInCards
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
                         prefs[showBudgetKeyFor(profileId)] = state.showBudget
                         state.showLoadingStats?.let { prefs[showLoadingStatsKeyFor(profileId)] = it }

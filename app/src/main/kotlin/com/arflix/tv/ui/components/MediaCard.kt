@@ -637,3 +637,78 @@ fun PosterCard(
         }
     }
 }
+
+/**
+ * Wide focused card that shows backdrop art and plays the trailer inline.
+ * Used in TV card rows: the focused item expands to this wider landscape format
+ * while other items in the row keep their normal width. The trailer starts
+ * after [trailerDelayMs] (same setting as the hero backdrop trailer).
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun FeaturedMediaCard(
+    item: MediaItem,
+    width: Dp,
+    height: Dp,
+    trailerKey: String?,
+    trailerDelayMs: Long,
+    trailerVolume: Float,
+    onClick: () -> Unit,
+) {
+    val shape = rememberArvioCardShape(ArvioSkin.radius.md)
+    val imageUrl = (item.backdrop ?: item.image).takeIf { it.isNotBlank() }
+
+    ArvioFocusableSurface(
+        modifier = Modifier.size(width, height),
+        shape = shape,
+        backgroundColor = Color(0xFF1A1A1A),
+        outlineColor = ArvioSkin.colors.focusOutline,
+        outlineWidth = 2.5.dp,
+        focusedScale = 1f,
+        pressedScale = 0.97f,
+        animateFocus = false,
+        enableSystemFocus = false,
+        isFocusedOverride = true,
+        onClick = onClick,
+    ) { _ ->
+        if (imageUrl != null) {
+            AsyncImage(
+                model = imageUrl,
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        if (trailerKey != null) {
+            TrailerPlayer(
+                youtubeKey = trailerKey,
+                delayMs = trailerDelayMs,
+                volume = trailerVolume,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        // Bottom gradient so title text is readable over the backdrop/trailer
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.55f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.85f)
+                    )
+                )
+        )
+        Text(
+            text = item.title,
+            style = ArvioSkin.typography.cardTitle,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+        )
+    }
+}
