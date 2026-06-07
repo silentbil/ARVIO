@@ -98,6 +98,20 @@ internal fun buildEpisodeIdCandidates(
     return ordered.distinctBy { "${it.contentId}|${it.preferAnimePath}" }
 }
 
+internal fun buildNativeAnimeRetryCandidates(
+    seriesId: String,
+    animeQuery: String?,
+    tmdbEpisodeId: String?
+): List<EpisodeIdCandidate> {
+    return buildEpisodeIdCandidates(
+        seriesId = seriesId,
+        animeQuery = animeQuery,
+        tmdbEpisodeId = tmdbEpisodeId,
+        preferNativeAnimeIds = true,
+        includeTmdbCandidate = true
+    ).filterNot { it.label == "imdb" }
+}
+
 internal fun shouldTryNativeAnimeFallback(
     genreIds: List<Int>,
     originalLanguage: String?,
@@ -1265,7 +1279,7 @@ class StreamRepository @Inject constructor(
     private val STREAM_RESULT_CACHE_TTL_MS = 10 * 60_000L
     private val STREAM_RESULT_CACHE_HTTP_TTL_MS = 90_000L
     private val STREAM_RESULT_CACHE_HTTP_EPHEMERAL_TTL_MS = 30_000L
-    private val EPISODE_STREAM_CACHE_TYPE = "series_v2"
+    private val EPISODE_STREAM_CACHE_TYPE = "series_v3"
 
     private fun streamCacheKey(
         profileId: String,
@@ -1616,6 +1630,48 @@ class StreamRepository @Inject constructor(
                         preferAnimePath = candidate.preferAnimePath
                     )
                     if (addonStreams.isNotEmpty()) break
+                }
+
+                if (addonStreams.isEmpty() && !resolveAsAnime && nativeAnimeAddon) {
+                    val retryAnimeQuery = withTimeoutOrNull(3_000L) {
+                        animeMapper.resolveAnimeEpisodeQuery(
+                            tmdbId = tmdbId,
+                            tvdbId = tvdbId,
+                            title = title,
+                            imdbId = imdbId,
+                            season = season,
+                            episode = episode
+                        )
+                    }
+                    val retryTmdbEpisodeId = if (tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
+                        "tmdb:$tmdbId:$season:$episode"
+                    } else null
+                    val retryCandidates = buildNativeAnimeRetryCandidates(
+                        seriesId = seriesId,
+                        animeQuery = retryAnimeQuery,
+                        tmdbEpisodeId = retryTmdbEpisodeId
+                    )
+                    if (retryCandidates.isNotEmpty()) {
+                        Log.d(
+                            TAG,
+                            "[StreamFetch][Episode] native anime retry addon=${addon.name} addonId=${addon.id} candidates=${retryCandidates.joinToString(",") { it.label }}"
+                        )
+                    }
+                    for (candidate in retryCandidates) {
+                        addonStreams = requestEpisodeId(
+                            contentId = candidate.contentId,
+                            label = "retry_${candidate.label}",
+                            preferAnimePath = candidate.preferAnimePath
+                        )
+                        if (addonStreams.isNotEmpty()) {
+                            AppLogger.breadcrumb(
+                                tag = "Sources",
+                                message = "episode_native_anime_retry_success addon=${addon.id} candidate=${candidate.label}",
+                                severity = "info"
+                            )
+                            break
+                        }
+                    }
                 }
 
                 // Daily show fallback: try air-date-based numbering (S{year}E{dayOfYear})

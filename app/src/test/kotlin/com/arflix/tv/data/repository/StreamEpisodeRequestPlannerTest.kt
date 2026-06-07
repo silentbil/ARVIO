@@ -68,6 +68,33 @@ class StreamEpisodeRequestPlannerTest {
     }
 
     @Test
+    fun `native anime retry only replays native ids after imdb was already tried`() {
+        val candidates = buildNativeAnimeRetryCandidates(
+            seriesId = "tt2560140:1:1",
+            animeQuery = "kitsu:7442:1",
+            tmdbEpisodeId = "tmdb:1429:1:1"
+        )
+
+        assertEquals(
+            listOf("kitsu:7442:1", "tmdb:1429:1:1"),
+            candidates.map { it.contentId }
+        )
+        assertEquals(listOf("kitsu", "tmdb"), candidates.map { it.label })
+        assertEquals(listOf(true, true), candidates.map { it.preferAnimePath })
+    }
+
+    @Test
+    fun `native anime retry skips when no native ids were resolved`() {
+        val candidates = buildNativeAnimeRetryCandidates(
+            seriesId = "tt2560140:1:1",
+            animeQuery = "tt2560140:1:1",
+            tmdbEpisodeId = null
+        )
+
+        assertEquals(emptyList<String>(), candidates.map { it.contentId })
+    }
+
+    @Test
     fun `animation with missing language can use native anime addon fallback`() {
         val shouldFallback = shouldTryNativeAnimeFallback(
             genreIds = listOf(16, 10759),
