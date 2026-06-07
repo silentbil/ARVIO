@@ -99,6 +99,14 @@ class AuthRepositoryPayloadSelectionTest {
             accountSyncPayloadRestoreRank(olderUserSettingsSnapshot) >
                 accountSyncPayloadRestoreRank(newerAccountSyncSnapshot)
         )
+        assertTrue(
+            (accountSyncPayloadProfileCount(olderUserSettingsSnapshot) ?: 0) >
+                (accountSyncPayloadProfileCount(newerAccountSyncSnapshot) ?: 0)
+        )
+        assertTrue(
+            accountSyncPayloadScopedCoverage(olderUserSettingsSnapshot) >
+                accountSyncPayloadScopedCoverage(newerAccountSyncSnapshot)
+        )
     }
 
     @Test

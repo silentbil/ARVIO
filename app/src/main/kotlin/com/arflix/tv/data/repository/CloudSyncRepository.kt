@@ -650,7 +650,14 @@ class CloudSyncRepository @Inject constructor(
         pushToCloudLocked(force = force)
     }
 
-    private suspend fun pushToCloudLocked(force: Boolean = false): Result<Unit> {
+    suspend fun pushLocalSnapshotToCloud(): Result<Unit> = cloudSyncMutex.withLock {
+        pushToCloudLocked(force = true, allowRemoteRestoreBeforePush = false)
+    }
+
+    private suspend fun pushToCloudLocked(
+        force: Boolean = false,
+        allowRemoteRestoreBeforePush: Boolean = true
+    ): Result<Unit> {
         val now = System.currentTimeMillis()
         if (!force && pushFailureCount > 0) {
             val requiredBackoffMs = (2_000L * (1 shl (pushFailureCount - 1).coerceAtMost(6))).coerceAtMost(300_000L)
@@ -693,6 +700,7 @@ class CloudSyncRepository @Inject constructor(
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
         if (
+            allowRemoteRestoreBeforePush &&
             existingRemotePayload != null &&
             shouldRestoreRemoteBeforePush(payload, existingRemotePayload)
         ) {

@@ -121,6 +121,49 @@ private data class AccountSyncPayloadCandidate(
     val updatedAtMillis: Long
 )
 
+internal fun accountSyncPayloadProfileCount(payload: String): Int? {
+    val root = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull() ?: return null
+    if (!root.has("profiles")) return null
+    return root.get("profiles")
+        ?.takeIf { !it.isJsonNull && it.isJsonArray }
+        ?.asJsonArray
+        ?.size()
+        ?: 0
+}
+
+internal fun accountSyncPayloadScopedCoverage(payload: String): Int {
+    val root = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull() ?: return 0
+    val profileIds = root.get("profiles")
+        ?.takeIf { !it.isJsonNull && it.isJsonArray }
+        ?.asJsonArray
+        ?.mapNotNull { profile ->
+            profile
+                ?.takeIf { !it.isJsonNull && it.isJsonObject }
+                ?.asJsonObject
+                ?.stringValue("id")
+                ?.takeIf { it.isNotBlank() }
+        }
+        ?.toSet()
+        .orEmpty()
+    if (profileIds.isEmpty()) return 0
+
+    val scopedKeys = listOf(
+        "profileSettingsById",
+        "addonsByProfile",
+        "catalogsByProfile",
+        "hiddenPreinstalledByProfile",
+        "hiddenAddonByProfile",
+        "hiddenHomeServerByProfile",
+        "iptvByProfile",
+        "watchlistByProfile"
+    )
+
+    return scopedKeys.sumOf { key ->
+        val obj = root.getObject(key) ?: return@sumOf 0
+        profileIds.count { profileId -> obj.has(profileId) }
+    }
+}
+
 internal fun accountSyncPayloadRestoreRank(payload: String): Int {
     val root = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull() ?: return 0
     val profiles = root.get("profiles")
@@ -1158,10 +1201,20 @@ class AuthRepository @Inject constructor(
             .filter { it.payload.isNotBlank() }
             .maxWithOrNull(
                 compareBy<AccountSyncPayloadCandidate> { accountSyncPayloadRestoreRank(it.payload) }
+                    .thenBy { accountSyncPayloadProfileCount(it.payload) ?: -1 }
+                    .thenBy { accountSyncPayloadScopedCoverage(it.payload) }
                     .thenBy { it.updatedAtMillis }
             )
 
         if (bestPayload != null) {
+            Log.i(
+                TAG,
+                "Selected account sync payload source=${bestPayload.source} " +
+                    "rank=${accountSyncPayloadRestoreRank(bestPayload.payload)} " +
+                    "profiles=${accountSyncPayloadProfileCount(bestPayload.payload)} " +
+                    "coverage=${accountSyncPayloadScopedCoverage(bestPayload.payload)} " +
+                    "updated=${bestPayload.updatedAtMillis}"
+            )
             if (bestPayload.source != ACCOUNT_SYNC_SOURCE_PRIMARY) {
                 runCatching { saveAccountSyncPayload(bestPayload.payload) }
                     .onSuccess { result ->

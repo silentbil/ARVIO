@@ -2619,7 +2619,7 @@ class SettingsViewModel @Inject constructor(
             // with the server-authoritative snapshot after upload.
             cloudSyncRepository.markLocalStateDirtyNow()
             var pushResult = withTimeoutOrNull(30_000L) {
-                cloudSyncRepository.pushToCloud(force = true)
+                cloudSyncRepository.pushLocalSnapshotToCloud()
             }
             if (pushResult == null) {
                 _uiState.value = _uiState.value.copy(
@@ -2632,7 +2632,7 @@ class SettingsViewModel @Inject constructor(
             if (pushResult.isFailure) {
                 delay(1200)
                 pushResult = withTimeoutOrNull(30_000L) {
-                    cloudSyncRepository.pushToCloud(force = true)
+                    cloudSyncRepository.pushLocalSnapshotToCloud()
                 }
             }
             if (pushResult == null || pushResult.isFailure) {
