@@ -330,14 +330,16 @@ p {
 }
 
 .rail {
-  margin-top: clamp(-274px, -33.3vh, -220px);
+  margin-top: 8px;
   padding: 0 0 0 3.35vw;
   position: relative;
   z-index: 5;
 }
 
-.rail + .rail {
-  margin-top: 8px;
+/* Only the first rail after the hero overlaps it (Netflix-style). */
+.hero + .rail,
+.hero + .rail-skeleton {
+  margin-top: clamp(-274px, -33.3vh, -220px);
 }
 
 .rail-head {
@@ -1074,8 +1076,13 @@ input:focus {
   }
 
   .rail {
-    margin-top: -170px;
+    margin-top: 8px;
     padding-left: 24px;
+  }
+
+  .hero + .rail,
+  .hero + .rail-skeleton {
+    margin-top: -170px;
   }
 
   .rail-strip {
@@ -1459,4 +1466,119 @@ input:focus {
   justify-content: flex-end;
   gap: 12px;
   margin-top: 24px;
+}
+
+/* ============================================================
+   Phase 2 — Home: hero logo + metadata, card logo overlay, badges
+   ============================================================ */
+
+.hero-logo {
+  max-width: min(46vw, 520px);
+  max-height: clamp(110px, 18vh, 200px);
+  object-fit: contain;
+  object-position: left bottom;
+  margin: 0 0 clamp(12px, 2vh, 22px);
+  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.6));
+}
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: clamp(8px, 1vw, 16px);
+  margin-bottom: clamp(10px, 1.6vh, 18px);
+  color: rgba(237, 237, 237, 0.82);
+  font-size: clamp(15px, 1.15vw, 22px);
+  font-weight: 500;
+}
+.hero-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hero-meta > span + span::before {
+  content: "•";
+  margin-right: clamp(8px, 1vw, 16px);
+  color: rgba(237, 237, 237, 0.4);
+}
+.hero-rating {
+  color: var(--gold);
+  font-weight: 700;
+}
+.hero-rating::before { color: rgba(237, 237, 237, 0.4); }
+
+/* Card title-treatment logo overlay (landscape) */
+.media-card .poster .card-logo {
+  position: absolute;
+  left: 10px;
+  bottom: 12px;
+  width: 52%;
+  max-height: 42%;
+  object-fit: contain;
+  object-position: left bottom;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.7));
+  z-index: 2;
+}
+
+/* Watched green check badge */
+.watched-badge {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: var(--green);
+  background: rgba(0, 213, 136, 0.18);
+  border: 1px solid var(--green);
+  z-index: 3;
+}
+
+/* Continue-watching pill badge (time remaining / new episode) */
+.cw-badge {
+  position: absolute;
+  z-index: 3;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(26, 26, 26, 0.85);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.cw-badge.top-right { top: 8px; right: 8px; }
+
+/* Continue-watching progress bar */
+.cw-progress {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.48);
+  overflow: hidden;
+  z-index: 2;
+}
+.cw-progress > span {
+  display: block;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+/* Lazy rail skeletons (rows load as they scroll into view) */
+.rail-skeleton {
+  min-height: clamp(220px, 28vh, 320px);
+}
+.card-skeleton {
+  width: clamp(280px, 22.1vw, 424px);
+  aspect-ratio: 16 / 9;
+  border-radius: clamp(12px, 0.94vw, 18px);
+  background: linear-gradient(100deg, var(--bg-card) 30%, var(--bg-elevated) 50%, var(--bg-card) 70%);
+  background-size: 200% 100%;
+  animation: arvio-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes arvio-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }

@@ -8,7 +8,7 @@ import { getContinueWatching, pullCloudPayload, pullCloudProfiles, saveCloudAddo
 import { loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia } from "./mappers";
 import { loadStored, saveStored } from "./storage";
-import { getDetails, loadHomeCategories, searchMedia } from "./tmdb";
+import { getDetails, loadCatalog, searchMedia } from "./tmdb";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import type {
   AppSettings,
@@ -17,6 +17,7 @@ import type {
   InstalledAddon,
   IptvChannel,
   IptvPlaylistEntry,
+  CatalogConfig,
   IptvSnapshot,
   MediaItem,
   NavSection,
@@ -107,9 +108,12 @@ export interface AppStore {
   section: NavSection;
   setSection: (section: NavSection) => void;
   categories: Category[];
+  catalogConfigs: CatalogConfig[];
+  loadCatalogRow: (catalog: CatalogConfig) => Promise<Category | null>;
   continueWatching: MediaItem[];
   watchlist: MediaItem[];
   hero: MediaItem | null;
+  setHeroPreview: (item: MediaItem | null) => void;
   selected: MediaItem | null;
   streams: StreamSource[];
   activeStream: StreamSource | null;
@@ -156,6 +160,7 @@ export function useApp(): AppStore {
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [section, setSection] = useState<NavSection>("home");
   const [categories, setCategories] = useState<Category[]>([]);
+  const [catalogConfigs, setCatalogConfigs] = useState<CatalogConfig[]>([]);
   const [continueWatching, setContinueWatching] = useState<MediaItem[]>([]);
   const [watchlist, setWatchlist] = useState<MediaItem[]>([]);
   const [selected, setSelected] = useState<MediaItem | null>(null);
@@ -198,7 +203,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
 
-  const hero = selected ?? continueWatching[0] ?? categories[0]?.items[0] ?? null;
+  const [heroPreview, setHeroPreview] = useState<MediaItem | null>(null);
+  const hero = heroPreview ?? continueWatching[0] ?? categories[0]?.items[0] ?? null;
 
   // Refs so stable callbacks always read the latest values without re-creating.
   const addonsRef = useRef(addons);
@@ -231,8 +237,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       saveLocalAddons(mergedAddons);
 
       const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds);
-      const [homeRows, historyRows, traktRows, playbackRows, loadedIptv] = await Promise.all([
-        loadHomeCategories(settings.language, effectiveCatalogs),
+      setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled));
+
+      const [historyRows, traktRows, playbackRows, loadedIptv] = await Promise.all([
         authClient.session ? getContinueWatching(authClient).catch(() => []) : Promise.resolve([]),
         traktClient.isConnected ? traktClient.watchlist().catch(() => []) : Promise.resolve([]),
         traktClient.isConnected ? traktClient.playback().catch(() => []) : Promise.resolve([]),
@@ -250,7 +257,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const cw = dedupeMedia([...cloudCw, ...traktCw]);
       setContinueWatching(cw);
       setWatchlist(await hydrateTraktItems(traktRows.map(traktItemToMedia)));
-      setCategories(cw.length ? [{ id: "continue_watching", title: "Continue Watching", items: cw }, ...homeRows] : homeRows);
+      setCategories(cw.length ? [{ id: "continue_watching", title: "Continue Watching", items: cw }] : []);
       setIptvSnapshot(loadedIptv);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Failed to load ARVIO");
@@ -357,6 +364,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setActiveChannel(null);
   }, []);
 
+  const loadCatalogRow = useCallback((catalog: CatalogConfig) => loadCatalog(catalog, settings.language), [settings.language]);
+
   const installAddon = useCallback(async (url: string) => {
     const addon = await installAddonManifest(url);
     const next = [addon, ...addonsRef.current.filter((candidate) => candidate.id !== addon.id)];
@@ -461,9 +470,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     section,
     setSection,
     categories,
+    catalogConfigs,
+    loadCatalogRow,
     continueWatching,
     watchlist,
     hero,
+    setHeroPreview,
     selected,
     streams,
     activeStream,
@@ -499,7 +511,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }), [
     view, profiles, activeProfile, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
-    section, categories, continueWatching, watchlist, hero, selected, streams, activeStream, activeChannel,
+    section, categories, catalogConfigs, loadCatalogRow, continueWatching, watchlist, hero, heroPreview, selected, streams, activeStream, activeChannel,
     addons, iptvSnapshot, query, results, settings, auth, traktConnected, deviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playChannel, closePlayer,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt

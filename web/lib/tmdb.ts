@@ -147,27 +147,29 @@ async function loadMdblist(catalog: CatalogConfig, language: string) {
   const ids = rawItems
     .map((item) => extractMdblistIdentity(item as MdblistItem, catalog.mediaType))
     .filter((item): item is { id: number; type: MediaType } => Boolean(item?.id))
-    .slice(0, 24);
-  const details = await Promise.all(ids.map((item) => getDetails({
-    id: item.id,
-    title: "",
-    mediaType: item.type
-  }).catch(() => null)));
+    .slice(0, 20);
+  const details = await Promise.all(ids.map((item) => getBasicItem(item.type, item.id, language).catch(() => null)));
   return details.filter((item): item is MediaItem => Boolean(item?.title));
 }
 
 function extractMdblistIdentity(item: MdblistItem, preferred?: CatalogConfig["mediaType"]) {
   const ids = objectValue(item, "ids") ?? objectValue(objectValue(item, "movie"), "ids") ?? objectValue(objectValue(item, "show"), "ids");
+  const rawType = String(item.type ?? item.media_type ?? item.mediatype ?? "").toLowerCase();
+  // MDBList's flat list JSON uses `id` as the TMDB id and `mediatype` for the type.
+  const isFlatMdblist = "mediatype" in item || "release_year" in item;
   const tmdb =
     numberValue(item.tmdb_id) ??
     numberValue(item.tmdbId) ??
     numberValue(item.tmdb) ??
     numberValue(objectValue(ids, "tmdb")) ??
     numberValue(objectValue(objectValue(item, "movie"), "tmdb_id")) ??
-    numberValue(objectValue(objectValue(item, "show"), "tmdb_id"));
+    numberValue(objectValue(objectValue(item, "show"), "tmdb_id")) ??
+    (isFlatMdblist ? numberValue(item.id) : null);
   if (!tmdb) return null;
-  const rawType = String(item.type ?? item.media_type ?? item.mediatype ?? "").toLowerCase();
-  const type: MediaType = rawType.includes("show") || rawType.includes("series") || preferred === "tv" ? "tv" : "movie";
+  const type: MediaType =
+    rawType.includes("show") || rawType.includes("series") || rawType === "tv" || (!rawType && preferred === "tv")
+      ? "tv"
+      : "movie";
   return { id: tmdb, type };
 }
 
@@ -182,12 +184,83 @@ function numberValue(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : null;
 }
 
+type TmdbImages = {
+  logos?: Array<{ file_path: string; iso_639_1: string | null; vote_average?: number; width?: number }>;
+};
+
+const logoCache = new Map<string, string | null>();
+const LOGO_CACHE_KEY = "arvio.web.logoCache";
+
+function restoreLogoCache() {
+  if (logoCache.size || typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(LOGO_CACHE_KEY);
+    if (!raw) return;
+    Object.entries(JSON.parse(raw) as Record<string, string | null>).forEach(([k, v]) => logoCache.set(k, v));
+  } catch {
+    /* ignore */
+  }
+}
+
+let logoPersistTimer: ReturnType<typeof setTimeout> | null = null;
+function persistLogoCache() {
+  if (typeof window === "undefined") return;
+  if (logoPersistTimer) clearTimeout(logoPersistTimer);
+  logoPersistTimer = setTimeout(() => {
+    try {
+      const trimmed = Array.from(logoCache.entries()).slice(-600);
+      window.localStorage.setItem(LOGO_CACHE_KEY, JSON.stringify(Object.fromEntries(trimmed)));
+    } catch {
+      /* ignore */
+    }
+  }, 1500);
+}
+
+/** Title-treatment (clearlogo) URL for a movie/show — mirrors MediaRepository.getImages logo pick. */
+export async function getLogoUrl(item: { mediaType: MediaType; id: number }): Promise<string | null> {
+  const key = `${item.mediaType}:${item.id}`;
+  restoreLogoCache();
+  if (logoCache.has(key)) return logoCache.get(key) ?? null;
+  try {
+    const images = await tmdb<TmdbImages>(`${item.mediaType}/${item.id}/images`, { include_image_language: "en,null" });
+    const logos = images.logos ?? [];
+    const pick =
+      logos.filter((l) => l.iso_639_1 === "en").sort((a, b) => (b.vote_average ?? 0) - (a.vote_average ?? 0))[0] ??
+      logos.find((l) => l.iso_639_1 === null) ??
+      logos[0];
+    const url = pick?.file_path ? `https://image.tmdb.org/t/p/w500${pick.file_path}` : null;
+    logoCache.set(key, url);
+    persistLogoCache();
+    return url;
+  } catch {
+    logoCache.set(key, null);
+    return null;
+  }
+}
+
 export async function searchMedia(query: string, language = "en-US") {
   if (!query.trim()) return [];
   const response = await tmdb<TmdbList>("search/multi", { query, language });
   return response.results
     .filter((item) => item.media_type === "movie" || item.media_type === "tv")
     .map((item) => mapTmdbItem(item, item.media_type === "tv" ? "tv" : "movie"));
+}
+
+const basicItemCache = new Map<string, MediaItem | null>();
+
+/** Lightweight details fetch (no append_to_response) with an in-memory cache — used to hydrate catalog rows. */
+export async function getBasicItem(mediaType: MediaType, id: number, language = "en-US"): Promise<MediaItem | null> {
+  const key = `${mediaType}:${id}`;
+  if (basicItemCache.has(key)) return basicItemCache.get(key) ?? null;
+  try {
+    const details = await tmdb<TmdbItem>(`${mediaType}/${id}`, { language });
+    const mapped = mapTmdbItem({ ...details, media_type: mediaType }, mediaType);
+    basicItemCache.set(key, mapped);
+    return mapped;
+  } catch {
+    basicItemCache.set(key, null);
+    return null;
+  }
 }
 
 export async function getDetails(item: MediaItem) {
