@@ -599,7 +599,7 @@ fun TvScreen(
     }
 
     // Helper: prepare ExoPlayer with a stream URL (shared by normal play + error retry)
-    fun prepareStream(stream: String, drmInfo: com.arflix.tv.data.model.DrmInfo? = null) {
+    fun prepareStream(stream: String) {
         val player = exoPlayer ?: return
         if (isPlayerReleased) return
         player.stop()
@@ -613,20 +613,6 @@ fun TvScreen(
                     .setTargetOffsetMs(4_000)
                     .build()
             )
-            .apply {
-                // DRM configuration from #KODIPROP directives
-                drmInfo?.let { drm ->
-                    val schemeUuid = com.arflix.tv.util.ClearKeyUtil.drmSchemeToUuid(drm.scheme)
-                    val drmBuilder = MediaItem.DrmConfiguration.Builder(schemeUuid)
-                    if (drm.scheme == "clearkey" && !drm.licenseUrl.isNullOrBlank()) {
-                        com.arflix.tv.util.ClearKeyUtil.buildClearKeyLicenseUri(drm.licenseUrl)
-                            ?.let { dataUri -> drmBuilder.setLicenseUri(dataUri) }
-                    } else if (!drm.licenseUrl.isNullOrBlank()) {
-                        drmBuilder.setLicenseUri(drm.licenseUrl.substringBefore("|"))
-                    }
-                    setDrmConfiguration(drmBuilder.build())
-                }
-            }
             .build()
         val streamLower = stream.lowercase()
         if (streamLower.contains(".m3u8") || streamLower.contains("/hls") || streamLower.contains("format=hls")) {
@@ -674,7 +660,7 @@ fun TvScreen(
         }
         lastPreparedStreamUrl = stream
         playerRetryCount = 0
-        prepareStream(stream, drmInfo = playingChannel?.drmInfo)
+        prepareStream(stream)
     }
 
     LaunchedEffect(isFullScreen, miniPlayerView, fullPlayerView, exoPlayer) {
@@ -728,20 +714,6 @@ fun TvScreen(
                             .setTargetOffsetMs(4_000)
                             .build()
                     )
-                    .apply {
-                        // Preserve DRM config on retry
-                        playingChannel?.drmInfo?.let { drm ->
-                            val schemeUuid = com.arflix.tv.util.ClearKeyUtil.drmSchemeToUuid(drm.scheme)
-                            val drmBuilder = MediaItem.DrmConfiguration.Builder(schemeUuid)
-                            if (drm.scheme == "clearkey" && !drm.licenseUrl.isNullOrBlank()) {
-                                com.arflix.tv.util.ClearKeyUtil.buildClearKeyLicenseUri(drm.licenseUrl)
-                                    ?.let { dataUri -> drmBuilder.setLicenseUri(dataUri) }
-                            } else if (!drm.licenseUrl.isNullOrBlank()) {
-                                drmBuilder.setLicenseUri(drm.licenseUrl.substringBefore("|"))
-                            }
-                            setDrmConfiguration(drmBuilder.build())
-                        }
-                    }
                     .build()
                 player.setMediaItem(mediaItem)
                 player.prepare()
