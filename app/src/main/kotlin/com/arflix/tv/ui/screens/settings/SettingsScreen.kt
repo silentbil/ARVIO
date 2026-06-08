@@ -1517,6 +1517,7 @@ fun SettingsScreen(
                             isTraktAuthStarting = uiState.isTraktAuthStarting,
                             isTraktPolling = uiState.isTraktPolling,
                             isForceCloudSyncing = uiState.isForceCloudSyncing,
+                            lastCloudSyncStatus = uiState.lastCloudSyncStatus,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
                             updateStatus = uiState.updateStatus,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
@@ -7288,6 +7289,7 @@ private fun AccountsSettings(
     isTraktAuthStarting: Boolean,
     isTraktPolling: Boolean,
     isForceCloudSyncing: Boolean,
+    lastCloudSyncStatus: String?,
     isSelfUpdateSupported: Boolean,
     updateStatus: com.arflix.tv.updater.UpdateStatus,
     focusedIndex: Int,
@@ -7364,6 +7366,8 @@ private fun AccountsSettings(
             title = stringResource(R.string.force_cloud_sync),
             description = if (isForceCloudSyncing) {
                 "Syncing local and cloud state now"
+            } else if (!lastCloudSyncStatus.isNullOrBlank()) {
+                lastCloudSyncStatus
             } else if (isCloudAuthenticated) {
                 "Upload local state, then restore from cloud now"
             } else {

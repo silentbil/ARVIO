@@ -200,7 +200,27 @@ internal fun accountSyncPayloadSaveSucceeded(
     userSettingsSaved: Boolean,
     profileAddonsSaved: Boolean
 ): Boolean {
-    return accountSyncSaved || userSettingsSaved || profileAddonsSaved
+    return accountSyncSaved || userSettingsSaved
+}
+
+private fun accountSyncPayloadsMatch(expected: String, actual: String?): Boolean {
+    if (actual.isNullOrBlank()) return false
+    if (expected == actual) return true
+    return runCatching {
+        val expectedJson = JSONObject(expected)
+        val actualJson = JSONObject(actual)
+        expectedJson.remove("updatedAt")
+        actualJson.remove("updatedAt")
+        expectedJson.toString() == actualJson.toString()
+    }.getOrDefault(false)
+}
+
+private fun safePostgrestError(body: String): String {
+    if (body.isBlank()) return "empty response"
+    val parsed = runCatching { JSONObject(body) }.getOrNull()
+    return parsed?.optString("message")?.takeIf { it.isNotBlank() }
+        ?: parsed?.optString("error")?.takeIf { it.isNotBlank() }
+        ?: body.take(180)
 }
 
 private fun com.google.gson.JsonObject.isPlaceholderCloudProfile(): Boolean {
@@ -896,6 +916,10 @@ class AuthRepository @Inject constructor(
         return context.authDataStore.data.first()[PrefsKeys.USER_ID]?.takeIf { it.isNotBlank() }
     }
 
+    suspend fun hasValidCloudSyncSession(): Boolean {
+        return ensureValidSession() != null
+    }
+
     /**
      * Get Supabase access token for API calls
      */
@@ -1275,6 +1299,19 @@ class AuthRepository @Inject constructor(
 
     suspend fun saveAccountSyncPayload(payload: String): Result<Unit> {
         val userId = getCurrentUserIdForSync() ?: return Result.failure(Exception("Not logged in"))
+        val rpcResult = saveAccountSyncPayloadViaRpc(userId, payload)
+        if (rpcResult.isSuccess) {
+            val profileAddonsResult = saveAccountSyncPayloadToProfileAddons(userId, payload)
+            if (profileAddonsResult.isFailure) {
+                AppLogger.breadcrumb(
+                    tag = "CloudSync",
+                    message = "rpc_saved_profile_addons_mirror_failed",
+                    severity = "warning"
+                )
+            }
+            return Result.success(Unit)
+        }
+
         val accountSyncResult = saveAccountSyncPayloadToAccountSyncState(userId, payload)
         val userSettingsResult = saveAccountSyncPayloadToUserSettings(userId, payload)
         val profileAddonsResult = saveAccountSyncPayloadToProfileAddons(userId, payload)
@@ -1312,11 +1349,50 @@ class AuthRepository @Inject constructor(
         }
 
         return Result.failure(
-            accountSyncResult.exceptionOrNull()
+            rpcResult.exceptionOrNull()
+                ?: accountSyncResult.exceptionOrNull()
                 ?: userSettingsResult.exceptionOrNull()
                 ?: profileAddonsResult.exceptionOrNull()
                 ?: Exception("Cloud sync save failed")
         )
+    }
+
+    private suspend fun saveAccountSyncPayloadViaRpc(userId: String, payload: String): Result<Unit> {
+        return try {
+            val session = ensureValidSession() ?: return Result.failure(Exception("Session expired"))
+            withContext(Dispatchers.IO) {
+                val body = JSONObject()
+                    .put("p_payload", payload)
+                    .toString()
+                    .toRequestBody(jsonMediaType)
+                val request = Request.Builder()
+                    .url("${Constants.SUPABASE_URL}/rest/v1/rpc/save_account_sync_payload")
+                    .header("apikey", Constants.SUPABASE_ANON_KEY)
+                    .header("Authorization", "Bearer ${session.accessToken}")
+                    .header("Cache-Control", "no-cache, no-store")
+                    .post(body)
+                    .build()
+
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val errorBody = response.body?.string().orEmpty()
+                        throw IllegalStateException(
+                            "Cloud sync upload failed (${response.code}): ${safePostgrestError(errorBody)}"
+                        )
+                    }
+                }
+            }
+
+            val savedPayload = loadAccountSyncPayloadFromAccountSyncState(userId)
+                .getOrNull()
+                ?.payload
+            if (!accountSyncPayloadsMatch(expected = payload, actual = savedPayload)) {
+                return Result.failure(Exception("Cloud sync upload was not saved"))
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     private suspend fun saveAccountSyncPayloadToAccountSyncState(userId: String, payload: String): Result<Unit> {
