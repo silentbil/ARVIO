@@ -1813,3 +1813,24 @@ input:focus {
 .set-control input[type="number"], .set-control input[type="text"], .set-control input:not([type]),
 .set-control input[type="password"], .set-control input[type="color"] { min-height: 42px; width: clamp(140px, 16vw, 220px); }
 .set-control select { min-height: 42px; }
+
+/* Phase 6 — Live TV EPG now/next */
+.channel-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.channel-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.epg-now, .epg-next {
+  font-style: normal;
+  font-size: 12px;
+  color: rgba(237, 237, 237, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.epg-next { color: rgba(237, 237, 237, 0.4); }
+.epg-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+  margin: 2px 0;
+}
+.epg-progress > span { display: block; height: 100%; background: var(--green); }

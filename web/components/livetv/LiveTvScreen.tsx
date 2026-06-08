@@ -5,6 +5,14 @@ import { useState } from "react";
 import { useApp } from "@/lib/store";
 import type { IptvChannel, IptvSnapshot } from "@/lib/types";
 
+function fmtTime(ms: number): string {
+  try {
+    return new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
+  } catch {
+    return "";
+  }
+}
+
 export function LiveTvScreen() {
   const { iptvSnapshot, settings, setSettings, playChannel } = useApp();
   const playlists = settings.iptvPlaylists;
@@ -135,20 +143,28 @@ function ChannelGroup({ title, channels, nowNext, favorites, isFavoriteGroup, is
         )}
       </div>
       <div className="channel-list">
-        {channels.slice(0, 120).map((channel) => (
-          <div className="channel-row" key={channel.id}>
-            <button onClick={() => onPlay(channel)}>
-              {channel.logo ? <img src={channel.logo} alt="" /> : <Tv size={22} />}
-              <span>
-                {channel.name}
-                {nowNext[channel.id]?.now?.title && <em>{nowNext[channel.id].now?.title}</em>}
-              </span>
-            </button>
-            <button className={favorites.includes(channel.id) ? "star active" : "star"} onClick={() => onToggleFavorite(channel.id)}>
-              <Star size={18} fill="currentColor" />
-            </button>
-          </div>
-        ))}
+        {channels.slice(0, 120).map((channel) => {
+          const epg = nowNext[channel.id];
+          const now = epg?.now;
+          const next = epg?.next ?? epg?.later ?? epg?.upcoming?.[0];
+          const progress = now ? Math.min(100, Math.max(0, ((Date.now() - now.startUtcMillis) / (now.endUtcMillis - now.startUtcMillis)) * 100)) : 0;
+          return (
+            <div className="channel-row" key={channel.id}>
+              <button onClick={() => onPlay(channel)}>
+                {channel.logo ? <img src={channel.logo} alt="" /> : <Tv size={22} />}
+                <span className="channel-meta">
+                  <span className="channel-name">{channel.name}</span>
+                  {now?.title && <em className="epg-now">{fmtTime(now.startUtcMillis)} {now.title}</em>}
+                  {now && <span className="epg-progress"><span style={{ width: `${progress}%` }} /></span>}
+                  {next?.title && <em className="epg-next">Next · {fmtTime(next.startUtcMillis)} {next.title}</em>}
+                </span>
+              </button>
+              <button className={favorites.includes(channel.id) ? "star active" : "star"} onClick={() => onToggleFavorite(channel.id)}>
+                <Star size={18} fill="currentColor" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
