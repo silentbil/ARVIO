@@ -66,6 +66,7 @@ data class PlayerUiState(
     val backdropUrl: String? = null,
     val logoUrl: String? = null,
     val streams: List<StreamSource> = emptyList(),
+    val addonOrderedIds: List<String> = emptyList(),
     val subtitles: List<Subtitle> = emptyList(),
     val selectedStream: StreamSource? = null,
     val selectedStreamUrl: String? = null,
@@ -168,6 +169,7 @@ class PlayerViewModel @Inject constructor(
     private var currentPreferredAddonId: String? = null
     private var currentPreferredSourceName: String? = null
     private var currentPreferredBingeGroup: String? = null
+    private var currentAddonOrderedIds: List<String> = emptyList()
     private var lastScrobbleTime: Long = 0
     private var lastWatchHistorySaveTime: Long = 0
     private var lastWatchHistorySavedPositionSeconds: Long = -1L
@@ -378,6 +380,10 @@ class PlayerViewModel @Inject constructor(
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
             val volumeBoostDb = prefs[profileManager.profileStringKey("volume_boost_db")]
                 ?.toIntOrNull()?.coerceIn(0, 15) ?: 0
+            val orderedAddonIds = streamRepository.installedAddons.first()
+                .filter { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                .map { it.id }
+            currentAddonOrderedIds = orderedAddonIds
             val preferredSub = prefs[defaultSubtitleKey()]?.trim().orEmpty()
                 .let { if (isSubtitleDisabledPreference(it)) "" else it }
             val secondarySub = prefs[secondarySubtitleKey()]?.trim().orEmpty()
@@ -400,6 +406,10 @@ class PlayerViewModel @Inject constructor(
                 isLoading = true,
                 isLoadingStreams = true,
                 sourceSearchActive = true,
+                title = cachedItem?.title ?: currentItemTitle,
+                backdropUrl = cachedItem?.backdrop?.takeIf { it.isNotBlank() }
+                    ?: cachedItem?.image?.takeIf { it.isNotBlank() },
+                addonOrderedIds = orderedAddonIds,
                 preferredAudioLanguage = preferredAudioLanguage,
                 preferredSubtitleLang = preferredSub,
                 secondarySubtitleLang = secondarySub,
@@ -688,12 +698,13 @@ class PlayerViewModel @Inject constructor(
                     )
                 }
 
-                // Collect progressive emissions. Wait a very short window so
-                // cached/debrid-ready sources can arrive before autoplay picks.
+                // Collect progressive emissions. Give cached/debrid-ready results
+                // a short grace period to avoid false low-quality picks, then
+                // force-select once quality/size looks stable.
                 val hasHomeServerConnections = streamRepository.hasHomeServerConnections()
-                val HOME_SERVER_AUTOPLAY_WAIT_MS = 1_100L
-                val AUTOPLAY_MAX_WINDOW_MS = if (hasHomeServerConnections) HOME_SERVER_AUTOPLAY_WAIT_MS else 650L
-                val AUTOPLAY_QUALITY_WINDOW_MS = if (hasHomeServerConnections) 550L else 350L
+                val HOME_SERVER_AUTOPLAY_WAIT_MS = 850L
+                val AUTOPLAY_MAX_WINDOW_MS = 1_750L
+                val AUTOPLAY_QUALITY_WINDOW_MS = 180L
                 val collectionStartMs = System.currentTimeMillis()
                 var autoplaySelected = false
                 var autoplayDeferredJob: Job? = null
@@ -826,14 +837,14 @@ class PlayerViewModel @Inject constructor(
                             }
                         }
                     }
-                    val topStream = mergedStreams.firstOrNull()
+                    val autoplayTopStream = pickAutoplayTopStream(mergedStreams, preferredLanguage)
                     val hasRequestedPreferredStream = hasRequestedPreferredStream(mergedStreams)
                     val shouldSelectNow = !autoplaySelected && mergedStreams.isNotEmpty() && homeServerReadyForAutoplay && (
                         cacheHit ||
                             progressive.isFinal ||
                             hasCachedReadyStream ||
                             hasRequestedPreferredStream ||
-                            isExcellentAutoplayCandidate(topStream) ||
+                            isExcellentAutoplayCandidate(autoplayTopStream) ||
                             elapsedMs >= AUTOPLAY_MAX_WINDOW_MS
                         )
 
@@ -843,13 +854,13 @@ class PlayerViewModel @Inject constructor(
                         autoplayDeferredJob = null
                         Log.i(
                             TAG,
-                            "Autoplay selecting streams=${mergedStreams.size} completed=$completed/$total final=${progressive.isFinal} cached=$hasCachedReadyStream preferred=$hasRequestedPreferredStream elapsedMs=$elapsedMs top=${topStream?.quality}/${topStream?.size}"
+                            "Autoplay selecting streams=${mergedStreams.size} completed=$completed/$total final=${progressive.isFinal} cached=$hasCachedReadyStream preferred=$hasRequestedPreferredStream elapsedMs=$elapsedMs top=${autoplayTopStream?.quality}/${autoplayTopStream?.size}"
                         )
                         playbackDiag(
                             "autoplayNow streams=${mergedStreams.size} completed=$completed/$total final=${progressive.isFinal} " +
-                                "cached=$hasCachedReadyStream preferred=$hasRequestedPreferredStream top=${mergedStreams.take(5).joinToString(" | ") { streamDiag(it) }}"
+                                "cached=$hasCachedReadyStream preferred=$hasRequestedPreferredStream top=${autoplayTopStream?.let { streamDiag(it) } ?: "none"}"
                         )
-                        autoplaySelectBest(mergedStreams, preferredLanguage)
+                        autoplayTopStream?.let { selectStream(it) } ?: autoplaySelectBest(mergedStreams, preferredLanguage)
                     }
                 }
 
@@ -1411,6 +1422,24 @@ class PlayerViewModel @Inject constructor(
         return score
     }
 
+    private fun addonOrderIndex(stream: StreamSource): Int {
+        if (currentAddonOrderedIds.isEmpty()) return Int.MAX_VALUE
+        val tabId = if (stream.addonId == HomeServerRepository.ADDON_ID) {
+            val baseName = stream.addonName.split(" - ").firstOrNull()?.trim().orEmpty()
+            if (baseName.isNotBlank()) "${stream.addonId}:$baseName" else stream.addonId
+        } else {
+            stream.addonId.ifBlank { stream.addonName }
+        }
+        val directIndex = currentAddonOrderedIds.indexOfFirst { orderedId ->
+            orderedId == stream.addonId || orderedId == tabId
+        }
+        if (directIndex >= 0) return directIndex
+        val fuzzyIndex = currentAddonOrderedIds.indexOfFirst { orderedId ->
+            tabId.contains(orderedId) || orderedId.contains(tabId)
+        }
+        return if (fuzzyIndex >= 0) fuzzyIndex else Int.MAX_VALUE
+    }
+
     fun onPlaybackStarted(startupMs: Long, startupRetries: Int, autoFailovers: Int) {
         playbackErrorReportJob?.cancel()
         val currentState = _uiState.value
@@ -1583,7 +1612,7 @@ class PlayerViewModel @Inject constructor(
             currentPreferredAddonId?.let { s.addonId == it } ?: false
         }
 
-        val stabilitySelected = pickPreferredStream(healthyStreams, preferredLanguage)
+        val stabilitySelected = pickAutoplayTopStream(healthyStreams, preferredLanguage)
         val selected = if (hasExplicitPreferred) {
             preferredFromBingeGroup ?: preferredNavigationCandidate ?: stabilitySelected ?: healthyStreams.first()
         } else {
@@ -1635,22 +1664,43 @@ class PlayerViewModel @Inject constructor(
         return sortStreamsByQualityAndSize(streams, preferredLanguage).firstOrNull()
     }
 
+    private fun pickAutoplayTopStream(
+        streams: List<StreamSource>,
+        preferredLanguage: String
+    ): StreamSource? {
+        if (streams.isEmpty()) return null
+        return sortStreamsForAutoplay(streams, preferredLanguage).firstOrNull()
+    }
+
+    private fun sortStreamsForAutoplay(
+        streams: List<StreamSource>,
+        preferredLanguage: String
+    ): List<StreamSource> {
+        return streams.sortedWith(
+            compareBy<StreamSource> { streamRepository.getPlaybackHostHealthPenalty(it) }
+                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
+                .thenByDescending { qualityScore(it.quality) }
+                .thenByDescending { parseSize(it.size) }
+                .thenByDescending { playbackPriorityScore(it) }
+                .thenByDescending { if (it.behaviorHints?.cached == true) 1 else 0 }
+                .thenByDescending { streamLanguageScore(it, preferredLanguage) }
+                .thenByDescending { streamRepository.getAddonHealthBias(it.addonId) }
+        )
+    }
+
     private fun sortStreamsByQualityAndSize(
         streams: List<StreamSource>,
         preferredLanguage: String
     ): List<StreamSource> {
-        val useLanguagePreference = !preferredLanguage.equals("none", ignoreCase = true)
-
         return streams.sortedWith(
-            // Autoplay must match the visible source picker: stable/reachable sources first,
-            // then the highest quality and largest file. Language is only a tie-breaker.
-            compareBy<StreamSource> { streamRepository.getPlaybackHostHealthPenalty(it) }
-                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
-                .thenByDescending { playbackPriorityScore(it) }
+            compareBy<StreamSource> { addonOrderIndex(it) }
                 .thenByDescending { parseSize(it.size) }
-                .thenByDescending { if (it.behaviorHints?.cached == true) 1 else 0 }
-                .thenByDescending { if (useLanguagePreference) streamLanguageScore(it, preferredLanguage) else 1 }
-                .thenByDescending { streamRepository.getAddonHealthBias(it.addonId) }
+                .thenByDescending { qualityScore(it.quality) }
+                .thenByDescending { playbackPriorityScore(it) }
+                .thenBy { streamRepository.getPlaybackHostHealthPenalty(it) }
+                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
+                .thenByDescending { streamLanguageScore(it, preferredLanguage) }
+                .thenBy { it.source.lowercase() }
         )
     }
 
@@ -1683,8 +1733,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun prewarmTopStreams(streams: List<StreamSource>, preferredLanguage: String) {
         if (streams.isEmpty()) return
-        if (!_uiState.value.selectedStreamUrl.isNullOrBlank()) return
-        val topStreams = sortStreamsByQualityAndSize(streams, preferredLanguage).take(3)
+        val topStreams = sortStreamsForAutoplay(streams, preferredLanguage).take(3)
         val prewarmKey = topStreams.joinToString("|") { stream ->
             "${stream.addonId}:${stream.source}:${stream.url?.substringBefore('|')?.substringBefore('#')}"
         }

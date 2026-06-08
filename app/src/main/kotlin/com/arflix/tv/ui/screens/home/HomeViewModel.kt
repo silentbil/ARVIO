@@ -16,6 +16,7 @@ import coil.size.Precision
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.CollectionGroupKind
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
@@ -2130,7 +2131,7 @@ class HomeViewModel @Inject constructor(
                         }
                         val cat = allById[cfg.id]
                         if (cat == null || cat.items.isEmpty()) return@mapNotNull null
-                        if (!cfg.isPreinstalled &&
+                        if (cfg.sourceType == CatalogSourceType.ADDON &&
                             cat.title.trim().lowercase(Locale.US) in serviceTitleBlocklist
                         ) return@mapNotNull null
                         cat.withTop10CapIfNeeded()

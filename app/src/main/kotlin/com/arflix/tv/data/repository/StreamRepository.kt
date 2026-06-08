@@ -147,6 +147,11 @@ class StreamRepository @Inject constructor(
         val result: StreamResult,
         val createdAtMs: Long
     )
+    private data class PersistedStreamResultPayload(
+        val streams: List<StreamSource>,
+        val subtitles: List<Subtitle>,
+        val createdAtMs: Long
+    )
     private data class CachedResolvedStream(
         val stream: StreamSource,
         val createdAtMs: Long
@@ -236,6 +241,85 @@ class StreamRepository @Inject constructor(
     private fun torrServerBaseUrlKey() = profileManager.profileStringKey("torrserver_base_url_v1")
     private fun addonHealthKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "addon_health_v1")
     private val qualityFiltersKey = stringPreferencesKey("quality_filters")
+    private val streamResultCacheBundleType = TypeToken.getParameterized(
+        Map::class.java,
+        String::class.java,
+        PersistedStreamResultPayload::class.java
+    ).type
+    private val streamResultCacheDiskTtlMs = 4 * 60 * 60_000L
+    private val streamResultCacheDiskStaleGraceMs = 5 * 60_000L
+    private val streamResultCacheDiskMaxEntries = 320
+    private fun streamResultCacheBundleKey(profileId: String): Preferences.Key<String> =
+        stringPreferencesKey("profile_${profileId}_stream_result_cache_v2")
+    private fun streamResultCacheEntryKey(cacheKey: String): String {
+        val hash = MessageDigest.getInstance("SHA-1")
+            .digest(cacheKey.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
+        return hash.take(16)
+    }
+
+    private fun decodeStreamResultCacheBundle(raw: String): Map<String, PersistedStreamResultPayload> {
+        if (raw.isBlank()) return emptyMap()
+        return runCatching {
+            gson.fromJson(raw, streamResultCacheBundleType)
+        }.getOrElse {
+            Log.w(TAG, "[StreamCache][Decode] malformed stream result cache payload")
+            emptyMap()
+        }
+    }
+
+    private fun isStreamCacheFresh(cached: CachedStreamResult, graceMs: Long = 0L): Boolean {
+        val ageMs = System.currentTimeMillis() - cached.createdAtMs
+        val ttlMs = cacheTtlMsFor(cached.result)
+        return ageMs <= (ttlMs + graceMs)
+    }
+
+    private suspend fun loadPersistedStreamResult(
+        profileId: String,
+        cacheKey: String,
+        graceMs: Long = 0L
+    ): CachedStreamResult? = withContext(Dispatchers.IO) {
+        val entryKey = streamResultCacheEntryKey(cacheKey)
+        val raw = context.streamDataStore.data.first()[streamResultCacheBundleKey(profileId)].orEmpty()
+        val payload = decodeStreamResultCacheBundle(raw)[entryKey] ?: return@withContext null
+        val cached = CachedStreamResult(
+            result = StreamResult(payload.streams, payload.subtitles),
+            createdAtMs = payload.createdAtMs
+        )
+        if (isStreamCacheFresh(cached, graceMs)) cached else null
+    }
+
+    private fun persistStreamResult(profileId: String, cacheKey: String, cached: CachedStreamResult) {
+        val entryKey = streamResultCacheEntryKey(cacheKey)
+        val payload = PersistedStreamResultPayload(
+            streams = cached.result.streams,
+            subtitles = cached.result.subtitles,
+            createdAtMs = cached.createdAtMs
+        )
+        repositoryScope.launch {
+            runCatching {
+                val bundleKey = streamResultCacheBundleKey(profileId)
+                val now = System.currentTimeMillis()
+                val raw = context.streamDataStore.data.first()[bundleKey].orEmpty()
+                val decoded = decodeStreamResultCacheBundle(raw).toMutableMap()
+                decoded[entryKey] = payload
+                val trimmed = decoded.entries
+                    .filter { now - it.value.createdAtMs <= streamResultCacheDiskTtlMs + streamResultCacheDiskStaleGraceMs }
+                    .sortedByDescending { it.value.createdAtMs }
+                    .take(streamResultCacheDiskMaxEntries)
+                    .associate { it.key to it.value }
+                context.streamDataStore.edit { prefs ->
+                    if (trimmed.isEmpty()) {
+                        prefs.remove(bundleKey)
+                    } else {
+                        prefs[bundleKey] = gson.toJson(trimmed)
+                    }
+                }
+            }.onFailure {
+                Log.w(TAG, "[StreamCache][Persist] failed key=$cacheKey reason=${it::class.java.simpleName}")
+            }
+        }
+    }
 
     init {
         repositoryScope.launch {
@@ -442,6 +526,27 @@ class StreamRepository @Inject constructor(
             addons[index] = addons[index].copy(isEnabled = !addons[index].isEnabled)
             saveAddons(addons)
         }
+    }
+
+    suspend fun moveAddonUp(addonId: String): Boolean {
+        return moveAddon(addonId, direction = -1)
+    }
+
+    suspend fun moveAddonDown(addonId: String): Boolean {
+        return moveAddon(addonId, direction = 1)
+    }
+
+    private suspend fun moveAddon(addonId: String, direction: Int): Boolean {
+        if (direction == 0) return false
+        val addons = installedAddons.first().toMutableList()
+        val currentIndex = addons.indexOfFirst { it.id == addonId }
+        if (currentIndex < 0) return false
+        val targetIndex = (currentIndex + direction).coerceIn(0, addons.lastIndex)
+        if (targetIndex == currentIndex) return false
+        val moved = addons.removeAt(currentIndex)
+        addons.add(targetIndex, moved)
+        saveAddons(addons)
+        return true
     }
 
     /**
@@ -1272,6 +1377,10 @@ class StreamRepository @Inject constructor(
     private val ADDON_NATIVE_ANIME_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 12_000L
     private val ANIME_ID_LOOKUP_TIMEOUT_MS = 3_000L
     private val NATIVE_ANIME_ID_LOOKUP_TIMEOUT_MS = 8_000L
+    // Longer timeouts for providers/requests known to be slower on large IPTV/legacy catalogs.
+    private val ADDON_EXTENDED_TIMEOUT_MS = 30_000L
+    private val ADDON_EXTENDED_EPISODE_TIMEOUT_MS = 45_000L
+    private val ADDON_EXTENDED_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 35_000L
     // Subtitles should not block playback but need enough time on slow connections.
     private val SUBTITLE_TIMEOUT_MS = 6_000L
     // If addons return nothing, allow Xtream VOD lookup to recover playback.
@@ -1322,11 +1431,6 @@ class StreamRepository @Inject constructor(
         }
     }
 
-    private fun isStreamCacheFresh(cached: CachedStreamResult): Boolean {
-        val ageMs = System.currentTimeMillis() - cached.createdAtMs
-        return ageMs < cacheTtlMsFor(cached.result)
-    }
-
     private fun sanitizeLogUrl(rawUrl: String): String {
         return runCatching {
             val uri = java.net.URI(rawUrl)
@@ -1365,6 +1469,25 @@ class StreamRepository @Inject constructor(
         }
     }
 
+    private fun addonNeedsExtendedStreamTimeout(addon: Addon): Boolean {
+        val manifest = addon.manifest
+        val haystack = listOf(
+            addon.id,
+            addon.name,
+            addon.url.orEmpty(),
+            addon.transportUrl.orEmpty(),
+            manifest?.id.orEmpty(),
+            manifest?.name.orEmpty(),
+            manifest?.description.orEmpty()
+        ).joinToString(" ").lowercase(Locale.US)
+
+        return haystack.contains("flix-stream") ||
+            haystack.contains("flix streams") ||
+            haystack.contains("flickystream") ||
+            haystack.contains("flixnest") ||
+            haystack.contains("telegram")
+    }
+
     private fun latencyBucket(ms: Long): String = when {
         ms < 500L -> "lt_500ms"
         ms < 2_000L -> "lt_2s"
@@ -1392,8 +1515,13 @@ class StreamRepository @Inject constructor(
         year: Int? = null
     ): List<StreamSource> {
         val startedAt = System.currentTimeMillis()
+        val addonTimeoutMs = if (addonNeedsExtendedStreamTimeout(addon)) {
+            ADDON_EXTENDED_TIMEOUT_MS
+        } else {
+            ADDON_TIMEOUT_MS
+        }
         return try {
-            withTimeout(ADDON_TIMEOUT_MS) {
+            withTimeout(addonTimeoutMs) {
                 if (httpLocalScraperRuntime.canHandle(addon)) {
                     val streams = httpLocalScraperRuntime.resolveMovieStreams(
                         addon = addon,
@@ -1434,7 +1562,7 @@ class StreamRepository @Inject constructor(
         } catch (timeout: TimeoutCancellationException) {
             Log.w(
                 TAG,
-                "[StreamFetch][Movie] timeout addon=${addon.name} addonId=${addon.id} elapsedMs=${System.currentTimeMillis() - startedAt}"
+                "[StreamFetch][Movie] timeout addon=${addon.name} addonId=${addon.id} timeoutMs=$addonTimeoutMs elapsedMs=${System.currentTimeMillis() - startedAt}"
             )
             AppLogger.breadcrumb(
                 tag = "Sources",
@@ -1480,10 +1608,11 @@ class StreamRepository @Inject constructor(
     ): List<StreamSource> {
         val startedAt = System.currentTimeMillis()
         val nativeAnimeAddonHint = shouldPreferNativeAnimeIds(addon)
-        val addonTimeoutMs = if (nativeAnimeAddonHint) {
-            ADDON_NATIVE_ANIME_EPISODE_TIMEOUT_MS
-        } else {
-            ADDON_EPISODE_TIMEOUT_MS
+        val extendedTimeout = addonNeedsExtendedStreamTimeout(addon)
+        val addonTimeoutMs = when {
+            extendedTimeout -> ADDON_EXTENDED_EPISODE_TIMEOUT_MS
+            nativeAnimeAddonHint -> ADDON_NATIVE_ANIME_EPISODE_TIMEOUT_MS
+            else -> ADDON_EPISODE_TIMEOUT_MS
         }
         return try {
             withTimeout(addonTimeoutMs) {
@@ -1575,10 +1704,10 @@ class StreamRepository @Inject constructor(
                     preferAnimePath: Boolean
                 ): List<StreamSource> {
                     var lastError: Exception? = null
-                    val singleRequestTimeoutMs = if (nativeAnimeAddon) {
-                        ADDON_NATIVE_ANIME_SINGLE_STREAM_REQUEST_TIMEOUT_MS
-                    } else {
-                        ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS
+                    val singleRequestTimeoutMs = when {
+                        extendedTimeout -> ADDON_EXTENDED_SINGLE_STREAM_REQUEST_TIMEOUT_MS
+                        nativeAnimeAddon -> ADDON_NATIVE_ANIME_SINGLE_STREAM_REQUEST_TIMEOUT_MS
+                        else -> ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS
                     }
                     for (requestType in streamRequestTypes(contentId, preferAnimePath)) {
                         val requestUrl = streamUrl(requestType, contentId)
@@ -1738,7 +1867,7 @@ class StreamRepository @Inject constructor(
         } catch (timeout: TimeoutCancellationException) {
             Log.w(
                 TAG,
-                "[StreamFetch][Episode] timeout addon=${addon.name} addonId=${addon.id} elapsedMs=${System.currentTimeMillis() - startedAt}"
+                "[StreamFetch][Episode] timeout addon=${addon.name} addonId=${addon.id} timeoutMs=$addonTimeoutMs elapsedMs=${System.currentTimeMillis() - startedAt}"
             )
             AppLogger.breadcrumb(
                 tag = "Sources",
@@ -1789,12 +1918,17 @@ class StreamRepository @Inject constructor(
             type = "movie",
             imdbId = imdbId
         )
+        val profileId = profileManager.getProfileIdSync()
         if (!forceRefresh) {
             synchronized(streamResultCache) {
                 val cached = streamResultCache[cacheKey]
                 if (cached != null && isStreamCacheFresh(cached)) {
                     return@withContext cached.result
                 }
+            }
+            loadPersistedStreamResult(profileId, cacheKey)?.let { persisted ->
+                synchronized(streamResultCache) { streamResultCache[cacheKey] = persisted }
+                return@withContext persisted.result
             }
         }
 
@@ -1810,9 +1944,15 @@ class StreamRepository @Inject constructor(
         // IPTV VOD enrichment is appended separately in ViewModels.
 
         val result = StreamResult(filteredStreams, subtitles)
+        val createdAtMs = System.currentTimeMillis()
         synchronized(streamResultCache) {
-            streamResultCache[cacheKey] = CachedStreamResult(result = result, createdAtMs = System.currentTimeMillis())
+            streamResultCache[cacheKey] = CachedStreamResult(result = result, createdAtMs = createdAtMs)
         }
+        persistStreamResult(
+            profileId = profileId,
+            cacheKey = cacheKey,
+            cached = CachedStreamResult(result = result, createdAtMs = createdAtMs)
+        )
         result
     }
 
@@ -1826,13 +1966,14 @@ class StreamRepository @Inject constructor(
             ensureAddonHealthLoaded()
             val allAddons = installedAddonsForSourceResolution()
             val streamAddons = getStreamAddons(allAddons, "movie", imdbId)
+            val profileId = profileManager.getProfileIdSync()
             val cacheKey = streamCacheKey(
-                profileId = profileManager.getProfileIdSync(),
+                profileId = profileId,
                 type = "movie",
                 imdbId = imdbId
             )
             if (!forceRefresh) {
-                var staleCache: CachedStreamResult? = null
+                var warmCache: CachedStreamResult? = null
                 synchronized(streamResultCache) {
                     val cached = streamResultCache[cacheKey]
                     if (cached != null) {
@@ -1841,19 +1982,31 @@ class StreamRepository @Inject constructor(
                             close()
                             return@launch
                         }
-                        staleCache = cached
+                        warmCache = cached
                     }
                 }
-                staleCache?.let { cached ->
+                if (warmCache == null) {
+                    warmCache = loadPersistedStreamResult(
+                        profileId = profileId,
+                        cacheKey = cacheKey,
+                        graceMs = streamResultCacheDiskStaleGraceMs
+                    )
+                }
+                warmCache?.let { cached ->
+                    synchronized(streamResultCache) { streamResultCache[cacheKey] = cached }
                     trySend(
                         ProgressiveStreamResult(
                             streams = cached.result.streams,
                             subtitles = cached.result.subtitles,
                             completedAddons = 0,
                             totalAddons = 1,
-                            isFinal = false
+                            isFinal = isStreamCacheFresh(cached)
                         )
                     )
+                    if (isStreamCacheFresh(cached)) {
+                        close()
+                        return@launch
+                    }
                 }
             }
 
@@ -1873,6 +2026,13 @@ class StreamRepository @Inject constructor(
                     val cached = synchronized(streamResultCache) { streamResultCache[cacheKey] }
                     if (cached != null) {
                         trySend(ProgressiveStreamResult(cached.result.streams, cached.result.subtitles, 1, 1, true))
+                        close()
+                        return@launch
+                    }
+                    val persisted = loadPersistedStreamResult(profileId = profileId, cacheKey = cacheKey)
+                    if (persisted != null) {
+                        synchronized(streamResultCache) { streamResultCache[cacheKey] = persisted }
+                        trySend(ProgressiveStreamResult(persisted.result.streams, persisted.result.subtitles, 1, 1, true))
                         close()
                         return@launch
                     }
@@ -1901,10 +2061,16 @@ class StreamRepository @Inject constructor(
                     .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
                 val filtered = applyQualityRegexFilters(deduped)
                 if (completed == totalAddons) {
+                    val createdAtMs = System.currentTimeMillis()
                     val finalResult = StreamResult(filtered, emptyList())
                     synchronized(streamResultCache) {
-                        streamResultCache[cacheKey] = CachedStreamResult(finalResult, System.currentTimeMillis())
+                        streamResultCache[cacheKey] = CachedStreamResult(finalResult, createdAtMs)
                     }
+                    persistStreamResult(
+                        profileId = profileId,
+                        cacheKey = cacheKey,
+                        cached = CachedStreamResult(finalResult, createdAtMs)
+                    )
                     if (filtered.isEmpty()) {
                         AppLogger.breadcrumb(
                             tag = "Sources",

@@ -130,7 +130,7 @@ fun StreamSelector(
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var focusedFilterIndex by remember { mutableIntStateOf(0) }
     var selectedFilterIndex by remember { mutableIntStateOf(0) }
-    var focusZone by remember { mutableStateOf("streams") } // "filters", "streams", or "addons"
+    var focusZone by remember { mutableStateOf("streams") } // "streams" or "addons"
     val listState = rememberTvLazyListState()
     val focusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
@@ -162,15 +162,7 @@ fun StreamSelector(
 
     data class AddonTab(val id: String, val label: String)
     data class SourceFilter(val label: String)
-    val sourceFilters = remember {
-        listOf(
-            SourceFilter("All"),
-            SourceFilter("4K"),
-            SourceFilter("1080p"),
-            SourceFilter("Debrid"),
-            SourceFilter("Direct")
-        )
-    }
+    val sourceFilters = remember { listOf(SourceFilter("All")) }
 
     // Build addon tabs using addonId so multiple instances of the same addon are shown separately.
     val addonTabs = remember(streams, addonOrderedIds) {
@@ -205,7 +197,8 @@ fun StreamSelector(
 
     val presentations = remember(streams) { streams.map(::presentSource) }
 
-    // Recommended ordering for per-addon lists keeps robust playback and quality heuristics.
+    // Source ordering follows user addon order first. Within each addon, show the
+    // largest files first, then the highest resolution/release quality.
     val addonOrder = remember(addonTabs, addonOrderedIds) {
         if (addonOrderedIds.isNotEmpty()) {
             // Use the user's configured addon order: map each stream's addonId to its
@@ -218,17 +211,9 @@ fun StreamSelector(
             addonTabs.mapIndexed { index, tab -> tab.id to index }.toMap()
         }
     }
-    val recommendedPresentations = remember(presentations, addonOrder) {
-        presentations.sortedWith(compareByDescending<SourcePresentation> { it.sortCached }
-            .thenByDescending { it.sortDirect }
-            .thenBy { addonOrder[sourceTabId(it.stream)] ?: Int.MAX_VALUE }
-            .thenByDescending { it.resolutionScore }
-            .thenByDescending { it.releaseScore }
+    val orderedPresentations = remember(presentations, addonOrder) {
+        presentations.sortedWith(compareBy<SourcePresentation> { addonOrder[sourceTabId(it.stream)] ?: Int.MAX_VALUE }
             .thenByDescending { it.sizeBytes }
-            .thenBy { it.title.lowercase() })
-    }
-    val sizeSortedPresentations = remember(presentations) {
-        presentations.sortedWith(compareByDescending<SourcePresentation> { it.sizeBytes }
             .thenByDescending { it.resolutionScore }
             .thenByDescending { it.releaseScore }
             .thenBy { it.title.lowercase() })
@@ -236,18 +221,17 @@ fun StreamSelector(
 
     // Filter streams by selected tab
     val filteredPresentations = remember(
-        recommendedPresentations,
-        sizeSortedPresentations,
+        orderedPresentations,
         selectedTabIndex,
         selectedFilterIndex,
         addonTabs
     ) {
         val selectedFilter = sourceFilters.getOrNull(selectedFilterIndex)?.label ?: "All"
         val addonFiltered = if (selectedTabIndex == 0) {
-            sizeSortedPresentations // All sources are easiest to compare by file size.
+            orderedPresentations
         } else {
             val selectedAddonId = addonTabs.getOrNull(selectedTabIndex - 1)?.id ?: ""
-            recommendedPresentations.filter {
+            orderedPresentations.filter {
                 sourceTabId(it.stream) == selectedAddonId
             }
         }
@@ -340,14 +324,9 @@ fun StreamSelector(
                                         selectedTabIndex = focusedTabIndex  // Immediately filter on focus
                                         focusedIndex = 0  // Reset stream selection
                                     }
-                                } else if (focusZone == "filters") {
-                                    // Already at the top focus row.
                                 } else {
                                     if (focusedIndex > 0) {
                                         focusedIndex--
-                                    } else {
-                                        focusZone = "filters"
-                                        focusedFilterIndex = selectedFilterIndex
                                     }
                                 }
                                 true
@@ -359,9 +338,6 @@ fun StreamSelector(
                                         selectedTabIndex = focusedTabIndex  // Immediately filter on focus
                                         focusedIndex = 0  // Reset stream selection
                                     }
-                                } else if (focusZone == "filters") {
-                                    focusZone = "streams"
-                                    focusedIndex = 0
                                 } else {
                                     if (focusedIndex < flatStreams.size - 1) focusedIndex++
                                 }
@@ -373,21 +349,11 @@ fun StreamSelector(
                                         focusZone = "streams"
                                         focusedIndex = focusedIndex.coerceAtMost((flatStreams.size - 1).coerceAtLeast(0))
                                     }
-                                    focusZone == "filters" && focusedFilterIndex > 0 -> {
-                                        focusedFilterIndex--
-                                        selectedFilterIndex = focusedFilterIndex
-                                        focusedIndex = 0
-                                    }
                                 }
                                 true
                             }
                             Key.DirectionRight -> {
                                 when {
-                                    focusZone == "filters" && focusedFilterIndex < sourceFilters.size - 1 -> {
-                                        focusedFilterIndex++
-                                        selectedFilterIndex = focusedFilterIndex
-                                        focusedIndex = 0
-                                    }
                                     focusZone == "streams" && tabLabels.size > 1 -> {
                                         focusZone = "addons"
                                         focusedTabIndex = selectedTabIndex
@@ -398,9 +364,6 @@ fun StreamSelector(
                             Key.Enter, Key.DirectionCenter -> {
                                 if (focusZone == "addons") {
                                     // Tab already selected on focus, just move to streams
-                                    focusZone = "streams"
-                                    focusedIndex = 0
-                                } else if (focusZone == "filters") {
                                     focusZone = "streams"
                                     focusedIndex = 0
                                 } else {
@@ -425,7 +388,7 @@ fun StreamSelector(
                     sourceFilters = sourceFilters.map { it.label },
                     selectedFilterIndex = selectedFilterIndex,
                     focusedFilterIndex = focusedFilterIndex,
-                    filterFocused = focusZone == "filters",
+                    filterFocused = false,
                     tabLabels = tabLabels,
                     selectedTabIndex = selectedTabIndex,
                     focusedTabIndex = focusedTabIndex,
@@ -627,7 +590,7 @@ fun StreamSelector(
                             items(flatPresentations) { presentation ->
                                 MobileStreamCard(
                                     presentation = presentation,
-                                    isSelected = presentation.stream == selectedStream,
+                                    isSelected = isSelectedSource(presentation.stream, selectedStream),
                                     onClick = { onSelect(presentation.stream) }
                                 )
                             }
@@ -747,24 +710,26 @@ private fun OledSourceSelectorTv(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                sourceFilters.forEachIndexed { index, filter ->
-                    SourceFilterChip(
-                        text = filter,
-                        isSelected = index == selectedFilterIndex,
-                        isFocused = filterFocused && index == focusedFilterIndex,
-                        onClick = { onFilterSelected(index) }
-                    )
+            if (sourceFilters.size > 1) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    sourceFilters.forEachIndexed { index, filter ->
+                        SourceFilterChip(
+                            text = filter,
+                            isSelected = index == selectedFilterIndex,
+                            isFocused = filterFocused && index == focusedFilterIndex,
+                            onClick = { onFilterSelected(index) }
+                        )
+                    }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             when {
                 streams.isEmpty() -> SourceEmptyState(
@@ -795,7 +760,7 @@ private fun OledSourceSelectorTv(
                             OledSourceRow(
                                 presentation = presentation,
                                 isFocused = streamsFocused && index == focusedIndex,
-                                isSelected = presentation.stream == selectedStream,
+                                isSelected = isSelectedSource(presentation.stream, selectedStream),
                                 onClick = { onSelect(presentation.stream) }
                             )
                         }
@@ -915,6 +880,25 @@ private fun sourceTabId(stream: StreamSource): String {
     } else {
         stream.addonId.ifBlank { baseName }
     }
+}
+
+private fun isSelectedSource(candidate: StreamSource, selected: StreamSource?): Boolean {
+    selected ?: return false
+    if (candidate == selected) return true
+
+    val sameAddon = candidate.addonId.isNotBlank() && candidate.addonId == selected.addonId
+    val sameSource = candidate.source.isNotBlank() && candidate.source == selected.source
+    val sameFile = candidate.behaviorHints?.filename?.takeIf { it.isNotBlank() }?.let { filename ->
+        filename == selected.behaviorHints?.filename
+    } ?: false
+    val sameBingeGroup = candidate.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }?.let { group ->
+        group == selected.behaviorHints?.bingeGroup
+    } ?: false
+    val sameUrl = candidate.url?.takeIf { it.isNotBlank() }?.let { url ->
+        url == selected.url
+    } ?: false
+
+    return sameUrl || (sameAddon && (sameSource || sameFile || sameBingeGroup))
 }
 
 private fun isDebridLikeSource(stream: StreamSource, blob: String? = null): Boolean {
@@ -1195,8 +1179,6 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
         "480p" -> add(SourceBadge("480p"))
         else -> add(SourceBadge(presentation.resolutionLabel))
     }
-
-    presentation.transportLabel?.let { add(SourceBadge(it)) }
 
     when (presentation.releaseLabel) {
         "REMUX" -> add(SourceBadge("REMUX", SourceBadgeImages.REMUX))
@@ -1658,12 +1640,20 @@ private fun OledSourceRow(
                     )
                     if (isSelected) {
                         Spacer(modifier = Modifier.width(10.dp))
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = stringResource(R.string.selected),
-                            tint = TextPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .background(Color.White.copy(alpha = 0.14f), CircleShape)
+                                .border(1.dp, Color.White.copy(alpha = 0.9f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(R.string.selected),
+                                tint = Color.White,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(5.dp))
@@ -1868,11 +1858,11 @@ private fun MobileStreamCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = presentation.title,
+                    text = presentation.rawTitle,
                     style = ArflixTypography.body.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
                     color = TextPrimary,
                     modifier = Modifier.weight(1f),
-                    maxLines = 2,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1916,13 +1906,14 @@ private fun MobileStreamCard(
             Box(
                 modifier = Modifier
                     .size(20.dp)
-                    .background(Color.White, CircleShape),
+                    .background(Color.White.copy(alpha = 0.14f), CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.9f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.Check,
                     contentDescription = stringResource(R.string.selected),
-                    tint = Color.Black,
+                    tint = Color.White,
                     modifier = Modifier.size(14.dp)
                 )
             }

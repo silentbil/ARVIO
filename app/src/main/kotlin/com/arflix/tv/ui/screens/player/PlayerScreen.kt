@@ -1426,11 +1426,10 @@ fun PlayerScreen(
                 else -> mediaSourceFactory.createMediaSource(mediaItem)
             }
 
-            // Source-switch hardening: stop+clear before loading next source.
+            // Keep the old frame visible while the next source prepares. Clearing
+            // media items here created a black gap before autoplay/manual sources.
             runCatching {
                 exoPlayer.playWhenReady = false
-                exoPlayer.stop()
-                exoPlayer.clearMediaItems()
             }
 
             val resumePosition = uiState.savedPosition
@@ -3216,6 +3215,7 @@ fun PlayerScreen(
             selectedStream = uiState.selectedStream,
             isLoading = uiState.isLoadingStreams,
             hasStreamingAddons = !uiState.isSetupError,
+            addonOrderedIds = uiState.addonOrderedIds,
             title = uiState.title,
             subtitle = if (seasonNumber != null && episodeNumber != null) {
                 "S$seasonNumber E$episodeNumber"

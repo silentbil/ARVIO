@@ -1,6 +1,3 @@
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -23,7 +20,7 @@ plugins {
 
 android {
     namespace = "com.arflix.tv"
-    compileSdk = 36
+    compileSdk = 35
 
     flavorDimensions += "distribution"
 
@@ -33,8 +30,8 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 35
-        versionCode = 281
-        versionName = "1.9.94"
+        versionCode = 272
+        versionName = "1.9.93"
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
 
@@ -56,12 +53,10 @@ android {
         create("play") {
             dimension = "distribution"
             buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "false")
-            buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
         }
         create("sideload") {
             dimension = "distribution"
             buildConfigField("Boolean", "SELF_UPDATE_ENABLED", "true")
-            buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "true")
         }
     }
 
@@ -142,8 +137,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -154,7 +147,8 @@ android {
             excludes += setOf(
                 "/META-INF/{AL2.0,LGPL2.1}",
                 "/META-INF/LICENSE*",
-                "/META-INF/NOTICE*", "META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+                "/META-INF/NOTICE*",
+            )
         }
         jniLibs {
             useLegacyPackaging = false  // Required for 16KB page size support
@@ -164,24 +158,11 @@ android {
     baselineProfile {
         mergeIntoMain = true
     }
+}
 
-    sourceSets {
-        getByName("main") {
-            java.srcDir("src/main/tdlib-java")
-        }
-    }
-
-    // Per-ABI APKs for sideload distribution only.
-    // Play builds are distributed via AAB (Google Play handles splitting) so splits are not needed.
-    // x86/x86_64 splits are emulator/debug use only.
-    val isSideloadBuild = gradle.startParameter.taskNames.any { it.contains("sideload", ignoreCase = true) }
-    splits {
-        abi {
-            isEnable = isSideloadBuild
-            reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-            isUniversalApk = true
-        }
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -189,17 +170,6 @@ android {
 // is the same as before — marks domain models as stable to avoid
 // unnecessary recompositions — but fed through a first-class plugin
 // extension instead of a raw -P freeCompilerArg.
-configurations.configureEach {
-    exclude(group = "org.json", module = "json")
-
-    resolutionStrategy.eachDependency {
-        if (requested.group == "org.jetbrains.kotlinx" && requested.name.startsWith("kotlinx-coroutines")) {
-            useVersion("1.7.3")
-            because("Ktor 2.3.7 used by Supabase and the Telegram proxy crashes with coroutines 1.10.x on Android TV.")
-        }
-    }
-}
-
 composeCompiler {
     stabilityConfigurationFile = rootProject.layout.projectDirectory
         .file("app/compose_stability_config.conf")
@@ -250,8 +220,8 @@ dependencies {
     // with "Unable to read Kotlin metadata due to unsupported metadata
     // version" because Hilt parses generated `@Module` classes that carry
     // Kotlin 2.1's newer metadata format.
-    implementation("com.google.dagger:hilt-android:2.57")
-    ksp("com.google.dagger:hilt-compiler:2.57")
+    implementation("com.google.dagger:hilt-android:2.54")
+    ksp("com.google.dagger:hilt-compiler:2.54")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
 
     // Leanback (TV compliance, browse fragments if needed)
@@ -279,14 +249,11 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation("com.squareup.moshi:moshi:1.15.1")
+    implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
 
     // HTML parsing for catalog discovery.
     implementation("org.jsoup:jsoup:1.17.2")
-    // Runtime helpers used by the sideload plugin extractor stack.
-    // NewPipe/cloudstream evaluate some packed JavaScript with Rhino, while
-    // newer jsoup exposes an optional RE2J regex adapter referenced during R8.
-    add("sideloadImplementation", "org.mozilla:rhino:1.8.1")
-    add("sideloadImplementation", "com.google.re2j:re2j:1.8")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
@@ -302,17 +269,8 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:gotrue-kt:2.0.4")
     implementation("io.ktor:ktor-client-android:2.3.7")
 
-    // Telegram native integration — local HTTP streaming proxy + TDLib Java API
-    // libtdjni.so and TdApi.java are downloaded automatically by the downloadTdlibNatives task
-    implementation("io.ktor:ktor-server-cio:2.3.7")
-    implementation("io.ktor:ktor-server-core:2.3.7")
-
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
-
-    // Google Cast SDK — mobile-only at runtime (guarded by DeviceType check), harmless on TV
-    implementation("com.google.android.gms:play-services-cast-framework:21.4.0")
-    implementation("androidx.mediarouter:mediarouter:1.7.0")
 
     // Google Sign-In / Credential Manager for TV
     implementation("androidx.credentials:credentials:1.3.0")
@@ -423,110 +381,6 @@ tasks.configureEach {
     }
 }
 
-// Downloads prebuilt TDLib Android natives + Java API sources on first build.
-// Files are cached — re-download only if arm64-v8a libtdjni.so is missing.
-//
-// Provenance:
-//   Source repo : https://github.com/FaiBah/tdlib-android-prebuilt
-//   Release tag : v1.8.64-e0943d0-Java
-//   TDLib version: 1.8.64, commit e0943d0 (https://github.com/tdlib/td)
-//   License      : Boost Software License 1.0 (https://www.boost.org/LICENSE_1_0.txt)
-//
-// SHA-256 of extracted libtdjni.so per ABI (verified after download):
-//   arm64-v8a  : fd0509edd49107af27e4799caac226f3cc365b273f56df79bf4d7708c6dfa879
-//   armeabi-v7a: 971d7abafa0e6a6c1cae31397d6b2c4255064938b7472874b88633b5bde58b5e
-//   x86        : 626c06f2de659b925e63e139bc0e3d4e7bc28d3718d7aa7ac3b67f671238d513
-//   x86_64     : a652be5eed71dfce7791f80658cbd78742fb6f5341dbbb9e62b31be3a8cb8984
-tasks.register("downloadTdlibNatives") {
-    val marker = project.file("src/main/jniLibs/arm64-v8a/libtdjni.so")
-    onlyIf { !marker.exists() }
-
-    doLast {
-        val base = "https://github.com/FaiBah/tdlib-android-prebuilt/releases/download/v1.8.64-e0943d0-Java"
-
-        val expectedChecksums = mapOf(
-            "arm64-v8a"   to "fd0509edd49107af27e4799caac226f3cc365b273f56df79bf4d7708c6dfa879",
-            "armeabi-v7a" to "971d7abafa0e6a6c1cae31397d6b2c4255064938b7472874b88633b5bde58b5e",
-            "x86"         to "626c06f2de659b925e63e139bc0e3d4e7bc28d3718d7aa7ac3b67f671238d513",
-            "x86_64"      to "a652be5eed71dfce7791f80658cbd78742fb6f5341dbbb9e62b31be3a8cb8984"
-        )
-
-        fun verifySha256(file: File, expected: String) {
-            val digest = MessageDigest.getInstance("SHA-256")
-            val actual = file.inputStream().use { stream ->
-                val buf = ByteArray(8192)
-                var n: Int
-                while (stream.read(buf).also { n = it } != -1) digest.update(buf, 0, n)
-                digest.digest().joinToString("") { "%02x".format(it) }
-            }
-            require(actual == expected) {
-                "Checksum mismatch for ${file.name}: expected $expected but got $actual"
-            }
-        }
-
-        fun fetch(urlStr: String, dest: File) {
-            dest.parentFile.mkdirs()
-            var url = URL(urlStr)
-            var conn = url.openConnection() as HttpURLConnection
-            conn.instanceFollowRedirects = true
-            conn.connect()
-            while (conn.responseCode in 300..399) {
-                url = URL(conn.getHeaderField("Location"))
-                conn = url.openConnection() as HttpURLConnection
-                conn.instanceFollowRedirects = true
-                conn.connect()
-            }
-            conn.inputStream.use { inp -> dest.outputStream().use { inp.copyTo(it) } }
-        }
-
-        // arm64-v8a: .so + Java source files
-        val arm64Zip = File(temporaryDir, "tdlib-arm64-v8a.zip")
-        logger.lifecycle("Downloading TDLib arm64-v8a (~22 MB)...")
-        fetch("$base/tdlib-arm64-v8a.zip", arm64Zip)
-        project.copy {
-            from(project.zipTree(arm64Zip)) {
-                include("libs/arm64-v8a/libtdjni.so")
-                eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
-                includeEmptyDirs = false
-            }
-            into("src/main/jniLibs")
-        }
-        verifySha256(project.file("src/main/jniLibs/arm64-v8a/libtdjni.so"), expectedChecksums["arm64-v8a"]!!)
-        project.copy {
-            from(project.zipTree(arm64Zip)) {
-                include("java/org/drinkless/tdlib/*.java")
-                eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
-                includeEmptyDirs = false
-            }
-            into("src/main/tdlib-java")
-        }
-        arm64Zip.delete()
-
-        // remaining ABIs: .so only
-        listOf("armeabi-v7a", "x86", "x86_64").forEach { abi ->
-            val zipFile = File(temporaryDir, "tdlib-$abi.zip")
-            logger.lifecycle("Downloading TDLib $abi...")
-            fetch("$base/tdlib-$abi.zip", zipFile)
-            project.copy {
-                from(project.zipTree(zipFile)) {
-                    include("libs/$abi/libtdjni.so")
-                    eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
-                    includeEmptyDirs = false
-                }
-                into("src/main/jniLibs")
-            }
-            verifySha256(project.file("src/main/jniLibs/$abi/libtdjni.so"), expectedChecksums[abi]!!)
-            zipFile.delete()
-        }
-
-        logger.lifecycle("TDLib natives ready — all checksums verified.")
-    }
-}
-
-tasks.named("preBuild") {
-    dependsOn("downloadTdlibNatives")
-}
-
 detekt {
     // Configuration file
     config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
@@ -550,33 +404,4 @@ detekt {
 
     // Don't fail build on issues (use baseline instead)
     ignoreFailures = true
-}
-
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        freeCompilerArgs.add("-Xskip-metadata-version-check")
-    }
-}
-
-dependencies {
-    ksp("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
-    annotationProcessor("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
-
-    // Plugin system dependencies (Sideload flavor only)
-    add("sideloadImplementation", files("libs/quickjs-kt-android-1.0.5-nuvio.aar"))
-    add("sideloadImplementation", "com.fasterxml.jackson.core:jackson-databind:2.17.0")
-    add("sideloadImplementation", "com.fasterxml.jackson.module:jackson-module-kotlin:2.17.0")
-    add("sideloadImplementation", "com.github.Blatzar:NiceHttp:0.4.11")
-    add("sideloadImplementation", "org.conscrypt:conscrypt-android:2.5.3")
-    add("sideloadImplementation", "com.github.recloudstream.cloudstream:library:v4.7.0") {
-        exclude(group = "org.mozilla", module = "rhino")
-    }
-    add("sideloadImplementation", "org.webjars.npm:crypto-js:4.2.0")
-
-    // Moshi - used in both sideload plugins and main data store
-    implementation("com.squareup.moshi:moshi:1.15.1")
-    implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
-    ksp("com.squareup.moshi:moshi-kotlin-codegen:1.15.1")
 }

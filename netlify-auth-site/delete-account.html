@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ARVIO &mdash; Delete Account</title>
+  <link rel="icon" href="/assets/arvio-icon-512.png" type="image/png">
   <style>
     :root {
       --bg-1: #050505;
@@ -12,7 +13,7 @@
       --line: rgba(255,255,255,0.18);
       --text: #f5f5f5;
       --muted: #b7b7b7;
-      --accent: #f5f5f5;
+      --accent: #0df0c2;
       --danger: #f87171;
     }
 
@@ -20,8 +21,8 @@
     html, body { margin: 0; padding: 0; min-height: 100%; font-family: "Segoe UI", Inter, system-ui, sans-serif; color: var(--text); }
     body {
       background:
-        radial-gradient(900px 500px at 0% -10%, rgba(255,255,255,0.08), transparent 60%),
-        radial-gradient(900px 500px at 100% 120%, rgba(255,255,255,0.05), transparent 60%),
+        radial-gradient(900px 500px at 0% -10%, rgba(13,240,194,0.12), transparent 60%),
+        radial-gradient(900px 500px at 100% 120%, rgba(103,183,255,0.08), transparent 60%),
         linear-gradient(160deg, var(--bg-1), var(--bg-2));
       display: grid;
       place-items: center;
@@ -44,11 +45,11 @@
     }
 
     .brand {
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      font-size: 14px;
-      color: #ffffff;
-      margin-bottom: 8px;
+      display: block;
+      width: 132px;
+      height: auto;
+      margin-bottom: 12px;
+      filter: drop-shadow(0 0 16px rgba(13, 240, 194, 0.18));
     }
 
     .title {
@@ -133,7 +134,7 @@
 <body>
   <main class="shell">
     <header class="head">
-      <div class="brand">ARVIO</div>
+      <img class="brand" src="assets/arvio-wordmark.png" alt="ARVIO">
       <h1 class="title">Delete Your Account</h1>
       <p class="subtitle">How to permanently remove your ARVIO account and associated data.</p>
     </header>
@@ -177,7 +178,7 @@
       </p>
 
       <div class="email-box">
-        <a href="mailto:arvio.support@gmail.com?subject=Account%20Deletion%20Request">arvio.support@gmail.com</a>
+        <a href="mailto:arvio.app@gmail.com?subject=Account%20Deletion%20Request">arvio.app@gmail.com</a>
       </div>
 
       <p>Include the following in your email:</p>

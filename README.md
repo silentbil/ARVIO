@@ -157,7 +157,7 @@ Smoke-test startup, profile switching, playback, stream fallback, subtitle/audio
 
 ## Privacy
 
-See [PRIVACY.md](PRIVACY.md) for the privacy policy. Cloud account and synced data deletion is available at [auth.arvio.tv/delete-account](https://auth.arvio.tv/delete-account).
+See [PRIVACY.md](PRIVACY.md) for the privacy policy. Cloud account and synced data deletion is available at [auth.arvio.tv/delete](https://auth.arvio.tv/delete).
 
 ## License
 

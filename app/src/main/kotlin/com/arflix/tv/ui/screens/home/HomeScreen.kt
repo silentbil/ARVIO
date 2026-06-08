@@ -2702,21 +2702,13 @@ private fun MobileHomeRowsLayer(
                     )
                 }
 
-                val rowHasMore = !isCollectionRow && categoryHasMoreMap[category.id] == true
-                val skeletonCount = if (isPortrait) 12 else 7
-                val itemsToRender = remember(category.items, rowHasMore, isPortrait) {
-                    if (rowHasMore) {
-                        category.items + List(skeletonCount) { idx ->
-                            MediaItem(
-                                id = -1000 - idx,
-                                title = "",
-                                isPlaceholder = true
-                            )
-                        }
-                    } else {
-                        category.items
-                    }
+                val rowHasMore = categoryHasMoreMap[category.id] == true
+                val isPortrait = if (isCollectionRow) {
+                    category.items.firstOrNull()?.collectionTileShape == CollectionTileShape.POSTER
+                } else {
+                    rowUsePosterCards
                 }
+                val itemsToRender = category.items
 
                 // Horizontal card row with touch scrolling
                 LazyRow(
@@ -3417,20 +3409,7 @@ private fun ContentRow(
             )
         }
 
-        val skeletonCount = if (effectivePosterMode) 12 else 7
-        val itemsToRender = remember(category.items, effectiveCategoryHasMore, effectivePosterMode) {
-            if (effectiveCategoryHasMore) {
-                category.items + List(skeletonCount) { idx ->
-                    MediaItem(
-                        id = -1000 - idx,
-                        title = "",
-                        isPlaceholder = true
-                    )
-                }
-            } else {
-                category.items
-            }
-        }
+        val itemsToRender = category.items
 
         // Cards row - clipped to hide previous items when scrolling
         val clipModifier = if (isContinueWatching) Modifier else Modifier.clipToBounds()

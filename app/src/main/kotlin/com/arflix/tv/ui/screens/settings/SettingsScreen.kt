@@ -680,6 +680,13 @@ fun SettingsScreen(
                     val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
                         !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
                     } ?: false
+                    val focusedStremioAddonMaxAction = if (focusedStremioAddon == null) {
+                        0
+                    } else if (focusedStremioAddonCanDelete) {
+                        3
+                    } else {
+                        2
+                    }
                     when (event.key) {
                         Key.Back, Key.Escape -> {
                             when (activeZone) {
@@ -704,7 +711,7 @@ fun SettingsScreen(
                             when (activeZone) {
                                 Zone.CONTENT -> {
                                     if (currentSection == "stremio" && contentFocusIndex < stremioAddons.size && addonActionIndex > 0) {
-                                        addonActionIndex = 0
+                                        addonActionIndex--
                                     } else if (currentSection == "iptv" &&
                                         iptvActionIndex > 0 &&
                                         (
@@ -749,10 +756,9 @@ fun SettingsScreen(
                                 Zone.CONTENT -> {
                                     if (currentSection == "stremio" &&
                                         contentFocusIndex in 0 until stremioAddons.size &&
-                                        addonActionIndex < 1 &&
-                                        focusedStremioAddonCanDelete
+                                        addonActionIndex < focusedStremioAddonMaxAction
                                     ) {
-                                        addonActionIndex = 1
+                                        addonActionIndex++
                                     } else if (currentSection == "iptv" && showIptvCategoriesSettings && contentFocusIndex > 0 && iptvActionIndex < 2) {
                                         iptvActionIndex++
                                     } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..uiState.iptvPlaylists.size && iptvActionIndex < 5) {
@@ -1011,14 +1017,18 @@ fun SettingsScreen(
                                                 contentFocusIndex in 0 until stremioAddons.size -> {
                                                     val addon = stremioAddons[contentFocusIndex]
                                                     val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
-                                                    if (addonActionIndex == 0 || !canDelete) {
-                                                        viewModel.toggleAddon(addon.id)
-                                                    } else {
-                                                        viewModel.removeAddon(addon.id)
-                                                        addonActionIndex = 0
-                                                        if (contentFocusIndex >= stremioAddons.size && contentFocusIndex > 0) {
-                                                            contentFocusIndex--
+                                                    when (addonActionIndex) {
+                                                        0 -> viewModel.toggleAddon(addon.id)
+                                                        1 -> viewModel.moveAddonUp(addon.id)
+                                                        2 -> viewModel.moveAddonDown(addon.id)
+                                                        3 -> if (canDelete) {
+                                                            viewModel.removeAddon(addon.id)
+                                                            addonActionIndex = 0
+                                                            if (contentFocusIndex >= stremioAddons.size && contentFocusIndex > 0) {
+                                                                contentFocusIndex--
+                                                            }
                                                         }
+                                                        else -> viewModel.toggleAddon(addon.id)
                                                     }
                                                 }
                                                 else -> {
@@ -1496,6 +1506,8 @@ fun SettingsScreen(
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = addonActionIndex,
                             onToggleAddon = { viewModel.toggleAddon(it) },
+                            onMoveAddonUp = { viewModel.moveAddonUp(it) },
+                            onMoveAddonDown = { viewModel.moveAddonDown(it) },
                             onDeleteAddon = { viewModel.removeAddon(it) },
                             onAddCustomAddon = { showCustomAddonInput = true }
                         )
@@ -3764,6 +3776,8 @@ private fun MobileSettingsSubPage(
                     focusedIndex = -1,
                     focusedActionIndex = 0,
                     onToggleAddon = { viewModel.toggleAddon(it) },
+                    onMoveAddonUp = { viewModel.moveAddonUp(it) },
+                    onMoveAddonDown = { viewModel.moveAddonDown(it) },
                     onDeleteAddon = { viewModel.removeAddon(it) },
                     onAddCustomAddon = onAddCustomAddonClick
                 )
@@ -7042,6 +7056,8 @@ private fun StremioAddonsSettings(
     focusedIndex: Int = -1,
     focusedActionIndex: Int = 0,
     onToggleAddon: (String) -> Unit = {},
+    onMoveAddonUp: (String) -> Unit = {},
+    onMoveAddonDown: (String) -> Unit = {},
     onDeleteAddon: (String) -> Unit = {},
     onAddCustomAddon: () -> Unit = {}
 ) {
@@ -7058,6 +7074,8 @@ private fun StremioAddonsSettings(
                 } else {
                     addons.forEachIndexed { index, addon ->
                         val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
+                        val canMoveUp = index > 0
+                        val canMoveDown = index < addons.lastIndex
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { onToggleAddon(addon.id) }.padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -7072,6 +7090,36 @@ private fun StremioAddonsSettings(
                             // Toggle switch
                             Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (addon.isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).padding(3.dp), contentAlignment = if (addon.isEnabled) Alignment.CenterEnd else Alignment.CenterStart) {
                                 Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clickable(enabled = canMoveUp) { onMoveAddonUp(addon.id) }
+                                    .background(Color.White.copy(alpha = if (canMoveUp) 0.1f else 0.04f), RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.ArrowUpward,
+                                    contentDescription = "Move addon up",
+                                    tint = TextSecondary.copy(alpha = if (canMoveUp) 1f else 0.35f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clickable(enabled = canMoveDown) { onMoveAddonDown(addon.id) }
+                                    .background(Color.White.copy(alpha = if (canMoveDown) 0.1f else 0.04f), RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.ArrowDownward,
+                                    contentDescription = "Move addon down",
+                                    tint = TextSecondary.copy(alpha = if (canMoveDown) 1f else 0.35f),
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             if (canDelete) {
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -7096,7 +7144,17 @@ private fun StremioAddonsSettings(
             } else {
                 addons.forEachIndexed { index, addon ->
                     val canDelete = !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
-                    AddonRow(addon = addon, isFocused = focusedIndex == index, focusedAction = if (focusedIndex == index) focusedActionIndex else -1, canDelete = canDelete, onToggle = { onToggleAddon(addon.id) }, onDelete = { onDeleteAddon(addon.id) }, modifier = Modifier.settingsFocusSlot(index))
+                    AddonRow(
+                        addon = addon,
+                        isFocused = focusedIndex == index,
+                        focusedAction = if (focusedIndex == index) focusedActionIndex else -1,
+                        canDelete = canDelete,
+                        onToggle = { onToggleAddon(addon.id) },
+                        onMoveUp = { onMoveAddonUp(addon.id) },
+                        onMoveDown = { onMoveAddonDown(addon.id) },
+                        onDelete = { onDeleteAddon(addon.id) },
+                        modifier = Modifier.settingsFocusSlot(index)
+                    )
                     if (index < addons.size - 1) { Spacer(modifier = Modifier.height(12.dp)) }
                 }
             }
@@ -7138,11 +7196,15 @@ private fun AddonRow(
     focusedAction: Int = -1,
     canDelete: Boolean = true,
     onToggle: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isToggleFocused = isFocused && focusedAction == 0
-    val isDeleteFocused = canDelete && isFocused && focusedAction == 1
+    val isMoveUpFocused = isFocused && focusedAction == 1
+    val isMoveDownFocused = isFocused && focusedAction == 2
+    val isDeleteFocused = canDelete && isFocused && focusedAction == 3
     val isEnabled = addon.isEnabled
     val focusRingColor = resolveAccentColor(fallback = Pink)
 
@@ -7249,29 +7311,25 @@ private fun AddonRow(
                 }
             }
 
+            CatalogActionChip(
+                icon = Icons.Default.ArrowUpward,
+                isFocused = isMoveUpFocused,
+                onClick = onMoveUp
+            )
+
+            CatalogActionChip(
+                icon = Icons.Default.ArrowDownward,
+                isFocused = isMoveDownFocused,
+                onClick = onMoveDown
+            )
+
             if (canDelete) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clickable { onDelete() }
-                        .background(
-                            color = if (isDeleteFocused) Color(0xFFEF4444) else Color.White.copy(alpha = 0.1f),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        .border(
-                            width = if (isDeleteFocused) 2.dp else 0.dp,
-                            color = if (isDeleteFocused) Color.White else Color.Transparent,
-                            shape = RoundedCornerShape(8.dp)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete addon",
-                        tint = if (isDeleteFocused) Color.White else TextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                CatalogActionChip(
+                    icon = Icons.Default.Delete,
+                    isFocused = isDeleteFocused,
+                    isDestructive = true,
+                    onClick = onDelete
+                )
             }
         }
     }
