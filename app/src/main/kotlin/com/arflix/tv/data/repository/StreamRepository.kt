@@ -10,6 +10,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.arflix.tv.data.api.*
 import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.AddonInstallSource
+import com.arflix.tv.data.model.AddonCatalog
 import com.arflix.tv.data.model.AddonManifest
 import com.arflix.tv.data.model.AddonResource
 import com.arflix.tv.data.model.AddonStreamResult
@@ -1322,11 +1323,17 @@ class StreamRepository @Inject constructor(
         val manifest = addon.manifest ?: return false
         val normalizedType = type.trim().lowercase(Locale.US)
         if (normalizedType.isBlank()) return false
-        if (manifest.types.any { it.trim().equals(normalizedType, ignoreCase = true) }) return true
-        if (manifest.catalogs.any { it.type.trim().equals(normalizedType, ignoreCase = true) }) return true
-        return manifest.resources.any { resource ->
-            resource.types.any { it.trim().equals(normalizedType, ignoreCase = true) }
-        }
+        // Gson can set non-nullable list fields to null when the manifest JSON contains null;
+        // assign to nullable locals so safe-call checks work correctly at runtime.
+        val types: List<String>? = manifest.types
+        val catalogs: List<AddonCatalog>? = manifest.catalogs
+        val resources: List<AddonResource>? = manifest.resources
+        if (types?.any { it.trim().equals(normalizedType, ignoreCase = true) } == true) return true
+        if (catalogs?.any { it.type.trim().equals(normalizedType, ignoreCase = true) } == true) return true
+        return resources?.any { resource ->
+            val resTypes: List<String>? = resource.types
+            resTypes?.any { it.trim().equals(normalizedType, ignoreCase = true) } == true
+        } == true
     }
 
     private fun shouldPreferNativeAnimeIds(addon: Addon): Boolean {
