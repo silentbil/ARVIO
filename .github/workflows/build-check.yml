@@ -1,12 +1,13 @@
 name: Build Check
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
+    types: [opened, synchronize, reopened]
 
 concurrency:
-  group: build-check-${{ github.ref }}
+  group: build-check-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -15,8 +16,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout PR code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Java
         uses: actions/setup-java@v4
