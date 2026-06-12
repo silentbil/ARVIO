@@ -1526,9 +1526,7 @@ fun SettingsScreen(
                         "plugins" -> {
                             com.arflix.tv.ui.screens.plugin.PluginScreen(
                                 onBackPressed = { activeZone = Zone.SECTION },
-                                onNavigateToSection = {
-                                    activeZone = Zone.SECTION
-                                }
+                                onNavigateToSection = { activeZone = Zone.SECTION }
                             )
                         }
                         "accounts" -> AccountsSettings(

@@ -11,7 +11,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
 
@@ -32,6 +34,8 @@ fun PluginScreen(
     val uiState by viewModel.uiState.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     val addButtonFocusRequester = remember { FocusRequester() }
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val sectionNavKey = if (isRtl) Key.DirectionRight else Key.DirectionLeft
 
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(100)
@@ -45,9 +49,18 @@ fun PluginScreen(
             .padding(bottom = 80.dp)
             .fillMaxWidth()
             .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
-                    onNavigateToSection?.invoke()
-                    return@onPreviewKeyEvent onNavigateToSection != null
+                if (event.type == KeyEventType.KeyDown) {
+                    when (event.key) {
+                        sectionNavKey -> {
+                            onNavigateToSection?.invoke()
+                            return@onPreviewKeyEvent onNavigateToSection != null
+                        }
+                        Key.Back, Key.Escape -> {
+                            onBackPressed()
+                            return@onPreviewKeyEvent true
+                        }
+                        else -> {}
+                    }
                 }
                 false
             }
