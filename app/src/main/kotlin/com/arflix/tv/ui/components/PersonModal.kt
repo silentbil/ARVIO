@@ -53,6 +53,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -107,6 +109,7 @@ fun PersonModal(
     var focusedKnownForIndex by remember { mutableIntStateOf(0) }
     val scrollState = rememberScrollState()
     val focusRequester = remember { FocusRequester() }
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     // Request focus when modal becomes visible
     androidx.compose.runtime.LaunchedEffect(isVisible) {
@@ -148,12 +151,21 @@ fun PersonModal(
                                 true
                             }
                             Key.DirectionLeft -> {
-                                if (focusedKnownForIndex > 0) focusedKnownForIndex--
+                                if (isRtl) {
+                                    val max = (person?.knownFor?.size ?: 1) - 1
+                                    if (focusedKnownForIndex < max) focusedKnownForIndex++
+                                } else {
+                                    if (focusedKnownForIndex > 0) focusedKnownForIndex--
+                                }
                                 true
                             }
                             Key.DirectionRight -> {
-                                val max = (person?.knownFor?.size ?: 1) - 1
-                                if (focusedKnownForIndex < max) focusedKnownForIndex++
+                                if (isRtl) {
+                                    if (focusedKnownForIndex > 0) focusedKnownForIndex--
+                                } else {
+                                    val max = (person?.knownFor?.size ?: 1) - 1
+                                    if (focusedKnownForIndex < max) focusedKnownForIndex++
+                                }
                                 true
                             }
                             Key.Enter, Key.DirectionCenter -> {

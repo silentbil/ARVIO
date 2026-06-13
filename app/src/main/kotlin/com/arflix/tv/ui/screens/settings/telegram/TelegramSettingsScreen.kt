@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,12 +31,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -67,13 +79,15 @@ fun TelegramSettingsScreen(
     viewModel: TelegramSettingsViewModel = hiltViewModel()
 ) {
     val authState by viewModel.authState.collectAsState()
+    val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsState()
+    var showDisconnectConfirm by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(appBackgroundDark())
-            .padding(horizontal = 32.dp, vertical = 24.dp)
     ) {
+        Box(modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 24.dp)) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -124,13 +138,26 @@ fun TelegramSettingsScreen(
                 )
                 is TelegramAuthState.Ready -> ConnectedContent(
                     firstName = state.firstName,
-                    onDisconnect = { viewModel.disconnect() }
+                    cacheSizeBytes = cacheSizeBytes,
+                    onDisconnect = { showDisconnectConfirm = true },
+                    onClearCache = { viewModel.clearCache() }
                 )
                 is TelegramAuthState.Error -> ErrorContent(
                     message = state.message,
                     onRetry = { viewModel.startAuth() }
                 )
             }
+        }
+        } // inner padded Box
+
+        if (showDisconnectConfirm) {
+            DisconnectConfirmDialog(
+                onConfirm = {
+                    showDisconnectConfirm = false
+                    viewModel.disconnect()
+                },
+                onDismiss = { showDisconnectConfirm = false }
+            )
         }
     }
 }
@@ -428,7 +455,9 @@ private fun PasswordContent(onSubmit: (String) -> Unit) {
 @Composable
 private fun ConnectedContent(
     firstName: String,
-    onDisconnect: () -> Unit
+    cacheSizeBytes: Long,
+    onDisconnect: () -> Unit,
+    onClearCache: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -466,6 +495,48 @@ private fun ConnectedContent(
                     text = "DISCONNECT",
                     style = ArflixTypography.label.copy(fontSize = 11.sp),
                     color = TextSecondary
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        var cacheFocused by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { if (cacheSizeBytes > 0L) onClearCache() }
+                .onFocusChanged { cacheFocused = it.isFocused }
+                .background(
+                    if (cacheFocused) Pink.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.04f),
+                    RoundedCornerShape(12.dp)
+                )
+                .border(
+                    width = if (cacheFocused) 2.dp else 1.dp,
+                    color = if (cacheFocused) Pink else Color.White.copy(alpha = 0.08f),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    text = "Video Cache",
+                    style = ArflixTypography.cardTitle.copy(fontSize = 14.sp),
+                    color = if (cacheFocused) Pink else TextPrimary
+                )
+                Text(
+                    text = formatCacheSize(cacheSizeBytes),
+                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                    color = TextSecondary
+                )
+            }
+            if (cacheSizeBytes > 0L) {
+                Text(
+                    text = "CLEAR",
+                    style = ArflixTypography.label.copy(fontSize = 11.sp),
+                    color = Pink
                 )
             }
         }
@@ -507,6 +578,116 @@ private fun ActionButton(label: String, onClick: () -> Unit) {
             color = Pink
         )
     }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun DisconnectConfirmDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val focusRequester = remember { FocusRequester() }
+    var focusedButton by remember { mutableIntStateOf(0) } // 0 = cancel, 1 = disconnect
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.65f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 360.dp)
+                .background(BackgroundElevated, RoundedCornerShape(16.dp))
+                .clickable(enabled = false) {}
+                .focusRequester(focusRequester)
+                .focusable()
+                .onKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    when (event.key) {
+                        Key.Back, Key.Escape -> { onDismiss(); true }
+                        Key.DirectionLeft  -> { focusedButton = if (isRtl) 1 else 0; true }
+                        Key.DirectionRight -> { focusedButton = if (isRtl) 0 else 1; true }
+                        Key.Enter, Key.DirectionCenter -> {
+                            if (focusedButton == 0) onDismiss() else onConfirm()
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Disconnect Telegram?",
+                style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "You'll need to sign in again to use Telegram as a source.",
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                color = TextSecondary,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .background(
+                            if (focusedButton == 0) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.06f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .border(
+                            width = if (focusedButton == 0) 2.dp else 0.dp,
+                            color = if (focusedButton == 0) Color.White.copy(alpha = 0.5f) else Color.Transparent,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .clickable { onDismiss() }
+                        .padding(vertical = 13.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "CANCEL",
+                        style = ArflixTypography.label.copy(fontSize = 12.sp),
+                        color = TextPrimary
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .background(
+                            if (focusedButton == 1) Pink.copy(alpha = 0.3f) else Pink.copy(alpha = 0.12f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .border(
+                            width = if (focusedButton == 1) 2.dp else 1.dp,
+                            color = if (focusedButton == 1) Pink else Pink.copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .clickable { onConfirm() }
+                        .padding(vertical = 13.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "DISCONNECT",
+                        style = ArflixTypography.label.copy(fontSize = 12.sp),
+                        color = Pink
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatCacheSize(bytes: Long): String = when {
+    bytes <= 0 -> "Empty"
+    bytes >= 1_000_000_000 -> "%.1f GB".format(bytes / 1_000_000_000.0)
+    bytes >= 1_000_000 -> "%.1f MB".format(bytes / 1_000_000.0)
+    bytes >= 1_000 -> "%.0f KB".format(bytes / 1_000.0)
+    else -> "$bytes B"
 }
 
 @Composable
