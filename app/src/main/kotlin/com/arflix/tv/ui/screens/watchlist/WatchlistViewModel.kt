@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 enum class ToastType {
@@ -46,6 +47,8 @@ class WatchlistViewModel @Inject constructor(
     private val _logoUrls = MutableStateFlow<Map<String, String>>(emptyMap())
     val logoUrls: StateFlow<Map<String, String>> = _logoUrls.asStateFlow()
     private var traktSyncInFlight = false
+    private var initialLoadComplete = false
+    private var enrichmentInFlight = false
 
     private fun watchlistDiagnosticContext(
         phase: String,
@@ -113,73 +116,112 @@ class WatchlistViewModel @Inject constructor(
 
     private fun loadWatchlistInstant() {
         viewModelScope.launch {
-            if (watchlistRepository.getCachedItems().isEmpty()) {
-                runCatching { cloudSyncRepository.pullFromCloud() }
-                    .onFailure { error ->
-                        AppLogger.recordException(
-                            throwable = error,
-                            context = watchlistDiagnosticContext("startup_cloud_pull")
-                        )
-                    }
+            val initialLocalItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
+            if (initialLocalItems.isNotEmpty()) {
+                _uiState.value = initialLocalItems.toSplitState(isLoading = false)
+                fetchLogos(initialLocalItems)
             }
-            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
-            if (traktConnected) {
-                val cachedItems = (watchlistRepository.getCachedItems().ifEmpty {
-                    watchlistRepository.getWatchlistItems()
-                }).watchlistDisplayOrder()
-                _uiState.value = cachedItems.toSplitState(isLoading = cachedItems.isEmpty())
-                if (cachedItems.isNotEmpty()) fetchLogos(cachedItems)
-            } else {
-                val cachedItems = watchlistRepository.getCachedItems()
-                if (cachedItems.isNotEmpty()) {
-                    _uiState.value = cachedItems.toSplitState(isLoading = false)
-                } else {
-                    _uiState.value = WatchlistUiState(isLoading = true)
+
+            if (initialLocalItems.isEmpty()) {
+                withTimeoutOrNull(3_500) {
+                    runCatching { cloudSyncRepository.pullFromCloud() }
+                        .onFailure { error ->
+                            AppLogger.recordException(
+                                throwable = error,
+                                context = watchlistDiagnosticContext("startup_cloud_pull")
+                            )
+                        }
+                }
+                val cloudItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
+                if (cloudItems.isNotEmpty()) {
+                    _uiState.value = cloudItems.toSplitState(isLoading = false)
+                    fetchLogos(cloudItems)
                 }
             }
 
-            // Trakt must win over stale local cache when the profile is connected.
-            try {
-                val syncedFromTrakt = syncTraktWatchlistSuspend()
-                if (!syncedFromTrakt && !traktConnected) {
-                    val items = watchlistRepository.getWatchlistItems().watchlistDisplayOrder()
-                    _uiState.value = items.toSplitState(isLoading = false)
-                } else if (!syncedFromTrakt) {
-                    showLocalWatchlistOrError("Failed to load Trakt watchlist")
-                }
-            } catch (e: Exception) {
-                AppLogger.recordException(
-                    throwable = e,
-                    context = watchlistDiagnosticContext(
-                        phase = "load_instant",
-                        extra = mapOf("trakt_connected" to traktConnected.toString())
-                    )
-                )
-                if (traktConnected) {
-                    showLocalWatchlistOrError(e.message ?: "Failed to load Trakt watchlist")
-                } else if (_uiState.value.isEmpty) {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = e.message
-                    )
+            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+            if (!traktConnected) {
+                val items = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
+                _uiState.value = items.toSplitState(isLoading = false)
+                if (items.isNotEmpty()) fetchLogos(items)
+                if (items.isNotEmpty()) enrichLocalWatchlistInBackground()
+                initialLoadComplete = true
+                return@launch
+            }
+
+            val visibleItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
+            _uiState.value = visibleItems.toSplitState(isLoading = visibleItems.isEmpty())
+            if (visibleItems.isNotEmpty()) fetchLogos(visibleItems)
+            initialLoadComplete = true
+
+            // Trakt is authoritative when connected, but it must not hold the page hostage.
+            val syncedFromTrakt = withTimeoutOrNull(12_000) {
+                syncTraktWatchlistSuspend()
+            } ?: false
+
+            if (!syncedFromTrakt) {
+                val fallbackItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
+                if (fallbackItems.isNotEmpty()) {
+                    _uiState.value = fallbackItems.toSplitState(isLoading = false)
+                    fetchLogos(fallbackItems)
+                    enrichLocalWatchlistInBackground()
                 } else {
-                    _uiState.value = _uiState.value.copy(isLoading = false)
+                    _uiState.value = WatchlistUiState(
+                        isLoading = false,
+                        error = "Failed to load Trakt watchlist"
+                    )
                 }
+            } else {
+                enrichLocalWatchlistInBackground()
+            }
+        }
+    }
+
+    private fun enrichLocalWatchlistInBackground() {
+        if (enrichmentInFlight) return
+        enrichmentInFlight = true
+        viewModelScope.launch {
+            try {
+                val enrichedItems = watchlistRepository.refreshWatchlistItems().watchlistDisplayOrder()
+                if (enrichedItems.isNotEmpty()) {
+                    _uiState.value = enrichedItems.toSplitState(isLoading = false)
+                    fetchLogos(enrichedItems)
+                } else if (_uiState.value.isLoading) {
+                    _uiState.value = WatchlistUiState(isLoading = false)
+                }
+            } catch (error: Exception) {
+                AppLogger.recordException(
+                    throwable = error,
+                    context = watchlistDiagnosticContext("background_enrich")
+                )
+                if (_uiState.value.isLoading) {
+                    val fallbackItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
+                    _uiState.value = fallbackItems.toSplitState(isLoading = false)
+                }
+            } finally {
+                enrichmentInFlight = false
             }
         }
     }
 
     fun refresh() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
+            val hadItems = _uiState.value.allItems.isNotEmpty()
+            _uiState.value = _uiState.value.copy(isLoading = !hadItems)
             try {
-                val syncedFromTrakt = syncTraktWatchlistSuspend()
                 val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val syncedFromTrakt = if (traktConnected) {
+                    withTimeoutOrNull(15_000) { syncTraktWatchlistSuspend() } ?: false
+                } else {
+                    false
+                }
                 if (!syncedFromTrakt && !traktConnected) {
                     val items = watchlistRepository.refreshWatchlistItems().watchlistDisplayOrder()
                     _uiState.value = items.toSplitState(isLoading = false)
                 } else if (!syncedFromTrakt) {
                     showLocalWatchlistOrError("Failed to load Trakt watchlist")
+                } else {
+                    enrichLocalWatchlistInBackground()
                 }
             } catch (e: Exception) {
                 AppLogger.recordException(
@@ -195,8 +237,21 @@ class WatchlistViewModel @Inject constructor(
         }
     }
 
+    fun refreshAfterResume() {
+        if (!initialLoadComplete) return
+        viewModelScope.launch {
+            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+            if (!traktConnected || traktSyncInFlight) return@launch
+            val syncedFromTrakt = withTimeoutOrNull(10_000) { syncTraktWatchlistSuspend() } ?: false
+            if (!syncedFromTrakt && _uiState.value.isLoading) {
+                val fallbackItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
+                _uiState.value = fallbackItems.toSplitState(isLoading = false)
+            }
+        }
+    }
+
     private suspend fun showLocalWatchlistOrError(message: String) {
-        val cachedItems = watchlistRepository.getWatchlistItems().watchlistDisplayOrder()
+        val cachedItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
         if (cachedItems.isNotEmpty()) {
             _uiState.value = cachedItems.toSplitState(isLoading = false)
             fetchLogos(cachedItems)

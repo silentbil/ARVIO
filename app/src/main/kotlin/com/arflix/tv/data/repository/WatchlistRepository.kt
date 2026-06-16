@@ -80,6 +80,31 @@ class WatchlistRepository @Inject constructor(
     fun getCachedItems(): List<MediaItem> = itemsCache.toList()
 
     /**
+     * Load locally stored watchlist items without waiting for TMDB enrichment.
+     * This is the fast path for screens: posters/details can be refined later,
+     * but the page should never block on network work just to show saved items.
+     */
+    suspend fun getLocalWatchlistItems(): List<MediaItem> = withContext(Dispatchers.IO) {
+        if (itemsCache.isNotEmpty()) {
+            return@withContext itemsCache.toList()
+        }
+
+        val rawItems = loadWatchlistRaw()
+        val instantItems = rawItems.map { it.toBasicMediaItem() }
+        cacheMutex.withLock {
+            itemsCache.clear()
+            itemsCache.addAll(instantItems)
+            keyCache.clear()
+            instantItems.forEach { item ->
+                keyCache.add(cacheKey(item.mediaType, item.id))
+            }
+            _watchlistItems.value = instantItems
+            cacheLoaded = true
+        }
+        instantItems
+    }
+
+    /**
      * Check if an item is in watchlist
      */
     suspend fun isInWatchlist(mediaType: MediaType, tmdbId: Int): Boolean {
@@ -201,6 +226,8 @@ class WatchlistRepository @Inject constructor(
 
         val instantItems = rawItems.map { it.toBasicMediaItem() }
         cacheMutex.withLock {
+            itemsCache.clear()
+            itemsCache.addAll(instantItems)
             keyCache.clear()
             instantItems.forEach { item ->
                 keyCache.add(cacheKey(item.mediaType, item.id))

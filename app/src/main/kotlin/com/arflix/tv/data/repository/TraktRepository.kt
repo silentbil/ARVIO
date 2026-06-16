@@ -2434,10 +2434,12 @@ class TraktRepository @Inject constructor(
             return false to null
         }
         val watchlist = fetchAllWatchlistItems(auth)
-        val items = hydrateWatchlistItems(watchlist)
+        val items = watchlist
+            .mapIndexedNotNull { index, item -> mapWatchlistItemFast(item, sourceOrder = index) }
+            .sortedWith(compareBy<MediaItem> { it.sourceOrder }.thenByDescending { it.addedAt })
         AppLogger.breadcrumb(
             tag = "Trakt",
-            message = "watchlist_hydrated raw=${watchlist.size} hydrated=${items.size}",
+            message = "watchlist_mapped raw=${watchlist.size} mapped=${items.size}",
             severity = if (watchlist.isNotEmpty() && items.isEmpty()) "warning" else "info"
         )
         return true to WatchlistSyncResult(items = items, rawCount = watchlist.size)
@@ -2638,11 +2640,11 @@ class TraktRepository @Inject constructor(
         }
     }
 
-    private suspend fun mapWatchlistItemFast(item: TraktWatchlistItem): MediaItem? {
+    private fun mapWatchlistItemFast(item: TraktWatchlistItem, sourceOrder: Int): MediaItem? {
         val listedAtMs = parseTraktListedAtMs(item.listedAt)
         return when (item.type) {
             "movie" -> item.movie?.let { movie ->
-                val tmdbId = resolveWatchlistMovieTmdbId(movie) ?: return null
+                val tmdbId = movie.ids.tmdb?.takeIf { it > 0 } ?: return null
                 MediaItem(
                     id = tmdbId,
                     title = movie.title,
@@ -2652,11 +2654,12 @@ class TraktRepository @Inject constructor(
                     mediaType = MediaType.MOVIE,
                     image = "",
                     backdrop = null,
-                    addedAt = listedAtMs
+                    addedAt = listedAtMs,
+                    sourceOrder = sourceOrder
                 )
             }
             "show" -> item.show?.let { show ->
-                val tmdbId = resolveWatchlistShowTmdbId(show) ?: return null
+                val tmdbId = show.ids.tmdb?.takeIf { it > 0 } ?: return null
                 MediaItem(
                     id = tmdbId,
                     title = show.title,
@@ -2666,7 +2669,8 @@ class TraktRepository @Inject constructor(
                     mediaType = MediaType.TV,
                     image = "",
                     backdrop = null,
-                    addedAt = listedAtMs
+                    addedAt = listedAtMs,
+                    sourceOrder = sourceOrder
                 )
             }
             else -> null
