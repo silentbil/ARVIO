@@ -233,6 +233,13 @@
 -dontwarn org.drinkless.tdlib.**
 
 # ============================================
+# org.json — Android provides these at runtime; any bundled copy must not be
+# renamed or R8 will produce org.json.b/c names that collide with the system
+# classes and fail ART bytecode verification (VerifyError on app launch).
+# ============================================
+-keep class org.json.** { *; }
+
+# ============================================
 # App-specific keeps
 # ============================================
 # Keep app exception classes for crash reporting
