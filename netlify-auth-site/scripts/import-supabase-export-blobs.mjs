@@ -4,10 +4,20 @@ import readline from "node:readline";
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
 
-const exportDir = process.argv[2] || process.env.SUPABASE_EXPORT_DIR;
+const args = process.argv.slice(2);
+const exportDir = args.find((arg) => !arg.startsWith("--")) || process.env.SUPABASE_EXPORT_DIR;
 if (!exportDir) {
-  console.error("Usage: node scripts/import-supabase-export-blobs.mjs <export-dir>");
+  console.error("Usage: node scripts/import-supabase-export-blobs.mjs <export-dir> [--email user@example.com] [--limit 100] [--concurrency 4] [--force]");
   process.exit(1);
+}
+
+function argValue(name, fallback = "") {
+  const index = args.indexOf(name);
+  return index >= 0 ? String(args[index + 1] || fallback) : fallback;
+}
+
+function hasArg(name) {
+  return args.includes(name);
 }
 
 function readNetlifyToken() {
@@ -27,12 +37,21 @@ const legacyStore = getStore({
 
 const usersById = new Map();
 const bestByUser = new Map();
-const emailArgIndex = process.argv.indexOf("--email");
-const targetEmail = emailArgIndex >= 0 ? normalizeEmail(process.argv[emailArgIndex + 1] || "") : "";
-const limitArgIndex = process.argv.indexOf("--limit");
-const importLimit = limitArgIndex >= 0 ? Number(process.argv[limitArgIndex + 1] || 0) : 0;
+const checkpointPath = path.resolve(argValue(
+  "--checkpoint",
+  path.join(exportDir, "netlify-blobs-import-checkpoint.json")
+));
+const targetEmail = normalizeEmail(argValue("--email"));
+const importLimit = Number(argValue("--limit", "0") || 0);
+const concurrency = Math.max(1, Number(argValue("--concurrency", "4") || 4));
+const progressInterval = Math.max(1, Number(argValue("--progress", "250") || 250));
+const forceImport = hasArg("--force");
 const targetUserIds = new Set();
 let writtenCount = 0;
+let scheduledCount = 0;
+let skippedByCheckpoint = 0;
+const startedAt = Date.now();
+const pendingWrites = new Set();
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
@@ -51,6 +70,55 @@ async function* readNdjson(fileName) {
     const trimmed = line.trim();
     if (trimmed) yield JSON.parse(trimmed);
   }
+}
+
+function elapsed() {
+  const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes > 0 ? `${minutes}m${String(rest).padStart(2, "0")}s` : `${seconds}s`;
+}
+
+function metricsSummary(metrics, source, writtenAt = new Date().toISOString()) {
+  return {
+    restoreRank: metrics.restoreRank,
+    profileCount: metrics.profileCount,
+    scopedCoverage: metrics.scopedCoverage,
+    payloadUpdatedAt: metrics.payloadUpdatedAt,
+    payloadVersion: metrics.payloadVersion,
+    source,
+    writtenAt
+  };
+}
+
+function loadCheckpoint() {
+  if (forceImport || !fs.existsSync(checkpointPath)) return;
+  const checkpoint = JSON.parse(fs.readFileSync(checkpointPath, "utf8"));
+  const imported = checkpoint.imported || {};
+  Object.entries(imported).forEach(([userId, summary]) => {
+    bestByUser.set(userId, summary);
+  });
+  console.log(`checkpoint loaded: ${bestByUser.size} users from ${checkpointPath}`);
+}
+
+function saveCheckpoint(extra = {}) {
+  const imported = {};
+  for (const [userId, summary] of bestByUser.entries()) {
+    imported[userId] = summary;
+  }
+  const checkpoint = {
+    exportDir: path.resolve(exportDir),
+    siteID,
+    updatedAt: new Date().toISOString(),
+    imported,
+    stats: {
+      writtenCount,
+      scheduledCount,
+      skippedByCheckpoint,
+      ...extra
+    }
+  };
+  fs.writeFileSync(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`, "utf8");
 }
 
 function payloadMetrics(payload) {
@@ -143,6 +211,25 @@ function isBetter(existing, incoming) {
   return String(incoming.payloadUpdatedAt || "") >= String(existing.payloadUpdatedAt || "");
 }
 
+function limitReached() {
+  return importLimit > 0 && scheduledCount >= importLimit;
+}
+
+async function withRetry(label, action) {
+  let lastError;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+      const waitMs = Math.min(30_000, 1_000 * 2 ** (attempt - 1));
+      console.warn(`${label} failed attempt=${attempt}: ${error.message}`);
+      if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+  throw lastError;
+}
+
 async function writeSnapshot(userId, metrics, source) {
   const user = usersById.get(userId);
   const email = normalizeEmail(user?.email || "");
@@ -168,10 +255,38 @@ async function writeSnapshot(userId, metrics, source) {
   }
 }
 
+async function enqueueWrite(userId, metrics, source) {
+  scheduledCount += 1;
+  const task = (async () => {
+    await withRetry(`write snapshot user=${userId} source=${source}`, async () => {
+      await writeSnapshot(userId, metrics, source);
+    });
+    writtenCount += 1;
+    bestByUser.set(userId, metricsSummary(metrics, source));
+    if (writtenCount % 25 === 0) saveCheckpoint();
+    if (writtenCount % 100 === 0) {
+      console.log(`written=${writtenCount} scheduled=${scheduledCount} users=${bestByUser.size} elapsed=${elapsed()}`);
+    }
+  })();
+
+  pendingWrites.add(task);
+  task.finally(() => pendingWrites.delete(task));
+
+  if (pendingWrites.size >= concurrency) {
+    await Promise.race(pendingWrites);
+  }
+}
+
+async function flushWrites() {
+  if (pendingWrites.size === 0) return;
+  await Promise.all(pendingWrites);
+  saveCheckpoint();
+}
+
 async function considerSnapshot(userId, payload, source) {
   if (!userId || !payload) return false;
   if (targetUserIds.size > 0 && !targetUserIds.has(userId)) return false;
-  if (importLimit > 0 && writtenCount >= importLimit) return false;
+  if (importLimit > 0 && scheduledCount >= importLimit) return false;
   let metrics;
   try {
     metrics = payloadMetrics(payload);
@@ -179,10 +294,11 @@ async function considerSnapshot(userId, payload, source) {
     console.warn(`skip invalid payload user=${userId} source=${source}: ${error.message}`);
     return false;
   }
-  if (!isBetter(bestByUser.get(userId), metrics)) return false;
-  bestByUser.set(userId, metrics);
-  await writeSnapshot(userId, metrics, source);
-  writtenCount += 1;
+  if (!isBetter(bestByUser.get(userId), metrics)) {
+    skippedByCheckpoint += 1;
+    return false;
+  }
+  await enqueueWrite(userId, metrics, source);
   return true;
 }
 
@@ -218,18 +334,38 @@ async function importSnapshots() {
   for await (const row of readNdjson("public.account_sync_state.ndjson")) {
     stats.account_sync_state += 1;
     if (await considerSnapshot(row.user_id, row.payload, "account_sync_state")) stats.written += 1;
-    if (stats.account_sync_state % 250 === 0) {
-      console.log(`account_sync_state scanned=${stats.account_sync_state} written=${stats.written}`);
+    if (limitReached()) {
+      console.log(`limit reached during account_sync_state after scanned=${stats.account_sync_state}`);
+      break;
     }
+    if (stats.account_sync_state % progressInterval === 0) {
+      console.log(`account_sync_state scanned=${stats.account_sync_state} written=${stats.written} skipped=${skippedByCheckpoint} pending=${pendingWrites.size} elapsed=${elapsed()}`);
+    }
+  }
+  await flushWrites();
+  if (limitReached()) {
+    saveCheckpoint({ finalStats: stats });
+    console.log(`snapshot import stopped by limit: ${JSON.stringify(stats)} checkpointUsers=${bestByUser.size} elapsed=${elapsed()}`);
+    return;
   }
 
   for await (const row of readNdjson("public.user_settings.ndjson")) {
     stats.user_settings += 1;
     const payload = row.settings?.accountSyncPayload;
     if (await considerSnapshot(row.user_id, payload, "user_settings")) stats.written += 1;
-    if (stats.user_settings % 250 === 0) {
-      console.log(`user_settings scanned=${stats.user_settings} written=${stats.written}`);
+    if (limitReached()) {
+      console.log(`limit reached during user_settings after scanned=${stats.user_settings}`);
+      break;
     }
+    if (stats.user_settings % progressInterval === 0) {
+      console.log(`user_settings scanned=${stats.user_settings} written=${stats.written} skipped=${skippedByCheckpoint} pending=${pendingWrites.size} elapsed=${elapsed()}`);
+    }
+  }
+  await flushWrites();
+  if (limitReached()) {
+    saveCheckpoint({ finalStats: stats });
+    console.log(`snapshot import stopped by limit: ${JSON.stringify(stats)} checkpointUsers=${bestByUser.size} elapsed=${elapsed()}`);
+    return;
   }
 
   for await (const row of readNdjson("public.profiles.ndjson")) {
@@ -242,16 +378,25 @@ async function importSnapshots() {
       continue;
     }
     if (await considerSnapshot(row.id, addons.__arvioAccountSyncPayload, "profile_addons")) stats.written += 1;
-    if (stats.profile_addons % 1000 === 0) {
-      console.log(`profile_addons scanned=${stats.profile_addons} written=${stats.written}`);
+    if (limitReached()) {
+      console.log(`limit reached during profile_addons after scanned=${stats.profile_addons}`);
+      break;
+    }
+    if (stats.profile_addons % progressInterval === 0) {
+      console.log(`profile_addons scanned=${stats.profile_addons} written=${stats.written} skipped=${skippedByCheckpoint} pending=${pendingWrites.size} elapsed=${elapsed()}`);
     }
   }
+  await flushWrites();
 
-  console.log(`snapshot import complete: ${JSON.stringify(stats)}`);
+  saveCheckpoint({ finalStats: stats });
+  console.log(`snapshot import complete: ${JSON.stringify(stats)} checkpointUsers=${bestByUser.size} elapsed=${elapsed()}`);
 }
 
 console.log(`Importing snapshots into Netlify Blobs for site ${siteID}`);
 if (targetEmail) console.log(`Filter: email=${targetEmail}`);
 if (importLimit > 0) console.log(`Limit: ${importLimit} writes`);
+console.log(`Concurrency: ${concurrency}`);
+console.log(`Checkpoint: ${checkpointPath}${forceImport ? " (force import, ignoring existing checkpoint)" : ""}`);
+loadCheckpoint();
 await loadUsers();
 await importSnapshots();
