@@ -813,7 +813,7 @@
         throw new Error("Account found, but the password email could not be sent. Please try again in a minute.");
       }
       markEmailSent("reset", email);
-      return json;
+      return { ...json, email };
     }
 
     async function saveNewPassword() {
@@ -888,8 +888,8 @@
       try {
         setBusy(true);
         setStatus("Sending new password email...");
-        await sendPasswordReset();
-        setStatus("New password email sent. Check your inbox and spam folder.", "ok");
+        const result = await sendPasswordReset();
+        setStatus(`New password email sent to ${result.email}. Check your inbox and spam folder.`, "ok");
       } catch (err) {
         setStatus(err.message || String(err), "error");
       } finally {
