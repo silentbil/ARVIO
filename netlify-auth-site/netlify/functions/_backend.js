@@ -54,7 +54,7 @@ function parseBody(event) {
   const raw = event.isBase64Encoded
     ? Buffer.from(event.body, "base64").toString("utf8")
     : event.body;
-  return JSON.parse(raw);
+  return JSON.parse(String(raw || "").replace(/^\uFEFF/, ""));
 }
 
 function appAnonKey() {
@@ -347,6 +347,37 @@ async function loadLegacySnapshotByEmail(event, email) {
   return getJSONOrNull(stores.legacy, `email/${sha256(normalizeEmail(email))}.json`);
 }
 
+async function loadLegacyUserByEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+  try {
+    const result = await getPool().query(
+      `SELECT supabase_user_id, email, email_normalized
+         FROM public.legacy_supabase_users
+        WHERE email_normalized = $1
+        LIMIT 1`,
+      [normalizedEmail]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.warn(`legacy user lookup failed for ${normalizedEmail}: ${error.message}`);
+    return null;
+  }
+}
+
+async function loadLegacyAccountReference(event, email) {
+  const [legacyUser, legacySnapshot] = await Promise.all([
+    loadLegacyUserByEmail(email),
+    loadLegacySnapshotByEmail(event, email)
+  ]);
+  if (!legacyUser && !legacySnapshot) return null;
+  return {
+    user: legacyUser,
+    snapshot: legacySnapshot,
+    accountId: legacyUser?.supabase_user_id || legacyAccountIdForEmail(email)
+  };
+}
+
 async function issueArvioSession(event, account) {
   const normalizedAccount = {
     ...account,
@@ -480,8 +511,8 @@ async function sendPasswordSetupEmail(email, setupUrl) {
 async function startPasswordSetup(event, email) {
   const normalizedEmail = normalizeEmail(email);
   const account = await loadAuthAccount(event, normalizedEmail);
-  const legacySnapshot = account ? null : await loadLegacySnapshotByEmail(event, normalizedEmail);
-  if (!account && !legacySnapshot) {
+  const legacy = account ? null : await loadLegacyAccountReference(event, normalizedEmail);
+  if (!account && !legacy) {
     return { exists: false, emailSent: false };
   }
 
@@ -489,7 +520,7 @@ async function startPasswordSetup(event, email) {
   const expiresAt = new Date(Date.now() + PASSWORD_SETUP_TTL_MS).toISOString();
   const pending = {
     email: normalizedEmail,
-    accountId: account?.accountId || legacyAccountIdForEmail(normalizedEmail),
+    accountId: account?.accountId || legacy?.accountId || legacyAccountIdForEmail(normalizedEmail),
     createdAt: new Date().toISOString(),
     expiresAt
   };
@@ -539,8 +570,8 @@ async function completePasswordSetup(event, token, password) {
 async function authenticateNetlifyPassword(event, email, password) {
   const account = await loadAuthAccount(event, email);
   if (!account || !account.passwordHash) {
-    const legacySnapshot = account ? null : await loadLegacySnapshotByEmail(event, email);
-    if (legacySnapshot || account) {
+    const legacy = account ? null : await loadLegacyAccountReference(event, email);
+    if (legacy || account) {
       const error = new Error("ARVIO Cloud moved to a new secure server. To keep your data protected, create a new ARVIO Cloud password from the email we sent you.");
       error.statusCode = 409;
       error.code = "password_setup_required";
@@ -568,8 +599,8 @@ async function authenticateNetlifyPassword(event, email, password) {
 
 async function createNetlifyAccount(event, email, password) {
   const existing = await loadAuthAccount(event, email);
-  const legacySnapshot = existing ? null : await loadLegacySnapshotByEmail(event, email);
-  if (legacySnapshot && !existing?.passwordHash) {
+  const legacy = existing ? null : await loadLegacyAccountReference(event, email);
+  if (legacy && !existing?.passwordHash) {
     const error = new Error("ARVIO Cloud moved to a new secure server. Create a new ARVIO Cloud password to keep your existing data.");
     error.statusCode = 409;
     error.code = "password_setup_required";

@@ -646,13 +646,21 @@
       return normalizeEmail(value);
     }
 
-    function enforceEmailSendCooldown(action, email) {
-      const key = `arvio:${action}:${normalizeEmail(email)}`;
+    function emailSendCooldownKey(action, email) {
+      return `arvio:${action}:${normalizeEmail(email)}`;
+    }
+
+    function assertEmailSendCooldown(action, email) {
+      const key = emailSendCooldownKey(action, email);
       const last = Number(window.localStorage.getItem(key) || "0");
       const remaining = EMAIL_SEND_COOLDOWN_MS - (Date.now() - last);
       if (remaining > 0) {
         throw new Error(`Please wait ${Math.ceil(remaining / 1000)}s before requesting another email.`);
       }
+    }
+
+    function markEmailSent(action, email) {
+      const key = emailSendCooldownKey(action, email);
       window.localStorage.setItem(key, String(Date.now()));
     }
 
@@ -700,7 +708,7 @@
     async function signUpAndPairViaServer(email, password) {
       if (!pairCode) return;
       const normalizedEmail = requireValidEmail(email);
-      enforceEmailSendCooldown("signup", normalizedEmail);
+      assertEmailSendCooldown("signup", normalizedEmail);
       const resp = await fetch(`${FUNCTION_BASE}/tv-auth-complete`, {
         method: "POST",
         headers: {
@@ -717,11 +725,12 @@
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(json.error || "Account creation or TV pairing failed");
+      markEmailSent("signup", normalizedEmail);
     }
 
     async function createAccountViaServer(email, password) {
       const normalizedEmail = requireValidEmail(email);
-      enforceEmailSendCooldown("signup", normalizedEmail);
+      assertEmailSendCooldown("signup", normalizedEmail);
       const resp = await fetch(`${FUNCTION_BASE}/cloud-auth-email`, {
         method: "POST",
         headers: {
@@ -739,6 +748,7 @@
       if (!json.access_token || !json.refresh_token) {
         throw new Error("Account created but sign-in response was incomplete.");
       }
+      markEmailSent("signup", normalizedEmail);
       return normalizedEmail;
     }
 
@@ -757,9 +767,16 @@
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        const setupHint = json.code === "password_setup_required" && json.email_sent
-          ? " Check your email to create the new password."
-          : "";
+        let setupHint = "";
+        if (json.code === "password_setup_required") {
+          if (json.email_sent) {
+            setupHint = " We sent you an email to create your new ARVIO Cloud password.";
+          } else if (json.setup_error) {
+            setupHint = ` Password setup email could not be sent: ${json.setup_error}`;
+          } else {
+            setupHint = " Use Forgot password to create your new ARVIO Cloud password.";
+          }
+        }
         throw new Error((json.error || "Sign in failed") + setupHint);
       }
       return { email, password };
@@ -774,8 +791,8 @@
     }
 
     async function sendPasswordReset() {
-      const email = requireValidEmail(emailEl.value);
-      enforceEmailSendCooldown("reset", email);
+      const email = requireValidEmail(emailEl.value, false);
+      assertEmailSendCooldown("reset", email);
       const resp = await fetch(`${FUNCTION_BASE}/cloud-auth-reset`, {
         method: "POST",
         headers: {
@@ -789,6 +806,14 @@
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(json.error || "Password reset failed");
+      if (!json.account_exists) {
+        throw new Error("No ARVIO Cloud account was found for this email.");
+      }
+      if (!json.email_sent) {
+        throw new Error("Account found, but the password email could not be sent. Please try again in a minute.");
+      }
+      markEmailSent("reset", email);
+      return json;
     }
 
     async function saveNewPassword() {
