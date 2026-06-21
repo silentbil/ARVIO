@@ -207,6 +207,11 @@ class IptvRepository @Inject constructor(
     @Volatile var cachedStalkerApi: com.arflix.tv.data.api.StalkerApi? = null
 
     @Volatile
+    private var groupOrderLocallyDirty = false
+
+    fun isGroupOrderLocallyDirty(): Boolean = groupOrderLocallyDirty
+
+    @Volatile
     private var cachedNowNext: ConcurrentHashMap<String, IptvNowNext> = ConcurrentHashMap()
     private val emptyShortEpgCooldownUntil = ConcurrentHashMap<String, Long>()
     private val visibleXmlEpgCooldownUntil = ConcurrentHashMap<String, Long>()
@@ -1390,6 +1395,7 @@ class IptvRepository @Inject constructor(
             if (idx > 0) { order.removeAt(idx); order.add(idx - 1, target) }
             prefs[groupOrderKey()] = gson.toJson(order)
         }
+        groupOrderLocallyDirty = true
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group up")
     }
 
@@ -1405,6 +1411,7 @@ class IptvRepository @Inject constructor(
             order.add(0, target)
             prefs[groupOrderKey()] = gson.toJson(order)
         }
+        groupOrderLocallyDirty = true
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group to top")
     }
 
@@ -1419,6 +1426,7 @@ class IptvRepository @Inject constructor(
             if (idx >= 0 && idx < order.size - 1) { order.removeAt(idx); order.add(idx + 1, target) }
             prefs[groupOrderKey()] = gson.toJson(order)
         }
+        groupOrderLocallyDirty = true
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "move group down")
     }
 
@@ -1428,6 +1436,7 @@ class IptvRepository @Inject constructor(
             existing.removeAll { PlaylistGroupKey(it).playlistId == playlistId }
             prefs[groupOrderKey()] = gson.toJson(existing)
         }
+        groupOrderLocallyDirty = true
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "reset group order")
     }
 
@@ -2946,6 +2955,7 @@ class IptvRepository @Inject constructor(
                 prefs.remove(tvSessionKeyFor(safeProfileId))
             }
         }
+        groupOrderLocallyDirty = false
         if (profileManager.getProfileIdSync() == safeProfileId) {
             invalidateCache()
         }
