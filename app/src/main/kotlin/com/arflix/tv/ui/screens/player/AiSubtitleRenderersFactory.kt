@@ -95,8 +95,17 @@ private class TranslatingTextOutput(
             return
         }
 
-        val text = extractText(cues)
+        val rawText = extractRawText(cues)
+        if (rawText.isBlank()) {
+            // Cues carry no extractable text (e.g. bitmap/PGS image subtitles). They can't be
+            // translated — pass the originals through so image subtitles still appear on screen
+            // instead of being hidden behind a blank.
+            delegate.onCues(cueGroup)
+            return
+        }
+        val text = if (manager.removeHearingImpaired) stripHearingImpaired(rawText) else rawText
         if (text.isBlank()) {
+            // Text existed but was entirely hearing-impaired markup the user chose to remove.
             delegate.onCues(CueGroup(emptyList(), cueGroup.presentationTimeUs))
             return
         }
@@ -128,7 +137,13 @@ private class TranslatingTextOutput(
             delegate.onCues(cues)
             return
         }
-        val text = extractText(cues)
+        val rawText = extractRawText(cues)
+        if (rawText.isBlank()) {
+            // No translatable text (e.g. bitmap subtitles) — show originals rather than hiding.
+            delegate.onCues(cues)
+            return
+        }
+        val text = if (manager.removeHearingImpaired) stripHearingImpaired(rawText) else rawText
         if (text.isBlank()) {
             delegate.onCues(emptyList())
             return
@@ -142,13 +157,12 @@ private class TranslatingTextOutput(
         }
     }
 
-    private fun extractText(cues: List<Cue>): String {
-        val removeHI = manager.removeHearingImpaired
-        val raw = cues.mapNotNull { it.text?.toString()?.trim() }
+    // Raw joined cue text before any hearing-impaired stripping. Blank when cues carry no
+    // text at all (e.g. bitmap/PGS image subtitles, whose Cue.text is null).
+    private fun extractRawText(cues: List<Cue>): String =
+        cues.mapNotNull { it.text?.toString()?.trim() }
             .filter { it.isNotBlank() }
             .joinToString("\n")
-        return if (removeHI) stripHearingImpaired(raw) else raw
-    }
 
     private fun stripHearingImpaired(text: String): String =
         text.replace(AiSubtitleRegexes.BRACKET_REGEX, "")

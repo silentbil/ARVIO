@@ -1101,6 +1101,9 @@ fun PlayerScreen(
                                     val label = format.label ?: matched?.label ?: getFullLanguageName(lang)
                                     val isExternal = matched?.url?.isNotBlank() == true
                                     val isForced = format.selectionFlags and C.SELECTION_FLAG_FORCED != 0
+                                    // Image-based subtitle tracks (PGS/VOBSUB/DVB) carry no text — they
+                                    // can't be AI-translated, so flag them to exclude as a translation source.
+                                    val isBitmap = isBitmapSubtitleMime(format.sampleMimeType)
                                     textTracks.add(Subtitle(
                                         id = matched?.id ?: formatTrackId.ifBlank { "embedded_${groupIndex}_$i" },
                                         url = matched?.url.orEmpty(),
@@ -1111,6 +1114,7 @@ fun PlayerScreen(
                                         groupIndex = groupIndex,
                                         trackIndex = i,
                                         isForced = isForced,
+                                        isBitmap = isBitmap,
                                     ))
                                 }
                             }
@@ -3922,6 +3926,18 @@ private fun nativeAudioLanguageHints(preferredCode: String): List<String> {
         "Czech" -> listOf("čeština", "cesky", "dabing")
         else -> emptyList()
     }
+}
+
+/**
+ * True if the subtitle MIME type is an image/bitmap format (PGS, VOBSUB, DVB).
+ * These tracks render as images and carry no text, so they can't be AI-translated.
+ */
+private fun isBitmapSubtitleMime(mimeType: String?): Boolean {
+    val mime = mimeType?.lowercase()?.trim() ?: return false
+    return mime == MimeTypes.APPLICATION_PGS ||      // application/pgs (Blu-ray)
+        mime == MimeTypes.APPLICATION_VOBSUB ||      // application/vobsub (DVD)
+        mime == MimeTypes.APPLICATION_DVBSUBS ||     // application/dvbsubs
+        mime.contains("pgs") || mime.contains("vobsub") || mime.contains("dvbsub")
 }
 
 /**

@@ -1289,18 +1289,21 @@ class PlayerViewModel @Inject constructor(
     private fun findAiSourceSubtitle(subtitles: List<Subtitle>): Subtitle? {
         // Some files label forced tracks "SUBFORCED" without setting SELECTION_FLAG_FORCED
         fun Subtitle.isEffectivelyForced() = isForced || label.contains("forced", ignoreCase = true)
+        // Bitmap subtitles (PGS/VOBSUB) are images with no text — they can't be translated,
+        // so they must never be chosen as the AI source (would render a blank screen).
+        fun Subtitle.isUsableSource() = !isEffectivelyForced() && !isBitmap
         fun List<Subtitle>.bestEmbedded(): Subtitle? {
             val embedded = filter { it.isEmbedded }
-            // Prefer plain > SDH/CC; never use forced-only tracks as AI source
-            return embedded.firstOrNull { !it.isEffectivelyForced() && !it.label.equals("SDH", ignoreCase = true) && !it.label.equals("CC", ignoreCase = true) }
-                ?: embedded.firstOrNull { !it.isEffectivelyForced() }
+            // Prefer plain > SDH/CC; never use forced-only or image-based tracks as AI source
+            return embedded.firstOrNull { it.isUsableSource() && !it.label.equals("SDH", ignoreCase = true) && !it.label.equals("CC", ignoreCase = true) }
+                ?: embedded.firstOrNull { it.isUsableSource() }
         }
 
         // Prefer English embedded > any embedded with lang > any embedded > any non-forced subtitle
         return subtitles.filter { normalizeLanguage(it.lang) == "en" }.bestEmbedded()
             ?: subtitles.filter { it.lang.isNotBlank() }.bestEmbedded()
             ?: subtitles.bestEmbedded()
-            ?: subtitles.firstOrNull { !it.isEffectivelyForced() }
+            ?: subtitles.firstOrNull { it.isUsableSource() }
     }
 
     private fun languageCodeToName(code: String): String {
