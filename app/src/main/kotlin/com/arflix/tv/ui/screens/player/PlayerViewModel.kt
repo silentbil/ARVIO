@@ -1198,7 +1198,7 @@ class PlayerViewModel @Inject constructor(
                     // Prefer plain subs over SDH (accessibility) over forced-only tracks
                     .thenBy { when {
                         it.isForced -> 2
-                        it.label.equals("SDH", ignoreCase = true) || it.label.equals("CC", ignoreCase = true) -> 1
+                        it.label.contains("SDH", ignoreCase = true) || it.label.contains("CC", ignoreCase = true) -> 1
                         else -> 0
                     }}
                     .thenByDescending { matchScore(it) }
@@ -1296,7 +1296,7 @@ class PlayerViewModel @Inject constructor(
         fun List<Subtitle>.bestEmbedded(): Subtitle? {
             val embedded = filter { it.isEmbedded }
             // Prefer plain > SDH/CC; never use forced-only or image-based tracks as AI source
-            return embedded.firstOrNull { it.isUsableSource() && !it.label.equals("SDH", ignoreCase = true) && !it.label.equals("CC", ignoreCase = true) }
+            return embedded.firstOrNull { it.isUsableSource() && !it.label.contains("SDH", ignoreCase = true) && !it.label.contains("CC", ignoreCase = true) }
                 ?: embedded.firstOrNull { it.isUsableSource() }
         }
 
