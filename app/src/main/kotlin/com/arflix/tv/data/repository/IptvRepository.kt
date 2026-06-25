@@ -6430,8 +6430,9 @@ class IptvRepository @Inject constructor(
                 val metadata = pendingMetadata
                 pendingMetadata = null
 
+                val streamUrl = normalizeIptvStreamUrl(line)
                 val epgId = extractAttr(metadata, "tvg-id")
-                val id = buildChannelId(line, epgId)
+                val id = buildChannelId(streamUrl, epgId)
                 if (!seenChannelIds.add(id)) {
                     pendingHeaders.clear()
                     continue
@@ -6440,7 +6441,7 @@ class IptvRepository @Inject constructor(
                 val tvgName = extractAttr(metadata, "tvg-name")
                 val channelName = tvgName?.takeIf { it.isNotBlank() } ?: extractChannelName(metadata)
                 val groupTitle = extractAttr(metadata, "group-title")?.takeIf { it.isNotBlank() } ?: "Uncategorized"
-                val logo = extractAttr(metadata, "tvg-logo")
+                val logo = normalizeIptvLogoUrlOrNull(extractAttr(metadata, "tvg-logo"))
                 val catchupType = extractAttr(metadata, "catchup")
                 val catchupDays = extractFirstAttr(metadata, "catchup-days", "timeshift")?.toIntOrNull() ?: 0
                 val catchupSource = extractAttr(metadata, "catchup-source")
@@ -6474,7 +6475,7 @@ class IptvRepository @Inject constructor(
                 channels += IptvChannel(
                     id = id,
                     name = channelName,
-                    streamUrl = line,
+                    streamUrl = streamUrl,
                     group = groupTitle,
                     logo = logo,
                     epgId = epgId,
@@ -7691,7 +7692,8 @@ class IptvRepository @Inject constructor(
             val text = decodeCacheText(file.readBytes())
             if (text.isBlank()) return null
             val payload = gson.fromJson(text, IptvChannelCachePayload::class.java) ?: return null
-            payload.takeIf { isValidCacheSignature(config, it.configSignature, it.sourceSignature) && it.channels.isNotEmpty() }
+            payload.copy(channels = sanitizeCachedChannels(payload.channels))
+                .takeIf { isValidCacheSignature(config, it.configSignature, it.sourceSignature) && it.channels.isNotEmpty() }
                 ?.also { rememberDiscoveredEpgUrls(it.discoveredEpgUrls) }
         }.getOrNull()
     }
@@ -7733,7 +7735,7 @@ class IptvRepository @Inject constructor(
             }
 
             IptvChannelCachePayload(
-                channels = channels,
+                channels = sanitizeCachedChannels(channels),
                 loadedAtEpochMs = loadedAt,
                 configSignature = configSignature,
                 sourceSignature = sourceSignature,
@@ -7744,6 +7746,22 @@ class IptvRepository @Inject constructor(
                     channelCacheFile().writeBytes(gzipBytes(gson.toJson(it)))
                 }
         }.getOrNull()
+    }
+
+    private fun sanitizeCachedChannels(channels: List<IptvChannel>): List<IptvChannel> {
+        if (channels.isEmpty()) return channels
+        var changed = false
+        val sanitized = channels.map { channel ->
+            val streamUrl = normalizeIptvStreamUrl(channel.streamUrl)
+            val logo = normalizeIptvLogoUrlOrNull(channel.logo)
+            if (streamUrl == channel.streamUrl && logo == channel.logo) {
+                channel
+            } else {
+                changed = true
+                channel.copy(streamUrl = streamUrl, logo = logo)
+            }
+        }
+        return if (changed) sanitized else channels
     }
 
     private fun cacheJsonReader(file: File): JsonReader {

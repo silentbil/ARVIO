@@ -869,7 +869,7 @@ private fun effectiveCatchupDays(channel: EnrichedChannel): Int {
 }
 
 private fun ProgramPlacement.canFocus(channel: EnrichedChannel, nowMillis: Long): Boolean =
-    !isPast(nowMillis) || isCatchupSupported(channel, nowMillis)
+    !isPlaceholder && (!isPast(nowMillis) || isCatchupSupported(channel, nowMillis))
 
 private fun buildProgramPlacements(
     programs: List<IptvProgram>,

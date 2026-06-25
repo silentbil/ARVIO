@@ -393,15 +393,12 @@ class TvViewModel @Inject constructor(
                 startCompleteEpgBackfill()
                 warmXtreamVodCache()
             }.onFailure { error ->
-                AppLogger.recordException(
-                    throwable = error,
-                    context = mapOf(
-                        "error_area" to "IPTV",
-                        "iptv_phase" to "load_snapshot",
-                        "force_playlist_reload" to force.toString(),
-                        "force_epg_reload" to forceEpg.toString(),
-                        "had_existing_channels" to hasExistingChannels.toString()
-                    )
+                logIptvRefreshFailure(
+                    error = error,
+                    phase = "load_snapshot",
+                    force = force,
+                    forceEpg = forceEpg,
+                    hasExistingChannels = hasExistingChannels
                 )
                 val fallback = runCatching {
                     iptvRepository.getMemoryCachedSnapshot() ?: iptvRepository.getCachedSnapshotOrNull()
@@ -975,6 +972,25 @@ class TvViewModel @Inject constructor(
         val largeList = isActiveLargeIptvList()
         if (!state.isConfigured || channels.isEmpty()) return
         if (!hasNetworkEpgSource(state.config)) return
+        if (!force && channels.size <= 1) {
+            AppLogger.breadcrumb(
+                tag = "IPTV",
+                message = "complete_epg_skipped_sparse_snapshot channels=${channels.size} now_next=${state.snapshot.nowNext.size}",
+                severity = "info"
+            )
+            return
+        }
+        if (!force && channels.none { channel ->
+                !channel.epgId.isNullOrBlank() || !channel.tvgName.isNullOrBlank()
+            }
+        ) {
+            AppLogger.breadcrumb(
+                tag = "IPTV",
+                message = "complete_epg_skipped_no_channel_identity channels=${channels.size}",
+                severity = "info"
+            )
+            return
+        }
         if (liveTvPlaybackActive) {
             deferCompleteEpgBackfill(priorityChannelIds)
             return
@@ -1104,29 +1120,20 @@ class TvViewModel @Inject constructor(
             }
             if (snapshot == null) {
                 lastCompleteEpgBackfillKey = null
-                AppLogger.recordException(
-                    throwable = IllegalStateException("Complete EPG backfill timed out"),
-                    context = mapOf(
-                        "error_area" to "IPTV",
-                        "iptv_phase" to "complete_epg_backfill_timeout",
-                        "channel_count" to countBucket(channels.size),
-                        "start_coverage_pct" to ((coverage * 100).toInt()).toString()
-                    )
+                AppLogger.breadcrumb(
+                    tag = "IPTV",
+                    message = "complete_epg_backfill_timeout channel_count=${countBucket(channels.size)} start_coverage_pct=${(coverage * 100).toInt()}",
+                    severity = "warning"
                 )
                 return@launch
             }
 
             if (snapshot.channels.isEmpty() || snapshot.nowNext.isEmpty()) {
                 lastCompleteEpgBackfillKey = null
-                AppLogger.recordException(
-                    throwable = IllegalStateException("Complete EPG backfill returned empty guide"),
-                    context = mapOf(
-                        "error_area" to "IPTV",
-                        "iptv_phase" to "complete_epg_backfill_empty",
-                        "channel_count" to countBucket(channels.size),
-                        "snapshot_channels" to snapshot.channels.size.toString(),
-                        "snapshot_now_next" to snapshot.nowNext.size.toString()
-                    )
+                AppLogger.breadcrumb(
+                    tag = "IPTV",
+                    message = "complete_epg_backfill_empty channel_count=${countBucket(channels.size)} snapshot_channels=${snapshot.channels.size} snapshot_now_next=${snapshot.nowNext.size}",
+                    severity = "warning"
                 )
                 return@launch
             }
@@ -1973,6 +1980,39 @@ class TvViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun logIptvRefreshFailure(
+        error: Throwable,
+        phase: String,
+        force: Boolean,
+        forceEpg: Boolean,
+        hasExistingChannels: Boolean
+    ) {
+        val message = error.message.orEmpty()
+        val expected = message.contains("IPTV load timed out", ignoreCase = true) ||
+            message.contains("Playlist loaded but contains no channels", ignoreCase = true) ||
+            message.contains("Xtream provider timed out", ignoreCase = true)
+
+        if (expected) {
+            AppLogger.breadcrumb(
+                tag = "IPTV",
+                message = "$phase soft_fail force=$force force_epg=$forceEpg had_existing=$hasExistingChannels reason=${error::class.java.simpleName}",
+                severity = "warning"
+            )
+            return
+        }
+
+        AppLogger.recordException(
+            throwable = error,
+            context = mapOf(
+                "error_area" to "IPTV",
+                "iptv_phase" to phase,
+                "force_playlist_reload" to force.toString(),
+                "force_epg_reload" to forceEpg.toString(),
+                "had_existing_channels" to hasExistingChannels.toString()
+            )
+        )
     }
 
     private fun canReusePreparedContent(previous: TvUiState, next: TvUiState): Boolean {

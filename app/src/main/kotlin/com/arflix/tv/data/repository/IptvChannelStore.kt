@@ -368,9 +368,9 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         return IptvChannel(
             id = cursor.getString(c.id).orEmpty(),
             name = name,
-            streamUrl = cursor.getString(c.streamUrl).orEmpty(),
+            streamUrl = normalizeIptvStreamUrl(cursor.getString(c.streamUrl).orEmpty()),
             group = cursor.getString(c.group).orEmpty(),
-            logo = if (cursor.isNull(c.logo)) null else cursor.getString(c.logo),
+            logo = normalizeIptvLogoUrlOrNull(if (cursor.isNull(c.logo)) null else cursor.getString(c.logo)),
             epgId = if (cursor.isNull(c.epgId)) null else cursor.getString(c.epgId),
             rawTitle = if (cursor.isNull(c.rawTitle)) name else cursor.getString(c.rawTitle),
             xtreamStreamId = if (cursor.isNull(c.xtreamStreamId)) null else cursor.getInt(c.xtreamStreamId),
