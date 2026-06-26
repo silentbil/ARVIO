@@ -354,6 +354,10 @@
     <string name="settings_section_user_account">USER INFO &amp; ACCOUNT</string>
     <string name="settings_force_sync">Force Sync</string>
     <string name="settings_disconnect">Disconnect</string>
+    <string name="settings_cloud_disconnect_confirm_title">Disconnect ARVIO Cloud?</string>
+    <string name="settings_cloud_disconnect_confirm_desc">You\'ll need to sign in again to sync your settings.</string>
+    <string name="settings_trakt_disconnect_confirm_title">Disconnect Trakt.tv?</string>
+    <string name="settings_trakt_disconnect_confirm_desc">Your watch history and lists will no longer sync.</string>
     <string name="settings_open">Open</string>
     <string name="settings_update_available">Update Available</string>
     <string name="settings_check_updates">Check Updates</string>

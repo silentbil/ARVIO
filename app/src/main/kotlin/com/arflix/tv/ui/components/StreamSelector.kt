@@ -249,14 +249,16 @@ fun StreamSelector(
             addonTabs.mapIndexed { index, tab -> tab.id to index }.toMap()
         }
     }
-    // Best overall quality first (resolution, then release type, then size), with the
-    // user's addon order and title only used as tiebreakers.
+    // Addon order first so "All Sources" groups by the user's installed-addon order.
+    // Within each addon, best quality floats up (resolution → release → size).
     val orderedPresentations = remember(presentations, addonOrder) {
-        presentations.sortedWith(compareByDescending<SourcePresentation> { it.resolutionScore }
-            .thenByDescending { it.releaseScore }
-            .thenByDescending { it.sizeBytes }
-            .thenBy { addonOrder[sourceTabId(it.stream)] ?: Int.MAX_VALUE }
-            .thenBy { it.title.lowercase() })
+        presentations.sortedWith(
+            compareBy<SourcePresentation> { addonOrder[sourceTabId(it.stream)] ?: Int.MAX_VALUE }
+                .thenByDescending { it.resolutionScore }
+                .thenByDescending { it.releaseScore }
+                .thenByDescending { it.sizeBytes }
+                .thenBy { it.title.lowercase() }
+        )
     }
 
     // Filter streams by selected tab

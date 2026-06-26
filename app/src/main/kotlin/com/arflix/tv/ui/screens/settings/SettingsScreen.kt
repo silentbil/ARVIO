@@ -132,10 +132,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -297,7 +300,7 @@ fun SettingsScreen(
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
+    val isRtlLayoutDirection = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     val sections = remember {
         buildList {
@@ -625,6 +628,8 @@ fun SettingsScreen(
         }
     }
 
+    var showCloudDisconnectConfirm by remember { mutableStateOf(false) }
+    var showTraktDisconnectConfirm by remember { mutableStateOf(false) }
     var cloudDialogEmail by remember { mutableStateOf("") }
     var cloudDialogPassword by remember { mutableStateOf("") }
 
@@ -664,7 +669,9 @@ fun SettingsScreen(
         uiState.traktCode != null ||
         uiState.plexHomeServerAuth != null ||
         uiState.showAppUpdateDialog ||
-        uiState.showUnknownSourcesDialog
+        uiState.showUnknownSourcesDialog ||
+        showCloudDisconnectConfirm ||
+        showTraktDisconnectConfirm
 
     Box(
         modifier = Modifier
@@ -1054,14 +1061,14 @@ fun SettingsScreen(
                                             when (contentFocusIndex) {
                                                 0 -> {
                                                     if (uiState.isLoggedIn) {
-                                                        viewModel.logout()
+                                                        showCloudDisconnectConfirm = true
                                                     } else {
                                                         viewModel.startCloudAuth()
                                                     }
                                                 }
                                                 1 -> {
                                                     if (uiState.isTraktAuthenticated) {
-                                                        viewModel.disconnectTrakt()
+                                                        showTraktDisconnectConfirm = true
                                                     } else if (uiState.isTraktPolling) {
                                                         viewModel.cancelTraktAuth()
                                                     } else {
@@ -1132,7 +1139,9 @@ fun SettingsScreen(
                 },
                 onAddCustomAddonClick = { showCustomAddonInput = true },
                 openCustomUserAgentDialog = { showCustomUserAgentDialog = true },
-                onNavigateToTelegram = onNavigateToTelegramSettings
+                onNavigateToTelegram = onNavigateToTelegramSettings,
+                onDisconnectCloud = { showCloudDisconnectConfirm = true },
+                onDisconnectTrakt = { showTraktDisconnectConfirm = true }
             )
         } else {
             AppTopBar(
@@ -1552,10 +1561,10 @@ fun SettingsScreen(
                                     viewModel.startCloudAuth()
                                 }
                             },
-                            onDisconnectCloud = { viewModel.logout() },
+                            onDisconnectCloud = { showCloudDisconnectConfirm = true },
                             onConnectTrakt = { viewModel.startTraktAuth() },
                             onCancelTrakt = { viewModel.cancelTraktAuth() },
-                            onDisconnectTrakt = { viewModel.disconnectTrakt() },
+                            onDisconnectTrakt = { showTraktDisconnectConfirm = true },
                             onForceCloudSync = { viewModel.forceCloudSyncNow() },
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
@@ -1950,6 +1959,30 @@ fun SettingsScreen(
                 serverUrl = uiState.aiKeyServerState.serverUrl,
                 keyReceived = uiState.aiKeyServerState.keyReceived,
                 onClose = { viewModel.stopAiKeyServer() }
+            )
+        }
+
+        if (showCloudDisconnectConfirm) {
+            AccountDisconnectConfirmDialog(
+                title = stringResource(R.string.settings_cloud_disconnect_confirm_title),
+                description = stringResource(R.string.settings_cloud_disconnect_confirm_desc),
+                onConfirm = {
+                    showCloudDisconnectConfirm = false
+                    viewModel.logout()
+                },
+                onDismiss = { showCloudDisconnectConfirm = false }
+            )
+        }
+
+        if (showTraktDisconnectConfirm) {
+            AccountDisconnectConfirmDialog(
+                title = stringResource(R.string.settings_trakt_disconnect_confirm_title),
+                description = stringResource(R.string.settings_trakt_disconnect_confirm_desc),
+                onConfirm = {
+                    showTraktDisconnectConfirm = false
+                    viewModel.disconnectTrakt()
+                },
+                onDismiss = { showTraktDisconnectConfirm = false }
             )
         }
 
@@ -3229,7 +3262,9 @@ private fun MobileSettingsLayout(
     onConnectPlexHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
     openCustomUserAgentDialog: () -> Unit = {},
-    onNavigateToTelegram: () -> Unit = {}
+    onNavigateToTelegram: () -> Unit = {},
+    onDisconnectCloud: () -> Unit = {},
+    onDisconnectTrakt: () -> Unit = {}
 ) {
     BackHandler(enabled = page != "MAIN") {
         onNavigate("MAIN")
@@ -3261,7 +3296,7 @@ private fun MobileSettingsLayout(
                         modifier = Modifier
                             .heightIn(min = 48.dp)
                             .widthIn(min = 72.dp)
-                            .clickable { viewModel.logout() }
+                            .clickable { onDisconnectCloud() }
                             .padding(horizontal = 12.dp, vertical = 14.dp)
                     )
                 }
@@ -3275,7 +3310,8 @@ private fun MobileSettingsLayout(
                 openSecondarySubtitlePicker = openSecondarySubtitlePicker,
                 openAudioLanguagePicker = openAudioLanguagePicker,
                 onSwitchProfile = onSwitchProfile,
-                onNavigateToTelegram = onNavigateToTelegram
+                onNavigateToTelegram = onNavigateToTelegram,
+                onDisconnectTrakt = onDisconnectTrakt
             )
         } else {
             Row(
@@ -3352,7 +3388,8 @@ private fun MobileSettingsMainPage(
     openSecondarySubtitlePicker: () -> Unit = {},
     openAudioLanguagePicker: () -> Unit,
     onSwitchProfile: () -> Unit,
-    onNavigateToTelegram: () -> Unit = {}
+    onNavigateToTelegram: () -> Unit = {},
+    onDisconnectTrakt: () -> Unit = {}
 ) {
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -3468,7 +3505,7 @@ private fun MobileSettingsMainPage(
                     title = stringResource(R.string.trakt_account),
                     value = if (uiState.isTraktAuthenticated) stringResource(R.string.settings_disconnect) else stringResource(R.string.connect),
                     isFocused = false,
-                    onClick = { if (uiState.isTraktAuthenticated) viewModel.disconnectTrakt() else viewModel.startTraktAuth() }
+                    onClick = { if (uiState.isTraktAuthenticated) onDisconnectTrakt() else viewModel.startTraktAuth() }
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.QrCode,
@@ -7654,6 +7691,117 @@ private fun SettingsActionRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun AccountDisconnectConfirmDialog(
+    title: String,
+    description: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    var focusedButton by remember { mutableIntStateOf(0) } // 0 = cancel, 1 = disconnect
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+
+    // onPreviewKeyEvent on the root Box fires for ANY focused child (Cancel button,
+    // Disconnect button, or the Box itself). This is intentional: it intercepts key
+    // events BEFORE clickable children can handle them, preventing the Cancel button
+    // from firing via its own clickable when the user presses OK/Enter to open the dialog.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.65f))
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.Back, Key.Escape -> { onDismiss(); true }
+                    Key.DirectionLeft  -> { focusedButton = if (isRtl) 1 else 0; true }
+                    Key.DirectionRight -> { focusedButton = if (isRtl) 0 else 1; true }
+                    Key.Enter, Key.DirectionCenter -> {
+                        if (focusedButton == 0) onDismiss() else onConfirm()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 360.dp)
+                .background(BackgroundElevated, RoundedCornerShape(16.dp))
+                .clickable(enabled = false) {}
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = title,
+                style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = description,
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                color = TextSecondary,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .background(
+                            if (focusedButton == 0) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.06f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .border(
+                            width = if (focusedButton == 0) 2.dp else 0.dp,
+                            color = if (focusedButton == 0) Color.White.copy(alpha = 0.5f) else Color.Transparent,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .clickable { onDismiss() }
+                        .padding(vertical = 13.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.cancel).uppercase(),
+                        style = ArflixTypography.label.copy(fontSize = 12.sp),
+                        color = TextPrimary
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .background(
+                            if (focusedButton == 1) Pink.copy(alpha = 0.3f) else Pink.copy(alpha = 0.12f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .border(
+                            width = if (focusedButton == 1) 2.dp else 1.dp,
+                            color = if (focusedButton == 1) Pink else Pink.copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .clickable { onConfirm() }
+                        .padding(vertical = 13.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_disconnect).uppercase(),
+                        style = ArflixTypography.label.copy(fontSize = 12.sp),
+                        color = Pink
+                    )
+                }
+            }
         }
     }
 }
