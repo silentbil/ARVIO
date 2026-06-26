@@ -101,11 +101,16 @@ class SportsRepository @Inject constructor(
             category.id == SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID ||
                 category.id == SportsAddonCapabilities.POPULAR_LIVE_TV_ROW_ID
         }
-        val insertAfter = maxOf(
-            base.indexOfFirst { it.id == "continue_watching" },
-            base.indexOfFirst { it.id == HomeViewModelFavorites.favoriteTvCategoryId }
-        )
-        val insertIndex = if (insertAfter >= 0) insertAfter + 1 else 0
+        val insertAfter = base.indexOfFirst { category ->
+            category.id.equals("trending_anime", ignoreCase = true) ||
+                category.title.equals("Trending Anime", ignoreCase = true) ||
+                category.title.equals("Trending in Anime", ignoreCase = true)
+        }.takeIf { it >= 0 } ?: base.indexOfFirst { category ->
+            category.id.contains("anime", ignoreCase = true) ||
+                category.title.contains("anime", ignoreCase = true)
+        }.takeIf { it >= 0 }
+
+        val insertIndex = if (insertAfter != null) insertAfter + 1 else base.size
         return base.take(insertIndex) + sportsRows + base.drop(insertIndex)
     }
 
@@ -428,10 +433,6 @@ class SportsRepository @Inject constructor(
             "KB" -> (value * 1024).toLong()
             else -> 0L
         }
-    }
-
-    private object HomeViewModelFavorites {
-        const val favoriteTvCategoryId = "favorite_tv"
     }
 
     private companion object {
