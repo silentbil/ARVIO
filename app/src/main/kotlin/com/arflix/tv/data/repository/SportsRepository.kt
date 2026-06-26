@@ -21,12 +21,8 @@ import com.arflix.tv.data.model.StreamBehaviorHints
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.util.AppLogger
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Locale
@@ -50,12 +46,8 @@ class SportsRepository @Inject constructor(
         val id: String,
         val title: String,
         val catalogIds: Set<String>,
-        val keywords: Set<String>
-    )
-
-    private data class SportsArtwork(
-        val image: String,
-        val backdrop: String?
+        val keywords: Set<String>,
+        val artworkUrl: String
     )
 
     private data class ParsedEventStatus(
@@ -65,21 +57,21 @@ class SportsRepository @Inject constructor(
     )
 
     private val sportsCategories = listOf(
-        SportsCategoryDef("basketball", "Basketball", setOf("sports_basketball"), setOf("basketball", "nba", "wnba")),
-        SportsCategoryDef("football", "Football", setOf("sports_football"), setOf("football", "soccer")),
-        SportsCategoryDef("american-football", "American Football", setOf("sports_american_football"), setOf("american football", "nfl")),
-        SportsCategoryDef("tennis", "Tennis", setOf("sports_tennis"), setOf("tennis", "atp", "wta")),
-        SportsCategoryDef("motor-sports", "Motor Sports", setOf("sports_motor_sports"), setOf("motorsport", "motor sports", "motor_sports", "motor-sports", "formula", "f1", "racing", "motogp", "nascar")),
-        SportsCategoryDef("rugby", "Rugby", setOf("sports_rugby"), setOf("rugby")),
-        SportsCategoryDef("hockey", "Hockey", setOf("sports_hockey"), setOf("hockey", "nhl")),
-        SportsCategoryDef("baseball", "Baseball", setOf("sports_baseball"), setOf("baseball", "mlb")),
-        SportsCategoryDef("fight", "Fight", setOf("sports_fight"), setOf("boxing", "ufc", "mma", "combat", "fight")),
-        SportsCategoryDef("golf", "Golf", setOf("sports_golf"), setOf("golf")),
-        SportsCategoryDef("cricket", "Cricket", setOf("sports_cricket"), setOf("cricket")),
-        SportsCategoryDef("darts", "Darts", setOf("sports_darts"), setOf("darts")),
-        SportsCategoryDef("billiards", "Billiards", setOf("sports_billiards"), setOf("billiards", "snooker", "pool")),
-        SportsCategoryDef("afl", "AFL", setOf("sports_afl"), setOf("afl", "aussie rules", "australian football")),
-        SportsCategoryDef("other", "Other", setOf("sports_other"), setOf("other"))
+        SportsCategoryDef("basketball", "Basketball", setOf("sports_basketball"), setOf("basketball", "nba", "wnba"), unsplash("photo-1770064319432-9c5f134afca7")),
+        SportsCategoryDef("football", "Football", setOf("sports_football"), setOf("football", "soccer"), unsplash("photo-1690663245372-429a9fe2f1b7")),
+        SportsCategoryDef("american-football", "American Football", setOf("sports_american_football"), setOf("american football", "nfl"), unsplash("photo-1464983308776-3c7215084895")),
+        SportsCategoryDef("tennis", "Tennis", setOf("sports_tennis"), setOf("tennis", "atp", "wta"), unsplash("photo-1761404984667-16d6c9158c59")),
+        SportsCategoryDef("motor-sports", "Motor Sports", setOf("sports_motor_sports"), setOf("motorsport", "motor sports", "motor_sports", "motor-sports", "formula", "f1", "racing", "motogp", "nascar"), unsplash("photo-1752884991452-b06745698a9d")),
+        SportsCategoryDef("rugby", "Rugby", setOf("sports_rugby"), setOf("rugby"), unsplash("photo-1540747913346-19e32dc3e97e")),
+        SportsCategoryDef("hockey", "Hockey", setOf("sports_hockey"), setOf("hockey", "nhl"), unsplash("photo-1514511719-9f5849dc16d0")),
+        SportsCategoryDef("baseball", "Baseball", setOf("sports_baseball"), setOf("baseball", "mlb"), unsplash("photo-1515871204537-49a5fe66a31f")),
+        SportsCategoryDef("fight", "Fight", setOf("sports_fight"), setOf("boxing", "ufc", "mma", "combat", "fight"), unsplash("photo-1549719386-74dfcbf7dbed")),
+        SportsCategoryDef("golf", "Golf", setOf("sports_golf"), setOf("golf"), unsplash("photo-1587174486073-ae5e5cff23aa")),
+        SportsCategoryDef("cricket", "Cricket", setOf("sports_cricket"), setOf("cricket"), unsplash("photo-1531415074968-036ba1b575da")),
+        SportsCategoryDef("darts", "Darts", setOf("sports_darts"), setOf("darts"), unsplash("photo-1517672651691-24622a91b550")),
+        SportsCategoryDef("billiards", "Billiards", setOf("sports_billiards"), setOf("billiards", "snooker", "pool"), unsplash("photo-1535007813616-79dc02ba4021")),
+        SportsCategoryDef("afl", "AFL", setOf("sports_afl"), setOf("afl", "aussie rules", "australian football"), unsplash("photo-1540747913346-19e32dc3e97e")),
+        SportsCategoryDef("other", "Other", setOf("sports_other"), setOf("other"), unsplash("photo-1540747913346-19e32dc3e97e"))
     )
 
     fun defaultHomeRows(): List<Category> = buildLockedRows()
@@ -93,11 +85,10 @@ class SportsRepository @Inject constructor(
                 addon.isEnabled &&
                 !addon.url.isNullOrBlank() &&
                 SportsAddonCapabilities.isSportsLiveTvAddon(addon)
-        }
+        }.prioritizedSportsAddons()
 
         if (sportsAddons.isEmpty()) return@withContext buildLockedRows()
 
-        val artwork = loadSportCategoryArtwork(sportsAddons)
         val liveRow = loadPopularLiveTvCategory(
             addons = sportsAddons,
             selectedSportId = selectedSportId
@@ -114,7 +105,7 @@ class SportsRepository @Inject constructor(
             )
         )
 
-        listOf(sportsCategoryRow(artwork = artwork, locked = false), liveRow)
+        listOf(sportsCategoryRow(locked = false), liveRow)
     }
 
     fun sportsCollectionCatalog(catalogId: String): CatalogConfig? {
@@ -151,7 +142,7 @@ class SportsRepository @Inject constructor(
                 addon.isEnabled &&
                 !addon.url.isNullOrBlank() &&
                 SportsAddonCapabilities.isSportsLiveTvAddon(addon)
-        }
+        }.prioritizedSportsAddons()
         if (addons.isEmpty() || limit <= 0 || offset < 0) {
             return@withContext MediaRepository.CategoryPageResult(emptyList(), hasMore = false)
         }
@@ -159,7 +150,8 @@ class SportsRepository @Inject constructor(
         val items = loadSportItems(
             addons = addons,
             selectedSportId = sportId,
-            maxItems = offset + limit + 1
+            maxItems = offset + limit + 1,
+            liveOnly = false
         ).distinctBy { it.status }
 
         MediaRepository.CategoryPageResult(
@@ -244,7 +236,8 @@ class SportsRepository @Inject constructor(
         val items = loadSportItems(
             addons = addons,
             selectedSportId = selectedSportId,
-            maxItems = MAX_EVENT_ITEMS
+            maxItems = MAX_EVENT_ITEMS,
+            liveOnly = true
         )
 
         if (items.isEmpty()) return null
@@ -277,14 +270,10 @@ class SportsRepository @Inject constructor(
         )
     )
 
-    private fun sportsCategoryRow(
-        artwork: Map<String, SportsArtwork> = emptyMap(),
-        locked: Boolean = false
-    ): Category = Category(
+    private fun sportsCategoryRow(locked: Boolean = false): Category = Category(
         id = SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID,
         title = "Sports",
         items = sportsCategories.map { sport ->
-            val sportArtwork = artwork[sport.id]
             val status = if (locked) {
                 "${SportsAddonCapabilities.SPORTS_LOCKED_STATUS_PREFIX}${sport.id}"
             } else {
@@ -297,8 +286,8 @@ class SportsRepository @Inject constructor(
                 overview = "Browse ${sport.title.lowercase(Locale.US)} events from your installed sports live TV addon.",
                 mediaType = MediaType.TV,
                 badge = "SPORT",
-                image = sportArtwork?.image.orEmpty(),
-                backdrop = sportArtwork?.backdrop ?: sportArtwork?.image,
+                image = sport.artworkUrl,
+                backdrop = sport.artworkUrl,
                 status = status,
                 collectionGroup = if (locked) null else CollectionGroupKind.SERVICE,
                 collectionTileShape = if (locked) null else CollectionTileShape.LANDSCAPE
@@ -309,7 +298,8 @@ class SportsRepository @Inject constructor(
     private suspend fun loadSportItems(
         addons: List<Addon>,
         selectedSportId: String?,
-        maxItems: Int
+        maxItems: Int,
+        liveOnly: Boolean
     ): List<MediaItem> {
         if (maxItems <= 0) return emptyList()
         val items = mutableListOf<MediaItem>()
@@ -317,42 +307,14 @@ class SportsRepository @Inject constructor(
             val catalogs = candidateCatalogs(addon, selectedSportId)
             for (catalog in catalogs.take(MAX_CATALOGS_PER_LOAD)) {
                 val metas = loadCatalogMetas(addon, catalog)
-                metas.mapNotNullTo(items) { meta -> meta.toMediaItem(addon, catalog) }
+                metas.asSequence()
+                    .filter { meta -> !liveOnly || isCurrentlyLive(meta) }
+                    .mapNotNullTo(items) { meta -> meta.toMediaItem(addon, catalog) }
                 if (items.size >= maxItems) break
             }
             if (items.size >= maxItems) break
         }
         return items.take(maxItems)
-    }
-
-    private suspend fun loadSportCategoryArtwork(addons: List<Addon>): Map<String, SportsArtwork> = coroutineScope {
-        val results = sportsCategories.map { sport ->
-            async {
-                sport.id to withTimeoutOrNull(CATEGORY_ARTWORK_TIMEOUT_MS) {
-                    findSportArtwork(addons, sport)
-                }
-            }
-        }.awaitAll()
-        results.mapNotNull { (sportId, artwork) -> artwork?.let { sportId to it } }.toMap()
-    }
-
-    private suspend fun findSportArtwork(
-        addons: List<Addon>,
-        sport: SportsCategoryDef
-    ): SportsArtwork? {
-        for (addon in addons) {
-            val catalog = candidateCatalogs(addon, sport.id).firstOrNull() ?: continue
-            val meta = loadCatalogMetas(addon, catalog)
-                .firstOrNull { meta ->
-                    !meta.poster.isNullOrBlank() || !meta.background.isNullOrBlank()
-                } ?: continue
-            val image = meta.poster ?: meta.background ?: continue
-            return SportsArtwork(
-                image = image,
-                backdrop = meta.background ?: meta.poster
-            )
-        }
-        return null
     }
 
     private suspend fun loadCatalogMetas(
@@ -415,18 +377,18 @@ class SportsRepository @Inject constructor(
         val status = eventStatus(addon.id, eventType, eventId)
         val title = name?.takeIf { it.isNotBlank() } ?: return null
         val genreText = genres.orEmpty().firstOrNull().orEmpty()
-        val isLive = looksLive(this, catalog)
+        val isLive = isCurrentlyLive(this)
         return MediaItem(
             id = SportsAddonCapabilities.sportsSyntheticId(status),
             title = title,
-            subtitle = listOf(genreText, if (isLive) "Live" else null).filter { !it.isNullOrBlank() }.joinToString(" | "),
+            subtitle = listOf(genreText, if (isLive) "Live" else "Upcoming").filter { !it.isNullOrBlank() }.joinToString(" | "),
             overview = cleanSportsDescription(description.orEmpty()),
             year = "",
             releaseDate = null,
             mediaType = MediaType.TV,
             image = poster ?: logo ?: "",
             backdrop = background ?: poster,
-            badge = if (isLive) "LIVE" else null,
+            badge = if (isLive) "LIVE" else "UPCOMING",
             status = status,
             primaryNetworkLogo = addon.logo
         )
@@ -501,12 +463,12 @@ class SportsRepository @Inject constructor(
         return blockedPhrases.none { phrase -> text.contains(phrase) }
     }
 
-    private fun looksLive(meta: StremioMetaPreview, catalog: AddonCatalog): Boolean {
-        val text = listOf(meta.name, meta.description, catalog.name, catalog.id)
+    private fun isCurrentlyLive(meta: StremioMetaPreview): Boolean {
+        val text = listOf(meta.releaseInfo, meta.description)
             .filterNotNull()
             .joinToString(" ")
             .lowercase(Locale.US)
-        return text.contains("live") || text.contains("vs") || text.contains(" v ")
+        return text.contains("live")
     }
 
     private fun AddonCatalog.matchesSport(sport: SportsCategoryDef): Boolean {
@@ -522,6 +484,21 @@ class SportsRepository @Inject constructor(
             text.contains("popular") ||
             id.equals("sports_live", ignoreCase = true)
     }
+
+    private fun List<Addon>.prioritizedSportsAddons(): List<Addon> =
+        sortedWith(
+            compareBy<Addon> { addon ->
+                val text = listOf(addon.id, addon.name, addon.url, addon.transportUrl)
+                    .filterNotNull()
+                    .joinToString(" ")
+                    .lowercase(Locale.US)
+                when {
+                    text.contains("sports.fly") || text.contains("highfly") -> 0
+                    text.contains("sports") -> 1
+                    else -> 2
+                }
+            }.thenBy { addon -> addon.name.ifBlank { addon.id } }
+        )
 
     private fun cleanSportsDescription(value: String): String =
         value.lines()
@@ -602,6 +579,8 @@ class SportsRepository @Inject constructor(
     private companion object {
         const val MAX_EVENT_ITEMS = 24
         const val MAX_CATALOGS_PER_LOAD = 3
-        const val CATEGORY_ARTWORK_TIMEOUT_MS = 2_200L
+
+        fun unsplash(photoId: String): String =
+            "https://images.unsplash.com/$photoId?auto=format&fit=crop&w=3840&q=80"
     }
 }

@@ -216,6 +216,10 @@ class HomeViewModel @Inject constructor(
                         onNavigateToSettings()
                         return@launch
                     }
+                    if (!item.badge.equals("LIVE", ignoreCase = true)) {
+                        showSportsToast(context.getString(R.string.home_sports_event_not_live), ToastType.INFO)
+                        return@launch
+                    }
                     showSportsToast(context.getString(R.string.home_sports_opening), ToastType.INFO)
                     val playback = sportsRepository.resolvePlayback(status, item.title)
                     if (playback == null) {

@@ -39,6 +39,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -352,12 +353,21 @@ class CollectionDetailsViewModel @Inject constructor(
 
     fun openSportsCollectionItem(
         item: MediaItem,
+        onUnavailable: () -> Unit,
         onNavigateToPlayer: (MediaType, Int, String, String?, String?) -> Unit
     ) {
         val status = item.status.orEmpty()
         if (!SportsAddonCapabilities.isSportsEventStatus(status)) return
+        if (!item.badge.equals("LIVE", ignoreCase = true)) {
+            onUnavailable()
+            return
+        }
         viewModelScope.launch {
-            val playback = sportsRepository.resolvePlayback(status, item.title) ?: return@launch
+            val playback = sportsRepository.resolvePlayback(status, item.title)
+            if (playback == null) {
+                onUnavailable()
+                return@launch
+            }
             onNavigateToPlayer(
                 MediaType.TV,
                 playback.mediaId,
@@ -448,6 +458,7 @@ fun CollectionDetailsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val cardLogoUrls by viewModel.cardLogoUrls.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     LaunchedEffect(catalogId) { viewModel.load(catalogId) }
     BackHandler(onBack = onBack)
 
@@ -635,7 +646,21 @@ fun CollectionDetailsScreen(
             onTabSelected = { selectedTab = it },
             onItemClick = { item ->
                 if (SportsAddonCapabilities.isSportsEventStatus(item.status)) {
-                    viewModel.openSportsCollectionItem(item, onNavigateToPlayer)
+                    viewModel.openSportsCollectionItem(
+                        item = item,
+                        onUnavailable = {
+                            android.widget.Toast.makeText(
+                                context,
+                                if (item.badge.equals("LIVE", ignoreCase = true)) {
+                                    context.getString(R.string.home_sports_playback_failed)
+                                } else {
+                                    context.getString(R.string.home_sports_event_not_live)
+                                },
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        },
+                        onNavigateToPlayer = onNavigateToPlayer
+                    )
                 } else {
                     onNavigateToDetails(item.mediaType, item.id)
                 }
