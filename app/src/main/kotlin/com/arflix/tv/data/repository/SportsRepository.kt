@@ -449,10 +449,6 @@ class SportsRepository @Inject constructor(
             url == "https://google.com" || url == "http://google.com"
         ) return false
 
-        // A notWebReady sports stream generally means "open externally / premium / unavailable";
-        // ARVIO should only launch streams it can play in the native player.
-        if (behaviorHints?.notWebReady == true) return false
-
         val blockedPhrases = listOf(
             "upgrade to watch",
             "premium",
@@ -460,7 +456,24 @@ class SportsRepository @Inject constructor(
             "stream has ended",
             "not available"
         )
-        return blockedPhrases.none { phrase -> text.contains(phrase) }
+        if (blockedPhrases.any { phrase -> text.contains(phrase) }) return false
+
+        // Highfly marks some real HLS channels as notWebReady because browser
+        // playback is restricted. They are still valid for ARVIO's native
+        // ExoPlayer path, so only reject notWebReady when the URL itself does
+        // not look like a native stream.
+        if (behaviorHints?.notWebReady == true && !isNativePlayableSportsUrl(rawUrl)) return false
+
+        return true
+    }
+
+    private fun isNativePlayableSportsUrl(rawUrl: String): Boolean {
+        val normalized = rawUrl.trim().lowercase(Locale.US)
+        if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) return false
+        return normalized.contains(".m3u8") ||
+            normalized.contains("/hls") ||
+            normalized.contains("format=hls") ||
+            (normalized.contains("highfly") && normalized.contains("/playlist/"))
     }
 
     private fun isCurrentlyLive(meta: StremioMetaPreview): Boolean {

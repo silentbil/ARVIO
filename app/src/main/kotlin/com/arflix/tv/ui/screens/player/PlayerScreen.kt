@@ -1436,7 +1436,11 @@ fun PlayerScreen(
 
             // Only add the selected subtitle to ExoPlayer (not all 30+).
             // Loading all external subs slows down preparation and causes non-UTF8 subs to fail.
+            val isHlsStream = isLikelyHlsPlaybackUrl(url, latestUiState.selectedStream)
             val mediaItemBuilder = MediaItem.Builder().setUri(Uri.parse(url))
+            if (isHlsStream) {
+                mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8)
+            }
             val mediaItem = mediaItemBuilder.build()
 
             // Use protocol-specific media source for faster startup:
@@ -1446,7 +1450,7 @@ fun PlayerScreen(
             val isHeavy = isLikelyHeavyStream(latestUiState.selectedStream)
             val isRemoteHttp = urlLower.startsWith("http://") || urlLower.startsWith("https://")
             val mediaSource: MediaSource = when {
-                urlLower.contains(".m3u8") || urlLower.contains("/hls") || urlLower.contains("format=hls") ->
+                isHlsStream ->
                     hlsFactory.createMediaSource(mediaItem)
                 urlLower.contains(".mpd") || urlLower.contains("/dash") || urlLower.contains("format=dash") ->
                     dashFactory.createMediaSource(mediaItem)
@@ -1558,10 +1562,13 @@ fun PlayerScreen(
             val currentPosition = exoPlayer.currentPosition
             val wasPlaying = exoPlayer.isPlaying
             val subtitleConfigs = buildExternalSubtitleConfigurations(listOf(subtitle))
-            val mediaItem = MediaItem.Builder()
+            val mediaItemBuilder = MediaItem.Builder()
                 .setUri(Uri.parse(url))
                 .setSubtitleConfigurations(subtitleConfigs)
-                .build()
+            if (isLikelyHlsPlaybackUrl(url, latestUiState.selectedStream)) {
+                mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8)
+            }
+            val mediaItem = mediaItemBuilder.build()
             exoPlayer.setMediaItem(mediaItem, currentPosition)
             exoPlayer.prepare()
             if (wasPlaying) exoPlayer.play()
@@ -5055,6 +5062,36 @@ private fun parseSizeToBytes(sizeStr: String): Long {
         else -> 1.0
     }
     return (number * multiplier).toLong()
+}
+
+private fun isLikelyHlsPlaybackUrl(url: String, stream: StreamSource?): Boolean {
+    val urlLower = url.lowercase()
+    if (urlLower.contains(".m3u8") ||
+        urlLower.contains("/hls") ||
+        urlLower.contains("format=hls")
+    ) {
+        return true
+    }
+
+    val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+    val host = uri.host.orEmpty().lowercase()
+    val path = uri.path.orEmpty().lowercase()
+    val streamText = buildString {
+        append(stream?.addonId.orEmpty())
+        append(' ')
+        append(stream?.addonName.orEmpty())
+        append(' ')
+        append(stream?.source.orEmpty())
+        append(' ')
+        append(stream?.quality.orEmpty())
+    }.lowercase()
+
+    // Sports live TV addons such as Highfly proxy the real .m3u8 behind
+    // /playlist/<token>, so extension sniffing would otherwise choose the
+    // progressive parser and fail with an unsupported container error.
+    val looksLikeSportsPlaylist = path.startsWith("/playlist/") &&
+        (host.contains("highfly") || streamText.contains("highfly") || streamText.contains("sports"))
+    return looksLikeSportsPlaylist
 }
 
 private fun isLikelyHeavyStream(stream: StreamSource?): Boolean {
