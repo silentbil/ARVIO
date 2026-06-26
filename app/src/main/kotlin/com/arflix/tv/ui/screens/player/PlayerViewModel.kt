@@ -10,7 +10,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.arflix.tv.BuildConfig
 import com.arflix.tv.data.api.TmdbApi
+import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.AddonType
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.repository.MediaRepository
@@ -50,6 +53,11 @@ import javax.inject.Inject
 
 private fun isSupplementalStream(stream: StreamSource): Boolean =
     stream.addonId == "iptv_xtream_vod" || stream.addonId == HomeServerRepository.ADDON_ID
+
+private fun Addon.isVodStreamingAddon(): Boolean =
+    isEnabled &&
+        type != AddonType.SUBTITLE &&
+        !SportsAddonCapabilities.isSportsLiveTvAddon(this)
 
 private const val PLAYBACK_DIAGNOSTICS = true
 
@@ -382,7 +390,7 @@ class PlayerViewModel @Inject constructor(
             val volumeBoostDb = prefs[profileManager.profileStringKey("volume_boost_db")]
                 ?.toIntOrNull()?.coerceIn(0, 15) ?: 0
             val orderedAddonIds = streamRepository.installedAddons.first()
-                .filter { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                .filter { it.isVodStreamingAddon() }
                 .map { it.id }
             currentAddonOrderedIds = orderedAddonIds
             val preferredSub = prefs[defaultSubtitleKey()]?.trim().orEmpty()
@@ -666,7 +674,7 @@ class PlayerViewModel @Inject constructor(
                 // Get saved position for resume playback
                 val resumeData = resumeDataDeferred.await()
                 val streamingAddonCount = streamRepository.installedAddons.first()
-                    .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                    .count { it.isVodStreamingAddon() }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isLoadingStreams = true,

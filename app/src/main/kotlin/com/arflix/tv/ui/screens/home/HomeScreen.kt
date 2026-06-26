@@ -547,6 +547,7 @@ fun HomeScreen(
     onNavigateToSearch: () -> Unit = {},
     onNavigateToWatchlist: () -> Unit = {},
     onNavigateToTv: (channelId: String?, streamUrl: String?) -> Unit = { _, _ -> },
+    onNavigateToPlayer: (MediaType, Int, String, String?, String?) -> Unit = { _, _, _, _, _ -> },
     onNavigateToSettings: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     onExitApp: () -> Unit = {}
@@ -600,10 +601,14 @@ fun HomeScreen(
         }
     }
 
-    val rawDisplayCategories = if (uiState.categories.isNotEmpty()) {
+    val rawDisplayCategoriesBase = if (uiState.categories.isNotEmpty()) {
         uiState.categories
     } else {
         preloadedCategories
+    }
+    val sportsHomeRows by viewModel.sportsHomeRows.collectAsStateWithLifecycle()
+    val rawDisplayCategories = remember(rawDisplayCategoriesBase, sportsHomeRows) {
+        viewModel.withSportsHomeRows(rawDisplayCategoriesBase, sportsHomeRows)
     }
     val displayCategories = remember(rawDisplayCategories) {
         deduplicateHomeCategories(rawDisplayCategories)
@@ -623,6 +628,13 @@ fun HomeScreen(
     val latestDisplayHeroItem by rememberUpdatedState(displayHeroItem)
 
     val context = LocalContext.current
+    val openSportsHomeItem: (MediaItem) -> Unit = { item ->
+        viewModel.openSportsHomeItem(
+            item = item,
+            onNavigateToSettings = onNavigateToSettings,
+            onNavigateToPlayer = onNavigateToPlayer
+        )
+    }
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val backdropSize = remember(configuration, density) {
@@ -1101,7 +1113,9 @@ fun HomeScreen(
             heroOverviewOverride = displayHeroOverview,
             onPlay = {
                 displayHeroItem?.let { item ->
-                    if (viewModel.isIptvItem(item)) {
+                    if (viewModel.isSportsHomeItem(item)) {
+                        openSportsHomeItem(item)
+                    } else if (viewModel.isIptvItem(item)) {
                         onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
                     } else if (viewModel.isCollectionItem(item)) {
                         onNavigateToCollection(item.status?.removePrefix("collection:").orEmpty())
@@ -1112,7 +1126,9 @@ fun HomeScreen(
             },
             onDetails = {
                 displayHeroItem?.let { item ->
-                    if (viewModel.isIptvItem(item)) {
+                    if (viewModel.isSportsHomeItem(item)) {
+                        openSportsHomeItem(item)
+                    } else if (viewModel.isIptvItem(item)) {
                         onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
                     } else if (viewModel.isCollectionItem(item)) {
                         onNavigateToCollection(item.status?.removePrefix("collection:").orEmpty())
@@ -1139,6 +1155,8 @@ fun HomeScreen(
             onNavigateToWatchlist = onNavigateToWatchlist,
             onNavigateToTv = onNavigateToTv,
             getIptvStreamUrl = { itemId -> viewModel.getIptvStreamUrl(itemId) },
+            isSportsHomeItem = { item -> viewModel.isSportsHomeItem(item) },
+            onSportsHomeItemClick = openSportsHomeItem,
             onNavigateToSettings = onNavigateToSettings,
             onSwitchProfile = onSwitchProfile,
             onExitApp = onExitApp,
@@ -1218,14 +1236,18 @@ fun HomeScreen(
                     isWatched = item.isWatched,
                     isContinueWatching = contextMenuIsContinueWatching,
                     onPlay = {
-                        if (viewModel.isIptvItem(item)) {
+                        if (viewModel.isSportsHomeItem(item)) {
+                            openSportsHomeItem(item)
+                        } else if (viewModel.isIptvItem(item)) {
                             onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
                         } else {
                             onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                         }
                     },
                     onViewDetails = {
-                        if (viewModel.isIptvItem(item)) {
+                        if (viewModel.isSportsHomeItem(item)) {
+                            openSportsHomeItem(item)
+                        } else if (viewModel.isIptvItem(item)) {
                             onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
                         } else {
                             onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
@@ -2171,6 +2193,8 @@ private fun HomeInputLayer(
     onNavigateToWatchlist: () -> Unit,
     onNavigateToTv: (channelId: String?, streamUrl: String?) -> Unit,
     getIptvStreamUrl: (itemId: Int) -> String?,
+    isSportsHomeItem: (MediaItem) -> Boolean = { false },
+    onSportsHomeItemClick: (MediaItem) -> Unit = {},
     onNavigateToSettings: () -> Unit,
     onSwitchProfile: () -> Unit,
     onExitApp: () -> Unit,
@@ -2438,9 +2462,13 @@ private fun HomeInputLayer(
                                     focusState.currentItemIndex
                                 )
                                 currentItem?.takeIf { isActionableHomeItem(it) }?.let { item ->
-                                    val currentCategory = categories.getOrNull(focusState.currentRowIndex)
-                                    val isContinue = currentCategory?.id == "continue_watching"
-                                    onOpenContextMenu(item, isContinue)
+                                    if (isSportsHomeItem(item)) {
+                                        onSportsHomeItemClick(item)
+                                    } else {
+                                        val currentCategory = categories.getOrNull(focusState.currentRowIndex)
+                                        val isContinue = currentCategory?.id == "continue_watching"
+                                        onOpenContextMenu(item, isContinue)
+                                    }
                                 }
                             }
                             true
@@ -2457,6 +2485,10 @@ private fun HomeInputLayer(
                                     focusState.currentItemIndex
                                 )
                                 currentItem?.takeIf { isActionableHomeItem(it) }?.let { item ->
+                                    if (isSportsHomeItem(item)) {
+                                        onSportsHomeItemClick(item)
+                                        return@let
+                                    }
                                     if (holdMs >= 500L) {
                                         // Long-press: open context menu
                                         val currentCategory = categories.getOrNull(focusState.currentRowIndex)
@@ -2548,6 +2580,10 @@ private fun HomeInputLayer(
                 if (!isActionableHomeItem(item)) {
                     return@HomeRowsLayer
                 }
+                if (isSportsHomeItem(item)) {
+                    onSportsHomeItemClick(item)
+                    return@HomeRowsLayer
+                }
                 val iptvId = item.status?.removePrefix("iptv:")?.takeIf { item.status?.startsWith("iptv:") == true && it.isNotBlank() }
                 val collectionId = item.status?.removePrefix("collection:")?.takeIf { item.status?.startsWith("collection:") == true && it.isNotBlank() }
                 if (iptvId != null) {
@@ -2558,7 +2594,15 @@ private fun HomeInputLayer(
                     onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                 }
             },
-            onItemLongClick = if (isMobile) { item, isContinue -> onOpenContextMenu(item, isContinue) } else null
+            onItemLongClick = if (isMobile) {
+                { item, isContinue ->
+                    if (isSportsHomeItem(item)) {
+                        onSportsHomeItemClick(item)
+                    } else {
+                        onOpenContextMenu(item, isContinue)
+                    }
+                }
+            } else null
         )
     }
 }

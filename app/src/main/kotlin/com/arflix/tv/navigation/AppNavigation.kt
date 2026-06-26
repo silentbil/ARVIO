@@ -192,6 +192,17 @@ fun AppNavigation(
                 onNavigateToTv = { channelId, streamUrl ->
                     navigateTopLevel(Screen.Tv.createRoute(channelId, streamUrl))
                 },
+                onNavigateToPlayer = { mediaType, mediaId, streamUrl, preferredAddonId, preferredSourceName ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            mediaType = mediaType,
+                            mediaId = mediaId,
+                            streamUrl = streamUrl,
+                            preferredAddonId = preferredAddonId,
+                            preferredSourceName = preferredSourceName
+                        )
+                    )
+                },
                 onNavigateToSettings = {
                     navigateTopLevel(Screen.Settings.route)
                 },

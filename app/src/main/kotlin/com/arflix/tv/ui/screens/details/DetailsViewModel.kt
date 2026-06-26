@@ -5,12 +5,15 @@ import android.util.Log
 import com.arflix.tv.R
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.AddonType
 import com.arflix.tv.data.model.CastMember
 import com.arflix.tv.data.model.Episode
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.PersonDetails
 import com.arflix.tv.data.model.Review
+import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.api.TmdbApi
@@ -172,6 +175,11 @@ enum class ToastType {
 
 private fun isSupplementalStream(stream: StreamSource): Boolean =
     stream.addonId == "iptv_xtream_vod" || stream.addonId == HomeServerRepository.ADDON_ID
+
+private fun Addon.isVodStreamingAddon(): Boolean =
+    isEnabled &&
+        type != AddonType.SUBTITLE &&
+        !SportsAddonCapabilities.isSportsLiveTvAddon(this)
 
 @HiltViewModel
 class DetailsViewModel @Inject constructor(
@@ -1378,7 +1386,7 @@ class DetailsViewModel @Inject constructor(
             }
 
             val orderedAddonIds = streamRepository.installedAddons.first()
-                .filter { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                .filter { it.isVodStreamingAddon() }
                 .map { it.id }
             _uiState.value = _uiState.value.copy(
                 isLoadingStreams = true,
@@ -1495,7 +1503,7 @@ class DetailsViewModel @Inject constructor(
 
                 val result = if (currentMediaType == MediaType.MOVIE) {
                     val enabledAddons = streamRepository.installedAddons.first()
-                        .filter { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                        .filter { it.isVodStreamingAddon() }
                     val enabledStreamingAddons = enabledAddons.size
                     val stremioCount = enabledAddons.count { it.runtimeKind == com.arflix.tv.data.model.RuntimeKind.STREMIO }
                     val enabledAddonNames = enabledAddons.take(4).joinToString(",") { it.name }
@@ -1524,7 +1532,7 @@ class DetailsViewModel @Inject constructor(
                             streams = emptyList(),
                             subtitles = emptyList(),
                             hasStreamingAddons = streamRepository.installedAddons.first()
-                                .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE } > 0 ||
+                                .count { it.isVodStreamingAddon() } > 0 ||
                                 hasHomeServerConnections
                         )
                         return@launch
@@ -1546,7 +1554,7 @@ class DetailsViewModel @Inject constructor(
                                 "incoming=${progressive.streams.size} merged=${mergedStreams.size} subtitles=${progressive.subtitles.size}"
                         )
                         val addonCount = streamRepository.installedAddons.first()
-                            .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                            .count { it.isVodStreamingAddon() }
                         val supplementalSourcesStillLoading =
                             homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                         _uiState.value = _uiState.value.copy(
@@ -1574,7 +1582,7 @@ class DetailsViewModel @Inject constructor(
                             streams = emptyList(),
                             subtitles = emptyList(),
                             hasStreamingAddons = streamRepository.installedAddons.first()
-                                .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE } > 0 ||
+                                .count { it.isVodStreamingAddon() } > 0 ||
                                 hasHomeServerConnections
                         )
                         return@launch
@@ -1602,7 +1610,7 @@ class DetailsViewModel @Inject constructor(
                                 .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
                         )
                         val addonCount = streamRepository.installedAddons.first()
-                            .count { it.isEnabled && it.type != com.arflix.tv.data.model.AddonType.SUBTITLE }
+                            .count { it.isVodStreamingAddon() }
                         val supplementalSourcesStillLoading =
                             homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                         _uiState.value = _uiState.value.copy(

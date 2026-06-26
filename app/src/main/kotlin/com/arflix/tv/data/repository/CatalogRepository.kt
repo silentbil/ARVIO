@@ -16,6 +16,7 @@ import com.arflix.tv.data.model.CollectionTileShape
 import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.CatalogValidationResult
 import com.arflix.tv.data.model.Category
+import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.data.repository.HomeServerCatalogCandidate
 import com.arflix.tv.R
 import com.arflix.tv.util.CatalogUrlParser
@@ -449,9 +450,10 @@ class CatalogRepository @Inject constructor(
         val supportedCatalogs = addons
             .asSequence()
             .filter { addon ->
-                addon.isInstalled &&
+                    addon.isInstalled &&
                     addon.isEnabled &&
                     addon.type != AddonType.SUBTITLE &&
+                    !SportsAddonCapabilities.isSportsLiveTvAddon(addon) &&
                     !addon.url.isNullOrBlank() &&
                     !addon.manifest?.catalogs.isNullOrEmpty()
             }

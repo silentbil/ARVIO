@@ -20,6 +20,7 @@ import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.CollectionGroupKind
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.R
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.TraktRepository
@@ -29,6 +30,7 @@ import com.arflix.tv.data.repository.CatalogRepository
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.ProfileManager
+import com.arflix.tv.data.repository.SportsRepository
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.HomeServerRepository
@@ -53,6 +55,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
@@ -123,6 +126,7 @@ class HomeViewModel @Inject constructor(
     private val mediaRepository: MediaRepository,
     private val catalogRepository: CatalogRepository,
     private val streamRepository: StreamRepository,
+    private val sportsRepository: SportsRepository,
     private val traktRepository: TraktRepository,
     private val traktSyncService: TraktSyncService,
     private val iptvRepository: IptvRepository,
@@ -163,6 +167,9 @@ class HomeViewModel @Inject constructor(
 
     // IPTV favorite channels — maps MediaItem.id (Int hash) to channel data
     private val iptvChannelMap = mutableMapOf<Int, com.arflix.tv.data.model.IptvChannel>()
+    private val _sportsHomeRows = MutableStateFlow(sportsRepository.defaultHomeRows())
+    val sportsHomeRows: StateFlow<List<Category>> = _sportsHomeRows.asStateFlow()
+    private var selectedSportsCategoryId: String? = null
 
     companion object {
         const val FAVORITE_TV_CATEGORY_ID = "favorite_tv"
@@ -179,6 +186,75 @@ class HomeViewModel @Inject constructor(
     fun isIptvItem(item: MediaItem): Boolean = item.status?.startsWith(IPTV_STATUS_PREFIX) == true
 
     fun isCollectionItem(item: MediaItem): Boolean = item.status?.startsWith("collection:") == true
+
+    fun isSportsHomeItem(item: MediaItem): Boolean =
+        SportsAddonCapabilities.isSportsHomeStatus(item.status)
+
+    fun withSportsHomeRows(
+        categories: List<Category>,
+        sportsRows: List<Category>
+    ): List<Category> = sportsRepository.mergeSportsRows(categories, sportsRows)
+
+    fun openSportsHomeItem(
+        item: MediaItem,
+        onNavigateToSettings: () -> Unit,
+        onNavigateToPlayer: (MediaType, Int, String, String?, String?) -> Unit
+    ) {
+        val status = item.status.orEmpty()
+        viewModelScope.launch {
+            val addons = streamRepository.installedAddons.first()
+            val hasSportsAddon = addons.any { addon ->
+                addon.isInstalled &&
+                    addon.isEnabled &&
+                    SportsAddonCapabilities.isSportsLiveTvAddon(addon)
+            }
+
+            when {
+                SportsAddonCapabilities.isSportsEventStatus(status) -> {
+                    if (!hasSportsAddon) {
+                        showSportsToast(context.getString(R.string.home_sports_addon_required), ToastType.INFO)
+                        onNavigateToSettings()
+                        return@launch
+                    }
+                    showSportsToast(context.getString(R.string.home_sports_opening), ToastType.INFO)
+                    val playback = sportsRepository.resolvePlayback(status, item.title)
+                    if (playback == null) {
+                        showSportsToast(context.getString(R.string.home_sports_playback_failed), ToastType.ERROR)
+                    } else {
+                        onNavigateToPlayer(
+                            MediaType.TV,
+                            playback.mediaId,
+                            playback.streamUrl,
+                            playback.addonId,
+                            playback.sourceName
+                        )
+                    }
+                }
+
+                SportsAddonCapabilities.isSportsCategoryStatus(status) -> {
+                    if (!hasSportsAddon) {
+                        showSportsToast(context.getString(R.string.home_sports_addon_required), ToastType.INFO)
+                        onNavigateToSettings()
+                        return@launch
+                    }
+                    selectedSportsCategoryId = sportsRepository.selectedSportIdFromStatus(status)
+                    _sportsHomeRows.value = sportsRepository.buildHomeRows(addons, selectedSportsCategoryId)
+                }
+
+                else -> {
+                    showSportsToast(context.getString(R.string.home_sports_addon_required), ToastType.INFO)
+                    onNavigateToSettings()
+                }
+            }
+        }
+    }
+
+    private fun showSportsToast(message: String, type: ToastType) {
+        _uiState.value = _uiState.value.copy(
+            toastMessage = message,
+            toastType = type
+        )
+    }
 
     /** Returns the service / franchise hero-video URL for a focused collection tile, or null. */
     fun getCollectionHeroVideoUrl(item: MediaItem): String? {
@@ -1246,6 +1322,12 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        viewModelScope.launch {
+            streamRepository.installedAddons.collectLatest { addons ->
+                _sportsHomeRows.value = sportsRepository.buildHomeRows(addons, selectedSportsCategoryId)
+            }
+        }
+
         viewModelScope.launch {
             profileManager.activeProfileId
                 .distinctUntilChanged()
