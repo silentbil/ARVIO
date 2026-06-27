@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
@@ -168,7 +169,18 @@ class HomeViewModel @Inject constructor(
     // IPTV favorite channels — maps MediaItem.id (Int hash) to channel data
     private val iptvChannelMap = mutableMapOf<Int, com.arflix.tv.data.model.IptvChannel>()
     private val _sportsHomeRows = MutableStateFlow(sportsRepository.defaultHomeRows())
-    val sportsHomeRows: StateFlow<List<Category>> = _sportsHomeRows.asStateFlow()
+    val sportsHomeRows: StateFlow<List<Category>> = combine(
+        _sportsHomeRows,
+        catalogRepository.observeCatalogs().map { catalogs ->
+            catalogs.map { it.id }.toSet()
+        }.distinctUntilChanged()
+    ) { rows, visibleIds ->
+        rows.filter { it.id in visibleIds }
+    }.let { flow ->
+        val state = MutableStateFlow<List<Category>>(emptyList())
+        viewModelScope.launch { flow.collect { state.value = it } }
+        state.asStateFlow()
+    }
     private var selectedSportsCategoryId: String? = null
 
     companion object {
