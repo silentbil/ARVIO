@@ -144,6 +144,7 @@ import com.arflix.tv.ui.components.ToastType
 import com.arflix.tv.ui.components.NextEpisodeOverlay
 import com.arflix.tv.ui.components.StreamSelector
 import com.arflix.tv.ui.components.WaveLoadingDots
+import com.arflix.tv.ui.components.PlaybackQualityBadgeRow
 import androidx.compose.ui.text.style.TextOverflow
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.settingsDataStore
@@ -3104,6 +3105,14 @@ fun PlayerScreen(
                             )
                         }
                     }
+
+
+                    // Quality badges (4K · DV · Atmos etc.) — shown above the seekbar
+                    // while controls are visible so the user always knows what is playing.
+                    PlaybackQualityBadgeRow(
+                        stream = uiState.selectedStream,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
 
                     Spacer(modifier = Modifier.height(if (isTouchDevice) 4.dp else 6.dp))
 
