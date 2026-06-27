@@ -508,9 +508,9 @@ class SettingsViewModel @Inject constructor(
 
             val subtitleOptions = loadSubtitleOptions(defaultSub)
             val audioLanguageOptions = loadAudioLanguageOptions(defaultAudio)
-            val existingCatalogs = _uiState.value.catalogs.ifEmpty {
-                mediaRepository.getDefaultCatalogConfigs()
-            }
+            val existingCatalogs = visibleCatalogs(
+                catalogRepository.ensurePreinstalledDefaults(mediaRepository.getDefaultCatalogConfigs())
+            )
 
             val currentState = _uiState.value
             _uiState.value = currentState.copy(
@@ -1687,12 +1687,8 @@ class SettingsViewModel @Inject constructor(
 
     private fun observeCatalogs() {
         viewModelScope.launch {
-            catalogRepository.observeCatalogs().collect { catalogs ->
-                val effectiveCatalogs = if (catalogs.isEmpty()) {
-                    catalogRepository.ensurePreinstalledDefaults(mediaRepository.getDefaultCatalogConfigs())
-                } else {
-                    catalogs
-                }
+            catalogRepository.observeCatalogs().collect {
+                val effectiveCatalogs = catalogRepository.ensurePreinstalledDefaults(mediaRepository.getDefaultCatalogConfigs())
                 val visible = visibleCatalogs(effectiveCatalogs)
                 if (_uiState.value.catalogs != visible) {
                     _uiState.value = _uiState.value.copy(catalogs = visible)
