@@ -258,7 +258,7 @@ fun IptvChannel.enrich(number: Int): EnrichedChannel {
     val traits = traits()
     return EnrichedChannel(
         source = this,
-        number = providerChannelNumber?.trim()?.toIntOrNull() ?: number,
+        number = number,
         country = traits.country,
         genre = traits.genre,
         quality = traits.quality,
@@ -290,7 +290,7 @@ fun IptvChannel.enrichForFastStartup(number: Int): EnrichedChannel {
     val brand = LiveColors.BrandGeneral
     return EnrichedChannel(
         source = this,
-        number = providerChannelNumber?.trim()?.toIntOrNull() ?: number,
+        number = number,
         country = rawCountry,
         genre = Genre.General,
         quality = quality,
@@ -862,7 +862,7 @@ fun buildFastStartupChannelState(
     }
 
     channels.forEachIndexed { index, rawChannel ->
-        val channel = rawChannel.enrichForFastStartup(100 + index)
+        val channel = rawChannel.enrichForFastStartup(index + 1)
         val playlistId = rawChannel.id.substringBefore(':')
         val groupLabel = playlistGroupLabel(rawChannel.group)
         val groupKey = playlistGroupKey(playlistId, groupLabel)
@@ -965,7 +965,7 @@ fun buildPagedStartupChannelState(
     windowOffset: Int = 0,
 ): EnrichedChannels {
     val visibleWindow = channels.mapIndexed { index, rawChannel ->
-        rawChannel.enrichForFastStartup(100 + windowOffset + index)
+        rawChannel.enrichForFastStartup(windowOffset + index + 1)
     }
     val byId = LinkedHashMap<String, EnrichedChannel>(visibleWindow.size)
     val byCategory = LinkedHashMap<String, MutableList<EnrichedChannel>>()
@@ -1076,7 +1076,7 @@ fun buildInitialCategoryChannels(
         return buildList(limit.coerceAtMost(channels.size)) {
             channels.forEachIndexed { index, channel ->
                 if (!isAdultGroup(channel.group, channel.name) && !isHiddenPlaylistGroup(channel, hiddenGroups)) {
-                    add(channel.enrichForFastStartup(100 + index))
+                    add(channel.enrichForFastStartup(index + 1))
                     if (size >= limit) return@buildList
                 }
             }
@@ -1086,7 +1086,7 @@ fun buildInitialCategoryChannels(
         return buildList(limit.coerceAtMost(favorites.size)) {
             channels.forEachIndexed { index, channel ->
                 if (channel.id in favorites && !isAdultGroup(channel.group, channel.name) && !isHiddenPlaylistGroup(channel, hiddenGroups)) {
-                    add(channel.enrichForFastStartup(100 + index))
+                    add(channel.enrichForFastStartup(index + 1))
                     if (size >= limit) return@buildList
                 }
             }
@@ -1098,7 +1098,7 @@ fun buildInitialCategoryChannels(
             recents.toList().asReversed().forEach { id ->
                 val (index, channel) = indexById[id] ?: return@forEach
                 if (!isAdultGroup(channel.group, channel.name) && !isHiddenPlaylistGroup(channel, hiddenGroups)) {
-                    add(channel.enrichForFastStartup(100 + index))
+                    add(channel.enrichForFastStartup(index + 1))
                     if (size >= limit) return@buildList
                 }
             }
@@ -1110,7 +1110,7 @@ fun buildInitialCategoryChannels(
             val isSelectedHiddenGroup = categoryId.startsWith("grp:") &&
                 playlistGroupCategoryId(channel.id.substringBefore(':'), channel.group) == categoryId
             if (matcher(channel) && (isSelectedHiddenGroup || !isHiddenPlaylistGroup(channel, hiddenGroups))) {
-                add(channel.enrich(100 + index))
+                add(channel.enrich(index + 1))
                 if (size >= limit) return@buildList
             }
         }

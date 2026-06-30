@@ -145,6 +145,7 @@ import com.arflix.tv.ui.components.NextEpisodeOverlay
 import com.arflix.tv.ui.components.StreamSelector
 import com.arflix.tv.ui.components.WaveLoadingDots
 import com.arflix.tv.ui.components.PlaybackQualityBadgeRow
+import com.arflix.tv.ui.components.buildPlaybackBadges
 import androidx.compose.ui.text.style.TextOverflow
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.settingsDataStore
@@ -170,6 +171,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.Locale
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.source.MediaSource
@@ -210,6 +212,23 @@ import androidx.core.content.ContextCompat
 private const val PIP_ACTION_REWIND = "com.arflix.tv.pip.REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
+
+private fun isSafePlaybackHeader(name: String, value: String): Boolean {
+    return name.isNotBlank() &&
+        value.isNotBlank() &&
+        name.all { ch ->
+            ch.code in 33..126 &&
+                ch !in setOf('(', ')', '<', '>', '@', ',', ';', ':', '\\', '"', '/', '[', ']', '?', '=', '{', '}')
+        } &&
+        value.all { ch -> ch == '\t' || ch.code in 32..126 }
+}
+
+private fun Map<String, String>.safePlaybackHeaders(): Map<String, String> {
+    if (isEmpty()) return emptyMap()
+    return filter { (name, value) -> isSafePlaybackHeader(name.trim(), value.trim()) }
+        .mapKeys { (name, _) -> name.trim() }
+        .mapValues { (_, value) -> value.trim() }
+}
 
 /**
  * Netflix-style Player UI for Android TV
@@ -781,7 +800,7 @@ fun PlayerScreen(
                 playbackBufferProfile.bufferForPlaybackAfterRebufferMs
             )
             .setTargetBufferBytes(playbackBufferProfile.targetBufferBytes)
-            .setPrioritizeTimeOverSizeThresholds(false) // byte cap is authoritative
+            .setPrioritizeTimeOverSizeThresholds(playbackBufferProfile.prioritizeTimeOverSizeThresholds)
             .setBackBuffer(playbackBufferProfile.backBufferMs, false)
             .build()
 
@@ -1383,7 +1402,7 @@ fun PlayerScreen(
                 ?.proxyHeaders
                 ?.request
                 .orEmpty()
-                .filterKeys { it.isNotBlank() }
+                .safePlaybackHeaders()
 
             // Never block first frame on MediaExtractor probing. Use a cached
             // frame-rate if available and prewarm the cache in the background.
@@ -3107,13 +3126,6 @@ fun PlayerScreen(
                     }
 
 
-                    // Quality badges (4K · DV · Atmos etc.) — shown above the seekbar
-                    // while controls are visible so the user always knows what is playing.
-                    PlaybackQualityBadgeRow(
-                        stream = uiState.selectedStream,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-
                     Spacer(modifier = Modifier.height(if (isTouchDevice) 4.dp else 6.dp))
 
                     // Trackbar at the very bottom with time labels
@@ -3737,6 +3749,19 @@ private fun PulsingLogo(
                         model = logoUrl, contentDescription = title, contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxWidth(0.76f).height(152.dp)
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(74.dp)
+                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .background(Color.White.copy(alpha = 0.95f), CircleShape)
+                        )
+                    }
                 }
             }
         }
@@ -4925,7 +4950,8 @@ private data class PlaybackBufferProfile(
     val bufferForPlaybackMs: Int,
     val bufferForPlaybackAfterRebufferMs: Int,
     val targetBufferBytes: Int,
-    val backBufferMs: Int
+    val backBufferMs: Int,
+    val prioritizeTimeOverSizeThresholds: Boolean
 )
 
 private fun buildPlaybackBufferProfile(
@@ -4935,23 +4961,23 @@ private fun buildPlaybackBufferProfile(
 ): PlaybackBufferProfile {
     val heapMb = memoryClassMb.coerceAtLeast(256)
     val targetMb = when {
-        isLowRamDevice || heapMb <= 256 -> 64
-        heapMb <= 384 -> 96
-        heapMb <= 512 -> 128
-        heapMb <= 768 -> 192
-        else -> 256
+        isLowRamDevice || heapMb <= 256 -> 80
+        heapMb <= 384 -> 128
+        heapMb <= 512 -> 224
+        heapMb <= 768 -> 288
+        else -> 384
     }
     val minBufferMs = when {
-        isLowRamDevice || heapMb <= 256 -> 18_000
-        heapMb <= 384 -> 22_000
-        heapMb <= 512 -> 28_000
-        else -> 32_000
+        isLowRamDevice || heapMb <= 256 -> 20_000
+        heapMb <= 384 -> 26_000
+        heapMb <= 512 -> 34_000
+        else -> 40_000
     }
     val maxBufferMs = when {
-        isLowRamDevice || heapMb <= 256 -> 60_000
-        heapMb <= 384 -> 80_000
-        heapMb <= 512 -> 105_000
-        else -> 135_000
+        isLowRamDevice || heapMb <= 256 -> 70_000
+        heapMb <= 384 -> 95_000
+        heapMb <= 512 -> 130_000
+        else -> 170_000
     }
     val startBufferMs = when {
         isTvDevice && (isLowRamDevice || heapMb <= 384) -> 550
@@ -4959,9 +4985,10 @@ private fun buildPlaybackBufferProfile(
         else -> 350
     }
     val rebufferMs = when {
-        isLowRamDevice || heapMb <= 256 -> 3_000
-        heapMb <= 384 -> 3_500
-        else -> 4_000
+        isLowRamDevice || heapMb <= 256 -> 4_000
+        heapMb <= 384 -> 5_000
+        heapMb <= 512 -> 6_500
+        else -> 8_000
     }
     val backBufferMs = when {
         isLowRamDevice || heapMb <= 256 -> 2_000
@@ -4975,7 +5002,8 @@ private fun buildPlaybackBufferProfile(
         bufferForPlaybackMs = startBufferMs,
         bufferForPlaybackAfterRebufferMs = rebufferMs,
         targetBufferBytes = targetMb * 1024 * 1024,
-        backBufferMs = backBufferMs
+        backBufferMs = backBufferMs,
+        prioritizeTimeOverSizeThresholds = !isLowRamDevice && heapMb > 768
     )
 }
 
@@ -5064,10 +5092,10 @@ private fun parseSizeToBytes(sizeStr: String): Long {
     val number = match.groupValues[1].toDoubleOrNull() ?: return 0L
 
     val multiplier = when (match.groupValues[2]) {
-        "TB" -> 1024.0 * 1024.0 * 1024.0 * 1024.0
-        "GB" -> 1024.0 * 1024.0 * 1024.0
-        "MB" -> 1024.0 * 1024.0
-        "KB" -> 1024.0
+        "TB", "TIB" -> 1024.0 * 1024.0 * 1024.0 * 1024.0
+        "GB", "GIB" -> 1024.0 * 1024.0 * 1024.0
+        "MB", "MIB" -> 1024.0 * 1024.0
+        "KB", "KIB" -> 1024.0
         else -> 1.0
     }
     return (number * multiplier).toLong()
@@ -5242,7 +5270,10 @@ private fun PlayerMetadataChrome(
         mediaType == MediaType.TV && !uiState.episodeTitle.isNullOrBlank() -> uiState.episodeTitle
         else -> uiState.title
     }
-    val metaLine = buildPlaybackMetaLine(uiState, mediaType, seasonNumber, episodeNumber)
+    val metaLine = buildPlaybackBaseMetaLine(uiState, mediaType, seasonNumber, episodeNumber)
+    val selectedStream = uiState.selectedStream
+    val streamSizeLabel = selectedStream?.let { formatStreamSizeInGb(it) }
+    val hasQualityBadges = selectedStream?.let { buildPlaybackBadges(it).isNotEmpty() } == true
     val overview = uiState.overview?.trim().orEmpty()
     val logoHeight = 44.dp
     val logoWidth = 230.dp
@@ -5304,17 +5335,47 @@ private fun PlayerMetadataChrome(
                 )
             }
 
-            if (metaLine.isNotBlank()) {
-                Text(
-                    text = metaLine,
-                    style = ArflixTypography.caption.copy(
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    color = TextPrimary.copy(alpha = 0.78f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            if (metaLine.isNotBlank() || hasQualityBadges || !streamSizeLabel.isNullOrBlank()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.widthIn(max = 540.dp)
+                ) {
+                    var hasPreviousMetaPart = false
+
+                    if (metaLine.isNotBlank()) {
+                        Text(
+                            text = metaLine,
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = TextPrimary.copy(alpha = 0.78f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        hasPreviousMetaPart = true
+                    }
+
+                    if (selectedStream != null && hasQualityBadges) {
+                        if (hasPreviousMetaPart) PlayerMetaSeparator()
+                        PlaybackQualityBadgeRow(stream = selectedStream)
+                        hasPreviousMetaPart = true
+                    }
+
+                    if (!streamSizeLabel.isNullOrBlank()) {
+                        if (hasPreviousMetaPart) PlayerMetaSeparator()
+                        Text(
+                            text = streamSizeLabel,
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = TextPrimary.copy(alpha = 0.82f),
+                            maxLines = 1
+                        )
+                    }
+                }
             }
 
             if (isPaused && overview.isNotBlank()) {
@@ -5331,7 +5392,20 @@ private fun PlayerMetadataChrome(
     }
 }
 
-private fun buildPlaybackMetaLine(
+@Composable
+private fun PlayerMetaSeparator() {
+    Text(
+        text = "|",
+        style = ArflixTypography.caption.copy(
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        ),
+        color = TextPrimary.copy(alpha = 0.45f),
+        maxLines = 1
+    )
+}
+
+private fun buildPlaybackBaseMetaLine(
     uiState: PlayerUiState,
     mediaType: MediaType,
     seasonNumber: Int?,
@@ -5345,14 +5419,21 @@ private fun buildPlaybackMetaLine(
         uiState.releaseYear?.trim()?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
     }
 
-    uiState.selectedStream?.let { stream ->
-        stream.quality.trim().takeIf { it.isNotBlank() }?.let { parts.add(it) }
-        val size = stream.size.trim().takeIf { it.isNotBlank() }
-            ?: stream.sizeBytes?.let { formatFileSize(it) }
-        size?.let { parts.add(it) }
-    }
-
     return parts.distinct().joinToString(" | ")
+}
+
+private fun formatStreamSizeInGb(stream: StreamSource): String? {
+    val bytes = sequenceOf(
+        parseSizeToBytes(stream.size),
+        parseSizeToBytes(stream.source),
+        parseSizeToBytes(stream.description.orEmpty()),
+        parseSizeToBytes(stream.behaviorHints?.filename.orEmpty()),
+        parseSizeToBytes(stream.quality),
+        stream.sizeBytes ?: 0L,
+        stream.behaviorHints?.videoSize ?: 0L
+    ).firstOrNull { it > 0L } ?: return null
+
+    return String.format(Locale.US, "%.2f GB", bytes / 1_073_741_824.0)
 }
 
 private fun subtitleMatchScore(streamSource: String, subtitle: Subtitle): Int {
@@ -5363,7 +5444,7 @@ private fun subtitleMatchScore(streamSource: String, subtitle: Subtitle): Int {
 private object PlayerScreenRegexes {
     val BRACKET_REGEX = Regex("^\\[[^]]+]")
     val MULTI_SPACE_REGEX = Regex("\\s+")
-    val SIZE_REGEX = Regex("""(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""")
+    val SIZE_REGEX = Regex("""(\d+(?:\.\d+)?)\s*(TIB|GIB|MIB|KIB|TB|GB|MB|KB)""")
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

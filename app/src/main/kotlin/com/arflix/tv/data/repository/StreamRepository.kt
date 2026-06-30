@@ -886,8 +886,8 @@ class StreamRepository @Inject constructor(
         }
     }
 
-    private fun sanitizeProviderLabel(value: String): String {
-        return value.replace(StreamRegexes.NUVIO_REGEX, "HTTP").trim()
+    private fun sanitizeProviderLabel(value: String?): String {
+        return value.orEmpty().replace(StreamRegexes.NUVIO_REGEX, "HTTP").trim()
     }
 
     private fun isIncompleteExternalAddon(addon: Addon): Boolean {
@@ -3356,10 +3356,21 @@ class StreamRepository @Inject constructor(
             val key = rawKey.trim()
             val value = rawValue.trim()
             if (key.isBlank() || value.isBlank()) return@forEach
-            if (key.any { it == '\r' || it == '\n' } || value.any { it == '\r' || it == '\n' }) return@forEach
+            if (!isSafeHttpHeaderName(key) || !isSafeHttpHeaderValue(value)) return@forEach
             sanitized[key] = value
         }
         return sanitized
+    }
+
+    private fun isSafeHttpHeaderName(value: String): Boolean {
+        return value.all { ch ->
+            ch.code in 33..126 &&
+                ch !in setOf('(', ')', '<', '>', '@', ',', ';', ':', '\\', '"', '/', '[', ']', '?', '=', '{', '}')
+        }
+    }
+
+    private fun isSafeHttpHeaderValue(value: String): Boolean {
+        return value.all { ch -> ch == '\t' || ch.code in 32..126 }
     }
 
     private fun decodeHeaderPart(value: String): String {

@@ -1,8 +1,8 @@
 // Top-level build file for Arflix Native Android TV
 
 plugins {
-    id("com.android.application") version "8.9.0" apply false
-    id("com.android.test") version "8.9.0" apply false
+    id("com.android.application") version "8.13.2" apply false
+    id("com.android.test") version "8.13.2" apply false
     id("androidx.baselineprofile") version "1.3.1" apply false
     id("org.jetbrains.kotlin.android") version "2.3.0" apply false
     id("org.jetbrains.kotlin.plugin.serialization") version "2.3.0" apply false

@@ -349,6 +349,8 @@ class PlayerViewModel @Inject constructor(
         primaryStreamResolutionFinal = false
         hasManualSubtitleSelection = false
         aiSourceSubtitle = null
+        val cachedItem = mediaRepository.getCachedItem(mediaType, mediaId)
+        val cachedLogoUrl = mediaRepository.peekCachedLogoUrl(mediaType, mediaId)
         _uiState.value = _uiState.value.copy(
             isLoading = true,
             isLoadingStreams = false,
@@ -356,6 +358,7 @@ class PlayerViewModel @Inject constructor(
             isAiTranslating = false,
             isAiAvailable = false,
             aiTargetLanguageName = "",
+            logoUrl = cachedLogoUrl,
             streamProgress = null,
             streamLoadPhase = null,
             sourceSearchActive = false,
@@ -369,7 +372,6 @@ class PlayerViewModel @Inject constructor(
         lastActiveSkipType = null
         activeSkipRequestKey = null
         _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervalDismissed = false)
-        val cachedItem = mediaRepository.getCachedItem(mediaType, mediaId)
         currentOriginalLanguage = cachedItem?.originalLanguage
         currentGenreIds = cachedItem?.genreIds ?: emptyList()
         currentItemTitle = cachedItem?.title ?: ""
@@ -418,6 +420,7 @@ class PlayerViewModel @Inject constructor(
                 title = cachedItem?.title ?: currentItemTitle,
                 backdropUrl = cachedItem?.backdrop?.takeIf { it.isNotBlank() }
                     ?: cachedItem?.image?.takeIf { it.isNotBlank() },
+                logoUrl = cachedLogoUrl,
                 addonOrderedIds = orderedAddonIds,
                 preferredAudioLanguage = preferredAudioLanguage,
                 preferredSubtitleLang = preferredSub,
@@ -968,10 +971,12 @@ class PlayerViewModel @Inject constructor(
                 val season = currentSeason
                 val episode = currentEpisode
                 if (season != null && episode != null) {
-                    currentEpisodeTitle = runCatching {
+                    val episodeDetails = runCatching {
                         val seasonDetails = tmdbApi.getTvSeason(mediaId, season, Constants.TMDB_API_KEY)
-                        seasonDetails.episodes.firstOrNull { it.episodeNumber == episode }?.name
+                        seasonDetails.episodes.firstOrNull { it.episodeNumber == episode }
                     }.getOrNull()
+                    currentEpisodeTitle = episodeDetails?.name?.takeIf { it.isNotBlank() }
+                    overview = episodeDetails?.overview?.takeIf { it.isNotBlank() } ?: overview
                 }
             } else {
                 val movieDetails = details as com.arflix.tv.data.api.TmdbMovieDetails
@@ -992,7 +997,7 @@ class PlayerViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 title = title,
                 backdropUrl = backdropUrl,
-                logoUrl = logoUrl,
+                logoUrl = logoUrl ?: _uiState.value.logoUrl,
                 episodeTitle = currentEpisodeTitle,
                 overview = overview,
                 releaseYear = releaseYear,
@@ -2971,9 +2976,7 @@ class PlayerViewModel @Inject constructor(
 
             val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
             val sortedStreams = sortStreamsByQualityAndSize(mergedStreams, preferredLanguage)
-            val selectedMatch = sortedStreams.firstOrNull { stream ->
-                isSameStreamUrl(stream.url, playbackUrl)
-            }
+            val selectedMatch = findProvidedSelectedStreamMatch(sortedStreams, playbackUrl)
 
             val shouldAutoplay = _uiState.value.selectedStreamUrl.isNullOrBlank()
             val prevSource = _uiState.value.selectedStream?.source.orEmpty()
@@ -3013,6 +3016,54 @@ class PlayerViewModel @Inject constructor(
         if (candidateTrimmed.isBlank() || targetTrimmed.isBlank()) return false
         if (candidateTrimmed.equals(targetTrimmed, ignoreCase = true)) return true
         return normalizeStreamUrlKey(candidateTrimmed) == normalizeStreamUrlKey(targetTrimmed)
+    }
+
+    private fun findProvidedSelectedStreamMatch(
+        streams: List<StreamSource>,
+        playbackUrl: String
+    ): StreamSource? {
+        streams.firstOrNull { stream ->
+            isSameStreamUrl(stream.url, playbackUrl)
+        }?.let { return it }
+
+        val preferredGroup = currentPreferredBingeGroup
+        val preferredAddon = currentPreferredAddonId
+        val preferredSource = currentPreferredSourceName
+        if (preferredGroup.isNullOrBlank() && preferredAddon.isNullOrBlank() && preferredSource.isNullOrBlank()) {
+            return null
+        }
+
+        preferredGroup?.let { group ->
+            streams.firstOrNull { stream ->
+                stream.behaviorHints?.bingeGroup == group &&
+                    (preferredAddon?.let { stream.addonId == it } ?: true)
+            }?.let { return it }
+        }
+
+        preferredSource?.let { source ->
+            streams.firstOrNull { stream ->
+                val addonMatch = preferredAddon?.let { stream.addonId == it } ?: true
+                addonMatch && sameSourceTitle(stream.source, source)
+            }?.let { return it }
+        }
+
+        return preferredAddon?.let { addonId ->
+            streams.firstOrNull { it.addonId == addonId }
+        }
+    }
+
+    private fun sameSourceTitle(left: String, right: String): Boolean {
+        val normalizedLeft = normalizeSourceTitle(left)
+        val normalizedRight = normalizeSourceTitle(right)
+        if (normalizedLeft.isBlank() || normalizedRight.isBlank()) return false
+        return normalizedLeft == normalizedRight
+    }
+
+    private fun normalizeSourceTitle(value: String): String {
+        return value
+            .trim()
+            .replace(Regex("""\s+"""), " ")
+            .lowercase()
     }
 
     private fun normalizeStreamUrlKey(url: String): String {

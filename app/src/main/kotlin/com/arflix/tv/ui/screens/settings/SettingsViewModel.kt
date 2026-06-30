@@ -675,24 +675,48 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setIptvSelectedPlaylistId(playlistId: String?) {
-        _uiState.value = _uiState.value.copy(iptvSelectedPlaylistId = playlistId)
-        if (playlistId != null) {
-            viewModelScope.launch {
-                val snapshot = iptvRepository.getMemoryCachedSnapshot()
-                    ?: iptvRepository.getCachedSnapshotOrNull()
-                val groups = withContext(Dispatchers.Default) {
-                    snapshot?.channels
-                        ?.asSequence()
-                        ?.filter { it.id.startsWith("$playlistId:") }
-                        ?.map { it.group.trim().ifBlank { "Ungrouped" } }
-                        ?.distinct()
-                        ?.toList()
-                        .orEmpty()
-                }
+        val selectedPlaylistId = playlistId?.trim().orEmpty()
+        if (selectedPlaylistId.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                iptvSelectedPlaylistId = null,
+                iptvAvailableGroups = emptyList()
+            )
+            return
+        }
+
+        _uiState.value = _uiState.value.copy(
+            iptvSelectedPlaylistId = selectedPlaylistId,
+            iptvAvailableGroups = emptyList()
+        )
+        viewModelScope.launch {
+            val groups = loadIptvGroupsForPlaylist(selectedPlaylistId)
+            if (_uiState.value.iptvSelectedPlaylistId == selectedPlaylistId) {
                 _uiState.value = _uiState.value.copy(iptvAvailableGroups = groups)
             }
-        } else {
-            _uiState.value = _uiState.value.copy(iptvAvailableGroups = emptyList())
+        }
+    }
+
+    private suspend fun loadIptvGroupsForPlaylist(playlistId: String): List<String> {
+        val pagedGroups = withContext(Dispatchers.IO) {
+            iptvRepository.pagedPlaylistGroupCounts()
+                .asSequence()
+                .filter { (id, _, count) -> id == playlistId && count > 0 }
+                .map { (_, group, _) -> group.trim().ifBlank { "Ungrouped" } }
+                .distinct()
+                .toList()
+        }
+        if (pagedGroups.isNotEmpty()) return pagedGroups
+
+        val snapshot = iptvRepository.getMemoryCachedSnapshot()
+            ?: iptvRepository.getCachedSnapshotOrNull()
+        return withContext(Dispatchers.Default) {
+            snapshot?.channels
+                ?.asSequence()
+                ?.filter { it.id.startsWith("$playlistId:") }
+                ?.map { it.group.trim().ifBlank { "Ungrouped" } }
+                ?.distinct()
+                ?.toList()
+                .orEmpty()
         }
     }
 

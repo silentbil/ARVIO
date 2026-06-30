@@ -210,6 +210,23 @@ private fun IptvNowNext?.hasGuideData(): Boolean =
     this != null &&
         (now != null || next != null || later != null || upcoming.isNotEmpty() || recent.isNotEmpty())
 
+private fun isSafePlaybackHeader(name: String, value: String): Boolean {
+    return name.isNotBlank() &&
+        value.isNotBlank() &&
+        name.all { ch ->
+            ch.code in 33..126 &&
+                ch !in setOf('(', ')', '<', '>', '@', ',', ';', ':', '\\', '"', '/', '[', ']', '?', '=', '{', '}')
+        } &&
+        value.all { ch -> ch == '\t' || ch.code in 32..126 }
+}
+
+private fun Map<String, String>.safePlaybackHeaders(): Map<String, String> {
+    if (isEmpty()) return emptyMap()
+    return filter { (name, value) -> isSafePlaybackHeader(name.trim(), value.trim()) }
+        .mapKeys { (name, _) -> name.trim() }
+        .mapValues { (_, value) -> value.trim() }
+}
+
 private fun mergeProgramLists(
     first: List<IptvProgram>,
     second: List<IptvProgram>,
@@ -669,7 +686,7 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
         val enriched = withContext(Dispatchers.Default) {
-            snapshot.mapIndexed { idx, ch -> ch.enrich(100 + idx) }
+            snapshot.mapIndexed { idx, ch -> ch.enrich(idx + 1) }
         }
         val index = withContext(Dispatchers.Default) { buildCategoryIndex(enriched, hiddenGroupSet) }
         val tree = withContext(Dispatchers.Default) {
@@ -850,7 +867,7 @@ fun LiveTvScreen(
                         "rows=${directChannels.size}/$categoryCount"
                 )
                 result = withContext(Dispatchers.Default) {
-                    directChannels.mapIndexed { index, channel -> channel.enrichForFastStartup(100 + index) }
+                    directChannels.mapIndexed { index, channel -> channel.enrichForFastStartup(index + 1) }
                 }
             }
         }
@@ -1087,7 +1104,14 @@ fun LiveTvScreen(
     }
     val normalizedGuideEnd = guideWindowEnd.coerceIn(normalizedGuideStart, filteredChannels.size)
     val guideChannels = remember(filteredChannels, normalizedGuideStart, normalizedGuideEnd) {
-        if (normalizedGuideStart >= normalizedGuideEnd) emptyList() else filteredChannels.subList(normalizedGuideStart, normalizedGuideEnd)
+        val total = filteredChannels.size
+        val start = normalizedGuideStart.coerceIn(0, total)
+        val end = normalizedGuideEnd.coerceIn(start, total)
+        if (start >= end) {
+            emptyList()
+        } else {
+            filteredChannels.subList(start, end).toList()
+        }
     }
     LaunchedEffect(selectedCategoryId, filteredChannels.size, guideChannels.size, selectedCategoryTotalCount) {
         if (filteredChannels.isNotEmpty()) {
@@ -1155,7 +1179,10 @@ fun LiveTvScreen(
         val maxPrefetch = if (selectedCategoryId == "all") 96 else 180
         val visibleFirstRows = if (selectedCategoryId == "all") GuideVisibleFirstRowsAllChannels else GuideVisibleFirstRows
         val selectedSeedChannelId = epgAnchorChannelId ?: selectedDisplayChannelId ?: focusedChannelId ?: playingChannelId
-        val anchorIndex = selectedSeedChannelId?.let(filteredChannelIndexById::get)
+        val anchorAbsoluteIndex = selectedSeedChannelId?.let(filteredChannelIndexById::get)
+            ?: normalizedGuideStart
+        val anchorWindowIndex = (anchorAbsoluteIndex - normalizedGuideStart)
+            .takeIf { it in guideChannels.indices }
             ?: 0
         buildList<String> {
             fun addChannel(channel: EnrichedChannel?) {
@@ -1181,15 +1208,15 @@ fun LiveTvScreen(
             // below it. These may lack tvg-id but still have an Xtream stream
             // id that can return direct short/full EPG data.
             addChannel(selectedSeedChannelId?.let(visibleChannelsById::get))
-            addChannel(guideChannels.getOrNull(anchorIndex))
-            var nearIndex = anchorIndex + 1
+            addChannel(guideChannels.getOrNull(anchorWindowIndex))
+            var nearIndex = anchorWindowIndex + 1
             var nearCount = 0
             while (nearIndex < guideChannels.size && nearCount < visibleFirstRows && size < maxPrefetch) {
                 addChannel(guideChannels[nearIndex])
                 nearIndex++
                 nearCount++
             }
-            var nearBackIndex = anchorIndex - 1
+            var nearBackIndex = anchorWindowIndex - 1
             var nearBackCount = 0
             while (nearBackIndex >= 0 && nearBackCount < 8 && size < maxPrefetch) {
                 addChannel(guideChannels[nearBackIndex])
@@ -1197,12 +1224,12 @@ fun LiveTvScreen(
                 nearBackCount++
             }
 
-            var index = anchorIndex + 1
+            var index = anchorWindowIndex + 1
             while (index < guideChannels.size && size < maxPrefetch) {
                 addGuideFirst(index)
                 index++
             }
-            var backIndex = anchorIndex - 1
+            var backIndex = anchorWindowIndex - 1
             var backCount = 0
             while (backIndex >= 0 && backCount < 24 && size < maxPrefetch) {
                 addGuideFirst(backIndex)
@@ -1811,7 +1838,7 @@ fun LiveTvScreen(
         initialPositionMs: Long = 0L,
         drmInfo: com.arflix.tv.data.model.DrmInfo? = null,
     ) {
-        val mergedHeaders = (baseRequestHeaders + headers).filterValues { it.isNotBlank() }
+        val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
@@ -2750,7 +2777,7 @@ fun LiveTvScreen(
                                 .build(playlistId, channel.group.ifBlank { "Ungrouped" })
                             groupKey in hiddenGroupSet
                         }
-                        .mapIndexed { index, channel -> channel.enrichForFastStartup(100 + index) }
+                        .mapIndexed { index, channel -> channel.enrichForFastStartup(index + 1) }
                         .toList()
                 },
                 onDismiss = { searchOpen = false },

@@ -60,25 +60,27 @@ object SportsAddonCapabilities {
         addon.manifest?.let(::isSportsLiveTvManifest) == true
 
     fun isSportsLiveTvManifest(manifest: AddonManifest): Boolean {
-        val hasStream = manifest.resources.any { resource ->
-            resource.name.equals("stream", ignoreCase = true) ||
-                resource.name.equals("streams", ignoreCase = true)
+        val resources = manifest.safeResources()
+        val catalogs = manifest.safeCatalogs()
+        val hasStream = resources.any { resource ->
+            resource.safeName().equals("stream", ignoreCase = true) ||
+                resource.safeName().equals("streams", ignoreCase = true)
         }
-        val hasCatalog = manifest.resources.any { resource ->
-            resource.name.equals("catalog", ignoreCase = true) ||
-                resource.name.equals("catalogs", ignoreCase = true)
-        } || manifest.catalogs.isNotEmpty()
+        val hasCatalog = resources.any { resource ->
+            resource.safeName().equals("catalog", ignoreCase = true) ||
+                resource.safeName().equals("catalogs", ignoreCase = true)
+        } || catalogs.isNotEmpty()
 
         if (!hasStream || !hasCatalog) return false
 
-        if (manifest.catalogs.any(::isSportsCatalog)) return true
+        if (catalogs.any(::isSportsCatalog)) return true
 
         val manifestText = normalizedText(
             manifest.id,
             manifest.name,
             manifest.description,
-            manifest.types.joinToString(" "),
-            manifest.resources.flatMap { it.types }.joinToString(" ")
+            manifest.safeTypes().joinToString(" "),
+            resources.flatMap { it.safeTypes() }.joinToString(" ")
         )
         return containsAny(manifestText, sportTerms) && containsAny(manifestText, liveTerms)
     }
@@ -106,4 +108,14 @@ object SportsAddonCapabilities {
 
     private fun containsAny(text: String, terms: Set<String>): Boolean =
         terms.any { term -> text.contains(term) }
+
+    private fun AddonManifest.safeResources() = runCatching { resources }.getOrNull().orEmpty()
+
+    private fun AddonManifest.safeCatalogs() = runCatching { catalogs }.getOrNull().orEmpty()
+
+    private fun AddonManifest.safeTypes() = runCatching { types }.getOrNull().orEmpty()
+
+    private fun AddonResource.safeName() = runCatching { name }.getOrNull().orEmpty()
+
+    private fun AddonResource.safeTypes() = runCatching { types }.getOrNull().orEmpty()
 }

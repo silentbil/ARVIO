@@ -90,11 +90,14 @@ object OkHttpProvider {
     val userAgent: String get() = userAgentOr(DEFAULT_USER_AGENT)
 
     fun setCustomUserAgent(value: String) {
-        _customUserAgent = value.trim()
+        _customUserAgent = value.trim().takeIf(::isSafeHeaderValue).orEmpty()
     }
 
     fun userAgentOr(defaultUserAgent: String): String {
-        return _customUserAgent.ifBlank { defaultUserAgent }
+        return _customUserAgent
+            .takeIf { it.isNotBlank() && isSafeHeaderValue(it) }
+            ?: defaultUserAgent.takeIf(::isSafeHeaderValue)
+            ?: DEFAULT_USER_AGENT
     }
 
     private val dnsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -339,12 +342,17 @@ object OkHttpProvider {
         // serving browsers fine — so the addon's streams never reach the app and it
         // silently shows no sources. Defaulting to a browser UA fixes this for every
         // Cloudflare-fronted addon without changing behaviour for hosts that don't care.
-        if (request.header("User-Agent") != null) {
+        val existingUserAgent = request.header("User-Agent")
+        if (existingUserAgent != null) {
             chain.proceed(request)
         } else {
-            val userAgent = _customUserAgent.ifBlank { DEFAULT_USER_AGENT }
+            val userAgent = userAgentOr(DEFAULT_USER_AGENT)
             chain.proceed(request.newBuilder().header("User-Agent", userAgent).build())
         }
+    }
+
+    private fun isSafeHeaderValue(value: String): Boolean {
+        return value.all { ch -> ch == '\t' || ch.code in 32..126 }
     }
 
     private fun getOrCreateHttpCache(context: Context): Cache {

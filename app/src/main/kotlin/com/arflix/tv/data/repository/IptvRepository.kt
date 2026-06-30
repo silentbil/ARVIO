@@ -1556,23 +1556,37 @@ class IptvRepository @Inject constructor(
                 cachedChannels
             } else {
                 coroutineScope {
-                    val aggregatedChannels = java.util.Collections.synchronizedList(mutableListOf<IptvChannel>())
-                    activePlaylists.map { playlist ->
+                    val playlistResults = Array<MutableList<IptvChannel>?>(activePlaylists.size) { null }
+                    val playlistResultsLock = Any()
+                    activePlaylists.mapIndexed { playlistIndex, playlist ->
                         async {
-                            val playlistChannels = fetchChannelsForPlaylistWithRetries(playlist, onProgress).map { channel ->
-                                channel.copy(
-                                    id = "${playlist.id}:${channel.id}",
-                                    group = channel.group
-                                )
-                            }
+                            val playlistChannels = fetchChannelsForPlaylistWithRetries(playlist, onProgress)
+                                .map { channel ->
+                                    channel.copy(
+                                        id = "${playlist.id}:${channel.id}",
+                                        group = channel.group
+                                    )
+                                }
                             if (playlistChannels.isNotEmpty()) {
-                                aggregatedChannels.addAll(playlistChannels)
-                                val currentList = synchronized(aggregatedChannels) { ArrayList(aggregatedChannels) }
+                                val currentList = synchronized(playlistResultsLock) {
+                                    playlistResults[playlistIndex] = playlistChannels.toMutableList()
+                                    ArrayList<IptvChannel>().apply {
+                                        playlistResults.forEach { result ->
+                                            if (!result.isNullOrEmpty()) addAll(result)
+                                        }
+                                    }
+                                }
                                 runCatching { onChannelsReady(currentList) }
+                            } else {
+                                synchronized(playlistResultsLock) {
+                                    playlistResults[playlistIndex] = mutableListOf()
+                                }
                             }
                         }
                     }.awaitAll()
-                    synchronized(aggregatedChannels) { ArrayList(aggregatedChannels) }
+                    synchronized(playlistResultsLock) {
+                        playlistResults.flatMap { it.orEmpty() }
+                    }
                 }.also {
                     cachedChannels = it
                     cachedGroupedChannels = buildGroupedChannels(it)
@@ -7149,17 +7163,17 @@ class IptvRepository @Inject constructor(
 
             // ── HTTP headers ────────────────────────────────────────────
             value.startsWith("http-user-agent=", ignoreCase = true) ->
-                target["User-Agent"] = value.substringAfter('=').trim()
+                target.putSafeHeader("User-Agent", value.substringAfter('=').trim())
             value.startsWith("user-agent=", ignoreCase = true) ->
-                target["User-Agent"] = value.substringAfter('=').trim()
+                target.putSafeHeader("User-Agent", value.substringAfter('=').trim())
             value.startsWith("http-referrer=", ignoreCase = true) ->
-                target["Referer"] = value.substringAfter('=').trim()
+                target.putSafeHeader("Referer", value.substringAfter('=').trim())
             value.startsWith("http-referer=", ignoreCase = true) ->
-                target["Referer"] = value.substringAfter('=').trim()
+                target.putSafeHeader("Referer", value.substringAfter('=').trim())
             value.startsWith("referer=", ignoreCase = true) ->
-                target["Referer"] = value.substringAfter('=').trim()
+                target.putSafeHeader("Referer", value.substringAfter('=').trim())
             value.startsWith("referrer=", ignoreCase = true) ->
-                target["Referer"] = value.substringAfter('=').trim()
+                target.putSafeHeader("Referer", value.substringAfter('=').trim())
             value.startsWith("inputstream.adaptive.stream_headers=", ignoreCase = true) ->
                 target.putAll(parseHeaderPairs(value.substringAfter('=')))
             value.startsWith("inputstream.adaptive.manifest_headers=", ignoreCase = true) ->
@@ -7186,8 +7200,8 @@ class IptvRepository @Inject constructor(
         val referrer = extractFirstAttr(metadata, "http-referrer", "http-referer", "referrer", "referer")
         if (userAgent == null && referrer == null) return emptyMap()
         val headers = LinkedHashMap<String, String>(2)
-        userAgent?.let { headers["User-Agent"] = it }
-        referrer?.let { headers["Referer"] = it }
+        userAgent?.let { headers.putSafeHeader("User-Agent", it) }
+        referrer?.let { headers.putSafeHeader("Referer", it) }
         return headers
     }
 
@@ -7205,9 +7219,26 @@ class IptvRepository @Inject constructor(
                 }
                 val name = decoded.substringBefore(separator).trim()
                 val value = decoded.substringAfter(separator).trim()
-                if (name.isBlank() || value.isBlank()) null else canonicalHeaderName(name) to value
+                val headerName = canonicalHeaderName(name)
+                if (isSafeHttpHeader(headerName, value)) headerName to value else null
             }
             .toMap()
+    }
+
+    private fun MutableMap<String, String>.putSafeHeader(name: String, value: String) {
+        if (isSafeHttpHeader(name, value)) {
+            put(name, value)
+        }
+    }
+
+    private fun isSafeHttpHeader(name: String, value: String): Boolean {
+        return name.isNotBlank() &&
+            value.isNotBlank() &&
+            name.all { ch ->
+                ch.code in 33..126 &&
+                    ch !in setOf('(', ')', '<', '>', '@', ',', ';', ':', '\\', '"', '/', '[', ']', '?', '=', '{', '}')
+            } &&
+            value.all { ch -> ch == '\t' || ch.code in 32..126 }
     }
 
     private fun canonicalHeaderName(name: String): String {
