@@ -46,6 +46,25 @@ object SentryCrashReporter : AppLogger.CrashContextProvider {
                     if (!CrashReportFilter.shouldSendSentryEvent(event.throwable, event.level)) {
                         return@setBeforeSend null
                     }
+                    runCatching {
+                        val prefs = context.getSharedPreferences("arvio_crash_store", Context.MODE_PRIVATE)
+                        val eventId = event.eventId.toString()
+                        val throwable = event.throwable
+                        val msg = if (throwable != null) {
+                            "${throwable::class.java.simpleName}: ${throwable.message?.take(200) ?: ""}"
+                        } else {
+                            event.message?.formatted ?: "Crash event"
+                        }
+                        val editor = prefs.edit()
+                            .putString("last_crash_id", eventId)
+                            .putString("last_crash_msg", msg)
+                            .putLong("last_crash_time", System.currentTimeMillis())
+                            .putString("last_crash_version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                        if (event.isCrashed == true || event.level == SentryLevel.FATAL) {
+                            editor.putBoolean("has_pending_crash_report", true)
+                        }
+                        editor.commit()
+                    }
                     event.setUser(null)
                     event.setServerName(null)
                     event.setRequest(null)
