@@ -98,6 +98,16 @@ private object IptvRepoDateRegexes {
     val YEAR_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy")
     val MONTH_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("MM")
     val DAY_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("dd")
+
+
+
+    private val datePatternRegexCache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
+    fun getDatePatternRegex(key: String): Regex {
+        return datePatternRegexCache.getOrPut(key) {
+            Regex("""\$\{$key:([^}]+)\}\|\{$key:([^}]+)\}""")
+        }
+    }
     val HOUR_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("HH")
     val MIN_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("mm")
     val SEC_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("ss")
@@ -1164,10 +1174,10 @@ class IptvRepository @Inject constructor(
         }
     }
 
-    private val datePatternRegexCache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
 
     private fun String.replaceDatePatternPlaceholders(key: String, dateTime: LocalDateTime): String {
-        val regex = datePatternRegexCache.getOrPut(key) { Regex("""\$\{""" + key + """:([^}]+)\}|\{""" + key + """:([^}]+)\}""") }
+        val regex = IptvRepoDateRegexes.getDatePatternRegex(key)
         return regex.replace(this) { match ->
             val pattern = match.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
                 ?: match.groupValues.getOrNull(2)

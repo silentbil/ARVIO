@@ -35,7 +35,13 @@ class CloudSyncCoordinator @Inject constructor(
             if (!started.compareAndSet(false, true)) return
             collectorJob = scope.launch {
                 invalidationBus.events.collectLatest { invalidation ->
-                    val userId = runCatching { authRepository.getCurrentUserIdForSync() }.getOrNull()
+                    val userId = try {
+                        authRepository.getCurrentUserIdForSync()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    }
                     if (userId.isNullOrBlank()) {
                         cloudSyncRepository.markLocalStateDirtyNow()
                         CloudSyncWorker.enqueueRecovery(context)
@@ -76,7 +82,13 @@ class CloudSyncCoordinator @Inject constructor(
                 }
                 delay(backoffMs)
 
-                val userId = runCatching { authRepository.getCurrentUserIdForSync() }.getOrNull()
+                val userId = try {
+                        authRepository.getCurrentUserIdForSync()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    }
                 if (userId.isNullOrBlank()) {
                     cloudSyncRepository.markLocalStateDirtyNow()
                     CloudSyncWorker.enqueueRecovery(context)
@@ -84,8 +96,11 @@ class CloudSyncCoordinator @Inject constructor(
                     return@launch
                 }
                 Log.i("CloudSyncCoordinator", "Flushing cloud sync for ${invalidation.scope}")
-                runCatching { cloudSyncRepository.pushToCloud(force = true) }
-                    .onFailure { error ->
+                try {
+                    cloudSyncRepository.pushToCloud(force = true)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (error: Exception) {
                         Log.w("CloudSyncCoordinator", "Cloud push failed after ${invalidation.scope}: ${error.message}")
                         cloudSyncRepository.markLocalStateDirty()
                         CloudSyncWorker.enqueueRecovery(context)

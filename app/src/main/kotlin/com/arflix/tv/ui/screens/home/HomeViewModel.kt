@@ -499,9 +499,14 @@ class HomeViewModel @Inject constructor(
             return base
         }
 
-        val searchMatches = runCatching { mediaRepository.search(item.title) }.getOrDefault(emptyList())
+        val searchMatches = try {
+            mediaRepository.search(item.title)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
         val bestMatch = searchMatches
-            .asSequence()
             .filter { match -> match.overview.isNotBlank() }
             .maxByOrNull { match ->
                 val titleBonus = if (match.title.equals(item.title, ignoreCase = true)) 1_000 else 0
@@ -1946,7 +1951,13 @@ class HomeViewModel @Inject constructor(
             if (fresh.isNotEmpty() && fresh != instant) {
                 publishContinueWatching(fresh)
             }
-            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+            val traktConnected = try {
+            traktRepository.hasTrakt()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
             if (traktConnected && cached.isEmpty() && instant.isEmpty() && fresh.isEmpty()) {
                 AppLogger.breadcrumb(
                     tag = "ContinueWatching",
@@ -3040,7 +3051,13 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun resolveContinueWatchingItems(forceFresh: Boolean): List<ContinueWatchingItem> {
-        val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+        val isTraktAuthenticated = try {
+            traktRepository.isAuthenticated.first()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         // Debug: write CW state to a file we can pull via adb
         val items: List<ContinueWatchingItem> = if (isTraktAuthenticated) {
             // When connected to Trakt, use ONLY Trakt as the source of truth for
@@ -3354,7 +3371,13 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun resolveContinueWatchingItemsStable(forceFresh: Boolean): List<ContinueWatchingItem> {
-        val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+        val isTraktAuthenticated = try {
+            traktRepository.isAuthenticated.first()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         val items = if (isTraktAuthenticated) {
             val traktItems = if (forceFresh) {
                 runCatching { traktRepository.getContinueWatching(forceRefresh = true) }
@@ -3424,7 +3447,13 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
-        val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+        val isTraktAuthenticated = try {
+            traktRepository.isAuthenticated.first()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         val items = if (isTraktAuthenticated) {
             runCatching { traktRepository.preloadContinueWatchingCache() }
                 .onFailure { error ->
@@ -4043,7 +4072,13 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val isInWatchlist = watchlistRepository.isInWatchlist(item.mediaType, item.id)
-                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val traktConnected = try {
+            traktRepository.hasTrakt()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
                 if (isInWatchlist) {
                     if (traktConnected && !traktRepository.removeFromWatchlist(item.mediaType, item.id)) {
                         throw IllegalStateException("Failed to remove from Trakt watchlist")
