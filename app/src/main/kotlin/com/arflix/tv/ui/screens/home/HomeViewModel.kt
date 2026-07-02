@@ -1900,8 +1900,11 @@ class HomeViewModel @Inject constructor(
         // Don't restart if already running
         if (cwFetchJob?.isActive == true) return
         cwFetchJob = viewModelScope.launch(Dispatchers.IO) {
-            val cachedResult = runCatching { preloadStartupContinueWatchingItems() }
-            cachedResult.onFailure { error ->
+            val cached = try {
+                preloadStartupContinueWatchingItems()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (error: Exception) {
                 AppLogger.recordException(
                     throwable = error,
                     context = mapOf(
@@ -1909,8 +1912,8 @@ class HomeViewModel @Inject constructor(
                         "cw_phase" to "preload_startup"
                     )
                 )
+                emptyList()
             }
-            val cached = cachedResult.getOrDefault(emptyList())
             if (cached.isNotEmpty()) {
                 publishContinueWatching(cached)
             }
@@ -1919,8 +1922,11 @@ class HomeViewModel @Inject constructor(
             // immediately. Avoids the 30–60s cold-refresh wait that used to
             // leave the CW row empty for minutes (especially when the Trakt
             // progress endpoint throttles with HTTP 429).
-            val instantResult = runCatching { resolveContinueWatchingItemsStable(forceFresh = false) }
-            instantResult.onFailure { error ->
+            val instant = try {
+                resolveContinueWatchingItemsStable(forceFresh = false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (error: Exception) {
                 AppLogger.recordException(
                     throwable = error,
                     context = mapOf(
@@ -1928,8 +1934,8 @@ class HomeViewModel @Inject constructor(
                         "cw_phase" to "instant"
                     )
                 )
+                emptyList()
             }
-            val instant = instantResult.getOrDefault(emptyList())
             if (instant.isNotEmpty()) {
                 publishContinueWatching(instant)
             }
@@ -1937,8 +1943,11 @@ class HomeViewModel @Inject constructor(
             // SLOW PATH — do a freshness refresh in the background. If it
             // returns something different, republish. Swallows transient
             // Trakt 429s so the visible row doesn't blink back to empty.
-            val freshResult = runCatching { resolveContinueWatchingItemsStable(forceFresh = true) }
-            freshResult.onFailure { error ->
+            val fresh = try {
+                resolveContinueWatchingItemsStable(forceFresh = true)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (error: Exception) {
                 AppLogger.recordException(
                     throwable = error,
                     context = mapOf(
@@ -1946,8 +1955,8 @@ class HomeViewModel @Inject constructor(
                         "cw_phase" to "fresh"
                     )
                 )
+                emptyList()
             }
-            val fresh = freshResult.getOrDefault(emptyList())
             if (fresh.isNotEmpty() && fresh != instant) {
                 publishContinueWatching(fresh)
             }
@@ -3320,6 +3329,8 @@ class HomeViewModel @Inject constructor(
                 )
             }
             traktRepository.enrichContinueWatchingItems(mapped)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Exception) {
             emptyList()
         }
@@ -3365,6 +3376,8 @@ class HomeViewModel @Inject constructor(
                 )
             }
             traktRepository.enrichContinueWatchingItems(mapped)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Exception) {
             emptyList()
         }
@@ -3380,18 +3393,21 @@ class HomeViewModel @Inject constructor(
         }
         val items = if (isTraktAuthenticated) {
             val traktItems = if (forceFresh) {
-                runCatching { traktRepository.getContinueWatching(forceRefresh = true) }
-                    .onFailure { error ->
-                        AppLogger.recordException(
-                            throwable = error,
-                            context = mapOf(
-                                "error_area" to "ContinueWatching",
-                                "cw_phase" to "trakt_fresh",
-                                "force_fresh" to forceFresh.toString()
-                            )
+                try {
+                    traktRepository.getContinueWatching(forceRefresh = true)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (error: Exception) {
+                    AppLogger.recordException(
+                        throwable = error,
+                        context = mapOf(
+                            "error_area" to "ContinueWatching",
+                            "cw_phase" to "trakt_fresh",
+                            "force_fresh" to forceFresh.toString()
                         )
-                    }
-                    .getOrDefault(emptyList())
+                    )
+                    emptyList()
+                }
             } else {
                 val cached = traktRepository.getCachedContinueWatching()
                 if (cached.isNotEmpty()) {
@@ -4106,6 +4122,8 @@ class HomeViewModel @Inject constructor(
                     toastMessage = if (isInWatchlist) context.getString(R.string.watchlist_toast_removed) else context.getString(R.string.added_to_watchlist),
                     toastType = ToastType.SUCCESS
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 AppLogger.recordException(
                     throwable = e,

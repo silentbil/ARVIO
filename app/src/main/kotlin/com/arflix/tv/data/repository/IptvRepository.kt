@@ -105,7 +105,7 @@ private object IptvRepoDateRegexes {
 
     fun getDatePatternRegex(key: String): Regex {
         return datePatternRegexCache.getOrPut(key) {
-            Regex("""\$\{$key:([^}]+)\}\|\{$key:([^}]+)\}""")
+            Regex("""\$\{$key:([^}]+)\}|\{$key:([^}]+)\}""")
         }
     }
     val HOUR_PATTERN: DateTimeFormatter = DateTimeFormatter.ofPattern("HH")
