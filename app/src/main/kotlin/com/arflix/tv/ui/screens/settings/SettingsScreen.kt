@@ -153,6 +153,7 @@ import androidx.tv.material3.Text
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogDiscoveryResult
 import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogPackManifest
 import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.QualityFilterConfig
 import com.arflix.tv.data.model.RuntimeKind
@@ -293,6 +294,7 @@ fun SettingsScreen(
     currentProfile: com.arflix.tv.data.model.Profile? = null,
     autoStartCloudAuth: Boolean = false,
     initialSection: String? = null,
+    installPackUrl: String? = null,
     onNavigateToHome: () -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
     onNavigateToTv: () -> Unit = {},
@@ -369,6 +371,19 @@ fun SettingsScreen(
     var renameCatalogId by remember { mutableStateOf("") }
     var renameCatalogTitle by remember { mutableStateOf("") }
 
+    // Catalog Pack states
+    var showCatalogPackInput by remember { mutableStateOf(false) }
+    var catalogPackInputUrl by remember { mutableStateOf("") }
+    var showDeletePackConfirm by remember { mutableStateOf(false) }
+    var deletePackId by remember { mutableStateOf("") }
+    var deletePackName by remember { mutableStateOf("") }
+
+    LaunchedEffect(installPackUrl) {
+        if (!installPackUrl.isNullOrBlank()) {
+            viewModel.loadPackManifest(installPackUrl)
+        }
+    }
+
     // Input modal states
     var showCustomAddonInput by remember { mutableStateOf(false) }
     var customAddonUrl by remember { mutableStateOf("") }
@@ -427,7 +442,7 @@ fun SettingsScreen(
                 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
             }
             "home_server" -> uiState.homeServerConnections.size + 3
-            "catalogs" -> uiState.catalogs.size // Add + rows
+            "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
             "stremio" -> stremioAddons.size // rows + add button
             "accounts" -> 5 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data
             else -> 0
@@ -676,7 +691,12 @@ fun SettingsScreen(
         uiState.showAppUpdateDialog ||
         uiState.showUnknownSourcesDialog ||
         showCloudDisconnectConfirm ||
-        showTraktDisconnectConfirm
+        showTraktDisconnectConfirm ||
+        showCatalogPackInput ||
+        showDeletePackConfirm ||
+        uiState.isPackLoading ||
+        uiState.packError != null ||
+        uiState.pendingPackManifest != null
 
     Box(
         modifier = Modifier
@@ -746,7 +766,7 @@ fun SettingsScreen(
                                             )
                                     ) {
                                         iptvActionIndex--
-                                    } else if (currentSection == "catalogs" && contentFocusIndex > 0 && catalogActionIndex > 0) {
+                                    } else if (currentSection == "catalogs" && contentFocusIndex > 1 && catalogActionIndex > 0) {
                                         catalogActionIndex--
                                     } else {
                                         activeZone = Zone.SECTION
@@ -789,7 +809,7 @@ fun SettingsScreen(
                                         iptvActionIndex++
                                     } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..uiState.iptvPlaylists.size && iptvActionIndex < 5) {
                                         iptvActionIndex++
-                                    } else if (currentSection == "catalogs" && contentFocusIndex > 0 && catalogActionIndex < 4) {
+                                    } else if (currentSection == "catalogs" && contentFocusIndex > 1 && catalogActionIndex < 4) {
                                         catalogActionIndex++
                                     }
                                 }
@@ -1021,8 +1041,10 @@ fun SettingsScreen(
                                         "catalogs" -> {
                                             if (contentFocusIndex == 0) {
                                                 showCatalogInput = true
+                                            } else if (contentFocusIndex == 1) {
+                                                showCatalogPackInput = true
                                             } else {
-                                                val catalog = uiState.catalogs.getOrNull(contentFocusIndex - 1)
+                                                val catalog = uiState.catalogs.getOrNull(contentFocusIndex - 2)
                                                 if (catalog != null) {
                                                     when (catalogActionIndex) {
                                                         0 -> {
@@ -1037,7 +1059,15 @@ fun SettingsScreen(
                                                                 toggleCatalogueRowLayoutMode(context, catalogueLayoutRowKey(catalog))
                                                             }
                                                         }
-                                                        else -> viewModel.removeCatalog(catalog.id)
+                                                        else -> {
+                                                            if (catalog.packId != null) {
+                                                                deletePackId = catalog.packId
+                                                                deletePackName = catalog.packName ?: ""
+                                                                showDeletePackConfirm = true
+                                                            } else {
+                                                                viewModel.removeCatalog(catalog.id)
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1128,10 +1158,20 @@ fun SettingsScreen(
                 onAddIptvClick = { editingIptvIndex = -1; showIptvInput = true },
                 onEditIptvClick = { idx -> editingIptvIndex = idx; showIptvInput = true },
                 onAddCatalogClick = { showCatalogInput = true },
+                onImportCatalogPackClick = { showCatalogPackInput = true },
                 onRenameCatalogClick = { catalog ->
                     renameCatalogId = catalog.id
                     renameCatalogTitle = catalog.title
                     showCatalogRename = true
+                },
+                onDeleteCatalogClick = { catalog ->
+                    if (catalog.packId != null) {
+                        deletePackId = catalog.packId
+                        deletePackName = catalog.packName ?: ""
+                        showDeletePackConfirm = true
+                    } else {
+                        viewModel.removeCatalog(catalog.id)
+                    }
                 },
                 onConnectHomeServerClick = {
                     val connection = uiState.homeServerConnection
@@ -1532,6 +1572,7 @@ fun SettingsScreen(
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = catalogActionIndex,
                             onAddCatalog = { showCatalogInput = true },
+                            onImportCatalogPack = { showCatalogPackInput = true },
                             onRenameCatalog = { catalog ->
                                 renameCatalogId = catalog.id
                                 renameCatalogTitle = catalog.title
@@ -1539,7 +1580,15 @@ fun SettingsScreen(
                             },
                             onMoveCatalogUp = { catalog -> viewModel.moveCatalogUp(catalog.id) },
                             onMoveCatalogDown = { catalog -> viewModel.moveCatalogDown(catalog.id) },
-                            onDeleteCatalog = { catalog -> viewModel.removeCatalog(catalog.id) }
+                            onDeleteCatalog = { catalog ->
+                                if (catalog.packId != null) {
+                                    deletePackId = catalog.packId
+                                    deletePackName = catalog.packName ?: ""
+                                    showDeletePackConfirm = true
+                                } else {
+                                    viewModel.removeCatalog(catalog.id)
+                                }
+                            }
                         )
                         "stremio" -> StremioAddonsSettings(
                             addons = stremioAddons,
@@ -1815,6 +1864,53 @@ fun SettingsScreen(
                 },
                 onDismiss = {
                     showCatalogRename = false
+                }
+            )
+        }
+
+        if (showCatalogPackInput) {
+            InputModal(
+                title = "Import Catalog Pack",
+                fields = listOf(
+                    InputField(label = "Pack URL", value = catalogPackInputUrl, onValueChange = { catalogPackInputUrl = it })
+                ),
+                onConfirm = {
+                    if (catalogPackInputUrl.isNotBlank()) {
+                        viewModel.loadPackManifest(catalogPackInputUrl)
+                        catalogPackInputUrl = ""
+                        showCatalogPackInput = false
+                    }
+                },
+                onDismiss = {
+                    catalogPackInputUrl = ""
+                    showCatalogPackInput = false
+                }
+            )
+        }
+
+        if (uiState.pendingPackManifest != null || uiState.isPackLoading || uiState.packError != null) {
+            CatalogPackImportDialog(
+                pendingPack = uiState.pendingPackManifest,
+                isLoading = uiState.isPackLoading,
+                error = uiState.packError,
+                onConfirm = { manifest ->
+                    viewModel.confirmInstallPack(uiState.pendingPackUrl ?: "")
+                },
+                onDismiss = {
+                    viewModel.clearPendingPack()
+                }
+            )
+        }
+
+        if (showDeletePackConfirm) {
+            CatalogPackDeleteConfirmDialog(
+                packName = deletePackName,
+                onConfirm = {
+                    viewModel.removeCatalogPack(deletePackId)
+                    showDeletePackConfirm = false
+                },
+                onDismiss = {
+                    showDeletePackConfirm = false
                 }
             )
         }
@@ -3277,7 +3373,9 @@ private fun MobileSettingsLayout(
     onAddIptvClick: () -> Unit,
     onEditIptvClick: (Int) -> Unit,
     onAddCatalogClick: () -> Unit,
+    onImportCatalogPackClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
+    onDeleteCatalogClick: (CatalogConfig) -> Unit,
     onConnectHomeServerClick: () -> Unit,
     onConnectPlexHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
@@ -3371,7 +3469,9 @@ private fun MobileSettingsLayout(
                 onAddIptvClick = onAddIptvClick,
                 onEditIptvClick = onEditIptvClick,
                 onAddCatalogClick = onAddCatalogClick,
+                onImportCatalogPackClick = onImportCatalogPackClick,
                 onRenameCatalogClick = onRenameCatalogClick,
+                onDeleteCatalogClick = onDeleteCatalogClick,
                 onConnectHomeServerClick = onConnectHomeServerClick,
                 onConnectPlexHomeServerClick = onConnectPlexHomeServerClick,
                 onAddCustomAddonClick = onAddCustomAddonClick,
@@ -3581,7 +3681,9 @@ private fun MobileSettingsSubPage(
     onAddIptvClick: () -> Unit,
     onEditIptvClick: (Int) -> Unit,
     onAddCatalogClick: () -> Unit,
+    onImportCatalogPackClick: () -> Unit,
     onRenameCatalogClick: (CatalogConfig) -> Unit,
+    onDeleteCatalogClick: (CatalogConfig) -> Unit,
     onConnectHomeServerClick: () -> Unit,
     onConnectPlexHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
@@ -3914,10 +4016,11 @@ private fun MobileSettingsSubPage(
                     focusedIndex = -1,
                     focusedActionIndex = 0,
                     onAddCatalog = onAddCatalogClick,
+                    onImportCatalogPack = onImportCatalogPackClick,
                     onRenameCatalog = onRenameCatalogClick,
                     onMoveCatalogUp = { viewModel.moveCatalogUp(it.id) },
                     onMoveCatalogDown = { viewModel.moveCatalogDown(it.id) },
-                    onDeleteCatalog = { viewModel.removeCatalog(it.id) }
+                    onDeleteCatalog = onDeleteCatalogClick
                 )
             }
             "TV" -> {
@@ -7015,6 +7118,7 @@ private fun CatalogsSettings(
     focusedIndex: Int,
     focusedActionIndex: Int,
     onAddCatalog: () -> Unit,
+    onImportCatalogPack: () -> Unit,
     onRenameCatalog: (CatalogConfig) -> Unit,
     onMoveCatalogUp: (CatalogConfig) -> Unit,
     onMoveCatalogDown: (CatalogConfig) -> Unit,
@@ -7042,7 +7146,8 @@ private fun CatalogsSettings(
                 }
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_add_catalog)) {
-                MobileSettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_catalog), subtitle = stringResource(R.string.add_catalog_desc), value = "", isFocused = false, showDivider = false, onClick = onAddCatalog)
+                MobileSettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_catalog), subtitle = stringResource(R.string.add_catalog_desc), value = "", isFocused = false, showDivider = true, onClick = onAddCatalog)
+                MobileSettingsRow(icon = Icons.Default.Widgets, title = "Import Catalog Pack", subtitle = "Import a bundle of catalogs from a JSON manifest URL", value = "", isFocused = false, showDivider = false, onClick = onImportCatalogPack)
             }
             if (catalogs.isNotEmpty()) {
                 MobileSettingsCategory(title = stringResource(R.string.settings_section_my_catalogs)) {
@@ -7050,7 +7155,32 @@ private fun CatalogsSettings(
                         val title = if (catalog.isPreinstalled) { when (catalog.kind) { CatalogKind.COLLECTION -> stringResource(R.string.settings_title_builtin_collection, catalog.title); CatalogKind.COLLECTION_RAIL -> stringResource(R.string.settings_title_builtin_rail, catalog.title); else -> stringResource(R.string.settings_title_builtin, catalog.title) } } else catalog.title
                         val collectionFallback = stringResource(R.string.settings_collection_fallback)
                         val addonFallback = stringResource(R.string.settings_source_addon)
-                        val subtitle = when { catalog.kind == CatalogKind.COLLECTION_RAIL -> { val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback; stringResource(R.string.settings_group_rail, group) }; catalog.kind == CatalogKind.COLLECTION -> { val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback; stringResource(R.string.settings_group_collection, group) }; catalog.sourceType == CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_preinstalled_catalog); else -> when (catalog.sourceType) { CatalogSourceType.ADDON -> { val addonLabel = catalog.addonName?.takeIf { it.isNotBlank() } ?: addonFallback; stringResource(R.string.settings_from_source, addonLabel) }; CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server); else -> catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog) } }
+                        val subtitle = when {
+                            catalog.kind == CatalogKind.COLLECTION_RAIL -> {
+                                val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
+                                stringResource(R.string.settings_group_rail, group)
+                            }
+                            catalog.kind == CatalogKind.COLLECTION -> {
+                                val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
+                                stringResource(R.string.settings_group_collection, group)
+                            }
+                            catalog.sourceType == CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_preinstalled_catalog)
+                            else -> when (catalog.sourceType) {
+                                CatalogSourceType.ADDON -> {
+                                    val addonLabel = catalog.addonName?.takeIf { it.isNotBlank() } ?: addonFallback
+                                    stringResource(R.string.settings_from_source, addonLabel)
+                                }
+                                CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
+                                else -> {
+                                    val base = catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
+                                    if (catalog.packName != null) {
+                                        "Pack: ${catalog.packName} • $base"
+                                    } else {
+                                        base
+                                    }
+                                }
+                            }
+                        }
                         val isSelected = selectedIds.contains(catalog.id)
                         val layoutToggleEnabled = catalog.kind != CatalogKind.COLLECTION_RAIL
                         val layoutRowKey = remember(catalog.id, catalog.kind) { catalogueLayoutRowKey(catalog) }
@@ -7109,12 +7239,39 @@ private fun CatalogsSettings(
             Text(text = stringResource(R.string.catalogs), style = ArflixTypography.caption, color = TextSecondary.copy(alpha = 0.65f), modifier = Modifier.padding(bottom = 20.dp))
             SettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_catalog), subtitle = stringResource(R.string.add_catalog_desc), value = stringResource(R.string.settings_badge_add), isFocused = focusedIndex == 0, onClick = onAddCatalog, modifier = Modifier.settingsFocusSlot(0))
             Spacer(modifier = Modifier.height(16.dp))
+            SettingsRow(icon = Icons.Default.Widgets, title = "Import Catalog Pack", subtitle = "Import a bundle of catalogs from a JSON manifest URL", value = "IMPORT", isFocused = focusedIndex == 1, onClick = onImportCatalogPack, modifier = Modifier.settingsFocusSlot(1))
+            Spacer(modifier = Modifier.height(16.dp))
             catalogs.forEachIndexed { index, catalog ->
-                val rowFocusIndex = index + 1; val isRowFocused = focusedIndex == rowFocusIndex
+                val rowFocusIndex = index + 2; val isRowFocused = focusedIndex == rowFocusIndex
                 val title = if (catalog.isPreinstalled) { when (catalog.kind) { CatalogKind.COLLECTION -> stringResource(R.string.settings_title_builtin_collection, catalog.title); CatalogKind.COLLECTION_RAIL -> stringResource(R.string.settings_title_builtin_rail, catalog.title); else -> stringResource(R.string.settings_title_builtin, catalog.title) } } else catalog.title
                 val collectionFallback = stringResource(R.string.settings_collection_fallback)
                 val addonFallback = stringResource(R.string.settings_source_addon)
-                val subtitle = when { catalog.kind == CatalogKind.COLLECTION_RAIL -> { val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback; stringResource(R.string.settings_group_rail, group) }; catalog.kind == CatalogKind.COLLECTION -> { val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback; stringResource(R.string.settings_group_collection, group) }; catalog.sourceType == CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_preinstalled_catalog); else -> when (catalog.sourceType) { CatalogSourceType.ADDON -> { val addonLabel = catalog.addonName?.takeIf { it.isNotBlank() } ?: addonFallback; stringResource(R.string.settings_from_source, addonLabel) }; CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server); else -> catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog) } }
+                val subtitle = when {
+                    catalog.kind == CatalogKind.COLLECTION_RAIL -> {
+                        val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
+                        stringResource(R.string.settings_group_rail, group)
+                    }
+                    catalog.kind == CatalogKind.COLLECTION -> {
+                        val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
+                        stringResource(R.string.settings_group_collection, group)
+                    }
+                    catalog.sourceType == CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_preinstalled_catalog)
+                    else -> when (catalog.sourceType) {
+                        CatalogSourceType.ADDON -> {
+                            val addonLabel = catalog.addonName?.takeIf { it.isNotBlank() } ?: addonFallback
+                            stringResource(R.string.settings_from_source, addonLabel)
+                        }
+                        CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
+                        else -> {
+                            val base = catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
+                            if (catalog.packName != null) {
+                                "Pack: ${catalog.packName} • $base"
+                            } else {
+                                base
+                            }
+                        }
+                    }
+                }
                 val isSelected = selectedIds.contains(catalog.id)
                 val layoutToggleEnabled = catalog.kind != CatalogKind.COLLECTION_RAIL
                 val layoutRowKey = remember(catalog.id, catalog.kind) { catalogueLayoutRowKey(catalog) }
@@ -9325,6 +9482,378 @@ private fun IptvCategoriesSettings(
                                 onClick = { onMoveDown(group) }
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun CatalogPackImportDialog(
+    pendingPack: CatalogPackManifest?,
+    isLoading: Boolean,
+    error: String?,
+    onConfirm: (CatalogPackManifest) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    var focusedIndex by remember(pendingPack) { mutableIntStateOf(0) } // 0 = Confirm, 1 = Cancel/Dismiss
+    val isTouchDevice = LocalDeviceType.current.isTouchDevice()
+
+    LaunchedEffect(pendingPack, isLoading, error) {
+        focusRequester.requestFocus()
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        ModalScrim(onDismiss = onDismiss) {
+            Column(
+                modifier = Modifier
+                    .then(
+                        if (isTouchDevice) Modifier.fillMaxWidth(0.92f).widthIn(max = 480.dp)
+                        else Modifier.width(480.dp)
+                    )
+                    .background(BackgroundElevated, RoundedCornerShape(16.dp))
+                    .padding(if (isTouchDevice) 20.dp else 28.dp)
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            when (event.key) {
+                                Key.Back, Key.Escape -> {
+                                    onDismiss()
+                                    true
+                                }
+                                Key.DirectionLeft -> {
+                                    if (focusedIndex > 0) focusedIndex--
+                                    true
+                                }
+                                Key.DirectionRight -> {
+                                    if (focusedIndex < 1) focusedIndex++
+                                    true
+                                }
+                                Key.Enter, Key.DirectionCenter -> {
+                                    if (isLoading) {
+                                        // Ignore clicks while loading
+                                    } else if (error != null) {
+                                        onDismiss()
+                                    } else if (pendingPack != null) {
+                                        if (focusedIndex == 0) {
+                                            onConfirm(pendingPack)
+                                        } else {
+                                            onDismiss()
+                                        }
+                                    }
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else false
+                    }
+            ) {
+                if (isLoading) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        LoadingIndicator(size = 40.dp)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Loading catalog pack details...",
+                            style = ArflixTypography.body,
+                            color = TextPrimary
+                        )
+                    }
+                } else if (error != null) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Import Failed",
+                            style = ArflixTypography.sectionTitle,
+                            color = Color(0xFFDC2626)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = error,
+                            style = ArflixTypography.body,
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.White)
+                                .clickable { onDismiss() }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Close",
+                                style = ArflixTypography.button,
+                                color = Color.Black
+                            )
+                        }
+                    }
+                } else if (pendingPack != null) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Import Catalog Pack",
+                            style = ArflixTypography.sectionTitle,
+                            color = TextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = pendingPack.name,
+                            style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
+                            color = resolveAccentColor(fallback = Pink)
+                        )
+                        if (!pendingPack.author.isNullOrBlank()) {
+                            Text(
+                                text = "Author: ${pendingPack.author} • v${pendingPack.version ?: "1.0.0"}",
+                                style = ArflixTypography.caption,
+                                color = TextSecondary.copy(alpha = 0.8f)
+                            )
+                        }
+                        if (!pendingPack.description.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = pendingPack.description,
+                                style = ArflixTypography.body.copy(fontSize = 14.sp),
+                                color = TextSecondary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Catalogs included (${pendingPack.catalogs.size}):",
+                            style = ArflixTypography.caption,
+                            color = TextSecondary.copy(alpha = 0.6f)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        // Display a preview list of catalogs (scrollable if many)
+                        val previewScrollState = rememberScrollState()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 160.dp)
+                                .verticalScroll(previewScrollState)
+                                .background(Color.Black.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                                .padding(8.dp)
+                        ) {
+                            pendingPack.catalogs.forEach { cat ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Widgets,
+                                        contentDescription = null,
+                                        tint = TextSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = cat.name,
+                                        style = ArflixTypography.body.copy(fontSize = 14.sp),
+                                        color = TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(24.dp))
+                        // Action buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            val isConfirmFocused = focusedIndex == 0
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        color = if (isConfirmFocused) Color.White else Color.Black.copy(alpha = 0.82f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (isConfirmFocused) Color.White else Color.White.copy(alpha = 0.14f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { onConfirm(pendingPack) }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Install Pack",
+                                    style = ArflixTypography.button,
+                                    color = if (isConfirmFocused) Color.Black else Color.White
+                                )
+                            }
+
+                            val isCancelFocused = focusedIndex == 1
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        color = if (isCancelFocused) Color.White else Color.Black.copy(alpha = 0.82f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (isCancelFocused) Color.White else Color.White.copy(alpha = 0.14f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { onDismiss() }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Cancel",
+                                    style = ArflixTypography.button,
+                                    color = if (isCancelFocused) Color.Black else Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun CatalogPackDeleteConfirmDialog(
+    packName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    var focusedIndex by remember { mutableIntStateOf(0) } // 0 = Confirm, 1 = Cancel
+    val isTouchDevice = LocalDeviceType.current.isTouchDevice()
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        ModalScrim(onDismiss = onDismiss) {
+            Column(
+                modifier = Modifier
+                    .then(
+                        if (isTouchDevice) Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp)
+                        else Modifier.width(400.dp)
+                    )
+                    .background(BackgroundElevated, RoundedCornerShape(16.dp))
+                    .padding(if (isTouchDevice) 20.dp else 28.dp)
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            when (event.key) {
+                                Key.Back, Key.Escape -> {
+                                    onDismiss()
+                                    true
+                                }
+                                Key.DirectionLeft -> {
+                                    if (focusedIndex > 0) focusedIndex--
+                                    true
+                                }
+                                Key.DirectionRight -> {
+                                    if (focusedIndex < 1) focusedIndex++
+                                    true
+                                }
+                                Key.Enter, Key.DirectionCenter -> {
+                                    if (focusedIndex == 0) onConfirm() else onDismiss()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else false
+                    }
+            ) {
+                Text(
+                    text = "Delete Catalog Pack",
+                    style = ArflixTypography.sectionTitle,
+                    color = Color(0xFFDC2626)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Do you want to delete the pack \"$packName\"? This will remove all catalogs that were imported with this pack.",
+                    style = ArflixTypography.body,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val isConfirmFocused = focusedIndex == 0
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                color = if (isConfirmFocused) Color.White else Color.Black.copy(alpha = 0.82f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (isConfirmFocused) Color.White else Color.White.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onConfirm() }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Delete Pack",
+                            style = ArflixTypography.button,
+                            color = if (isConfirmFocused) Color.Black else Color.White
+                        )
+                    }
+
+                    val isCancelFocused = focusedIndex == 1
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                color = if (isCancelFocused) Color.White else Color.Black.copy(alpha = 0.82f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (isCancelFocused) Color.White else Color.White.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onDismiss() }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Cancel",
+                            style = ArflixTypography.button,
+                            color = if (isCancelFocused) Color.Black else Color.White
+                        )
                     }
                 }
             }

@@ -100,7 +100,9 @@ data class CatalogConfig(
     val collectionTileShape: CollectionTileShape = CollectionTileShape.LANDSCAPE,
     val collectionHideTitle: Boolean = false,
     val collectionSources: List<CollectionSourceConfig> = emptyList(),
-    val requiredAddonUrls: List<String> = emptyList()
+    val requiredAddonUrls: List<String> = emptyList(),
+    val packId: String? = null,
+    val packName: String? = null
 ) : Serializable
 
 data class CatalogDiscoveryResult(
@@ -123,3 +125,18 @@ data class CatalogValidationResult(
     val sourceType: CatalogSourceType? = null,
     val error: String? = null
 )
+
+data class CatalogPackManifest(
+    val id: String,
+    val name: String,
+    val author: String? = null,
+    val version: String? = null,
+    val description: String? = null,
+    val catalogs: List<CatalogPackItem>
+) : Serializable
+
+data class CatalogPackItem(
+    val name: String,
+    val url: String
+) : Serializable
+

@@ -10,6 +10,8 @@ import com.arflix.tv.data.model.AddonCatalog
 import com.arflix.tv.data.model.AddonType
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogPackManifest
+import com.arflix.tv.data.model.CatalogPackItem
 import com.arflix.tv.data.model.CollectionGroupKind
 import com.arflix.tv.data.model.CollectionSourceConfig
 import com.arflix.tv.data.model.CollectionTileShape
@@ -704,6 +706,81 @@ class CatalogRepository @Inject constructor(
             return CollectionTemplateManifest.isValidCollectionConfig(config)
         }
         return true
+    }
+
+    suspend fun fetchCatalogPackManifest(packUrl: String): Result<CatalogPackManifest> {
+        val json = fetchUrl(packUrl)
+            ?: return Result.failure(IllegalArgumentException("Failed to fetch catalog pack from URL"))
+        val manifest = try {
+            val type = object : com.google.gson.reflect.TypeToken<CatalogPackManifest>() {}.type
+            gson.fromJson<CatalogPackManifest>(json, type)
+        } catch (e: Exception) {
+            null
+        } ?: return Result.failure(IllegalArgumentException("Failed to parse catalog pack manifest"))
+
+        if (manifest.id.isBlank() || manifest.name.isBlank()) {
+            return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: missing ID or Name"))
+        }
+        return Result.success(manifest)
+    }
+
+    suspend fun addCatalogPack(packUrl: String): Result<CatalogPackManifest> {
+        val manifestResult = fetchCatalogPackManifest(packUrl)
+        if (manifestResult.isFailure) return manifestResult
+        val manifest = manifestResult.getOrThrow()
+
+        val current = getCatalogs().toMutableList()
+        val addedConfigs = mutableListOf<CatalogConfig>()
+
+        for (item in manifest.catalogs) {
+            val validation = validateCatalogUrl(item.url)
+            if (!validation.isValid || validation.normalizedUrl == null || validation.sourceType == null) {
+                continue
+            }
+            val normalizedUrl = validation.normalizedUrl
+            val sourceType = validation.sourceType
+
+            // Skip if this URL is already added
+            if (current.any { it.sourceUrl.equals(normalizedUrl, ignoreCase = true) }) {
+                continue
+            }
+
+            val resolved = resolveMetadata(normalizedUrl, sourceType)
+                ?: fallbackMetadata(normalizedUrl, sourceType)
+                ?: continue
+
+            val stableId = "custom_${sha256Short(manifest.id + "|" + normalizedUrl)}"
+            val newCatalog = CatalogConfig(
+                id = stableId,
+                title = item.name.trim().ifBlank { resolved.title },
+                sourceType = sourceType,
+                sourceUrl = normalizedUrl,
+                sourceRef = resolved.sourceRef,
+                isPreinstalled = false,
+                packId = manifest.id,
+                packName = manifest.name
+            )
+            addedConfigs.add(newCatalog)
+        }
+
+        if (addedConfigs.isEmpty()) {
+            return Result.failure(IllegalArgumentException("No new or valid catalogs found in this pack to import"))
+        }
+
+        current.addAll(0, addedConfigs)
+        saveCatalogs(current)
+        return Result.success(manifest)
+    }
+
+    suspend fun removeCatalogPack(packId: String): Result<Unit> {
+        val current = getCatalogs().toMutableList()
+        val beforeSize = current.size
+        current.removeAll { it.packId == packId }
+        if (current.size == beforeSize) {
+            return Result.failure(IllegalArgumentException("No catalogs found for pack: $packId"))
+        }
+        saveCatalogs(current)
+        return Result.success(Unit)
     }
 
     suspend fun addCustomCatalog(rawUrl: String): Result<CatalogConfig> {
