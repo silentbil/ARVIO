@@ -1371,7 +1371,7 @@ class PlayerViewModel @Inject constructor(
                     ?: normalizedFallback?.let { bestMatch(it) }
                 if (externalMatch != null) {
                     val current = _uiState.value.selectedSubtitle
-                    if (current == null || !(current.isEmbedded && !externalMatch.isEmbedded)) {
+                    if (!embeddedBlocksExternal(current, externalMatch, normalizedPref)) {
                         translationManager.isEnabled = false
                         aiSourceSubtitle = null
                         _uiState.value = _uiState.value.copy(selectedSubtitle = externalMatch, isAiTranslating = false, isAiAvailable = false, aiTargetLanguageName = "")
@@ -1394,7 +1394,7 @@ class PlayerViewModel @Inject constructor(
                 ?: normalizedFallback?.let { bestMatch(it) }
             if (externalMatch != null) {
                 val current = _uiState.value.selectedSubtitle
-                if (current == null || !(current.isEmbedded && !externalMatch.isEmbedded)) {
+                if (!embeddedBlocksExternal(current, externalMatch, normalizedPref)) {
                     translationManager.isEnabled = false
                     if (aiEnabledForLanguage) {
                         // Keep AI available in picker — user can still activate it manually
@@ -1406,6 +1406,23 @@ class PlayerViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Whether a currently-selected embedded track should block auto-selecting [externalMatch].
+     * An embedded track normally wins over externals (guaranteed sync) — but a fallback-language
+     * embedded (e.g. English selected while the preferred-language addon subs were still
+     * loading) must not block the preferred-language external that arrives later.
+     */
+    private fun embeddedBlocksExternal(
+        current: Subtitle?,
+        externalMatch: Subtitle,
+        normalizedPref: String
+    ): Boolean {
+        if (current == null || !current.isEmbedded || externalMatch.isEmbedded) return false
+        val externalIsPref = normalizeLanguage(externalMatch.lang) == normalizedPref
+        val currentIsPref = normalizeLanguage(current.lang) == normalizedPref
+        return !(externalIsPref && !currentIsPref)
     }
 
     private fun findAiSourceSubtitle(subtitles: List<Subtitle>): Subtitle? {
@@ -2474,14 +2491,18 @@ class PlayerViewModel @Inject constructor(
         if (source != null) {
             activateAiTranslation()
             findBestSubtitleMatch(
-                onNoMatch = {
+                onNoMatch = { score ->
                     // Staying on the AI fallback — re-activate to upgrade the translation source:
                     // an embedded track may have resolved while the scan ran, and the early
                     // activation could still be translating an external fallback source. Say so —
                     // otherwise the searching indicator just vanishes with no visible outcome.
                     if (_uiState.value.isAiTranslating) {
                         activateAiTranslation()
-                        showMatchToast("No well-synced subtitle found — keeping AI translation")
+                        showMatchToast(
+                            "No well-synced subtitle found" +
+                                (score?.let { " (best ${(it * 100).toInt()}%)" } ?: "") +
+                                " — keeping AI translation"
+                        )
                     }
                 },
                 useCache = !isUserAction
@@ -2554,17 +2575,22 @@ class PlayerViewModel @Inject constructor(
      * listens to the AI hearing for a short window, then scores each candidate by how often its
      * on-screen cue matches what was spoken at that moment (see [SubtitleSyncMatcher]).
      */
-    fun findBestSubtitleMatch(onNoMatch: (() -> Unit)? = null, useCache: Boolean = true) {
+    fun findBestSubtitleMatch(onNoMatch: ((Double?) -> Unit)? = null, useCache: Boolean = true) {
         if (_uiState.value.isFindingBestMatch) return
         val previousSubtitle = _uiState.value.selectedSubtitle
         findMatchJob?.cancel()
         findMatchJob = viewModelScope.launch {
             val targetLang = targetSubtitleLangCode.ifBlank { normalizeLanguage(getDefaultSubtitle()) }
             val targetLangName = languageCodeToName(targetLang)
-            val noMatch = onNoMatch
-                ?: { showMatchToast("No well-synced $targetLangName subtitle found") }
+            // Include the best (rejected) score so a fast verdict is visibly a real scan result.
+            val noMatch = onNoMatch ?: { score ->
+                showMatchToast(
+                    "No well-synced $targetLangName subtitle found" +
+                        (score?.let { " (best ${(it * 100).toInt()}%)" } ?: "")
+                )
+            }
             if (targetLang.isBlank() || isSubtitleDisabledPreference(targetLang)) {
-                noMatch()
+                noMatch(null)
                 return@launch
             }
             beginMatch("Finding best subtitle…")
@@ -2629,7 +2655,7 @@ class PlayerViewModel @Inject constructor(
                 .take(MATCH_MAX_CANDIDATES)
             if (candidates.isEmpty()) {
                 endMatch()
-                noMatch()
+                noMatch(null)
                 return@launch
             }
 
@@ -2684,7 +2710,7 @@ class PlayerViewModel @Inject constructor(
             if (loaded.isEmpty()) {
                 endMatch()
                 restoreSubtitle(previousSubtitle)
-                noMatch()
+                noMatch(null)
                 selectLastResort()
                 return@launch
             }
@@ -2715,7 +2741,7 @@ class PlayerViewModel @Inject constructor(
             } else {
                 // Nothing synced found (or too little dialogue) → let the caller fall back (AI translate).
                 restoreSubtitle(previousSubtitle)
-                noMatch()
+                noMatch(best?.second)
                 selectLastResort()
             }
         }
@@ -2799,16 +2825,29 @@ class PlayerViewModel @Inject constructor(
                 lastRefCount = refs.size
                 lastProgressElapsed = elapsed
             }
+            // While paused no realtime evidence can arrive — freeze the give-up clock so a scan
+            // with partial evidence isn't concluded just because the user paused. (A scan with
+            // full evidence still exits via the target/early-accept breaks above.)
+            if (!lastIsPlaying) lastProgressElapsed = elapsed
             // Interval count alone is not evidence: cues clustered in one moment (a recap, a
             // titles sequence) can agree with an overall-drifting sub. Only accept once the refs
             // also cover a minimum stretch of the video.
-            val spanOk = refs.size >= 2 &&
-                refs.last().second - refs.first().first >= MATCH_MIN_REF_SPAN_MS
+            val span = if (refs.size >= 2) refs.last().second - refs.first().first else 0L
+            val spanOk = span >= MATCH_MIN_REF_SPAN_MS
             if (spanOk && refs.size >= MATCH_TARGET_REF_INTERVALS) break
             // Early accept: scoring is free, so score incrementally — once some candidate is
             // already clearly in sync there's no need to keep collecting up to the target.
-            if (spanOk && refs.size >= MATCH_EARLY_ACCEPT_REFS &&
-                loaded.maxOf { (_, cues) -> SubtitleSyncMatcher.scoreByTiming(cues, refs) } >= MATCH_EARLY_ACCEPT_SCORE
+            val bestNow = if (refs.size >= MATCH_EARLY_ACCEPT_REFS) {
+                loaded.maxOf { (_, cues) -> SubtitleSyncMatcher.scoreByTiming(cues, refs) }
+            } else {
+                0.0
+            }
+            if (spanOk && refs.size >= MATCH_EARLY_ACCEPT_REFS && bestNow >= MATCH_EARLY_ACCEPT_SCORE) break
+            // Fast accept: a decisively-synced candidate doesn't need the full span — the
+            // cluster false-positive it protects against packs refs into a few seconds, which
+            // half the span already rules out. Saves ~15s of realtime collection per scan.
+            if (span >= MATCH_FAST_ACCEPT_SPAN_MS && refs.size >= MATCH_FAST_ACCEPT_REFS &&
+                bestNow >= MATCH_FAST_ACCEPT_SCORE
             ) break
             // Give-up timers: a long one while waiting for speech to exist at all (openings can
             // run minutes without dialogue), and a progress-anchored one afterwards — a silent
@@ -2828,8 +2867,9 @@ class PlayerViewModel @Inject constructor(
         collectingReference = false
         // Inconclusive after the hard cap (too few refs, or all clustered in one moment) — a pick
         // would be a guess; return null so the caller stays on the AI-translation fallback.
+        // Floor matches the fast-accept span so a fast-accepted result isn't discarded here.
         if (refs.size < MATCH_MIN_REF_INTERVALS ||
-            refs.last().second - refs.first().first < MATCH_MIN_REF_SPAN_MS
+            refs.last().second - refs.first().first < MATCH_FAST_ACCEPT_SPAN_MS
         ) return null
         val srcLabel = when {
             bufferedCount == refs.size -> "buffer"
@@ -2882,6 +2922,8 @@ class PlayerViewModel @Inject constructor(
                 lastSampleCount = samples.size
                 lastProgressElapsed = elapsed
             }
+            // Paused playback produces no audio — freeze the give-up clock (as in the built-in path).
+            if (!lastIsPlaying) lastProgressElapsed = elapsed
             // Same timer scheme as the built-in path: wait long for speech to exist, then a
             // progress-anchored budget so mid-scan silence doesn't drain it. Absolute ceiling.
             val deadline = if (lastSampleCount == 0) {
@@ -3807,6 +3849,9 @@ class PlayerViewModel @Inject constructor(
         private const val MATCH_TARGET_REF_INTERVALS = 8 // built-in mode: stop collecting once we have this many
         private const val MATCH_EARLY_ACCEPT_REFS = 4    // min refs before the incremental early-accept check
         private const val MATCH_EARLY_ACCEPT_SCORE = 0.8 // a candidate this well-synced ends collection early
+        private const val MATCH_FAST_ACCEPT_SPAN_MS = 15_000L // decisive candidates accept at half the span
+        private const val MATCH_FAST_ACCEPT_REFS = 5    // …with at least this many refs
+        private const val MATCH_FAST_ACCEPT_SCORE = 0.85 // …scoring at least this
         private const val MATCH_MIN_REF_SPAN_MS = 30_000L // refs must cover this much video before any accept
         private const val MATCH_TRACK_SWITCH_SETTLE_MS = 1_500L // let the reference-track switch reach the renderer
         private const val MATCH_BUFFERED_REF_INTERVALS = 12  // max upcoming cues to read from the buffer per poll
@@ -3817,11 +3862,11 @@ class PlayerViewModel @Inject constructor(
         private const val MATCH_LATENCY_MS = 800L        // AI hearing lag: audio time ≈ arrival − this
         private const val MATCH_TOLERANCE_MS = 1_500L    // cue search window around the audio time
         private const val MATCH_MIN_SIMILARITY = 0.35    // word-overlap needed to count a cue as a hit
-        // Separate accept thresholds per reference type: timing overlap of a truly synced sub
-        // scores 0.8+, while a consistently-offset one still reaches 0.5-0.7 — accepting those
-        // puts a visibly off sub on screen when staying on AI translation would be better.
+        // Separate accept thresholds per reference type: calibrated against user-verified subs —
+        // a confirmed-synced sub scored 0.71, a confirmed-offset one 0.65 (union-coverage
+        // scoring, 12 refs). Below the bar, staying on AI translation beats a visibly-off sub.
         // Hearing hit-ratios run much lower, so they keep the permissive bar.
-        private const val MATCH_SUCCESS_THRESHOLD_TIMING = 0.75
+        private const val MATCH_SUCCESS_THRESHOLD_TIMING = 0.70
         private const val MATCH_SUCCESS_THRESHOLD_HEARING = 0.30
         private const val MATCH_MAX_CANDIDATES = 10      // cap downloaded candidates (best release-name matches first)
         private const val MATCH_CACHE_MAX_ENTRIES = 50   // per-stream remembered matches (oldest evicted)
