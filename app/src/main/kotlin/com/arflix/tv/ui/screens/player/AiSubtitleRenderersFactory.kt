@@ -6,6 +6,8 @@ import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.text.TextOutput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -26,6 +28,39 @@ class AiSubtitleRenderersFactory(
 
     val syncOffsetUs = java.util.concurrent.atomic.AtomicLong(0L)
 
+    var audioCaptureProcessor: AudioCaptureProcessor? = null
+        private set
+
+    private val offsetRenderers = mutableListOf<SubtitleOffsetRenderer>()
+
+    /**
+     * Cue-visible intervals (startMs to endMs) of the currently selected text track, read from
+     * ExoPlayer's buffered cue list via reflection — i.e. upcoming cues that haven't rendered yet.
+     * Lets "Find best match" build its built-in reference from prefetched cues instead of waiting
+     * for playback to reach them. Returns empty if nothing is buffered yet.
+     */
+    fun extractBufferedReferenceIntervals(maxCount: Int): List<Pair<Long, Long>> {
+        for (renderer in offsetRenderers) {
+            val intervals = renderer.extractBufferedIntervals(maxCount)
+            if (intervals.isNotEmpty()) return intervals
+        }
+        return emptyList()
+    }
+
+    override fun buildAudioSink(
+        context: Context,
+        enableFloatOutput: Boolean,
+        enableAudioTrackPlaybackParams: Boolean
+    ): AudioSink {
+        val capture = AudioCaptureProcessor()
+        audioCaptureProcessor = capture
+        return DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .setAudioProcessors(arrayOf(capture))
+            .build()
+    }
+
     override fun buildTextRenderers(
         context: Context,
         output: TextOutput,
@@ -41,7 +76,7 @@ class AiSubtitleRenderersFactory(
         )
         val startIndex = out.size
         super.buildTextRenderers(context, translatingOutput, outputLooper, extensionRendererMode, out)
-        val offsetRenderers = mutableListOf<SubtitleOffsetRenderer>()
+        offsetRenderers.clear()
         for (index in startIndex until out.size) {
             val offsetRenderer = SubtitleOffsetRenderer(
                 baseRenderer = out[index],
@@ -372,6 +407,66 @@ private class SubtitleOffsetRenderer(
         extractFromSubtitleField("subtitle")
         extractFromSubtitleField("nextSubtitle")
         return texts.toList()
+    }
+
+    /** Buffered cue intervals (startMs, endMs) for text-carrying cues, from the modern resolver. */
+    fun extractBufferedIntervals(maxCount: Int): List<Pair<Long, Long>> {
+        val intervals = ArrayList<Pair<Long, Long>>()
+        // Cue buffer timestamps are on ExoPlayer's internal stream timeline, which adds a large
+        // base offset; subtract the renderer's stream offset to get 0-based media time.
+        val offsetMs = readStreamOffsetUs() / 1000L
+        try {
+            val resolverField = findField(baseRenderer.javaClass, "cuesResolver") ?: return emptyList()
+            val resolver = resolverField.get(baseRenderer) ?: return emptyList()
+            for (candidate in listOf("cuesWithTimingList", "cueGroupsByStartTime", "cueGroups", "cueGroupList", "groups")) {
+                val f = findField(resolver.javaClass, candidate) ?: continue
+                val v = f.get(resolver) ?: continue
+                val items: Collection<*> = when (v) {
+                    is Map<*, *> -> v.values
+                    is Collection<*> -> v
+                    else -> continue
+                }
+                for (item in items) {
+                    val (s, e) = item?.let(::intervalFromCueWrapper) ?: continue
+                    intervals.add((s - offsetMs) to (e - offsetMs))
+                }
+                if (intervals.isNotEmpty()) break
+            }
+        } catch (_: Exception) {
+        }
+        return intervals.filter { it.first >= 0 }.distinct().sortedBy { it.first }.take(maxCount)
+    }
+
+    /** The renderer's stream offset (µs) — the base added to buffer sample timestamps. */
+    private fun readStreamOffsetUs(): Long {
+        for (name in listOf("streamOffsetUs", "outputStreamOffsetUs")) {
+            val v = runCatching { findField(baseRenderer.javaClass, name)?.getLong(baseRenderer) }.getOrNull()
+            if (v != null && v > 0L) return v
+        }
+        return 0L
+    }
+
+    private fun intervalFromCueWrapper(obj: Any): Pair<Long, Long>? {
+        val cues: List<Cue>? = when (obj) {
+            is CueGroup -> obj.cues
+            is List<*> -> obj.filterIsInstance<Cue>()
+            else -> (findField(obj.javaClass, "cues")?.get(obj) as? List<*>)?.filterIsInstance<Cue>()
+        }
+        if (cues.isNullOrEmpty() || cues.none { !it.text?.toString()?.trim().isNullOrBlank() }) return null
+
+        val startUs: Long
+        val endUs: Long
+        if (obj is CueGroup) {
+            startUs = obj.presentationTimeUs
+            endUs = startUs + 2_000_000L // CueGroup carries no duration — assume 2s on screen
+        } else {
+            val start = runCatching { findField(obj.javaClass, "startTimeUs")?.getLong(obj) }.getOrNull() ?: return null
+            val dur = runCatching { findField(obj.javaClass, "durationUs")?.getLong(obj) }.getOrNull() ?: 2_000_000L
+            startUs = start
+            endUs = start + dur
+        }
+        if (endUs <= startUs) return null
+        return (startUs / 1000L) to (endUs / 1000L)
     }
 
     private fun extractFromCollectionOrMap(v: Any, texts: MutableSet<String>, removeHI: Boolean): Int {

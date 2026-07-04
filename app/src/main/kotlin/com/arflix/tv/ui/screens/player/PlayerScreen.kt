@@ -71,6 +71,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
@@ -451,6 +453,8 @@ fun PlayerScreen(
             groups.none { (name, _) -> name.equals(uiState.aiTargetLanguageName, ignoreCase = true) }) {
             groups.add(0, Pair(uiState.aiTargetLanguageName, emptyList()))
         }
+        // "Find Best Match (AI)" is rendered inside the target-language (e.g. Hebrew) group as its
+        // first item, alongside the AI translation option — not as a global picker entry.
         groups.toList()
     }
     // Audio tracks from ExoPlayer
@@ -791,6 +795,30 @@ fun PlayerScreen(
             scope = coroutineScope
         )
     }
+
+    // Wire AudioCaptureProcessor → GeminiLiveTranslationService when live audio is active.
+    LaunchedEffect(uiState.isLiveAudioTranslating) {
+        aiRenderersFactory.audioCaptureProcessor?.onChunk = if (uiState.isLiveAudioTranslating) {
+            { bytes, captureMs -> viewModel.geminiLiveService.sendAudioChunk(bytes, captureMs) }
+        } else {
+            null
+        }
+    }
+    // Let "Find best match" read the selected reference track's buffered (upcoming) cues,
+    // so built-in matching can complete before dialogue is spoken.
+    LaunchedEffect(aiRenderersFactory) {
+        viewModel.bufferedReferenceIntervalsProvider = { max ->
+            aiRenderersFactory.extractBufferedReferenceIntervals(max)
+        }
+    }
+    DisposableEffect(aiRenderersFactory) {
+        onDispose {
+            aiRenderersFactory.audioCaptureProcessor?.onChunk = null
+            viewModel.bufferedReferenceIntervalsProvider = null
+            viewModel.geminiLiveService.disconnect()
+        }
+    }
+
     val exoPlayer = remember(isConstrainedPlaybackDevice, preferExtensionDecoder, playbackBufferProfile) {
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -873,6 +901,12 @@ fun PlayerScreen(
                         }
                         if (BuildConfig.DEBUG) {
                         }
+                    }
+
+                    // Feed the selected text track's rendered cues to "Find best match" so it can
+                    // read a built-in subtitle's timing (embedded tracks have no URL to parse).
+                    override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                        viewModel.onPlayerCues(cueGroup.cues.isNotEmpty(), cueGroup.presentationTimeUs / 1000L)
                     }
 
                     override fun onIsPlayingChanged(playing: Boolean) {
@@ -2374,7 +2408,7 @@ fun PlayerScreen(
                                         val aiGroup = latestUiState.isAiAvailable &&
                                             latestUiState.aiTargetLanguageName.isNotBlank() &&
                                             group?.first?.equals(latestUiState.aiTargetLanguageName, ignoreCase = true) == true
-                                        val trackCount = (group?.second?.size ?: 0) + if (aiGroup) 1 else 0
+                                        val trackCount = (group?.second?.size ?: 0) + if (aiGroup) 2 else 0
                                         if (subtitleTrackIndex < trackCount - 1) subtitleTrackIndex++
                                     }
                                 }
@@ -2442,9 +2476,12 @@ fun PlayerScreen(
                                     val aiGroup = latestUiState.isAiAvailable &&
                                         latestUiState.aiTargetLanguageName.isNotBlank() &&
                                         group?.first?.equals(latestUiState.aiTargetLanguageName, ignoreCase = true) == true
-                                    val realIdx = if (aiGroup) subtitleTrackIndex - 1 else subtitleTrackIndex
+                                    // In the AI/target-language group, index 0 = Find Best Match, 1 = AI translate, 2+ = subs.
+                                    val realIdx = if (aiGroup) subtitleTrackIndex - 2 else subtitleTrackIndex
                                     if (aiGroup && subtitleTrackIndex == 0) {
-                                        if (!latestUiState.isAiTranslating) viewModel.activateAiSubtitle()
+                                        viewModel.runFindBestMatch()
+                                    } else if (aiGroup && subtitleTrackIndex == 1) {
+                                        if (!latestUiState.isAiTranslating) viewModel.activateAiTranslation()
                                     } else {
                                         group?.second?.getOrNull(realIdx)?.second
                                             ?.let { viewModel.selectSubtitle(it) }
@@ -2753,6 +2790,37 @@ fun PlayerScreen(
             }
         }
 
+        // (AI-hearing on-screen overlay removed — the hearing still runs under the hood to power
+        // "Find Best Match", but its transcription is no longer displayed.)
+
+        // "Find Best Match" persistent searching indicator
+        if (hasPlaybackStarted && uiState.isFindingBestMatch) {
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 16.dp)
+                    .background(
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.72f),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .zIndex(6f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = androidx.compose.ui.graphics.Color(0xFF7EC8F0)
+                )
+                Text(
+                    text = uiState.matchStatusText.ifBlank { "Searching for a match…" },
+                    style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
+                )
+            }
+        }
+
         // AI translation API error toast
         uiState.aiErrorToast?.let { msg ->
             Toast(
@@ -2761,6 +2829,17 @@ fun PlayerScreen(
                 isVisible = true,
                 durationMs = 5000,
                 onDismiss = { viewModel.dismissAiErrorToast() }
+            )
+        }
+
+        // "Find best match" status toast
+        uiState.matchToast?.let { msg ->
+            Toast(
+                message = msg,
+                type = ToastType.INFO,
+                isVisible = true,
+                durationMs = 4000,
+                onDismiss = { viewModel.dismissMatchToast() }
             )
         }
 
@@ -3279,7 +3358,11 @@ fun PlayerScreen(
                         try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
                     }
                 },
-                onToggleAi = { viewModel.activateAiSubtitle() },
+                isLiveAudioTranslating = uiState.isLiveAudioTranslating,
+                isFindingBestMatch = uiState.isFindingBestMatch,
+                onToggleAi = { viewModel.activateAiTranslation() },
+                onToggleLiveAudio = { viewModel.toggleLiveAudioTranslation() },
+                onFindBestMatch = { viewModel.runFindBestMatch() },
                 onClose = {
                     showSubtitleMenu = false
                     showControls = true
@@ -4101,6 +4184,8 @@ private fun SubtitleMenu(
     isAiTranslating: Boolean = false,
     isAiAvailable: Boolean = false,
     aiTargetLanguageName: String = "",
+    isLiveAudioTranslating: Boolean = false,
+    isFindingBestMatch: Boolean = false,
     audioTracks: List<AudioTrackInfo>,
     selectedAudioIndex: Int,
     activeTab: Int,
@@ -4114,6 +4199,8 @@ private fun SubtitleMenu(
     onSelectSubtitle: (Int) -> Unit,
     onSelectAudio: (AudioTrackInfo) -> Unit,
     onToggleAi: () -> Unit = {},
+    onToggleLiveAudio: () -> Unit = {},
+    onFindBestMatch: () -> Unit = {},
     onClose: () -> Unit
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
@@ -4203,7 +4290,7 @@ private fun SubtitleMenu(
                                         count = 0,
                                         isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == 0,
                                         isActivePanel = subtitleLangIndex == 0,
-                                        isSelected = selectedSubtitle == null
+                                        isSelected = selectedSubtitle == null && !isLiveAudioTranslating
                                     )
                                 }
                                 itemsIndexed(subtitleGroups) { idx, (langName, items) ->
@@ -4212,11 +4299,10 @@ private fun SubtitleMenu(
                                         count = items.size,
                                         isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == idx + 1,
                                         isActivePanel = subtitleLangIndex == idx + 1,
-                                        isSelected = if (isAiTranslating && aiTargetLanguageName.isNotBlank() &&
-                                            langName.equals(aiTargetLanguageName, ignoreCase = true)) {
-                                            true
-                                        } else {
-                                            selectedSubtitle != null &&
+                                        isSelected = when {
+                                            (isAiTranslating || isFindingBestMatch) && aiTargetLanguageName.isNotBlank() &&
+                                                langName.equals(aiTargetLanguageName, ignoreCase = true) -> true
+                                            else -> selectedSubtitle != null &&
                                                 items.any { (_, sub) -> sub.id == selectedSubtitle.id }
                                         }
                                     )
@@ -4248,6 +4334,7 @@ private fun SubtitleMenu(
                                     )
                                 }
                             } else {
+                                val isLiveAudioGroup = selectedGroup.first == "Live Audio"
                                 val isAiGroup = isAiAvailable && aiTargetLanguageName.isNotBlank() &&
                                     selectedGroup.first.equals(aiTargetLanguageName, ignoreCase = true)
                                 LazyColumn(
@@ -4259,13 +4346,25 @@ private fun SubtitleMenu(
                                     verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
                                     if (isAiGroup) {
+                                        // First: "Find Best Match (AI)" — runs the match logic.
+                                        item {
+                                            TrackMenuItem(
+                                                label = if (isFindingBestMatch) "Scanning…" else "Find Best Match",
+                                                subtitle = "AI",
+                                                subtitleDetail = "Auto-pick the best-synced subtitle",
+                                                isSelected = isFindingBestMatch,
+                                                isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == 0,
+                                                onClick = { /* D-pad only */ }
+                                            )
+                                        }
+                                        // Second: translate the built-in subtitle with AI.
                                         item {
                                             TrackMenuItem(
                                                 label = aiTargetLanguageName,
                                                 subtitle = "AI",
                                                 subtitleDetail = null,
                                                 isSelected = isAiTranslating,
-                                                isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == 0,
+                                                isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == 1,
                                                 onClick = { /* D-pad only */ }
                                             )
                                         }
@@ -4289,12 +4388,12 @@ private fun SubtitleMenu(
                                                 .ifBlank { subtitle.id }
                                                 .ifBlank { null }
                                         }
-                                        val itemIdx = if (isAiGroup) idx + 1 else idx
+                                        val itemIdx = if (isAiGroup) idx + 2 else idx
                                         TrackMenuItem(
                                             label = mainLabel,
                                             subtitle = badge,
                                             subtitleDetail = detail,
-                                            isSelected = !isAiTranslating && selectedSubtitle?.id == subtitle.id,
+                                            isSelected = !isAiTranslating && !isLiveAudioTranslating && selectedSubtitle?.id == subtitle.id,
                                             isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == itemIdx,
                                             onClick = { /* D-pad only */ }
                                         )
@@ -4485,7 +4584,7 @@ private fun SubtitleMenu(
                             MobileTrackItem(
                                 name = "Off",
                                 description = null,
-                                isSelected = selectedSubtitle == null,
+                                isSelected = selectedSubtitle == null && !isLiveAudioTranslating,
                                 onClick = { onSelectSubtitle(0) }
                             )
                             Box(
@@ -4499,6 +4598,7 @@ private fun SubtitleMenu(
 
                         // Grouped by language
                         subtitleGroups.forEach { (langName, indexedSubs) ->
+                            val isLiveAudioGroup = langName == "Live Audio"
                             val isAiGroup = isAiAvailable && aiTargetLanguageName.isNotBlank() &&
                                 langName.equals(aiTargetLanguageName, ignoreCase = true)
                             item(key = "mobile_header_$langName") {
@@ -4514,7 +4614,39 @@ private fun SubtitleMenu(
                                         .padding(start = 16.dp, top = 8.dp, bottom = 2.dp)
                                 )
                             }
+                            if (isLiveAudioGroup) {
+                                item(key = "mobile_live_audio_item") {
+                                    MobileTrackItem(
+                                        name = "Translate Audio",
+                                        description = "AI",
+                                        isSelected = isLiveAudioTranslating,
+                                        onClick = { onToggleLiveAudio(); onClose() }
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp)
+                                            .height(1.dp)
+                                            .background(Color.White.copy(alpha = 0.06f))
+                                    )
+                                }
+                            }
                             if (isAiGroup) {
+                                item(key = "mobile_find_best_match_item") {
+                                    MobileTrackItem(
+                                        name = if (isFindingBestMatch) "Scanning…" else "Find Best Match",
+                                        description = "AI",
+                                        isSelected = isFindingBestMatch,
+                                        onClick = { onFindBestMatch(); onClose() }
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp)
+                                            .height(1.dp)
+                                            .background(Color.White.copy(alpha = 0.06f))
+                                    )
+                                }
                                 item(key = "mobile_ai_item") {
                                     MobileTrackItem(
                                         name = aiTargetLanguageName,
@@ -4548,7 +4680,7 @@ private fun SubtitleMenu(
                                     MobileTrackItem(
                                         name = displayName,
                                         description = description,
-                                        isSelected = !isAiTranslating && selectedSubtitle?.id == sub.id,
+                                        isSelected = !isAiTranslating && !isLiveAudioTranslating && selectedSubtitle?.id == sub.id,
                                         onClick = { onSelectSubtitle(originalIndex + 1) }
                                     )
                                     Box(
