@@ -11,8 +11,10 @@ import java.util.concurrent.TimeUnit
 /**
  * "Find best match": scores candidate subtitle tracks by how well their on-screen cue at a given
  * moment matches what the AI hearing transcribed being spoken at that same moment. A well-synced
- * subtitle shows the right words at the right time; an out-of-sync one does not. Comparison is
- * language-specific (currently Hebrew), so it ranks Hebrew subtitle tracks by sync quality.
+ * subtitle shows the right words at the right time; an out-of-sync one does not. The comparison
+ * is language-agnostic word overlap (normalization additionally strips Hebrew niqqud and bidi
+ * marks, which is a no-op for other languages); callers pass candidates in the user's preferred
+ * subtitle language.
  */
 object SubtitleSyncMatcher {
 
@@ -74,20 +76,31 @@ object SubtitleSyncMatcher {
 
     /**
      * Score a candidate against a synced reference (a built-in subtitle's cue-visible intervals)
-     * purely by timing. For each reference interval we take the best temporal overlap fraction
-     * with any candidate cue and average them. A synced candidate has cues at the same times →
-     * high overlap; an offset candidate → low. Language-agnostic (no translation needed).
+     * purely by timing. For each reference interval we measure how much of it is covered by the
+     * union of the candidate's cues, and average the fractions. A synced candidate has cues at
+     * the same times → high coverage; an offset candidate → low. Union (not best-single-cue)
+     * because realtime-collected reference intervals merge back-to-back cues into long windows
+     * that span several candidate cues. Language-agnostic (no translation needed).
      */
     fun scoreByTiming(cues: List<TimedCue>, referenceIntervals: List<Pair<Long, Long>>): Double {
         if (cues.isEmpty() || referenceIntervals.isEmpty()) return 0.0
+        val sorted = cues.sortedBy { it.startMs }
         var sum = 0.0
         for ((rs, re) in referenceIntervals) {
             val refDur = (re - rs).coerceAtLeast(1L)
-            val best = cues.maxOfOrNull { c ->
-                val overlap = minOf(re, c.endMs) - maxOf(rs, c.startMs)
-                overlap.toDouble() / refDur
-            } ?: 0.0
-            sum += best.coerceIn(0.0, 1.0)
+            var covered = 0L
+            var cursor = rs
+            for (c in sorted) {
+                if (c.endMs <= cursor) continue
+                if (c.startMs >= re) break
+                val s = maxOf(c.startMs, cursor)
+                val e = minOf(c.endMs, re)
+                if (e > s) {
+                    covered += e - s
+                    cursor = e
+                }
+            }
+            sum += (covered.toDouble() / refDur).coerceIn(0.0, 1.0)
         }
         return sum / referenceIntervals.size
     }

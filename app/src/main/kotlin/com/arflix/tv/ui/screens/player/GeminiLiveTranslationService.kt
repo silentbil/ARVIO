@@ -44,6 +44,9 @@ class GeminiLiveTranslationService(
     private val apiKeyProvider: () -> String,
     private val scope: CoroutineScope
 ) {
+    /** BCP-47 code the live translation outputs (the user's preferred subtitle language). */
+    @Volatile var targetLanguageCode: String = "he"
+
     private val _text = MutableStateFlow<String?>(null)
     val translatedText: StateFlow<String?> = _text.asStateFlow()
 
@@ -124,7 +127,7 @@ class GeminiLiveTranslationService(
                 // The translate model's only real control: target language. It ignores
                 // system instructions and has no quality/style/gender knobs, so we don't send any.
                 put("translation_config", JSONObject().apply {
-                    put("target_language_code", "he")
+                    put("target_language_code", targetLanguageCode)
                 })
             })
         })

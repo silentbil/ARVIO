@@ -360,6 +360,7 @@ class CloudSyncRepository @Inject constructor(
     // Global AI subtitle keys (non-profile-scoped, device-wide)
     private val subtitleAiEnabledKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_enabled")
     private val subtitleAiAutoSelectKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_auto_select")
+    private val subtitleAiFindBestMatchKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_find_best_match")
     private val subtitleAiApiKeyKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_api_key")
     private val subtitleAiModelKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_model")
     private val subtitleRemoveHearingImpairedKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_remove_hearing_impaired")
@@ -497,6 +498,7 @@ class CloudSyncRepository @Inject constructor(
         // Global AI subtitle settings (non-profile-scoped)
         root.put("subtitleAiEnabled", prefs[subtitleAiEnabledKey] ?: false)
         root.put("subtitleAiAutoSelect", prefs[subtitleAiAutoSelectKey] ?: false)
+        root.put("subtitleAiFindBestMatch", prefs[subtitleAiFindBestMatchKey] ?: true)
         root.put("subtitleAiApiKey", prefs[subtitleAiApiKeyKey] ?: "")
         root.put("subtitleAiModel", prefs[subtitleAiModelKey] ?: "GROQ_LLAMA_70B")
         root.put("subtitleRemoveHearingImpaired", prefs[subtitleRemoveHearingImpairedKey] ?: true)
@@ -1235,6 +1237,7 @@ class CloudSyncRepository @Inject constructor(
             context.settingsDataStore.edit { prefs ->
                 prefs[subtitleAiEnabledKey] = root.optBoolean("subtitleAiEnabled", false)
                 prefs[subtitleAiAutoSelectKey] = root.optBoolean("subtitleAiAutoSelect", false)
+                prefs[subtitleAiFindBestMatchKey] = root.optBoolean("subtitleAiFindBestMatch", true)
                 val apiKey = root.optString("subtitleAiApiKey", "")
                 if (apiKey.isNotBlank()) prefs[subtitleAiApiKeyKey] = apiKey
                 val model = root.optString("subtitleAiModel", "GROQ_LLAMA_70B")
