@@ -103,6 +103,24 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         if (!SentryCrashReporter.initialize(this)) {
             CrashlyticsProvider.initialize()
         }
+
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val prefs = getSharedPreferences("arvio_crash_store", android.content.Context.MODE_PRIVATE)
+                val fallbackId = java.util.UUID.randomUUID().toString()
+                prefs.edit()
+                    .putString("last_crash_id", fallbackId)
+                    .putString("last_crash_msg", "${throwable::class.java.simpleName}: ${throwable.message?.take(200) ?: ""}")
+                    .putLong("last_crash_time", System.currentTimeMillis())
+                    .putString("last_crash_version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                    .putBoolean("has_pending_crash_report", true)
+                    .commit()
+            } catch (_: Throwable) {
+            } finally {
+                defaultHandler?.uncaughtException(thread, throwable) ?: android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
         // Initialize active profile asynchronously to avoid blocking cold start.
         // Wire realtime push notification when realtime is enabled.
         cloudSyncRepository.onPushCompleted = { realtimeSyncManager.markPush() }

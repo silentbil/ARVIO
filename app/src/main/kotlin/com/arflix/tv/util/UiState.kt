@@ -30,7 +30,7 @@ sealed class UiState<out T> {
     /**
      * Initial state before any data loading has been attempted.
      */
-    object Idle : UiState<Nothing>()
+    data object Idle : UiState<Nothing>()
 
     /**
      * Data is currently being loaded.

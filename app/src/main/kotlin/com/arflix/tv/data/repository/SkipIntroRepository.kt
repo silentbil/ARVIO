@@ -76,9 +76,11 @@ class SkipIntroRepository @Inject constructor(
             body.outro?.let { addIfValid("outro", it.startMs, it.endMs, it.startSec, it.endSec) }
 
             out.sortedBy { it.startMs }
-        } catch (e: HttpException) {
+        } catch (_: HttpException) {
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             emptyList()
         }
     }
@@ -104,9 +106,11 @@ class SkipIntroRepository @Inject constructor(
                     } else null
                 }
                 .sortedBy { it.startMs }
-        } catch (e: HttpException) {
+        } catch (_: HttpException) {
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             emptyList()
         }
     }

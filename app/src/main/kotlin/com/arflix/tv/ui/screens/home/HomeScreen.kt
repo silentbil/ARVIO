@@ -336,6 +336,7 @@ private fun homeRowItemKey(item: MediaItem): String {
     return "${item.mediaType.name}-${item.id}$episodeSuffix"
 }
 
+@androidx.compose.runtime.Immutable
 private data class HomeFocusedHeroSnapshot(
     val rowIndex: Int,
     val itemIndex: Int,
@@ -359,6 +360,7 @@ private fun isActionableHomeItem(item: MediaItem?): Boolean {
     return item != null && item.id > 0 && !item.isPlaceholder
 }
 
+@androidx.compose.runtime.Immutable
 private data class HomeHeroPlaybackHandles(
     val player: ExoPlayer,
     val hlsFactory: HlsMediaSource.Factory
@@ -2774,7 +2776,29 @@ private fun MobileHomeRowsLayer(
                 } else {
                     rowUsePosterCards
                 }
-                val itemsToRender = category.items
+                val itemsToRender = remember(category.items, rowHasMore, isPortrait) {
+                    if (category.items.isEmpty()) {
+                        (1..8).map { index ->
+                            MediaItem(
+                                id = -index,
+                                title = "",
+                                mediaType = MediaType.MOVIE,
+                                isPlaceholder = true
+                            )
+                        }
+                    } else if (rowHasMore) {
+                        val skeletonCount = if (isPortrait) 12 else 7
+                        category.items + List(skeletonCount) { idx ->
+                            MediaItem(
+                                id = -1000 - idx,
+                                title = "",
+                                isPlaceholder = true
+                            )
+                        }
+                    } else {
+                        category.items
+                    }
+                }
 
                 // Horizontal card row with touch scrolling
                 LazyRow(
@@ -3325,7 +3349,30 @@ private fun ContentRow(
     val cardAspectRatio = if (effectivePosterMode) 2f / 3f else 16f / 9f
     val itemWidth = if (effectivePosterMode) 105.dp else 210.dp
     val itemSpacing = 14.dp
-    val totalItems = category.items.size
+    val itemsToRender = remember(category.items, effectiveCategoryHasMore, effectivePosterMode) {
+        if (category.items.isEmpty()) {
+            (1..8).map { index ->
+                MediaItem(
+                    id = -index,
+                    title = "",
+                    mediaType = MediaType.MOVIE,
+                    isPlaceholder = true
+                )
+            }
+        } else if (effectiveCategoryHasMore) {
+            val skeletonCount = if (effectivePosterMode) 12 else 7
+            category.items + List(skeletonCount) { idx ->
+                MediaItem(
+                    id = -1000 - idx,
+                    title = "",
+                    isPlaceholder = true
+                )
+            }
+        } else {
+            category.items
+        }
+    }
+    val totalItems = itemsToRender.size
     val maxFirstIndex = remember(totalItems) {
         (totalItems - 1).coerceAtLeast(0)
     }
@@ -3482,8 +3529,6 @@ private fun ContentRow(
                 color = Color.White
             )
         }
-
-        val itemsToRender = category.items
 
         // Cards row - clipped to hide previous items when scrolling
         val clipModifier = if (isContinueWatching) Modifier else Modifier.clipToBounds()

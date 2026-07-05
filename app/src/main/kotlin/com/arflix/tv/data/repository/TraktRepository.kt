@@ -292,6 +292,8 @@ class TraktRepository @Inject constructor(
                     null
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("TraktRepo: token refresh failed: ${e.message}")
                 if (isPermanentTokenRefreshFailure(e)) {
                     clearInvalidTraktToken()
@@ -506,6 +508,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptySet()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptySet()
         }
@@ -538,6 +542,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptySet()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptySet()
         }
@@ -557,6 +563,8 @@ class TraktRepository @Inject constructor(
         try {
             syncService.markMovieWatched(tmdbId)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             // Sync failed, but local cache is already updated
         }
     }
@@ -574,6 +582,8 @@ class TraktRepository @Inject constructor(
         try {
             syncService.markMovieUnwatched(tmdbId)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             // Sync failed, but local cache is already updated
         }
     }
@@ -594,6 +604,8 @@ class TraktRepository @Inject constructor(
             val traktShowId = tmdbToTraktIdCache[showTmdbId]
             syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             AppLogger.e("TraktRepository", "Failed to mark episode watched", e)
         }
     }
@@ -612,6 +624,8 @@ class TraktRepository @Inject constructor(
             val traktShowId = tmdbToTraktIdCache[showTmdbId]
             syncService.markEpisodeWatchedInSupabaseOnly(showTmdbId, season, episode, traktShowId)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             AppLogger.e("TraktRepository", "Failed to mark episode watched in Supabase", e)
         }
     }
@@ -632,6 +646,8 @@ class TraktRepository @Inject constructor(
             try {
                 syncService.markEpisodeUnwatched(showTmdbId, season, episode)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 // Sync failed, but local cache is already updated
             }
         }
@@ -668,6 +684,8 @@ class TraktRepository @Inject constructor(
                 delayMs = (delayMs * 2).coerceAtMost(10000)
                 attempt++
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 if (attempt == maxAttempts) {
                     return null
                 }
@@ -833,6 +851,8 @@ class TraktRepository @Inject constructor(
             traktApi.removePlaybackItem(auth, clientId, "2", playbackId)
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -857,6 +877,8 @@ class TraktRepository @Inject constructor(
                 false
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -895,6 +917,8 @@ class TraktRepository @Inject constructor(
                     return watchedEpisodesCache.filter { it.startsWith(prefix) }.toSet()
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 AppLogger.e("TraktRepository", "Failed to resolve show TMDB ID to Trakt ID", e)
             }
 
@@ -958,6 +982,8 @@ class TraktRepository @Inject constructor(
             showWatchedCacheTime = now
 
         } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+
         }
 
         return watchedSet
@@ -1037,6 +1063,8 @@ class TraktRepository @Inject constructor(
             showCompletionCache[tmdbId] = complete to now
             complete
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             showCompletionCache[tmdbId] = false to now
             false
         }
@@ -1070,6 +1098,8 @@ class TraktRepository @Inject constructor(
                 false
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -1089,6 +1119,8 @@ class TraktRepository @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+
         }
     }
 
@@ -1105,6 +1137,8 @@ class TraktRepository @Inject constructor(
             }
             traktId
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             null
         }
     }
@@ -1232,6 +1266,8 @@ class TraktRepository @Inject constructor(
                     try {
                         return block(authHolder[0])
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+
                         lastErr = e
                         if (attempt == 0 && isAuthError(e)) {
                             // Token may be expired – force-refresh and retry
@@ -1251,6 +1287,8 @@ class TraktRepository @Inject constructor(
                         getAllHiddenProgressShows(currentAuth)
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     System.err.println("TraktRepo:getCW: getHiddenShows failed: ${e.message}")
                     AppLogger.breadcrumb(
                         tag = "Trakt",
@@ -1266,6 +1304,8 @@ class TraktRepository @Inject constructor(
                         getAllHiddenProgressResetShows(currentAuth)
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     System.err.println("TraktRepo:getCW: getHiddenResetShows failed: ${e.message}")
                     AppLogger.breadcrumb(
                         tag = "Trakt",
@@ -1359,6 +1399,8 @@ class TraktRepository @Inject constructor(
                     processedKeys.add("${MediaType.TV}:$tmdbId")
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("TraktRepo:getCW: playback progress failed: ${e.message}")
                 AppLogger.recordException(
                     throwable = e,
@@ -1408,6 +1450,8 @@ class TraktRepository @Inject constructor(
                                     )
                                 }
                             } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+
                                 System.err.println("TraktRepo:getCW: show progress failed for ${show.title}: ${e.message}")
                                 AppLogger.breadcrumb(
                                     tag = "Trakt",
@@ -1461,6 +1505,8 @@ class TraktRepository @Inject constructor(
                 }
                 watchedProgressFetched = true
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 System.err.println("TraktRepo:getCW: watched progress failed: ${e.message}")
                 AppLogger.recordException(
                     throwable = e,
@@ -1606,6 +1652,8 @@ class TraktRepository @Inject constructor(
                         )
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     // Keep local/cached item if TMDB hydration fails - don't lose user's continue watching entry
                     System.err.println("TraktRepo:getCW: TMDB hydration failed for ${candidate.item.title}: ${e.message}")
                     candidate.item
@@ -1642,11 +1690,15 @@ class TraktRepository @Inject constructor(
         // this returns null because tokens haven't loaded from DataStore yet,
         // causing the code to incorrectly fall back to local CW for Trakt
         // profiles. That loaded cloud-synced non-Trakt items into the CW row.
-        val hasTraktToken = runCatching {
+        val hasTraktToken = try {
             val prefs = context.traktDataStore.data.first()
             val tokenKey = profileManager.profileStringKey("trakt_access_token")
             !prefs[tokenKey].isNullOrBlank()
-        }.getOrDefault(false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
 
         if (!hasTraktToken) {
             // Profile genuinely has no Trakt — use local CW
@@ -1707,6 +1759,8 @@ class TraktRepository @Inject constructor(
                 cachedContinueWatchingProfileId = profileId
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             // Silently ignore preload failures - not critical
         }
     }
@@ -1882,7 +1936,7 @@ class TraktRepository @Inject constructor(
         // The previous code used refreshTokenIfNeeded() == null which could
         // incorrectly trigger for Trakt users on network errors, polluting
         // the Trakt CW cache with local-only items.
-        val isTraktAuth = runCatching { isAuthenticated.first() }.getOrDefault(false)
+        val isTraktAuth = try { isAuthenticated.first() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
         if (!isTraktAuth) {
             cachedContinueWatching = trimmed
         }
@@ -2074,7 +2128,7 @@ class TraktRepository @Inject constructor(
             return@coroutineScope if (item.mediaType == MediaType.TV) {
                 val details = try {
                     tmdbApi.getTvDetails(item.id, apiKey)
-                } catch (_: Exception) { null }
+                } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
 
                 // Get current season info for episode title and aired-episode counts.
                 val seasonDetails = if (item.season != null && item.episode != null && (item.episodeTitle.isNullOrEmpty() || needsEpisodeCounts)) {
@@ -2088,7 +2142,7 @@ class TraktRepository @Inject constructor(
                             launch {
                                 val result = try {
                                     tmdbApi.getTvSeason(item.id, item.season, apiKey)
-                                } catch (_: Exception) { null }
+                                } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
                                 newDeferred.complete(result)
                             }
                             newDeferred
@@ -2098,7 +2152,7 @@ class TraktRepository @Inject constructor(
                         }
 
                         deferredSeason.await()
-                    } catch (_: Exception) { null }
+                    } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
                 } else null
                 val episodeInfo = seasonDetails?.episodes?.find { it.episodeNumber == item.episode }
 
@@ -2140,7 +2194,7 @@ class TraktRepository @Inject constructor(
             } else {
                 val details = try {
                     tmdbApi.getMovieDetails(item.id, apiKey)
-                } catch (_: Exception) { null }
+                } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
 
                 // Build full URLs for images
                 val backdropUrl = details?.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
@@ -2194,6 +2248,8 @@ class TraktRepository @Inject constructor(
         return try {
             java.time.Instant.parse(dateString).toEpochMilli()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             0L
         }
     }
@@ -2227,7 +2283,7 @@ class TraktRepository @Inject constructor(
         cachedContinueWatching = cachedContinueWatching.filterNot {
             it.id == item.id && it.mediaType == item.mediaType
         }
-        val activeProfileId = runCatching { profileManager.getProfileIdSync() }.getOrNull()
+        val activeProfileId = try { profileManager.getProfileIdSync() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
         if (!activeProfileId.isNullOrBlank()) {
             preloadedProfileCache[activeProfileId] = preloadedProfileCache[activeProfileId]
                 ?.filterNot { it.id == item.id && it.mediaType == item.mediaType }
@@ -2978,6 +3034,8 @@ class TraktRepository @Inject constructor(
             traktApi.addToWatchlist(auth, clientId, "2", body)
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -2993,6 +3051,8 @@ class TraktRepository @Inject constructor(
             traktApi.removeFromWatchlist(auth, clientId, "2", body)
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3009,6 +3069,8 @@ class TraktRepository @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3029,6 +3091,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3048,6 +3112,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3065,6 +3131,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3081,6 +3149,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3097,6 +3167,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3113,6 +3185,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3149,6 +3223,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3168,6 +3244,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3187,6 +3265,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3206,6 +3286,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3224,6 +3306,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3249,6 +3333,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3267,6 +3353,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3306,6 +3394,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3328,6 +3418,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3350,6 +3442,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3372,6 +3466,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3402,6 +3498,8 @@ class TraktRepository @Inject constructor(
             }
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3418,6 +3516,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3431,6 +3531,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3458,6 +3560,8 @@ class TraktRepository @Inject constructor(
             }
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3485,6 +3589,8 @@ class TraktRepository @Inject constructor(
             }
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3501,6 +3607,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3517,6 +3625,8 @@ class TraktRepository @Inject constructor(
             )
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             false
         }
     }
@@ -3537,6 +3647,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3556,6 +3668,8 @@ class TraktRepository @Inject constructor(
             com.arflix.tv.util.AppLogger.e("TraktRepository", "HTTP error fetching data, returning default", e)
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             com.arflix.tv.util.AppLogger.e("TraktRepository", "Unknown error fetching data, returning default", e)
             emptyList()
         }
@@ -3631,6 +3745,8 @@ class TraktRepository @Inject constructor(
 
             cacheInitialized = true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             // If sync service fails, try direct Trakt load (only if Trakt auth available)
             try {
                 val (localSnapshotMovies, localSnapshotEpisodes) = loadLocalWatchedSnapshotForCurrentProfile()
@@ -3749,6 +3865,8 @@ class TraktRepository @Inject constructor(
             initializeWatchedCache()
 
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             throw e
         }
     }
@@ -3984,6 +4102,8 @@ private fun formatDateString(dateStr: String?): String {
         val date = inputFormat.parse(dateStr)
         date?.let { outputFormat.format(it) } ?: ""
     } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+
         ""
     }
 }

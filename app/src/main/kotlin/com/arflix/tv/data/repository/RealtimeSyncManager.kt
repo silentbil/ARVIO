@@ -5,6 +5,7 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.arflix.tv.BuildConfig
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.AppLogger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -423,6 +424,8 @@ class RealtimeSyncManager @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             Log.w(TAG, "Failed to parse realtime message: ${e.message}")
         }
     }
@@ -476,7 +479,8 @@ class RealtimeSyncManager @Inject constructor(
                 }
                 try {
                     ws.send(hb.toString())
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    AppLogger.e("RealtimeSyncManager", "Error parsing watch history event", e)
                     break
                 }
             }
@@ -553,6 +557,8 @@ class RealtimeSyncManager @Inject constructor(
                         connectWebSocket()
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     Log.w(TAG, "Token refresh check failed: ${e.message}")
                 }
             }

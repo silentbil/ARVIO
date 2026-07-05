@@ -32,9 +32,9 @@ class CastManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     sealed class CastState {
-        object NotAvailable : CastState()
-        object NotConnected : CastState()
-        object Connecting : CastState()
+        data object NotAvailable : CastState()
+        data object NotConnected : CastState()
+        data object Connecting : CastState()
         data class Casting(val deviceName: String) : CastState()
     }
 

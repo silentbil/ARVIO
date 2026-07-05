@@ -747,7 +747,6 @@ class IptvRepository @Inject constructor(
             return null
         }
         return listOf(Base64.DEFAULT, Base64.URL_SAFE or Base64.NO_WRAP)
-            .asSequence()
             .mapNotNull { flags ->
                 runCatching { String(Base64.decode(trimmed, flags), StandardCharsets.UTF_8).trim() }.getOrNull()
             }
@@ -1175,7 +1174,8 @@ class IptvRepository @Inject constructor(
             if (pattern in setOf("Y", "m", "d", "H", "M", "S")) {
                 return@replace match.value
             }
-            try { Result.success(dateTime.format(IptvRepoDateRegexes.formatterFor(pattern))) } catch (e: Exception) { Result.failure<String>(e) }
+            try { Result.success(dateTime.format(IptvRepoDateRegexes.formatterFor(pattern))) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e
+ Result.failure<String>(e) }
                 .getOrDefault(match.value)
         }
     }
@@ -8497,4 +8497,13 @@ class IptvRepository @Inject constructor(
             .toFormatter(Locale.US)
 
     }
+}
+
+
+private object IptvRepositoryRegexes {
+    val DURATION_PLACEHOLDER_REGEX = Regex("""\$\{duration:(\d+)\}|\{duration:(\d+)\}""")
+    val IPTV_URL_REDACT_SECRETS_REGEX = Regex("""(?i)([?&](?:username|user|uname|password|pass|pwd)=)[^&]+""")
+    val IPTV_URL_REDACT_PATH_REGEX = Regex("""(?i)(/(?:live|movie|series|timeshift)/)([^/]+)/([^/]+)(/)""")
+    val RESOLUTION_TAG_REGEX = Regex("""\b(4K|UHD|FHD|HD|SD|2160P?|1080P?|720P?|576P?|480P?)\b""", RegexOption.IGNORE_CASE)
+    val BRACKET_PAREN_REGEX = Regex("""\[[^\]]*]|\([^)]*\)""")
 }

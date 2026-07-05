@@ -114,10 +114,12 @@ class CloudSyncRepository @Inject constructor(
 
     private fun cloudPayloadProfileCount(payload: String): Int? {
         if (payload.isBlank()) return null
-        return runCatching {
+        return try {
             val root = JSONObject(payload)
             if (!root.has("profiles")) null else root.optJSONArray("profiles")?.length() ?: 0
-        }.getOrNull()
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun hasMeaningfulLocalProfiles(profiles: List<Profile>): Boolean {
@@ -140,19 +142,9 @@ class CloudSyncRepository @Inject constructor(
     private fun shouldRestoreRemoteBeforePush(localPayload: String, remotePayload: String): Boolean {
         val localRank = accountSyncPayloadRestoreRank(localPayload)
         val remoteRank = accountSyncPayloadRestoreRank(remotePayload)
-        val localProfileCount = cloudPayloadProfileCount(localPayload)
-        val remoteProfileCount = cloudPayloadProfileCount(remotePayload)
 
-        if (
-            localProfileCount != null &&
-            remoteProfileCount != null &&
-            remoteProfileCount > localProfileCount &&
-            remoteRank >= localRank
-        ) {
-            return true
-        }
-
-        return remoteRank >= 70 && localRank < 70
+        if (localRank >= 40) return false
+        return remoteRank >= 40 && localRank < 40
     }
 
     private fun mergeAddonsForSharedRestore(addonLists: Iterable<List<Addon>>): List<Addon> {
@@ -245,7 +237,7 @@ class CloudSyncRepository @Inject constructor(
     }
 
     private suspend fun markCloudPayloadApplied(payload: String, payloadHash: Int) {
-        val cloudUpdatedAt = runCatching { JSONObject(payload).optLong("updatedAt", 0L) }.getOrDefault(0L)
+        val cloudUpdatedAt = try { JSONObject(payload).optLong("updatedAt", 0L) } catch (e: Exception) { 0L }
         context.settingsDataStore.edit { prefs ->
             prefs[cloudSyncLastAppliedAtKey] = cloudUpdatedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
             prefs[androidx.datastore.preferences.core.intPreferencesKey("cloud_sync_last_applied_hash")] = payloadHash
@@ -660,7 +652,7 @@ class CloudSyncRepository @Inject constructor(
     // ══════════════════════════════════════════════════════════
 
     suspend fun pushToCloud(force: Boolean = false): Result<Unit> = cloudSyncMutex.withLock {
-        pushToCloudLocked(force = force)
+        pushToCloudLocked(force = force, allowRemoteRestoreBeforePush = !force)
     }
 
     suspend fun pushLocalSnapshotToCloud(): Result<Unit> = cloudSyncMutex.withLock {

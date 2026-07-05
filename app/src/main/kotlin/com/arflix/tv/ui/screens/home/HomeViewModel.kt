@@ -46,6 +46,7 @@ import com.arflix.tv.util.detectDeviceType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -73,6 +74,7 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
+@androidx.compose.runtime.Immutable
 data class HomeUiState(
     val isLoading: Boolean = false,
     val isInitialLoad: Boolean = true,
@@ -111,6 +113,7 @@ data class HomeUiState(
     val smoothScrolling: Boolean = false
 )
 
+@androidx.compose.runtime.Immutable
 data class HomeCollectionRow(
     val id: String,
     val title: String,
@@ -341,7 +344,9 @@ class HomeViewModel @Inject constructor(
 
                 // Default fallback
                 false
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                 false
             }
         }
@@ -393,7 +398,9 @@ class HomeViewModel @Inject constructor(
             if (value.isNullOrBlank()) return 0L
             return try {
                 java.time.Instant.parse(value).toEpochMilli()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                 0L
             }
         }
@@ -633,7 +640,9 @@ class HomeViewModel @Inject constructor(
             parser.isLenient = false
             val parsed = parser.parse(value) ?: return true
             parsed.time <= System.currentTimeMillis()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
             true
         }
     }
@@ -819,7 +828,8 @@ class HomeViewModel @Inject constructor(
      *                     If false, only re-derive from cached program data (free, no network).
      */
     private fun refreshFavoriteTvEpg(networkFetch: Boolean = false) {
-        viewModelScope.launch(Dispatchers.IO) {
+        activeEpgRefreshJob?.cancel()
+        activeEpgRefreshJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val categories = _uiState.value.categories
                 val favTvIndex = categories.indexOfFirst { it.id == FAVORITE_TV_CATEGORY_ID }
@@ -870,7 +880,8 @@ class HomeViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-                System.err.println("[EPG-Refresh] Error: ${e.message}")
+                if (e is CancellationException) throw e
+                AppLogger.e("HomeVM", "[EPG-Refresh] Error: ${e.message}", e)
             }
         }
     }
@@ -878,6 +889,7 @@ class HomeViewModel @Inject constructor(
     /** Start periodic EPG refresh for the Favorite TV home row. */
     private fun startEpgRefreshTimer() {
         epgRefreshJob?.cancel()
+        activeEpgRefreshJob?.cancel()
         epgRefreshJob = viewModelScope.launch {
             // Initial delay — let home data + IPTV warmup finish first
             delay(if (isLowRamDevice) 10_000L else 5_000L)
@@ -973,6 +985,7 @@ class HomeViewModel @Inject constructor(
     /** Network refresh: fetch fresh short EPG for favorite channels (Xtream only). */
     private val EPG_NETWORK_REFRESH_MS = 5 * 60_000L
     private var epgRefreshJob: Job? = null
+    private var activeEpgRefreshJob: Job? = null
     private var lastEpgNetworkRefreshMs: Long = 0L
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -1173,6 +1186,7 @@ class HomeViewModel @Inject constructor(
         startupCatalogWarmupJob?.cancel()
         customCatalogsJob?.cancel()
         epgRefreshJob?.cancel()
+        activeEpgRefreshJob?.cancel()
         lastContinueWatchingItems = emptyList()
         lastContinueWatchingUpdateMs = 0L
         lastResolvedBaseCategories = emptyList()
@@ -1336,7 +1350,8 @@ class HomeViewModel @Inject constructor(
                 val json = org.json.JSONObject(snapshot as Map<*, *>).toString()
                 logoCachePrefs.edit().putString("urls", json).apply()
             } catch (e: Exception) {
-                System.err.println("HomeVM: failed to save logo cache: ${e.message}")
+                if (e is CancellationException) throw e
+                AppLogger.e("HomeVM", "failed to save logo cache: ${e.message}", e)
             }
         }
     }
@@ -1406,7 +1421,9 @@ class HomeViewModel @Inject constructor(
                     clockFormat = clockFormat,
                     smoothScrolling = smoothScrolling
                 )
-            } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
         }
 
         // Subscribe to realtime watch_history events so Continue Watching refreshes on
@@ -1526,7 +1543,9 @@ class HomeViewModel @Inject constructor(
                         }
                     }
                 }
-            } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
         }
 
         // Instantly show Continue Watching from disk cache before anything else loads.
@@ -1589,7 +1608,8 @@ class HomeViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-                System.err.println("HomeVM: preload CW cache failed: ${e.message}")
+                if (e is CancellationException) throw e
+                AppLogger.e("HomeVM", "preload CW cache failed: ${e.message}", e)
             }
         }
         scheduleInitialHomeLoad()
@@ -1600,6 +1620,7 @@ class HomeViewModel @Inject constructor(
                 try {
                     iptvRepository.warmXtreamVodCachesIfPossible()
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     AppLogger.e("HomeVM", "warmXtreamVodCachesIfPossible failed", e)
                 }
             }
@@ -1612,7 +1633,8 @@ class HomeViewModel @Inject constructor(
                 traktRepository.isAuthenticated.filter { it }.first()
                 launchContinueWatchingFetch()
             } catch (e: Exception) {
-                System.err.println("HomeVM: auth observer CW refresh failed: ${e.message}")
+                if (e is CancellationException) throw e
+                AppLogger.e("HomeVM", "auth observer CW refresh failed: ${e.message}", e)
             }
         }
         viewModelScope.launch {
@@ -1642,7 +1664,8 @@ class HomeViewModel @Inject constructor(
                         refreshFavoriteTvEpg(networkFetch = false)
                     }
                 }
-            } catch (_: Exception) {
+                    } catch (e: Exception) {
+                if (e is CancellationException) throw e
             }
         }
         // Periodically refresh EPG data for Favorite TV row after Home settles.
@@ -2146,7 +2169,9 @@ class HomeViewModel @Inject constructor(
                                     Category(id = cfg.id, title = cfg.title, items = result.items)
                                         .withTop10CapIfNeeded()
                                 } else null
-                            } catch (_: Exception) { null }
+                            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+ null }
                         }
                     }
                     val mdblistCategories = mdblistInitial.awaitAll().filterNotNull()
@@ -2171,7 +2196,9 @@ class HomeViewModel @Inject constructor(
                                                 Category(id = cfg.id, title = cfg.title, items = result.items)
                                                     .withTop10CapIfNeeded()
                                             } else null
-                                        } catch (_: Exception) { null }
+                                        } catch (e: Exception) {
+                if (e is CancellationException) throw e
+ null }
                                     }
                                 }.awaitAll().filterNotNull()
                                 if (results.isNotEmpty()) {
@@ -2218,7 +2245,9 @@ class HomeViewModel @Inject constructor(
                                         )
                                         category
                                     } else null
-                                } catch (_: Exception) { null }
+                                } catch (e: Exception) {
+                if (e is CancellationException) throw e
+ null }
                             }
                         }
                     }.awaitAll().filterNotNull()
@@ -2451,6 +2480,8 @@ class HomeViewModel @Inject constructor(
                             val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
                             if (logoUrl != null) key to logoUrl else null
                         } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                             null
                         }
                     }
@@ -2587,6 +2618,8 @@ class HomeViewModel @Inject constructor(
                     }
                 }
               } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                 if (requestId != loadHomeRequestId) return@loadHome
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -2794,7 +2827,9 @@ class HomeViewModel @Inject constructor(
                     try {
                         val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
                         if (logoUrl != null) key to logoUrl else null
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                         null
                     } finally {
                         logoFetchInFlight.remove(key)
@@ -2898,7 +2933,9 @@ class HomeViewModel @Inject constructor(
                     categories = updatedCategories,
                     categoryHasMoreMap = _uiState.value.categoryHasMoreMap + (categoryId to result.hasMore)
                 )
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                 // Keep UI stable; user can retry naturally by continuing to browse the row.
             } finally {
                 pagination.isLoading = false
@@ -2912,11 +2949,8 @@ class HomeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(categoryHasMoreMap = hasMoreMap)
     }
 
-    private fun buildProfileSkeletonCategories(
-        savedCatalogs: List<com.arflix.tv.data.model.CatalogConfig>,
-        cachedContinueWatching: List<ContinueWatchingItem>
-    ): List<Category> {
-        val placeholderItems = (1..HOME_PLACEHOLDER_ITEM_COUNT).map { index ->
+    private fun createPlaceholderItems(count: Int = HOME_PLACEHOLDER_ITEM_COUNT): List<MediaItem> =
+        (1..count).map { index ->
             MediaItem(
                 id = -index,
                 title = "",
@@ -2924,6 +2958,12 @@ class HomeViewModel @Inject constructor(
                 isPlaceholder = true
             )
         }
+
+    private fun buildProfileSkeletonCategories(
+        savedCatalogs: List<com.arflix.tv.data.model.CatalogConfig>,
+        cachedContinueWatching: List<ContinueWatchingItem>
+    ): List<Category> {
+        val placeholderItems = createPlaceholderItems()
 
         val rows = mutableListOf<Category>()
         if (cachedContinueWatching.isNotEmpty()) {
@@ -3256,6 +3296,8 @@ class HomeViewModel @Inject constructor(
                     // Else: No data anywhere - nothing to show, UI already doesn't have it
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                 // Silently fail - don't clear existing data on error
                 AppLogger.e("HomeVM", "launchContinueWatchingFetch failed", e)
             }
@@ -3303,7 +3345,9 @@ class HomeViewModel @Inject constructor(
                 )
             }
             traktRepository.enrichContinueWatchingItems(mapped)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
             emptyList()
         }
     }
@@ -3348,7 +3392,9 @@ class HomeViewModel @Inject constructor(
                 )
             }
             traktRepository.enrichContinueWatchingItems(mapped)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
             emptyList()
         }
     }
@@ -3426,17 +3472,20 @@ class HomeViewModel @Inject constructor(
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
         val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
         val items = if (isTraktAuthenticated) {
-            runCatching { traktRepository.preloadContinueWatchingCache() }
-                .onFailure { error ->
-                    AppLogger.recordException(
-                        throwable = error,
-                        context = mapOf(
-                            "error_area" to "ContinueWatching",
-                            "cw_phase" to "preload_trakt_cache"
-                        )
+            try {
+                traktRepository.preloadContinueWatchingCache()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (error: Exception) {
+                AppLogger.recordException(
+                    throwable = error,
+                    context = mapOf(
+                        "error_area" to "ContinueWatching",
+                        "cw_phase" to "preload_trakt_cache"
                     )
-                }
-                .getOrDefault(emptyList())
+                )
+                emptyList()
+            }
         } else {
             val historyItems = loadContinueWatchingFromHistoryStable()
             if (historyItems.isNotEmpty()) {
@@ -3504,7 +3553,9 @@ class HomeViewModel @Inject constructor(
                     )
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
             items
         }
     }
@@ -3586,7 +3637,8 @@ class HomeViewModel @Inject constructor(
                 )
                 lastWatchedBadgesRefreshMs = SystemClock.elapsedRealtime()
             } catch (e: Exception) {
-                System.err.println("HomeVM: refreshWatchedBadges failed: ${e.message}")
+                if (e is CancellationException) throw e
+                AppLogger.e("HomeVM", "refreshWatchedBadges failed: ${e.message}", e)
             }
         }
     }
@@ -3700,6 +3752,8 @@ class HomeViewModel @Inject constructor(
                         preloadLogoImages(listOf(logoUrl))
                     }
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                     // Logo fetch failed
                     AppLogger.e("HomeVM", "Hero logo fetch failed", e)
                 }
@@ -3752,7 +3806,9 @@ class HomeViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(heroTrailerKey = trailerKey)
                         prefetchTrailerUrl(trailerKey)
                     }
-                } catch (_: Exception) {}
+                        } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
             }
         }
 
@@ -3784,8 +3840,11 @@ class HomeViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(heroTrailerKey = trailerKey)
                         prefetchTrailerUrl(trailerKey)
                     }
-                } catch (_: Exception) {}
-            } catch (_: Exception) {
+                        } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
+                    } catch (e: Exception) {
+                if (e is CancellationException) throw e
             }
         }
     }
@@ -3813,7 +3872,9 @@ class HomeViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(heroTrailerKey = trailerKey)
                         prefetchTrailerUrl(trailerKey)
                     }
-                } catch (_: Exception) {}
+                        } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
             }
         }
 
@@ -3834,6 +3895,7 @@ class HomeViewModel @Inject constructor(
                 applyHeroDetailsSnapshotIfCurrent(item, snapshot)
                 snapshot.primaryNetworkLogo?.let { preloadLogoImages(listOf(it)) }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(isHeroTransitioning = false)
             }
         }
@@ -3864,7 +3926,9 @@ class HomeViewModel @Inject constructor(
                             heroDetailsCache[key] = snapshot
                             snapshot.primaryNetworkLogo
                         }
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                         null
                     } finally {
                         heroDetailsFetchInFlight.remove(key)
@@ -3922,6 +3986,8 @@ class HomeViewModel @Inject constructor(
                             val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
                             if (logoUrl != null) key to logoUrl else null
                         } catch (e: Exception) {
+                if (e is CancellationException) throw e
+
                             null
                         } finally {
                             logoFetchInFlight.remove(key)
@@ -3992,6 +4058,7 @@ class HomeViewModel @Inject constructor(
                                 val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
                                 if (logoUrl != null) key to logoUrl else null
                             } catch (e: Exception) {
+                                if (e is CancellationException) throw e
                                 null
                             } finally {
                                 logoFetchInFlight.remove(key)
@@ -4072,6 +4139,7 @@ class HomeViewModel @Inject constructor(
                     toastType = ToastType.SUCCESS
                 )
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 AppLogger.recordException(
                     throwable = e,
                     context = mapOf(
@@ -4168,7 +4236,9 @@ class HomeViewModel @Inject constructor(
                             )
                             lastContinueWatchingUpdateMs = 0L
                             refreshContinueWatchingOnly(force = true)
-                        } catch (_: Exception) {}
+                                } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
                     } else {
                         _uiState.value = _uiState.value.copy(
                             toastMessage = context.getString(R.string.home_no_episode_info),
@@ -4183,6 +4253,7 @@ class HomeViewModel @Inject constructor(
                 // was never updated — only the Supabase watch_history table was.
                 runCatching { cloudSyncRepository.pushToCloud() }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(
                     toastMessage = context.getString(R.string.details_failed_update_watched),
                     toastType = ToastType.ERROR
@@ -4230,10 +4301,14 @@ class HomeViewModel @Inject constructor(
                         // Sync to backend after UI update (these may be slow for non-Trakt/non-Cloud profiles)
                         try {
                             traktRepository.markEpisodeWatched(item.id, nextEp.seasonNumber, nextEp.episodeNumber)
-                        } catch (_: Exception) {}
+                                } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
                         try {
                             watchHistoryRepository.removeFromHistory(item.id, nextEp.seasonNumber, nextEp.episodeNumber)
-                        } catch (_: Exception) {}
+                                } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
 
                         // Save the NEXT episode to CW (local + cloud) so it appears on all devices
                         try {
@@ -4275,7 +4350,9 @@ class HomeViewModel @Inject constructor(
                             // Reset throttle so refresh actually runs
                             lastContinueWatchingUpdateMs = 0L
                             refreshContinueWatchingOnly(force = true)
-                        } catch (_: Exception) {}
+                                } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
                     } else {
                         _uiState.value = _uiState.value.copy(
                             toastMessage = context.getString(R.string.home_no_episode_info),
@@ -4287,6 +4364,7 @@ class HomeViewModel @Inject constructor(
                 // Push cloud snapshot so other devices see watched status + CW update
                 runCatching { cloudSyncRepository.pushToCloud() }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(
                     toastMessage = context.getString(R.string.details_failed_update_watched),
                     toastType = ToastType.ERROR
@@ -4340,6 +4418,7 @@ class HomeViewModel @Inject constructor(
                     lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(
                     toastMessage = context.getString(R.string.home_failed_remove_continue_watching),
                     toastType = ToastType.ERROR

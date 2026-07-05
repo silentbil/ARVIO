@@ -7,13 +7,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 sealed class UpdateStatus {
-    object Idle : UpdateStatus()
-    object Checking : UpdateStatus()
+    data object Idle : UpdateStatus()
+    data object Checking : UpdateStatus()
     data class UpdateAvailable(val update: AppUpdate) : UpdateStatus()
     data class Downloading(val progress: Float?, val update: AppUpdate) : UpdateStatus()
     data class ReadyToInstall(val apkPath: String, val update: AppUpdate) : UpdateStatus()
     data class Installing(val update: AppUpdate?) : UpdateStatus()
-    object Success : UpdateStatus()
+    data object Success : UpdateStatus()
     data class Failure(val message: String, val update: AppUpdate? = null) : UpdateStatus()
 }
 

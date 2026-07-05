@@ -131,6 +131,19 @@ internal fun shouldTryNativeAnimeFallback(
  * Repository for stream resolution from Stremio addons
  * Enhanced with addon management
  */
+private object StreamRepoRegexes {
+    private val filterRegexCache = object : java.util.LinkedHashMap<String, Regex>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Regex>?): Boolean {
+            return size > 128
+        }
+    }
+
+    fun getOrPutFilterRegex(pattern: String): Regex {
+        synchronized(filterRegexCache) {
+            return filterRegexCache.getOrPut(pattern) { Regex(pattern, RegexOption.IGNORE_CASE) }
+        }
+    }
+}
 @Singleton
 class StreamRepository @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -245,7 +258,7 @@ class StreamRepository @Inject constructor(
     private fun torrServerBaseUrlKey() = profileManager.profileStringKey("torrserver_base_url_v1")
     private fun addonHealthKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "addon_health_v1")
     private val qualityFiltersKey = stringPreferencesKey("quality_filters")
-    private val streamResultCacheBundleType = object : TypeToken<Map<String, PersistedStreamResultPayload>>() {}.type
+    private val streamResultCacheBundleType = TypeToken.getParameterized(Map::class.java, String::class.java, PersistedStreamResultPayload::class.java).type
     private val streamResultCacheDiskTtlMs = 4 * 60 * 60_000L
     private val streamResultCacheDiskStaleGraceMs = 5 * 60_000L
     private val streamResultCacheDiskMaxEntries = 320
@@ -344,7 +357,7 @@ class StreamRepository @Inject constructor(
                 ).orEmpty()
                     .filter { it.enabled && it.regexPattern.isNotBlank() }
                 val regexes = filters.mapNotNull { filter ->
-                    runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull()
+                    try { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) } catch (e: Exception) { null }
                 }
                 cachedQualityFilters = PrecompiledQualityFilter(regexes, isEmpty = regexes.isEmpty())
             }
@@ -361,7 +374,7 @@ class StreamRepository @Inject constructor(
     fun updateQualityFiltersCache(filters: List<QualityFilterConfig>) {
         val enabledFilters = filters.filter { it.enabled && it.regexPattern.isNotBlank() }
         val regexes = enabledFilters.mapNotNull { filter ->
-            runCatching { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) }.getOrNull()
+            try { Regex(filter.regexPattern, RegexOption.IGNORE_CASE) } catch (e: Exception) { null }
         }
         cachedQualityFilters = PrecompiledQualityFilter(regexes, isEmpty = regexes.isEmpty())
         synchronized(streamResultCache) { streamResultCache.clear() }
@@ -635,6 +648,8 @@ class StreamRepository @Inject constructor(
 
             Result.success(newAddon)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             Result.failure(e)
         }
     }
@@ -945,6 +960,8 @@ class StreamRepository @Inject constructor(
                 acc
             }.values.toList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             null
         }
     }
@@ -2110,6 +2127,8 @@ class StreamRepository @Inject constructor(
                     val addonStreams = try {
                         fetchMovieStreamsFromAddon(addon, imdbId)
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+
                         Log.e(TAG, "[StreamFetch][Movie] stremio addon ${addon.id} failed", e)
                         AppLogger.recordException(
                             throwable = e,
@@ -2134,6 +2153,8 @@ class StreamRepository @Inject constructor(
                     val telegramStreams = try {
                         telegramSourceResolver.resolve(title = title, year = year, imdbId = imdbId, isMovie = true)
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+
                         Log.e(TAG, "[StreamFetch][Movie] telegram resolve failed", e)
                         emptyList()
                     }
@@ -2528,6 +2549,8 @@ class StreamRepository @Inject constructor(
                             airDate = airDate
                         )
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+
                         Log.e(TAG, "[StreamFetch][Episode] stremio addon ${addon.id} failed", e)
                         AppLogger.recordException(
                             throwable = e,
@@ -2561,6 +2584,8 @@ class StreamRepository @Inject constructor(
                             isMovie = false
                         )
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+
                         Log.e(TAG, "[StreamFetch][Episode] telegram resolve failed", e)
                         emptyList()
                     }
@@ -3145,6 +3170,8 @@ class StreamRepository @Inject constructor(
             )
             null
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             AppLogger.breadcrumb(
                 tag = "Sources",
                 message = "playback_resolve_exception kind=${sourceKind(stream)} addon=${stream.addonId.ifBlank { "unknown" }} error=${e::class.java.simpleName}",
@@ -3784,6 +3811,8 @@ class StreamRepository @Inject constructor(
      * Filter streams based on active quality regex filters.
      * Enabled filters exclude matching quality patterns from the stream list.
      */
+    private val qualityRegexCache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
     fun filterStreamsByQualityRegex(
         streams: List<StreamSource>,
         qualityFilters: List<com.arflix.tv.data.model.QualityFilterConfig>
@@ -3794,7 +3823,7 @@ class StreamRepository @Inject constructor(
         // Assuming qualityFilters are matching cached filters logic; to optimize, we rely on the caller maintaining cache or do a fast safe-compile.
         val compiledRegexes = enabledFilters.mapNotNull { filter ->
             try {
-                Regex(filter.regexPattern, RegexOption.IGNORE_CASE)
+                StreamRepoRegexes.getOrPutFilterRegex(filter.regexPattern)
             } catch (e: java.util.regex.PatternSyntaxException) {
                 null
             }

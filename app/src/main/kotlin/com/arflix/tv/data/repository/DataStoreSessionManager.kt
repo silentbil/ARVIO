@@ -37,7 +37,11 @@ class DataStoreSessionManager(
                 dataStore.edit { prefs ->
                     prefs[sessionKey] = payload
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 AppLogger.e(TAG, "Failed to save session", e)
                 throw e
             }
@@ -53,7 +57,11 @@ class DataStoreSessionManager(
                 }
                 val session = json.decodeFromString(UserSession.serializer(), raw)
                 session
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+               if (e is kotlinx.coroutines.CancellationException) throw e
+
                 if (e is CancellationException) throw e
                 AppLogger.e(TAG, "Failed to load session", e)
                 // Clear corrupted data
@@ -72,7 +80,11 @@ class DataStoreSessionManager(
         mutex.withLock {
             try {
                 dataStore.edit { prefs -> prefs.remove(sessionKey) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 AppLogger.e(TAG, "Failed to delete session", e)
                 throw e
             }

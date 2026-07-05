@@ -51,13 +51,13 @@ sealed interface PluginUiEvent {
     data class TestScraper(val scraperId: String) : PluginUiEvent
     data class SetPluginsEnabled(val enabled: Boolean) : PluginUiEvent
     data class SetGroupStreamsByRepository(val enabled: Boolean) : PluginUiEvent
-    object ClearTestResults : PluginUiEvent
-    object ClearError : PluginUiEvent
-    object ClearSuccess : PluginUiEvent
-    object StartQrMode : PluginUiEvent
-    object StopQrMode : PluginUiEvent
-    object ConfirmPendingRepoChange : PluginUiEvent
-    object RejectPendingRepoChange : PluginUiEvent
-    object ConfirmPendingScraperEnable : PluginUiEvent
-    object DismissPendingScraperEnable : PluginUiEvent
+    data object ClearTestResults : PluginUiEvent
+    data object ClearError : PluginUiEvent
+    data object ClearSuccess : PluginUiEvent
+    data object StartQrMode : PluginUiEvent
+    data object StopQrMode : PluginUiEvent
+    data object ConfirmPendingRepoChange : PluginUiEvent
+    data object RejectPendingRepoChange : PluginUiEvent
+    data object ConfirmPendingScraperEnable : PluginUiEvent
+    data object DismissPendingScraperEnable : PluginUiEvent
 }

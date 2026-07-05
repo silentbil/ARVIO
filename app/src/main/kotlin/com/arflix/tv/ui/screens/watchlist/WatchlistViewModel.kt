@@ -194,6 +194,7 @@ class WatchlistViewModel @Inject constructor(
                     _uiState.value = WatchlistUiState(isLoading = false)
                 }
             } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 AppLogger.recordException(
                     throwable = error,
                     context = watchlistDiagnosticContext("background_enrich")
@@ -228,6 +229,8 @@ class WatchlistViewModel @Inject constructor(
                     enrichLocalWatchlistInBackground()
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 AppLogger.recordException(
                     throwable = e,
                     context = watchlistDiagnosticContext("refresh")
@@ -290,6 +293,8 @@ class WatchlistViewModel @Inject constructor(
                         )
                     }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 AppLogger.recordException(
                     throwable = e,
                     context = watchlistDiagnosticContext(
@@ -378,6 +383,7 @@ class WatchlistViewModel @Inject constructor(
                 true
             }
         } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
             AppLogger.recordException(
                 throwable = error,
                 context = watchlistDiagnosticContext("trakt_sync")

@@ -37,16 +37,16 @@ import com.arflix.tv.util.LocalDeviceType
  * Navigation destinations
  */
 sealed class Screen(val route: String) {
-    object Login : Screen("login")
-    object Home : Screen("home")
-    object Search : Screen("search")
-    object Watchlist : Screen("watchlist")
-    object CollectionDetails : Screen("collections/{catalogId}") {
+    data object Login : Screen("login")
+    data object Home : Screen("home")
+    data object Search : Screen("search")
+    data object Watchlist : Screen("watchlist")
+    data object CollectionDetails : Screen("collections/{catalogId}") {
         fun createRoute(catalogId: String): String {
             return "collections/${android.net.Uri.encode(catalogId)}"
         }
     }
-    object Tv : Screen("tv?channelId={channelId}&streamUrl={streamUrl}") {
+    data object Tv : Screen("tv?channelId={channelId}&streamUrl={streamUrl}") {
         fun createRoute(channelId: String? = null, streamUrl: String? = null): String {
             if (channelId == null) return "tv"
             val enc = java.net.URLEncoder.encode(channelId, "UTF-8")
@@ -54,7 +54,7 @@ sealed class Screen(val route: String) {
             return if (streamEnc != null) "tv?channelId=$enc&streamUrl=$streamEnc" else "tv?channelId=$enc"
         }
     }
-    object Settings : Screen("settings") {
+    data object Settings : Screen("settings") {
         fun createRoute(autoCloudAuth: Boolean = false, initialSection: String? = null): String {
             val base = "settings"
             val params = mutableListOf<String>()
@@ -63,10 +63,10 @@ sealed class Screen(val route: String) {
             return if (params.isNotEmpty()) "$base?${params.joinToString("&")}" else base
         }
     }
-    object TelegramSettings : Screen("telegram_settings")
-    object ProfileSelection : Screen("profile_selection")
+    data object TelegramSettings : Screen("telegram_settings")
+    data object ProfileSelection : Screen("profile_selection")
 
-    object Details : Screen("details/{mediaType}/{mediaId}?initialSeason={initialSeason}&initialEpisode={initialEpisode}") {
+    data object Details : Screen("details/{mediaType}/{mediaId}?initialSeason={initialSeason}&initialEpisode={initialEpisode}") {
         fun createRoute(
             mediaType: MediaType,
             mediaId: Int,
@@ -81,7 +81,7 @@ sealed class Screen(val route: String) {
         }
     }
 
-    object Player : Screen("player/{mediaType}/{mediaId}?seasonNumber={seasonNumber}&episodeNumber={episodeNumber}&imdbId={imdbId}&streamUrl={streamUrl}&preferredAddonId={preferredAddonId}&preferredSourceName={preferredSourceName}&preferredBingeGroup={preferredBingeGroup}&startPositionMs={startPositionMs}") {
+    data object Player : Screen("player/{mediaType}/{mediaId}?seasonNumber={seasonNumber}&episodeNumber={episodeNumber}&imdbId={imdbId}&streamUrl={streamUrl}&preferredAddonId={preferredAddonId}&preferredSourceName={preferredSourceName}&preferredBingeGroup={preferredBingeGroup}&startPositionMs={startPositionMs}") {
         fun createRoute(
             mediaType: MediaType,
             mediaId: Int,

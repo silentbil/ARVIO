@@ -988,6 +988,8 @@ class PlayerViewModel @Inject constructor(
                 }
 
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+
                 AppLogger.recordException(
                     throwable = e,
                     context = playbackDiagnosticContext("load_media_exception")
@@ -1017,7 +1019,8 @@ class PlayerViewModel @Inject constructor(
 
             val logoUrl = try {
                 mediaRepository.getLogoUrl(mediaType, mediaId)
-            } catch (e: Exception) { null }
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e
+ null }
 
             val title: String
             val backdropUrl: String?
@@ -1071,6 +1074,8 @@ class PlayerViewModel @Inject constructor(
                 preferredAudioLanguage = resolvePreferredAudioLanguage()
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             // Failed to fetch metadata
         }
     }
@@ -3327,6 +3332,8 @@ class PlayerViewModel @Inject constructor(
                         episode = currentEpisode
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     // Scrobble start failed
                 }
                 lastScrobbleTime = currentTime
@@ -3340,6 +3347,8 @@ class PlayerViewModel @Inject constructor(
                         episode = currentEpisode
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     // Scrobble pause immediate failed
                 }
                 lastScrobbleTime = currentTime
@@ -3354,6 +3363,8 @@ class PlayerViewModel @Inject constructor(
                         episode = currentEpisode
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     // Scrobble update failed
                 }
                 lastScrobbleTime = currentTime
@@ -3445,6 +3456,8 @@ class PlayerViewModel @Inject constructor(
                         episode = currentEpisode
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     // Scrobble stop failed
                 }
                 try {
@@ -3475,6 +3488,8 @@ class PlayerViewModel @Inject constructor(
                         }
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+
                     // Delete playback failed
                 }
 

@@ -9,7 +9,7 @@ sealed class ParsedCatalogUrl {
     data class Mdblist(val url: String) : ParsedCatalogUrl()
 }
 
-object CatalogUrlParser {
+data object CatalogUrlParser {
     fun normalize(raw: String): String {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return trimmed

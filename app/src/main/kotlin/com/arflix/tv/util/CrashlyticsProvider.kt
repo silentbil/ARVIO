@@ -15,7 +15,7 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics
  * 2. Uncomment Firebase plugins in app/build.gradle.kts
  * 3. Call CrashlyticsProvider.initialize() in Application.onCreate()
  */
-object CrashlyticsProvider : AppLogger.CrashContextProvider {
+data object CrashlyticsProvider : AppLogger.CrashContextProvider {
 
     private const val TAG = "Crashlytics"
     private var isInitialized = false
