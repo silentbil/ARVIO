@@ -5061,7 +5061,9 @@ private fun buildExternalSubtitleConfigurations(subtitles: List<Subtitle>): List
 }
 
 private fun subtitleMimeTypeFromUrl(url: String): String {
-    val cleanUrl = url.substringBefore('?').lowercase()
+    // Trailing slash before the query is real-world (AIOStreams: ".../sub.vtt/?lang=…") — trim it
+    // so the extension check still sees ".vtt"; the SRT fallback would silently fail on WEBVTT.
+    val cleanUrl = url.substringBefore('?').trimEnd('/').lowercase()
     return when {
         cleanUrl.endsWith(".vtt") -> MimeTypes.TEXT_VTT
         cleanUrl.endsWith(".srt") || cleanUrl.endsWith(".srt.gz") -> MimeTypes.APPLICATION_SUBRIP

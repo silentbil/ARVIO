@@ -1832,20 +1832,37 @@ class PlayerViewModel @Inject constructor(
         )
     }
 
+    /** Aggregator addons (AIOStreams) sort results server-side per the user's own web config —
+     *  their streams keep the order the addon returned them in instead of being re-sorted. */
+    private fun keepsOwnStreamOrder(stream: StreamSource): Boolean =
+        stream.addonName.contains("aiostream", ignoreCase = true) ||
+            stream.addonId.contains("aiostream", ignoreCase = true)
+
     private fun sortStreamsByQualityAndSize(
         streams: List<StreamSource>,
         preferredLanguage: String
     ): List<StreamSource> {
-        return streams.sortedWith(
-            compareBy<StreamSource> { addonOrderIndex(it) }
-                .thenByDescending { parseSize(it.size) }
-                .thenByDescending { qualityScore(it.quality) }
-                .thenByDescending { playbackPriorityScore(it) }
-                .thenBy { streamRepository.getPlaybackHostHealthPenalty(it) }
-                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
-                .thenByDescending { streamLanguageScore(it, preferredLanguage) }
-                .thenBy { it.source.lowercase() }
-        )
+        val qualityOrder = compareByDescending<IndexedValue<StreamSource>> { parseSize(it.value.size) }
+            .thenByDescending { qualityScore(it.value.quality) }
+            .thenByDescending { playbackPriorityScore(it.value) }
+            .thenBy { streamRepository.getPlaybackHostHealthPenalty(it.value) }
+            .thenBy { if (it.value.behaviorHints?.notWebReady == true) 1 else 0 }
+            .thenByDescending { streamLanguageScore(it.value, preferredLanguage) }
+            .thenBy { it.value.source.lowercase() }
+        return streams.withIndex()
+            .sortedWith(
+                // Streams stay grouped by addon order; within a group, self-ordered addons keep
+                // their original (arrival) order while everything else gets the quality sort.
+                compareBy<IndexedValue<StreamSource>> { addonOrderIndex(it.value) }
+                    .then { a, b ->
+                        if (keepsOwnStreamOrder(a.value) && keepsOwnStreamOrder(b.value)) {
+                            a.index.compareTo(b.index)
+                        } else {
+                            qualityOrder.compare(a, b)
+                        }
+                    }
+            )
+            .map { it.value }
     }
 
     fun prewarmStream(stream: StreamSource) {
