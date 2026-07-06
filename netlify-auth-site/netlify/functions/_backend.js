@@ -6,7 +6,13 @@ const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-  "access-control-allow-headers": "authorization,apikey,content-type,x-arvio-user-id,x-arvio-email,x-client-info,x-user-token"
+  "access-control-allow-headers": "authorization,apikey,content-type,x-arvio-user-id,x-arvio-email,x-client-info,x-user-token",
+  // Per-user responses must never be served from a shared cache: Netlify's
+  // CDN cache key ignores the Authorization header, so a cached pull could
+  // serve one user's payload to another (or a stale payload back to the same
+  // user, which looks like "my addons disappeared"). tmdb-proxy overrides
+  // this with its own public cache-control.
+  "cache-control": "private, no-store"
 };
 
 let pool;
@@ -1073,7 +1079,11 @@ async function handleTmdbProxy(event) {
       statusCode: response.status,
       headers: {
         ...JSON_HEADERS,
-        "cache-control": response.ok ? "public, max-age=3600, stale-while-revalidate=86400" : "no-store"
+        "cache-control": response.ok ? "public, max-age=3600, stale-while-revalidate=86400" : "no-store",
+        // CRITICAL: Netlify's CDN cache key excludes the query string by default,
+        // so without this every /discover request shares ONE cache entry and all
+        // provider rows show identical content. Vary on the full query.
+        "netlify-vary": "query"
       },
       body: text
     };
@@ -1253,6 +1263,70 @@ function payloadMetrics(payload) {
       ? new Date(Number(root.updatedAt)).toISOString()
       : null
   };
+}
+
+// ---------------------------------------------------------------------------
+// Addon wipe guard. Recurring incident: a client (observed: the Android app on
+// 2026-07-05T22:03Z) pulls an empty/failed snapshot, keeps only its built-in
+// OpenSubtitles entry locally, then PUSHES that list — replacing 5 addons with
+// 1 across root + every profile. Client-side guards can't cover every app
+// version, so the server refuses catastrophic shrinks: if an existing list has
+// >= 3 addons and an incoming push keeps <= 1, the existing addons are merged
+// back in (union). Deliberate one-by-one removals (5→4→3→2→1) still work.
+function addonIdentity(addon) {
+  if (!addon || typeof addon !== "object") return "";
+  return String(addon.manifestUrl || addon.url || addon.transportUrl || addon.id || "").trim().toLowerCase();
+}
+
+function unionAddonLists(existingList, incomingList) {
+  const merged = new Map();
+  for (const addon of incomingList) {
+    const key = addonIdentity(addon);
+    if (key) merged.set(key, addon);
+  }
+  for (const addon of existingList) {
+    const key = addonIdentity(addon);
+    if (key && !merged.has(key)) merged.set(key, addon);
+  }
+  return Array.from(merged.values());
+}
+
+function applyAddonWipeGuard(existingSnapshot, incomingPayload) {
+  const existingPayload = existingSnapshot && existingSnapshot.payload;
+  if (!existingPayload || !incomingPayload || typeof incomingPayload !== "object") {
+    return { payload: incomingPayload, guarded: false };
+  }
+  let guarded = false;
+  const guardList = (existingListRaw, incomingListRaw) => {
+    const existingList = Array.isArray(existingListRaw) ? existingListRaw.filter(Boolean) : [];
+    const incomingList = Array.isArray(incomingListRaw) ? incomingListRaw.filter(Boolean) : [];
+    if (existingList.length >= 3 && incomingList.length <= 1) {
+      guarded = true;
+      return unionAddonLists(existingList, incomingList);
+    }
+    return incomingListRaw;
+  };
+
+  const output = { ...incomingPayload };
+  output.addons = guardList(existingPayload.addons, incomingPayload.addons);
+
+  const existingByProfile = existingPayload.addonsByProfile;
+  if (existingByProfile && typeof existingByProfile === "object" && !Array.isArray(existingByProfile)) {
+    const incomingByProfile = incomingPayload.addonsByProfile;
+    if (incomingByProfile && typeof incomingByProfile === "object" && !Array.isArray(incomingByProfile)) {
+      const mergedByProfile = { ...incomingByProfile };
+      for (const [profileId, existingList] of Object.entries(existingByProfile)) {
+        mergedByProfile[profileId] = guardList(existingList, mergedByProfile[profileId]);
+      }
+      output.addonsByProfile = mergedByProfile;
+    } else if (Object.values(existingByProfile).some((list) => Array.isArray(list) && list.length > 0)) {
+      // Incoming omitted the per-profile map entirely while data exists — keep it.
+      output.addonsByProfile = existingByProfile;
+      guarded = true;
+    }
+  }
+
+  return { payload: output, guarded };
 }
 
 function isExistingSnapshotRicher(existing, incoming) {
@@ -1483,6 +1557,7 @@ module.exports = {
   parseBody,
   payloadMetrics,
   isExistingSnapshotRicher,
+  applyAddonWipeGuard,
   resolveIdentity,
   getOrCreateAccount,
   claimLegacySnapshotIfNeeded,

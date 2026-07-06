@@ -4,6 +4,7 @@ const {
   parseBody,
   payloadMetrics,
   isExistingSnapshotRicher,
+  applyAddonWipeGuard,
   resolveIdentity,
   loadSnapshotFromBlobs,
   saveSnapshotToBlobs,
@@ -25,8 +26,19 @@ exports.handler = async (event) => {
       return json(400, { accepted: false, reason: "missing_payload" });
     }
 
-    const incoming = payloadMetrics(rawPayload);
     const existing = await loadSnapshotFromBlobs(event, identity);
+    // Server-side addon wipe guard: refuse pushes that catastrophically shrink
+    // the addon list (recurring client bug); existing addons are merged back.
+    const parsedPayload = typeof rawPayload === "string" ? JSON.parse(rawPayload) : rawPayload;
+    const { payload: guardedPayload, guarded } = applyAddonWipeGuard(existing, parsedPayload);
+    if (guarded) {
+      console.warn("account-sync-push: addon wipe guard engaged", {
+        user: identity.supabaseUserId,
+        incomingRootAddons: Array.isArray(parsedPayload.addons) ? parsedPayload.addons.length : null,
+        preservedRootAddons: Array.isArray(guardedPayload.addons) ? guardedPayload.addons.length : null
+      });
+    }
+    const incoming = payloadMetrics(guardedPayload);
     if (isExistingSnapshotRicher(existing, incoming)) {
       return json(200, {
         accepted: false,
@@ -53,6 +65,7 @@ exports.handler = async (event) => {
 
     return json(200, {
       accepted: true,
+      addonGuard: guarded,
       restoreRank: incoming.restoreRank,
       profileCount: incoming.profileCount,
       scopedCoverage: incoming.scopedCoverage
