@@ -3054,10 +3054,8 @@ select {
   flex: 0 0 auto;
   padding: 2px 8px;
   border-radius: 6px;
-  /* Fixed green so it reads as a live "resume" cue regardless of accent, with
-     dark text for contrast (a light accent would make white text invisible). */
-  background: #00d588;
-  color: #04110b !important;
+  background: #ffffff;
+  color: #000000 !important;
   font-size: clamp(11px, 0.72vw, 13px);
   font-weight: 700;
   letter-spacing: 0.2px;
@@ -8946,6 +8944,9 @@ button,
   justify-content: space-between;
   gap: 18px;
   flex-wrap: wrap;
+  /* Clear the grid below from the heading/toolbar so cards (and their hover
+     lift) never crowd or overlap the list-source text. */
+  padding-bottom: clamp(18px, 2.4vh, 30px);
 }
 
 .watchlist-toolbar {
