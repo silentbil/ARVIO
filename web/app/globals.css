@@ -4944,7 +4944,8 @@ button,
 
   .app-shell {
     min-height: 100dvh;
-    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+    /* Top nav on mobile (owner preference) — leave room at the top, not bottom. */
+    padding-top: calc(66px + env(safe-area-inset-top));
   }
 
   .content {
@@ -4953,18 +4954,21 @@ button,
   }
 
   .sidebar {
-    inset: auto 8px calc(8px + env(safe-area-inset-bottom));
-    width: auto;
-    height: 62px;
-    padding: 0 8px;
+    /* Top bar on mobile: pinned to the top edge, full width, respecting the
+       iOS status-bar inset. */
+    inset: 0 0 auto;
+    top: 0;
+    width: 100%;
+    height: calc(58px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) 10px 0;
     grid-template-columns: 42px minmax(0, 1fr) 42px;
     gap: 7px;
-    border: 1px solid rgba(255, 255, 255, 0.13);
-    border-radius: 22px;
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0;
     background:
-      linear-gradient(180deg, rgba(28, 30, 34, 0.9), rgba(7, 8, 10, 0.94)),
-      rgba(0, 0, 0, 0.88);
-    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.64);
+      linear-gradient(180deg, rgba(10, 11, 13, 0.96), rgba(7, 8, 10, 0.9));
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
     backdrop-filter: blur(22px);
   }
 
@@ -5018,7 +5022,8 @@ button,
   }
 
   .sync-strip {
-    top: 10px;
+    /* Sits below the top nav bar now. */
+    top: calc(66px + env(safe-area-inset-top));
     left: var(--phone-gutter);
     right: var(--phone-gutter);
     width: auto;
@@ -9350,21 +9355,34 @@ button,
   }
 
   .rail-strip {
-    grid-auto-columns: minmax(214px, 72vw) !important;
-    gap: 14px;
+    /* One card fills ~72% of the viewport, the next peeks at the edge. The
+       card must fill its own grid track (width:100%) — a competing fixed
+       width made cards overflow their track and overlap the neighbour. */
+    grid-auto-columns: 72vw !important;
+    gap: 12px;
     padding: 10px var(--phone-gutter) 34px 0;
   }
 
   .rail.is-poster .rail-strip {
-    grid-auto-columns: minmax(124px, 38vw) !important;
+    grid-auto-columns: 38vw !important;
   }
 
-  .media-card {
-    width: min(72vw, 280px) !important;
+  /* Touch scrolls by swipe — the desktop scroll arrows and edge-fade gradients
+     just sat on top of the cards (the dark "shadow" over episodes and the
+     ◄ ► buttons overlapping them). Hide them on mobile. */
+  .rail-arrow {
+    display: none !important;
   }
 
+  .rail-scroll-shell::before,
+  .rail-scroll-shell::after {
+    display: none !important;
+  }
+
+  .media-card,
   .media-card.is-poster {
-    width: min(38vw, 150px) !important;
+    width: 100% !important;
+    max-width: 100% !important;
   }
 
   .media-card strong {
