@@ -1,6 +1,8 @@
 import { config } from "./config";
 import { jsonRequest, proxiedUrl } from "./http";
-import type { CatalogConfig, Category, EpisodeInfo, MediaItem, MediaType, ReviewInfo } from "./types";
+import { tmdbImageUrl } from "./mediaImages";
+import { loadStored, saveStored } from "./storage";
+import type { CatalogConfig, Category, CollectionSourceConfig, EpisodeInfo, InstalledAddon, MediaItem, MediaType, PersonDetails, ReviewInfo } from "./types";
 
 type TmdbItem = {
   id: number;
@@ -13,11 +15,24 @@ type TmdbItem = {
   release_date?: string;
   first_air_date?: string;
   media_type?: string;
+  adult?: boolean;
   genre_ids?: number[];
   runtime?: number;
   episode_run_time?: number[];
   number_of_seasons?: number;
+  number_of_episodes?: number;
+  last_air_date?: string;
+  status?: string;
+  budget?: number;
+  revenue?: number;
+  original_language?: string;
   genres?: Array<{ id: number; name: string }>;
+  networks?: Array<{ id: number; name?: string; logo_path?: string | null }>;
+  production_companies?: Array<{ id: number; name?: string; logo_path?: string | null }>;
+  external_ids?: {
+    imdb_id?: string | null;
+    tvdb_id?: number | null;
+  };
   credits?: {
     cast?: Array<{ id: number; name?: string; character?: string; profile_path?: string | null }>;
   };
@@ -27,13 +42,54 @@ type TmdbItem = {
   seasons?: Array<{ id: number; season_number?: number; name?: string; episode_count?: number; poster_path?: string | null }>;
   similar?: TmdbList;
   recommendations?: TmdbList;
+  "watch/providers"?: {
+    results?: Record<string, {
+      flatrate?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }>;
+      ads?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }>;
+      free?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }>;
+    }>;
+  };
 };
 
-type TmdbList = { results: TmdbItem[] };
+type TmdbList = { results: TmdbItem[]; page?: number; total_pages?: number };
+type TmdbCombinedCredits = { cast?: TmdbItem[]; crew?: TmdbItem[] };
 type MdblistItem = Record<string, unknown>;
+
+const TMDB_CATALOG_PAGE_LIMIT = 10;
+const HYDRATE_BATCH_SIZE = 24;
+const CATALOG_FIRST_PAINT_LIMIT = 96;
+
+type TmdbPersonResponse = {
+  id: number;
+  name?: string;
+  biography?: string;
+  place_of_birth?: string | null;
+  birthday?: string | null;
+  profile_path?: string | null;
+  combined_credits?: {
+    cast?: Array<TmdbItem & { character?: string; vote_count?: number; popularity?: number }>;
+    crew?: Array<TmdbItem & { job?: string; vote_count?: number; popularity?: number }>;
+  };
+};
 
 function yearFrom(date?: string) {
   return date?.slice(0, 4) ?? "";
+}
+
+// TMDB genre ids → display names (movie + TV combined), so list items can show
+// genres in the hero without an extra details fetch.
+const TMDB_GENRES: Record<number, string> = {
+  28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
+  99: "Documentary", 18: "Drama", 10751: "Family", 14: "Fantasy", 36: "History",
+  27: "Horror", 10402: "Music", 9648: "Mystery", 10749: "Romance",
+  878: "Science Fiction", 10770: "TV Movie", 53: "Thriller", 10752: "War",
+  37: "Western", 10759: "Action & Adventure", 10762: "Kids", 10763: "News",
+  10764: "Reality", 10765: "Sci-Fi & Fantasy", 10766: "Soap", 10767: "Talk",
+  10768: "War & Politics"
+};
+
+export function genreNamesFromIds(ids?: number[]): string[] {
+  return (ids ?? []).map((id) => TMDB_GENRES[id]).filter(Boolean);
 }
 
 export function mapTmdbItem(item: TmdbItem, fallbackType: MediaType): MediaItem {
@@ -49,14 +105,16 @@ export function mapTmdbItem(item: TmdbItem, fallbackType: MediaType): MediaItem 
     rating: item.vote_average ? item.vote_average.toFixed(1) : "",
     duration: runtime ? `${runtime}m` : "",
     mediaType,
-    image: item.poster_path ? `${config.imageBase}${item.poster_path}` : "",
-    backdrop: item.backdrop_path ? `${config.backdropBase}${item.backdrop_path}` : null,
+    image: tmdbImageUrl(config.imageBase, item.poster_path),
+    backdrop: tmdbImageUrl(config.backdropBase, item.backdrop_path) || null,
     genreIds: item.genre_ids ?? []
   };
 }
 
 async function tmdb<T>(path: string, params: Record<string, string | number | undefined> = {}) {
   const url = new URL(`/api/tmdb/${path.replace(/^\/+/, "")}`, window.location.origin);
+  // Never surface adult titles anywhere in the app (discover/search/trending).
+  url.searchParams.set("include_adult", "false");
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
@@ -65,7 +123,7 @@ async function tmdb<T>(path: string, params: Record<string, string | number | un
 
 export async function loadHomeCategories(language = "en-US", catalogs?: CatalogConfig[]): Promise<Category[]> {
   if (catalogs?.length) {
-    const enabled = catalogs.filter((catalog) => catalog.enabled).slice(0, 36);
+    const enabled = catalogs.filter((catalog) => catalog.enabled);
     const rows = await Promise.all(enabled.map((catalog) => loadCatalog(catalog, language).catch(() => null)));
     const hydrated = rows.filter((row): row is Category => Boolean(row?.items.length));
     if (hydrated.length) return hydrated;
@@ -91,14 +149,26 @@ export async function loadHomeCategories(language = "en-US", catalogs?: CatalogC
   }
 }
 
-export async function loadCatalog(catalog: CatalogConfig, language = "en-US"): Promise<Category | null> {
+export async function loadCatalog(catalog: CatalogConfig, language = "en-US", addons: InstalledAddon[] = []): Promise<Category | null> {
   if (!catalog.enabled) return null;
-  if (catalog.sourceType === "tmdb" && catalog.endpoint) {
-    const response = await tmdb<TmdbList>(catalog.endpoint, { language, ...(catalog.params ?? {}) });
+  if (isCollectionCatalog(catalog)) {
+    const items = await loadCollectionCatalog(catalog, language, addons);
     return {
       id: catalog.id,
       title: catalog.name,
-      items: response.results.map((x) => mapTmdbItem(x, catalog.mediaType === "tv" ? "tv" : "movie")),
+      items,
+      sourceLabel: "COLLECTION",
+      sourceUrl: catalog.sourceUrl,
+      layout: catalog.layout ?? "landscape"
+    };
+  }
+
+  if (catalog.sourceType === "tmdb" && catalog.endpoint) {
+    const results = await loadTmdbCatalogPages(catalog, language);
+    return {
+      id: catalog.id,
+      title: catalog.name,
+      items: results.map((x) => mapTmdbItem(x, catalog.mediaType === "tv" ? "tv" : "movie")),
       sourceLabel: "TMDB",
       layout: catalog.layout ?? "landscape"
     };
@@ -131,7 +201,219 @@ export async function loadCatalog(catalog: CatalogConfig, language = "en-US"): P
     };
   }
 
+  if (catalog.sourceType === "trakt" && catalog.sourceUrl) {
+    const refs = await loadTraktPublicList(catalog.sourceUrl);
+    const details = await hydrateRefs(refs, language);
+    return {
+      id: catalog.id,
+      title: catalog.name,
+      items: details,
+      sourceLabel: "TRAKT",
+      sourceUrl: catalog.sourceUrl,
+      layout: catalog.layout ?? "landscape"
+    };
+  }
+
+  if (catalog.sourceType === "addon") {
+    const items = await loadAddonCatalog(catalog, addons, language);
+    return {
+      id: catalog.id,
+      title: catalog.name,
+      items,
+      sourceLabel: catalog.addonName || "ADDON",
+      sourceUrl: catalog.sourceUrl,
+      layout: catalog.layout ?? "landscape"
+    };
+  }
+
   return null;
+}
+
+function isCollectionCatalog(catalog: CatalogConfig) {
+  const kind = String(catalog.kind ?? "").toUpperCase();
+  return kind === "COLLECTION" || kind === "COLLECTION_RAIL" || Boolean(catalog.collectionSources?.length);
+}
+
+async function loadCollectionCatalog(catalog: CatalogConfig, language: string, addons: InstalledAddon[]) {
+  const sources = catalog.collectionSources ?? [];
+  if (!sources.length) {
+    if (catalog.sourceType === "mdblist" && catalog.sourceUrl) return loadMdblist(catalog, language);
+    return [];
+  }
+  const batches = await Promise.all(sources.map((source) => loadCollectionSource(source, language, addons).catch(() => [])));
+  return dedupeItems(batches.flat());
+}
+
+async function loadCollectionSource(source: CollectionSourceConfig, language: string, addons: InstalledAddon[]) {
+  const kind = String(source.kind ?? "").toUpperCase();
+  const mediaType = sourceMediaType(source);
+  if (kind === "CURATED_IDS") {
+    const refs = (source.curatedRefs ?? [])
+      .map(parseCuratedRef)
+      .filter((ref): ref is { type: MediaType; id: number } => Boolean(ref));
+    const items = await Promise.all(refs.map((ref) => getBasicItem(ref.type, ref.id, language).catch(() => null)));
+    return items.filter((item): item is MediaItem => Boolean(item));
+  }
+  if (kind === "MDBLIST_PUBLIC" && source.mdblistSlug) {
+    return loadMdblist({
+      id: `collection-mdblist-${source.mdblistSlug}`,
+      name: source.mdblistSlug,
+      sourceType: "mdblist",
+      mediaType,
+      sourceUrl: `https://mdblist.com/lists/${source.mdblistSlug}`,
+      enabled: true
+    }, language);
+  }
+  if (kind === "TMDB_COLLECTION" && source.tmdbCollectionId) {
+    const response = await tmdb<{ parts?: TmdbItem[] }>(`collection/${source.tmdbCollectionId}`, { language });
+    return (response.parts ?? []).map((item) => mapTmdbItem({ ...item, media_type: item.media_type ?? "movie" }, "movie"));
+  }
+  if (kind === "TMDB_PERSON" && source.tmdbPersonId) {
+    const response = await tmdb<TmdbCombinedCredits>(`person/${source.tmdbPersonId}/combined_credits`, { language });
+    return dedupeItems([...(response.cast ?? []), ...(response.crew ?? [])]
+      .filter((item) => item.media_type === "movie" || item.media_type === "tv")
+      .map((item) => mapTmdbItem(item, item.media_type === "tv" ? "tv" : "movie")));
+  }
+  if (kind === "TMDB_GENRE" && source.tmdbGenreId) {
+    return loadTmdbCatalogPages({
+      id: `collection-genre-${source.tmdbGenreId}`,
+      name: String(source.tmdbGenreId),
+      sourceType: "tmdb",
+      mediaType,
+      endpoint: `discover/${mediaType === "tv" ? "tv" : "movie"}`,
+      enabled: true,
+      params: {
+      language,
+      with_genres: source.tmdbGenreId,
+      sort_by: source.sortBy || "popularity.desc"
+      }
+    }, language).then((items) => items.map((item) => mapTmdbItem(item, mediaType === "tv" ? "tv" : "movie")));
+  }
+  if (kind === "TMDB_KEYWORD" && source.tmdbKeywordId) {
+    return loadTmdbCatalogPages({
+      id: `collection-keyword-${source.tmdbKeywordId}`,
+      name: String(source.tmdbKeywordId),
+      sourceType: "tmdb",
+      mediaType,
+      endpoint: `discover/${mediaType === "tv" ? "tv" : "movie"}`,
+      enabled: true,
+      params: {
+        language,
+        with_keywords: source.tmdbKeywordId,
+        sort_by: source.sortBy || "popularity.desc"
+      }
+    }, language).then((items) => items.map((item) => mapTmdbItem(item, mediaType === "tv" ? "tv" : "movie")));
+  }
+  if (kind === "TMDB_WATCH_PROVIDER" && source.tmdbWatchProviderId) {
+    return loadTmdbCatalogPages({
+      id: `collection-provider-${source.tmdbWatchProviderId}`,
+      name: String(source.tmdbWatchProviderId),
+      sourceType: "tmdb",
+      mediaType,
+      endpoint: `discover/${mediaType === "tv" ? "tv" : "movie"}`,
+      enabled: true,
+      params: {
+        language,
+        watch_region: source.watchRegion || "US",
+        with_watch_providers: source.tmdbWatchProviderId,
+        sort_by: source.sortBy || "popularity.desc"
+      }
+    }, language).then((items) => items.map((item) => mapTmdbItem(item, mediaType === "tv" ? "tv" : "movie")));
+  }
+  if (kind === "ADDON_CATALOG") {
+    return loadAddonCatalog({
+      id: `collection-addon-${source.addonId}-${source.addonCatalogId}`,
+      name: source.addonCatalogId || "Addon catalog",
+      sourceType: "addon",
+      mediaType,
+      addonId: source.addonId,
+      addonCatalogType: source.addonCatalogType,
+      addonCatalogId: source.addonCatalogId,
+      enabled: true
+    }, addons, language);
+  }
+  return [];
+}
+
+function sourceMediaType(source: CollectionSourceConfig): MediaType | "all" {
+  const raw = String(source.mediaType ?? "").trim().toLowerCase();
+  if (raw === "tv" || raw === "series") return "tv";
+  if (raw === "movie") return "movie";
+  return "all";
+}
+
+function parseCuratedRef(ref: string) {
+  const [type, rawId] = String(ref).split(":");
+  const id = Number(rawId);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const mediaType: MediaType = type === "tv" || type === "series" ? "tv" : "movie";
+  return { type: mediaType, id };
+}
+
+function dedupeItems(items: MediaItem[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.mediaType}:${item.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function catalogPageLimit(catalog: CatalogConfig) {
+  const raw = Number(catalog.params?.pageLimit ?? catalog.params?.pages ?? TMDB_CATALOG_PAGE_LIMIT);
+  if (!Number.isFinite(raw) || raw <= 0) return TMDB_CATALOG_PAGE_LIMIT;
+  return Math.min(25, Math.max(1, Math.floor(raw)));
+}
+
+function cleanCatalogParams(params?: CatalogConfig["params"]) {
+  const next: Record<string, string | number | undefined> = {};
+  Object.entries(params ?? {}).forEach(([key, value]) => {
+    if (key === "pageLimit" || key === "pages") return;
+    if (typeof value === "boolean") {
+      next[key] = value ? "true" : "false";
+      return;
+    }
+    next[key] = value;
+  });
+  return next;
+}
+
+function dedupeTmdbItems(items: TmdbItem[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const type = item.media_type ?? "";
+    const key = `${type}:${item.id}`;
+    if (!item.id || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function loadTmdbCatalogPages(catalog: CatalogConfig, language: string) {
+  if (!catalog.endpoint) return [];
+  const params = cleanCatalogParams(catalog.params);
+  const startPage = Number(params.page ?? 1);
+  const first = await tmdb<TmdbList>(catalog.endpoint, { ...params, language, page: startPage });
+  const totalPages = Math.max(startPage, Number(first.total_pages ?? startPage) || startPage);
+  const lastPage = Math.min(totalPages, startPage + catalogPageLimit(catalog) - 1);
+  const pageRequests: Array<Promise<TmdbList>> = [];
+  for (let page = startPage + 1; page <= lastPage; page += 1) {
+    pageRequests.push(tmdb<TmdbList>(catalog.endpoint, { ...params, language, page }).catch(() => ({ results: [] })));
+  }
+  const rest = await Promise.all(pageRequests);
+  return dedupeTmdbItems([...(first.results ?? []), ...rest.flatMap((page) => page.results ?? [])]);
+}
+
+async function hydrateRefs(refs: Array<{ type: MediaType; id: number }>, language: string) {
+  const output: MediaItem[] = [];
+  const firstPaintRefs = refs.slice(0, CATALOG_FIRST_PAINT_LIMIT);
+  for (let index = 0; index < firstPaintRefs.length; index += HYDRATE_BATCH_SIZE) {
+    const chunk = firstPaintRefs.slice(index, index + HYDRATE_BATCH_SIZE);
+    const details = await Promise.all(chunk.map((item) => getBasicItem(item.type, item.id, language).catch(() => null)));
+    output.push(...details.filter((item): item is MediaItem => Boolean(item?.title)));
+  }
+  return dedupeItems(output);
 }
 
 async function loadMdblist(catalog: CatalogConfig, language: string) {
@@ -146,10 +428,115 @@ async function loadMdblist(catalog: CatalogConfig, language: string) {
         : [];
   const ids = rawItems
     .map((item) => extractMdblistIdentity(item as MdblistItem, catalog.mediaType))
-    .filter((item): item is { id: number; type: MediaType } => Boolean(item?.id))
-    .slice(0, 20);
-  const details = await Promise.all(ids.map((item) => getBasicItem(item.type, item.id, language).catch(() => null)));
-  return details.filter((item): item is MediaItem => Boolean(item?.title));
+    .filter((item): item is { id: number; type: MediaType } => Boolean(item?.id));
+  return hydrateRefs(ids, language);
+}
+
+type StremioMeta = {
+  id?: string;
+  imdb_id?: string;
+  tmdb_id?: number | string;
+  type?: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  poster?: string;
+  background?: string;
+  logo?: string;
+  releaseInfo?: string;
+  year?: string | number;
+};
+
+async function loadAddonCatalog(catalog: CatalogConfig, addons: InstalledAddon[], language: string) {
+  const addon = addons.find((candidate) =>
+    candidate.id === catalog.addonId ||
+    candidate.name === catalog.addonName ||
+    candidate.manifestUrl === catalog.sourceUrl
+  );
+  const manifestUrl = addon?.manifestUrl || catalog.sourceUrl;
+  const catalogType = catalog.addonCatalogType || (catalog.mediaType === "tv" ? "series" : catalog.mediaType === "movie" ? "movie" : "movie");
+  const catalogId = catalog.addonCatalogId || catalog.sourceRef || catalog.id;
+  if (!manifestUrl || !catalogId) return [];
+  const base = manifestUrl.replace(/\/manifest\.json$/, "").replace(/\/+$/, "");
+  const url = proxiedUrl(`${base}/catalog/${encodeURIComponent(catalogType)}/${encodeURIComponent(catalogId)}.json`);
+  const payload = await jsonRequest<{ metas?: StremioMeta[] }>(url);
+  const metas = payload.metas ?? [];
+  const hydrated = await Promise.all(metas.map((meta) => hydrateAddonMeta(meta, catalog.mediaType, language).catch(() => null)));
+  return hydrated.filter((item): item is MediaItem => Boolean(item));
+}
+
+async function hydrateAddonMeta(meta: StremioMeta, preferred: CatalogConfig["mediaType"], language: string): Promise<MediaItem | null> {
+  const tmdbId = numberValue(meta.tmdb_id);
+  const mediaType: MediaType = String(meta.type ?? preferred ?? "").toLowerCase().includes("series") || preferred === "tv" ? "tv" : "movie";
+  if (tmdbId) {
+    const detailed = await getBasicItem(mediaType, tmdbId, language);
+    if (detailed) return detailed;
+  }
+  const numericId = numberValue(meta.id);
+  if (numericId) {
+    const detailed = await getBasicItem(mediaType, numericId, language);
+    if (detailed) return detailed;
+  }
+  const title = meta.name ?? meta.title;
+  if (!title) return null;
+  return {
+    id: numericId ?? stableStringId(`${mediaType}:${title}`),
+    title,
+    overview: meta.description ?? "",
+    year: String(meta.year ?? meta.releaseInfo ?? "").slice(0, 4),
+    mediaType,
+    image: meta.poster ?? "",
+    backdrop: meta.background ?? null,
+    rating: "",
+    duration: ""
+  };
+}
+
+function stableStringId(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+async function loadTraktPublicList(sourceUrl: string) {
+  const parsed = parseTraktUrl(sourceUrl);
+  if (!parsed) return [];
+  const path = parsed.type === "user"
+    ? `users/${encodeURIComponent(parsed.user)}/lists/${encodeURIComponent(parsed.slug)}/items`
+    : `lists/${encodeURIComponent(parsed.slug)}/items`;
+  const url = new URL(`/api/trakt/${path}`, window.location.origin);
+  const payload = await jsonRequest<Array<{
+    type?: string;
+    movie?: { ids?: { tmdb?: number } };
+    show?: { ids?: { tmdb?: number } };
+  }>>(url.toString());
+  return payload
+    .map((item) => {
+      const type: MediaType = item.type === "show" ? "tv" : "movie";
+      const id = type === "tv" ? item.show?.ids?.tmdb : item.movie?.ids?.tmdb;
+      return id ? { type, id } : null;
+    })
+    .filter((item): item is { type: MediaType; id: number } => Boolean(item));
+}
+
+function parseTraktUrl(sourceUrl: string): { type: "user"; user: string; slug: string } | { type: "list"; slug: string } | null {
+  try {
+    const url = new URL(sourceUrl);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const usersIndex = parts.indexOf("users");
+    if (usersIndex >= 0 && parts[usersIndex + 1] && parts[usersIndex + 3]) {
+      return { type: "user", user: parts[usersIndex + 1], slug: parts[usersIndex + 3] };
+    }
+    const listsIndex = parts.indexOf("lists");
+    if (listsIndex >= 0 && parts[listsIndex + 1]) {
+      return { type: "list", slug: parts[listsIndex + 1] };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function extractMdblistIdentity(item: MdblistItem, preferred?: CatalogConfig["mediaType"]) {
@@ -186,6 +573,12 @@ function numberValue(value: unknown) {
 
 type TmdbImages = {
   logos?: Array<{ file_path: string; iso_639_1: string | null; vote_average?: number; width?: number }>;
+};
+
+type CinemetaSeries = {
+  meta?: {
+    videos?: Array<{ season?: number; episode?: number; number?: number; rating?: string | number | null }>;
+  };
 };
 
 const logoCache = new Map<string, string | null>();
@@ -238,6 +631,100 @@ export async function getLogoUrl(item: { mediaType: MediaType; id: number }): Pr
   }
 }
 
+// Per-card streaming service names (US flatrate providers), cached and
+// persisted like title logos so home rails can show clearlogo badges without
+// hammering TMDB on every render.
+const PROVIDER_CACHE_KEY = "arvio.web.cardProviders.v1";
+const providerCache = new Map<string, string[]>();
+
+function restoreProviderCache() {
+  if (providerCache.size || typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(PROVIDER_CACHE_KEY);
+    if (!raw) return;
+    Object.entries(JSON.parse(raw) as Record<string, string[]>).forEach(([k, v]) => providerCache.set(k, v));
+  } catch { /* ignore */ }
+}
+
+let providerPersistTimer: ReturnType<typeof setTimeout> | null = null;
+function persistProviderCache() {
+  if (typeof window === "undefined") return;
+  if (providerPersistTimer) clearTimeout(providerPersistTimer);
+  providerPersistTimer = setTimeout(() => {
+    try {
+      const trimmed = Array.from(providerCache.entries()).slice(-600);
+      window.localStorage.setItem(PROVIDER_CACHE_KEY, JSON.stringify(Object.fromEntries(trimmed)));
+    } catch { /* ignore */ }
+  }, 800);
+}
+
+// Per-card runtime (minutes), cached + persisted. List responses omit runtime,
+// so cards fetch it lazily when needed.
+const CARD_META_KEY = "arvio.web.cardMeta.v1";
+const cardMetaCache = new Map<string, { runtime: number }>();
+
+function restoreCardMetaCache() {
+  if (cardMetaCache.size || typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(CARD_META_KEY);
+    if (raw) Object.entries(JSON.parse(raw) as Record<string, { runtime: number }>).forEach(([k, v]) => cardMetaCache.set(k, v));
+  } catch { /* ignore */ }
+}
+
+let cardMetaTimer: ReturnType<typeof setTimeout> | null = null;
+function persistCardMetaCache() {
+  if (typeof window === "undefined") return;
+  if (cardMetaTimer) clearTimeout(cardMetaTimer);
+  cardMetaTimer = setTimeout(() => {
+    try {
+      const trimmed = Array.from(cardMetaCache.entries()).slice(-800);
+      window.localStorage.setItem(CARD_META_KEY, JSON.stringify(Object.fromEntries(trimmed)));
+    } catch { /* ignore */ }
+  }, 800);
+}
+
+export async function getCardMeta(item: { mediaType: MediaType; id: number }): Promise<{ runtime: number }> {
+  const key = `${item.mediaType}:${item.id}`;
+  restoreCardMetaCache();
+  const cached = cardMetaCache.get(key);
+  if (cached) return cached;
+  try {
+    const payload = await tmdb<{ runtime?: number; episode_run_time?: number[] }>(`${item.mediaType}/${item.id}`, {});
+    const runtime = payload.runtime ?? payload.episode_run_time?.[0] ?? 0;
+    const meta = { runtime };
+    cardMetaCache.set(key, meta);
+    persistCardMetaCache();
+    return meta;
+  } catch {
+    const meta = { runtime: 0 };
+    cardMetaCache.set(key, meta);
+    return meta;
+  }
+}
+
+export async function getCardProviders(item: { mediaType: MediaType; id: number }): Promise<string[]> {
+  const key = `${item.mediaType}:${item.id}`;
+  restoreProviderCache();
+  const cached = providerCache.get(key);
+  if (cached) return cached;
+  try {
+    const payload = await tmdb<{ results?: Record<string, { flatrate?: Array<{ provider_name?: string }> }> }>(
+      `${item.mediaType}/${item.id}/watch/providers`,
+      {}
+    );
+    const names = (payload.results?.US?.flatrate ?? [])
+      .map((provider) => provider.provider_name ?? "")
+      .filter(Boolean)
+      .slice(0, 3);
+    providerCache.set(key, names);
+    persistProviderCache();
+    return names;
+  } catch {
+    providerCache.set(key, []);
+    return [];
+  }
+}
+
 export async function searchMedia(query: string, language = "en-US") {
   if (!query.trim()) return [];
   const response = await tmdb<TmdbList>("search/multi", { query, language });
@@ -247,15 +734,27 @@ export async function searchMedia(query: string, language = "en-US") {
 }
 
 const seasonCache = new Map<string, EpisodeInfo[]>();
+const seriesEpisodeRatingsCache = new Map<string, Map<string, string>>();
+const SEASON_EPISODE_CACHE_KEY = "arvio.web.seasonEpisodes.v1";
+const SEASON_EPISODE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 export async function getSeasonEpisodes(tvId: number, seasonNumber: number, language = "en-US"): Promise<EpisodeInfo[]> {
-  const key = `${tvId}:${seasonNumber}`;
+  const key = `${tvId}:${seasonNumber}:${language}`;
   if (seasonCache.has(key)) return seasonCache.get(key)!;
+  const cached = readSeasonEpisodesCache(key);
+  if (cached) {
+    seasonCache.set(key, cached);
+    return cached;
+  }
   try {
-    const season = await tmdb<{ episodes?: Array<{ id: number; episode_number: number; name?: string; overview?: string; still_path?: string | null; vote_average?: number; air_date?: string; runtime?: number }> }>(
-      `tv/${tvId}/season/${seasonNumber}`,
-      { language }
-    );
+    const [season, externalIds] = await Promise.all([
+      tmdb<{ episodes?: Array<{ id: number; episode_number: number; name?: string; overview?: string; still_path?: string | null; vote_average?: number; air_date?: string; runtime?: number }> }>(
+        `tv/${tvId}/season/${seasonNumber}`,
+        { language }
+      ),
+      tmdb<{ imdb_id?: string | null }>(`tv/${tvId}/external_ids`).catch(() => null)
+    ]);
+    const imdbRatings = externalIds?.imdb_id ? await getSeriesEpisodeRatings(externalIds.imdb_id).catch(() => new Map<string, string>()) : new Map<string, string>();
     const episodes = (season.episodes ?? []).map((episode) => ({
       id: episode.id,
       episodeNumber: episode.episode_number,
@@ -264,14 +763,30 @@ export async function getSeasonEpisodes(tvId: number, seasonNumber: number, lang
       overview: episode.overview ?? "",
       still: episode.still_path ? `${config.imageBase}${episode.still_path}` : undefined,
       voteAverage: episode.vote_average ?? 0,
+      imdbRating: imdbRatings.get(`${seasonNumber}:${episode.episode_number}`) ?? "",
       airDate: episode.air_date ?? "",
       runtime: episode.runtime ?? 0
     }));
     seasonCache.set(key, episodes);
+    writeSeasonEpisodesCache(key, episodes);
     return episodes;
   } catch {
     return [];
   }
+}
+
+function readSeasonEpisodesCache(key: string) {
+  const cache = loadStored<Record<string, { at: number; episodes: EpisodeInfo[] }>>(SEASON_EPISODE_CACHE_KEY, {});
+  const entry = cache[key];
+  if (!entry || Date.now() - entry.at > SEASON_EPISODE_CACHE_TTL) return null;
+  return Array.isArray(entry.episodes) ? entry.episodes : null;
+}
+
+function writeSeasonEpisodesCache(key: string, episodes: EpisodeInfo[]) {
+  const cache = loadStored<Record<string, { at: number; episodes: EpisodeInfo[] }>>(SEASON_EPISODE_CACHE_KEY, {});
+  const next = { ...cache, [key]: { at: Date.now(), episodes } };
+  const entries = Object.entries(next).sort((a, b) => b[1].at - a[1].at).slice(0, 80);
+  saveStored(SEASON_EPISODE_CACHE_KEY, Object.fromEntries(entries));
 }
 
 export async function getReviews(item: { mediaType: MediaType; id: number }): Promise<ReviewInfo[]> {
@@ -296,6 +811,75 @@ export async function getReviews(item: { mediaType: MediaType; id: number }): Pr
   }
 }
 
+const personCache = new Map<number, PersonDetails | null>();
+
+export async function getPersonDetails(personId: number, language = "en-US"): Promise<PersonDetails | null> {
+  if (personCache.has(personId)) return personCache.get(personId) ?? null;
+  try {
+    const person = await tmdb<TmdbPersonResponse>(`person/${personId}`, {
+      language,
+      append_to_response: "combined_credits"
+    });
+    const credits = [...(person.combined_credits?.cast ?? []), ...(person.combined_credits?.crew ?? [])]
+      .filter((item) => (item.media_type === "movie" || item.media_type === "tv") && item.id)
+      .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0) || (b.vote_count ?? 0) - (a.vote_count ?? 0));
+    const seen = new Set<string>();
+    const knownFor = credits
+      .map((item): MediaItem => {
+        const role = "character" in item ? item.character : "job" in item ? item.job : "";
+        return {
+          ...mapTmdbItem(item, item.media_type === "tv" ? "tv" : "movie"),
+          subtitle: role ? `as ${role}` : item.media_type === "tv" ? "Series" : "Movie"
+        };
+      })
+      .filter((item) => {
+        const key = `${item.mediaType}:${item.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 18);
+    const mapped: PersonDetails = {
+      id: person.id,
+      name: person.name ?? "Unknown",
+      biography: person.biography ?? "",
+      placeOfBirth: person.place_of_birth ?? null,
+      birthday: person.birthday ?? null,
+      profilePath: tmdbImageUrl(config.imageBase, person.profile_path),
+      knownFor
+    };
+    personCache.set(personId, mapped);
+    return mapped;
+  } catch {
+    personCache.set(personId, null);
+    return null;
+  }
+}
+
+async function getSeriesEpisodeRatings(imdbId: string) {
+  const normalized = imdbId.trim();
+  if (!normalized.startsWith("tt")) return new Map<string, string>();
+  if (seriesEpisodeRatingsCache.has(normalized)) return seriesEpisodeRatingsCache.get(normalized)!;
+  const payload = await jsonRequest<CinemetaSeries>(proxiedUrl(`https://v3-cinemeta.strem.io/meta/series/${encodeURIComponent(normalized)}.json`));
+  const ratings = new Map<string, string>();
+  (payload.meta?.videos ?? []).forEach((video) => {
+    const season = Number(video.season);
+    const episode = Number(video.episode ?? video.number);
+    const rating = normalizeRating(video.rating);
+    if (Number.isFinite(season) && season >= 0 && Number.isFinite(episode) && episode > 0 && rating) {
+      ratings.set(`${season}:${episode}`, rating);
+    }
+  });
+  seriesEpisodeRatingsCache.set(normalized, ratings);
+  return ratings;
+}
+
+function normalizeRating(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number(String(value ?? "").trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) return "";
+  return Math.max(0, Math.min(10, parsed)).toFixed(1);
+}
+
 const basicItemCache = new Map<string, MediaItem | null>();
 
 /** Lightweight details fetch (no append_to_response) with an in-memory cache — used to hydrate catalog rows. */
@@ -304,6 +888,12 @@ export async function getBasicItem(mediaType: MediaType, id: number, language = 
   if (basicItemCache.has(key)) return basicItemCache.get(key) ?? null;
   try {
     const details = await tmdb<TmdbItem>(`${mediaType}/${id}`, { language });
+    // mdblist and other ID-based lists can reference adult titles that the
+    // discover include_adult=false guard never touched; drop them here.
+    if (details.adult) {
+      basicItemCache.set(key, null);
+      return null;
+    }
     const mapped = mapTmdbItem({ ...details, media_type: mediaType }, mediaType);
     basicItemCache.set(key, mapped);
     return mapped;
@@ -313,12 +903,36 @@ export async function getBasicItem(mediaType: MediaType, id: number, language = 
   }
 }
 
+// Raw TMDB details payloads cached for a few minutes so hover-prefetch makes
+// the details page open instantly (the per-item merge still runs per call).
+const detailsPayloadCache = new Map<string, { at: number; payload: TmdbItem }>();
+const DETAILS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+async function fetchDetailsPayload(item: MediaItem) {
+  const key = `${item.mediaType}-${item.id}`;
+  const cached = detailsPayloadCache.get(key);
+  if (cached && Date.now() - cached.at < DETAILS_CACHE_TTL_MS) return cached.payload;
+  const payload = await tmdb<TmdbItem>(`${item.mediaType}/${item.id}`, {
+    language: "en-US",
+    append_to_response: "credits,videos,similar,recommendations,external_ids,watch/providers"
+  });
+  detailsPayloadCache.set(key, { at: Date.now(), payload });
+  if (detailsPayloadCache.size > 60) {
+    const oldest = [...detailsPayloadCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+    if (oldest) detailsPayloadCache.delete(oldest[0]);
+  }
+  return payload;
+}
+
+/** Warm the details cache from a card hover; failures are irrelevant. */
+export function prefetchDetails(item: MediaItem) {
+  if (item.id <= 0 || item.isHomeServer) return;
+  void fetchDetailsPayload(item).catch(() => undefined);
+}
+
 export async function getDetails(item: MediaItem) {
   try {
-    const details = await tmdb<TmdbItem>(`${item.mediaType}/${item.id}`, {
-      language: "en-US",
-      append_to_response: "credits,videos,similar,recommendations"
-    });
+    const details = await fetchDetailsPayload(item);
     const mapped = mapTmdbItem({ ...details, media_type: item.mediaType }, item.mediaType);
     const trailer = details.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer" && video.official)
       ?? details.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer")
@@ -331,6 +945,23 @@ export async function getDetails(item: MediaItem) {
       ...item,
       ...mapped,
       rating: mapped.rating || item.rating,
+      imdbId: details.external_ids?.imdb_id ?? item.imdbId ?? null,
+      genres: (details.genres ?? []).map((genre) => genre.name).filter(Boolean),
+      status: details.status ?? null,
+      budget: details.budget ?? null,
+      revenue: details.revenue ?? null,
+      originalLanguage: details.original_language ?? null,
+      providerLogos: pickProviderLogos(details),
+      networkLogos: (details.networks ?? details.production_companies ?? [])
+        .filter((provider) => provider.logo_path && provider.name)
+        .slice(0, 4)
+        .map((provider) => ({
+          name: provider.name ?? "",
+          logo: `${config.imageBase}${provider.logo_path}`
+        })),
+      numberOfSeasons: details.number_of_seasons ?? null,
+      numberOfEpisodes: details.number_of_episodes ?? null,
+      lastAirDate: details.last_air_date ?? null,
       trailerUrl: trailer?.key ? `https://www.youtube.com/watch?v=${trailer.key}` : null,
       cast: (details.credits?.cast ?? []).slice(0, 12).map((person) => ({
         id: person.id,
@@ -352,6 +983,26 @@ export async function getDetails(item: MediaItem) {
   } catch {
     return item;
   }
+}
+
+function pickProviderLogos(details: TmdbItem) {
+  const providers = details["watch/providers"]?.results ?? {};
+  const region = providers.NL ?? providers.US ?? Object.values(providers)[0];
+  const entries = [...(region?.flatrate ?? []), ...(region?.free ?? []), ...(region?.ads ?? [])];
+  const seen = new Set<number | string>();
+  return entries
+    .filter((provider) => provider.logo_path && provider.provider_name)
+    .filter((provider) => {
+      const key = provider.provider_id ?? provider.provider_name ?? provider.logo_path ?? "";
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4)
+    .map((provider) => ({
+      name: provider.provider_name ?? "",
+      logo: `${config.imageBase}${provider.logo_path}`
+    }));
 }
 
 const fallbackItems: MediaItem[] = [

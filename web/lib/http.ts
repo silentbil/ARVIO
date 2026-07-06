@@ -1,3 +1,26 @@
+function cleanErrorMessage(status: number, raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return `Request failed with ${status}`;
+
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const rawNested = typeof parsed.raw === "string" ? parsed.raw : "";
+    if (rawNested.includes("Cloudflare") || rawNested.includes("trakt.tv")) {
+      return "The remote service blocked this browser request. Try again later or use the Android app for this action.";
+    }
+    const description = parsed.error_description ?? parsed.msg ?? parsed.message ?? parsed.error;
+    if (typeof description === "string" && description.trim()) return description.trim();
+  } catch {
+    // Plain-text or HTML error bodies are handled below.
+  }
+
+  if (trimmed.startsWith("<") || trimmed.includes("<html") || trimmed.includes("Cloudflare")) {
+    return "The remote service returned an HTML error page instead of API data.";
+  }
+
+  return trimmed.length > 240 ? `${trimmed.slice(0, 240)}...` : trimmed;
+}
+
 export async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -9,7 +32,7 @@ export async function jsonRequest<T>(url: string, init: RequestInit = {}): Promi
   });
   if (!response.ok) {
     const message = await response.text().catch(() => "");
-    throw new Error(message || `Request failed with ${response.status}`);
+    throw new Error(cleanErrorMessage(response.status, message));
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -19,7 +42,7 @@ export async function textRequest(url: string, init: RequestInit = {}): Promise<
   const response = await fetch(url, init);
   if (!response.ok) {
     const message = await response.text().catch(() => "");
-    throw new Error(message || `Request failed with ${response.status}`);
+    throw new Error(cleanErrorMessage(response.status, message));
   }
   return response.text();
 }

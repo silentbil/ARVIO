@@ -2,8 +2,8 @@ import { jsonRequest, proxiedUrl } from "./http";
 import type { Category, HomeServerConfig, MediaItem, MediaType } from "./types";
 
 /**
- * Jellyfin / Emby home-server client (the two share an API surface). Plex uses a
- * different API and is accepted in config but not yet browsed.
+ * Home-server clients. Jellyfin / Emby share an API surface. Plex uses its own
+ * JSON API but is normalized to the same MediaItem rows.
  *
  * All requests go through /api/proxy so the browser avoids CORS with the user's
  * server and we can attach the auth header.
@@ -15,6 +15,10 @@ const sessionCache = new Map<string, { token: string; userId: string }>();
 
 function trimUrl(url: string) {
   return url.replace(/\/+$/, "");
+}
+
+function directUrl(url: string) {
+  return url;
 }
 
 function hashId(value: string): number {
@@ -86,10 +90,28 @@ interface JellyfinItem {
   BackdropImageTags?: string[];
 }
 
+interface PlexSection {
+  key: string;
+  title: string;
+  type: string;
+}
+
+interface PlexItem {
+  ratingKey: string;
+  title: string;
+  type: string;
+  year?: number;
+  summary?: string;
+  rating?: number;
+  thumb?: string;
+  art?: string;
+  Media?: Array<{ Part?: Array<{ key?: string }> }>;
+}
+
 function mapItem(base: string, token: string, item: JellyfinItem): MediaItem {
   const mediaType: MediaType = item.Type === "Series" ? "tv" : "movie";
-  const image = item.ImageTags?.Primary ? `${base}/Items/${item.Id}/Images/Primary?maxWidth=500&api_key=${token}` : "";
-  const backdrop = item.BackdropImageTags?.length ? `${base}/Items/${item.Id}/Images/Backdrop/0?maxWidth=1280&api_key=${token}` : null;
+  const image = item.ImageTags?.Primary ? directUrl(`${base}/Items/${item.Id}/Images/Primary?maxWidth=500&api_key=${token}`) : "";
+  const backdrop = item.BackdropImageTags?.length ? directUrl(`${base}/Items/${item.Id}/Images/Backdrop/0?maxWidth=1280&api_key=${token}`) : null;
   return {
     id: hashId(item.Id),
     title: item.Name,
@@ -101,11 +123,67 @@ function mapItem(base: string, token: string, item: JellyfinItem): MediaItem {
     backdrop,
     isHomeServer: true,
     // Movies stream directly; series would need episode browsing (future).
-    homeServerUrl: mediaType === "movie" ? `${base}/Videos/${item.Id}/stream?static=true&api_key=${token}` : null
+    homeServerUrl: mediaType === "movie" ? directUrl(`${base}/Videos/${item.Id}/stream?static=true&api_key=${token}`) : null
   };
 }
 
+function plexImage(base: string, token: string, path?: string) {
+  return path ? directUrl(`${base}${path}?X-Plex-Token=${encodeURIComponent(token)}`) : "";
+}
+
+function plexStreamUrl(base: string, token: string, item: PlexItem) {
+  const part = item.Media?.[0]?.Part?.[0]?.key;
+  return part ? directUrl(`${base}${part}?X-Plex-Token=${encodeURIComponent(token)}`) : null;
+}
+
+function mapPlexItem(base: string, token: string, item: PlexItem): MediaItem {
+  const mediaType: MediaType = item.type === "show" ? "tv" : "movie";
+  return {
+    id: hashId(`plex:${item.ratingKey}`),
+    title: item.title,
+    overview: item.summary ?? "",
+    year: item.year ? String(item.year) : "",
+    rating: item.rating ? item.rating.toFixed(1) : "",
+    mediaType,
+    image: plexImage(base, token, item.thumb),
+    backdrop: item.art ? plexImage(base, token, item.art) : null,
+    isHomeServer: true,
+    homeServerUrl: mediaType === "movie" ? plexStreamUrl(base, token, item) : null
+  };
+}
+
+async function loadPlexRows(server: HomeServerConfig): Promise<Category[]> {
+  if (!server.token) return [];
+  const base = trimUrl(server.url);
+  const token = server.token;
+  const headers = { Accept: "application/json", "X-Plex-Token": token };
+  const sections = await proxiedGet<{ MediaContainer?: { Directory?: PlexSection[] } }>(
+    `${base}/library/sections?X-Plex-Token=${encodeURIComponent(token)}`,
+    headers
+  ).catch(() => null);
+  const libraries = (sections?.MediaContainer?.Directory ?? [])
+    .filter((section) => section.type === "movie" || section.type === "show")
+    .slice(0, 4);
+  const rows = await Promise.all(libraries.map(async (library) => {
+    const payload = await proxiedGet<{ MediaContainer?: { Metadata?: PlexItem[] } }>(
+      `${base}/library/sections/${library.key}/all?X-Plex-Token=${encodeURIComponent(token)}&sort=addedAt:desc`,
+      headers
+    ).catch(() => null);
+    const mapped = (payload?.MediaContainer?.Metadata ?? [])
+      .slice(0, 24)
+      .map((item) => mapPlexItem(base, token, item))
+      .filter((item) => item.image || item.backdrop);
+    return mapped.length ? { id: `hs_${server.id}_${library.key}`, title: `${server.name} - ${library.title}`, items: mapped } : null;
+  }));
+  return rows.filter((row): row is Category => Boolean(row));
+}
+
 export async function loadHomeServerRows(servers: HomeServerConfig[]): Promise<Category[]> {
+  const plexRows = await Promise.all(
+    servers
+      .filter((server) => server.enabled && server.url && server.type === "plex")
+      .map((server) => loadPlexRows(server).catch(() => [] as Category[]))
+  );
   const active = servers.filter((server) => server.enabled && server.url && (server.type === "jellyfin" || server.type === "emby"));
   const rowsPerServer = await Promise.all(active.map(async (server) => {
     const session = await ensureSession(server).catch(() => null);
@@ -129,7 +207,7 @@ export async function loadHomeServerRows(servers: HomeServerConfig[]): Promise<C
       return [] as Category[];
     }
   }));
-  return rowsPerServer.flat();
+  return [...plexRows.flat(), ...rowsPerServer.flat()];
 }
 
 export function clearHomeServerSessions() {

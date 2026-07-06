@@ -21,7 +21,7 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
       <div className="profile-dialog" onClick={(event) => event.stopPropagation()}>
         <div className="profile-dialog-head">
           <h2>{mode === "add" ? "Add Profile" : "Edit Profile"}</h2>
-          <button className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button>
         </div>
 
         <div className="profile-dialog-preview">
@@ -51,6 +51,7 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
         <div className="color-row">
           {profileColors.map((color) => (
             <button
+              type="button"
               key={color}
               className={`color-dot ${avatarId === 0 && avatarColor === color ? "is-active" : ""}`}
               style={{ background: colorToCss(color) }}
@@ -70,6 +71,7 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
               <div className="avatar-grid">
                 {category.ids.map((id) => (
                   <button
+                    type="button"
                     key={id}
                     className={`avatar-cell ${avatarId === id ? "is-active" : ""}`}
                     style={{ background: `linear-gradient(180deg, ${avatarGradient(id)[0]}, ${avatarGradient(id)[1]})` }}
@@ -85,9 +87,9 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
 
         <div className="profile-dialog-actions">
           {mode === "edit" && onDelete && (
-            <button className="secondary text-button danger" onClick={onDelete}><Trash2 size={18} /> Delete</button>
+            <button type="button" className="secondary text-button danger" onClick={onDelete}><Trash2 size={18} /> Delete</button>
           )}
-          <button className="primary" onClick={() => onConfirm(name.trim() || "Profile", avatarColor, avatarId)} disabled={!name.trim()}>
+          <button type="button" className="primary" onClick={() => onConfirm(name.trim() || "Profile", avatarColor, avatarId)} disabled={!name.trim()}>
             {mode === "add" ? "Create" : "Save"}
           </button>
         </div>

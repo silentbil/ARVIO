@@ -9,7 +9,12 @@ export function ProfileAvatarVisual({ profile, avatarImages = {} }: {
 }) {
   const custom = customAvatarSrc(profile, avatarImages);
   if (custom) {
-    return <img className="avatar-visual" src={custom} alt="" />;
+    return <img className="avatar-visual" src={custom} alt="" decoding="async" />;
+  }
+  // Custom avatar expected but its image hasn't hydrated yet — show a neutral
+  // gradient placeholder rather than flashing the name initial.
+  if (profile.avatarImageVersion && profile.avatarImageVersion > 0) {
+    return <div className="avatar-visual avatar-pending" style={{ background: colorToCss(profile.avatarColor) }} />;
   }
   if (profile.avatarId && profile.avatarId > 0) {
     const [c1, c2] = avatarGradient(profile.avatarId);

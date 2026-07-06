@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
 import { AddonsScreen } from "@/components/addons/AddonsScreen";
 import { DetailsDrawer } from "@/components/details/DetailsDrawer";
@@ -12,7 +12,7 @@ import { ProfileSelectionScreen } from "@/components/profile/ProfileSelectionScr
 import { SearchScreen } from "@/components/search/SearchScreen";
 import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { WatchlistScreen } from "@/components/watchlist/WatchlistScreen";
-import { SyncStrip } from "./SyncStrip";
+import { ExternalPlaybackPrompt } from "./ExternalPlaybackPrompt";
 import { Toast } from "./Toast";
 import { TopNav } from "./TopNav";
 
@@ -25,11 +25,40 @@ const ACCENTS: Record<string, string> = {
 };
 
 export function AppShell() {
-  const { view, section, settings } = useApp();
+  const { view, section, settings, selected, activeStream } = useApp();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Warm the lazy player libraries during idle time so the first Play press
+  // doesn't pay their download cost. They stay out of the initial bundle.
+  useEffect(() => {
+    const warm = () => {
+      void import("hls.js").catch(() => undefined);
+      void import("mediabunny").catch(() => undefined);
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(warm, { timeout: 8000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = window.setTimeout(warm, 4000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     document.documentElement.style.scrollBehavior = settings.smoothScrolling ? "smooth" : "auto";
   }, [settings.smoothScrolling]);
+
+  if (!mounted) {
+    return (
+      <main className="app-boot">
+        <img src="/arvio-logo.svg" alt="" />
+        <span>ARVIO</span>
+      </main>
+    );
+  }
 
   if (view === "login") return <LoginScreen />;
   if (view === "profiles") return <ProfileSelectionScreen />;
@@ -41,20 +70,25 @@ export function AppShell() {
       className={`app-shell ${settings.oledBlack ? "oled" : ""} ${settings.spoilerBlur ? "spoiler-blur" : ""}`}
       style={{ ["--accent" as string]: accent }}
     >
-      <TopNav />
+      {!activeStream && <TopNav />}
 
       <section className="content">
-        <SyncStrip />
-        {section === "home" && <HomeScreen />}
-        {section === "search" && <SearchScreen />}
-        {section === "watchlist" && <WatchlistScreen />}
-        {section === "tv" && <LiveTvScreen />}
-        {section === "addons" && <AddonsScreen />}
-        {section === "settings" && <SettingsScreen />}
+        {selected ? (
+          <DetailsDrawer />
+        ) : (
+          <>
+            {section === "home" && <HomeScreen />}
+            {section === "search" && <SearchScreen />}
+            {section === "watchlist" && <WatchlistScreen />}
+            {section === "tv" && <LiveTvScreen />}
+            {section === "addons" && <AddonsScreen />}
+            {section === "settings" && <SettingsScreen />}
+          </>
+        )}
       </section>
 
-      <DetailsDrawer />
       <PlayerOverlay />
+      <ExternalPlaybackPrompt />
       <Toast />
     </main>
   );

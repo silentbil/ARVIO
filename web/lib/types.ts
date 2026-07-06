@@ -17,10 +17,27 @@ export interface MediaItem {
   progress?: number;
   isWatched?: boolean;
   traktId?: number | null;
+  imdbId?: string | null;
   badge?: string | null;
   genreIds?: number[];
+  genres?: string[];
+  status?: string | null;
+  budget?: number | null;
+  revenue?: number | null;
+  originalLanguage?: string | null;
+  providerLogos?: Array<{ name: string; logo: string }>;
+  networkLogos?: Array<{ name: string; logo: string }>;
+  numberOfSeasons?: number | null;
+  numberOfEpisodes?: number | null;
+  lastAirDate?: string | null;
   nextEpisode?: NextEpisode | null;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  episodeTitle?: string | null;
   timeRemainingLabel?: string | null;
+  // Epoch ms of the last activity (Trakt paused_at / last_watched_at, or cloud
+  // history updated_at). Continue Watching is ordered by this, newest first.
+  activityAt?: number;
   trailerUrl?: string | null;
   cast?: PersonCredit[];
   seasons?: SeasonSummary[];
@@ -45,6 +62,16 @@ export interface PersonCredit {
   image?: string;
 }
 
+export interface PersonDetails {
+  id: number;
+  name: string;
+  biography: string;
+  placeOfBirth?: string | null;
+  birthday?: string | null;
+  profilePath?: string | null;
+  knownFor: MediaItem[];
+}
+
 export interface SeasonSummary {
   id: number;
   seasonNumber: number;
@@ -61,6 +88,7 @@ export interface EpisodeInfo {
   overview?: string;
   still?: string;
   voteAverage?: number;
+  imdbRating?: string;
   airDate?: string;
   runtime?: number;
 }
@@ -104,17 +132,54 @@ export interface CatalogConfig {
   enabled: boolean;
   isPreinstalled?: boolean;
   layout?: "landscape" | "poster";
+  title?: string;
+  kind?: "STANDARD" | "COLLECTION" | "COLLECTION_RAIL" | "standard" | "collection" | "collection_rail";
+  addonId?: string | null;
+  addonCatalogType?: string | null;
+  addonCatalogId?: string | null;
+  addonName?: string | null;
+  collectionGroup?: string | null;
+  collectionDescription?: string | null;
+  collectionTileShape?: "LANDSCAPE" | "POSTER" | "landscape" | "poster";
+  collectionHideTitle?: boolean;
+  collectionSources?: CollectionSourceConfig[];
+  requiredAddonUrls?: string[];
+}
+
+export interface CollectionSourceConfig {
+  kind: string;
+  mediaType?: string | null;
+  addonId?: string | null;
+  addonCatalogType?: string | null;
+  addonCatalogId?: string | null;
+  tmdbGenreId?: number | null;
+  tmdbPersonId?: number | null;
+  tmdbCollectionId?: number | null;
+  tmdbKeywordId?: number | null;
+  tmdbWatchProviderId?: number | null;
+  watchRegion?: string | null;
+  sortBy?: string | null;
+  curatedRefs?: string[] | null;
+  mdblistSlug?: string | null;
 }
 
 export interface StreamBehaviorHints {
   notWebReady?: boolean;
   cached?: boolean | null;
   bingeGroup?: string | null;
+  directUrl?: string | null;
+  url?: string | null;
+  externalUrl?: string | null;
+  videoHash?: string | null;
+  videoSize?: number | null;
   proxyHeaders?: {
     request?: Record<string, string>;
     response?: Record<string, string>;
   } | null;
   filename?: string | null;
+  browserPlayable?: boolean;
+  iosPlayable?: boolean;
+  externalPlayerRecommended?: boolean;
 }
 
 export interface SubtitleTrack {
@@ -141,6 +206,12 @@ export interface StreamSource {
   subtitles?: SubtitleTrack[];
   sources?: string[];
   description?: string | null;
+  // Set when playback was switched to a debrid-transcoded HLS stream; external
+  // players should keep using originalUrl.
+  transcoded?: boolean;
+  originalUrl?: string | null;
+  // Set when this source should play through the in-browser MKV remux path.
+  remux?: boolean;
 }
 
 export interface InstalledAddon {
@@ -150,10 +221,18 @@ export interface InstalledAddon {
   manifestUrl: string;
   description?: string | null;
   catalogs: AddonCatalog[];
-  resources: string[];
+  resources: Array<string | AddonResource>;
+  types?: string[];
+  idPrefixes?: string[];
   logo?: string | null;
   background?: string | null;
   enabled?: boolean;
+}
+
+export interface AddonResource {
+  name: string;
+  types?: string[];
+  idPrefixes?: string[];
 }
 
 export interface AddonCatalog {
@@ -169,6 +248,7 @@ export interface AuthSession {
   userId: string;
   email: string;
   expiresAt: number;
+  provider?: "netlify" | "supabase";
 }
 
 /**
@@ -271,6 +351,7 @@ export interface IptvSnapshot {
   favoriteChannels: string[];
   hiddenGroups: string[];
   groupOrder: string[];
+  playlistWarnings?: string[];
   epgWarning?: string;
   loadedAt: number;
 }
@@ -286,14 +367,28 @@ export interface HomeServerConfig {
   enabled: boolean;
 }
 
+export interface QualityFilterConfig {
+  id: string;
+  deviceName: string;
+  regexPattern: string;
+  enabled: boolean;
+  createdAt?: number;
+}
+
 export interface AppSettings {
   // Playback
   autoPlayNext: boolean;
   autoPlaySingleSource: boolean;
   autoPlayMinQuality: "any" | "hd" | "fhd" | "4k";
+  frameRateMatchingMode: "off" | "seamless" | "always";
   trailerAutoPlay: boolean;
   trailerSound: boolean;
   trailerDelaySeconds: number;
+  trailerInCards: boolean;
+  volumeBoostDb: number;
+  includeSpecials: boolean;
+  qualityFilterPreset: "off" | "1080p-plus" | "1080p-only" | "720p-plus" | "custom";
+  qualityFilters: QualityFilterConfig[];
   // Language & audio
   language: string;
   defaultSubtitle: string;
@@ -302,7 +397,9 @@ export interface AppSettings {
   // Subtitles
   subtitleSize: number;
   subtitleColor: string;
+  subtitleColorName: "White" | "Yellow" | "Green" | "Cyan" | "Red" | "Orange" | "Blue" | "Violet";
   subtitleOffsetMs: number;
+  subtitleOffset: "bottom" | "low" | "medium" | "high";
   subtitleStyle: "outline" | "shadow" | "background" | "raised";
   subtitleStylized: boolean;
   filterSubtitlesByLanguage: boolean;
@@ -312,9 +409,13 @@ export interface AppSettings {
   aiSubtitleModel: "off" | "groq" | "gemini";
   aiAutoSelect: boolean;
   aiApiKey: string;
+  // Playback target: "browser" plays in the built-in player; "vlc"/"infuse"
+  // hand the top source straight to that external player on Play (Trakt still
+  // syncs via the return-to-app prompt).
+  defaultPlayer: "browser" | "vlc" | "infuse";
   // Appearance
   cardLayoutMode: "landscape" | "poster";
-  deviceModeOverride: "auto" | "tv" | "desktop";
+  deviceModeOverride: "auto" | "tv" | "tablet" | "phone" | "desktop";
   oledBlack: boolean;
   clockFormat: "12h" | "24h";
   showBudget: boolean;
@@ -322,9 +423,10 @@ export interface AppSettings {
   spoilerBlur: boolean;
   accentColor: string;
   // Network
-  dnsProvider: "system" | "cloudflare" | "google" | "quad9";
+  dnsProvider: "system" | "cloudflare" | "google" | "adguard" | "quad9";
   showLoadingStats: boolean;
   customUserAgent: string;
+  torrServerBaseUrl: string;
   // Profiles
   skipProfileSelection: boolean;
   cardDensity: "comfortable" | "compact";
@@ -336,6 +438,8 @@ export interface AppSettings {
   homeServers: HomeServerConfig[];
   // IPTV
   iptvPlaylists: IptvPlaylistEntry[];
+  iptvStalkerUrl: string;
+  iptvStalkerMac: string;
   favoriteChannelIds: string[];
   favoriteGroupIds: string[];
   hiddenGroupIds: string[];

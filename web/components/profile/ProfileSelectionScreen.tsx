@@ -15,19 +15,34 @@ export function ProfileSelectionScreen() {
   } = useApp();
 
   const [dialog, setDialog] = useState<{ mode: "add" | "edit"; profile?: Profile } | null>(null);
+  const [openingProfileId, setOpeningProfileId] = useState<string | null>(null);
+
+  const openProfile = (profile: Profile) => {
+    if (manageMode) {
+      setDialog({ mode: "edit", profile });
+      return;
+    }
+    setOpeningProfileId(profile.id);
+    void selectProfile(profile);
+  };
 
   return (
     <main className="profile-shell">
       <div className="profile-center">
-        <div className="profile-brand">ARVIO</div>
+        <div className="profile-brand-lockup">
+          <img className="profile-brand-logo" src="/arvio-icon-512.png" alt="" width={56} height={56} />
+          <span className="profile-brand-word">ARVIO</span>
+        </div>
         <h1 className="profile-heading">{manageMode ? "Manage Profiles" : "Who's watching?"}</h1>
 
         <div className="profile-row">
           {profiles.map((profile) => (
             <button
+              type="button"
               key={profile.id}
               className="profile-pick"
-              onClick={() => (manageMode ? setDialog({ mode: "edit", profile }) : selectProfile(profile))}
+              onClick={() => openProfile(profile)}
+              aria-busy={openingProfileId === profile.id}
             >
               <div className="avatar-tile">
                 <ProfileAvatarVisual profile={profile} avatarImages={avatarImages} />
@@ -35,12 +50,12 @@ export function ProfileSelectionScreen() {
                   <div className="avatar-edit-overlay"><Pencil size={26} /></div>
                 )}
               </div>
-              <span>{profile.name}</span>
+              <span>{openingProfileId === profile.id ? "Opening..." : profile.name}</span>
             </button>
           ))}
 
           {profiles.length < 5 && (
-            <button className="profile-pick" onClick={() => setDialog({ mode: "add" })}>
+            <button type="button" className="profile-pick" onClick={() => setDialog({ mode: "add" })}>
               <div className="avatar-tile add">
                 <Plus size={48} />
               </div>
@@ -49,12 +64,20 @@ export function ProfileSelectionScreen() {
           )}
         </div>
 
-        <button className="manage-profiles-btn" onClick={() => setManageMode(!manageMode)}>
+        <button type="button" className="manage-profiles-btn" onClick={() => setManageMode(!manageMode)}>
           {manageMode ? "Done" : "Manage Profiles"}
         </button>
 
         {!auth && (
-          <button className="cloud-connect-btn" onClick={goToLogin}>
+          <button
+            type="button"
+            className="cloud-connect-btn"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              goToLogin();
+            }}
+          >
             <Cloud size={18} /> Connect to Cloud
           </button>
         )}

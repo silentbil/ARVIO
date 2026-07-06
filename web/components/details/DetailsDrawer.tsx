@@ -1,23 +1,68 @@
 "use client";
 
-import { BadgeCheck, Bookmark, Clapperboard, Play, Star, Trash2, UserCircle, X } from "lucide-react";
-import { useEffect, useState } from "react";
-import { config } from "@/lib/config";
-import { saveProgress } from "@/lib/cloud";
-import { authClient, traktClient, useApp } from "@/lib/store";
-import { getReviews, getSeasonEpisodes } from "@/lib/tmdb";
+import { BadgeCheck, Bookmark, CalendarDays, Clapperboard, Copy, Download, ExternalLink, Filter, MapPin, Play, Search, Star, Trash2, UserCircle, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { MediaCard } from "@/components/media/MediaCard";
-import type { EpisodeInfo, MediaItem, ReviewInfo, StreamSource } from "@/lib/types";
+import { RailScroller } from "@/components/media/RailScroller";
+import { config } from "@/lib/config";
+import { createPendingExternalPlayback } from "@/lib/externalPlayback";
+import { saveProgress } from "@/lib/cloud";
+import { copyStreamUrl, downloadStreamUrl, externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
+import { fetchSubtitlesForItem } from "@/lib/addons";
+import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
+import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
+import { sourcePickerScore } from "@/lib/sourceRank";
+import { isBrowserPlayableStream, isDirectPlayableStream, streamPlayability } from "@/lib/streamCompatibility";
+import { authClient, traktClient, useApp } from "@/lib/store";
+import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
+import type { EpisodeInfo, InstalledAddon, MediaItem, PersonCredit, PersonDetails, ReviewInfo, StreamSource, SubtitleTrack } from "@/lib/types";
 
 export function DetailsDrawer() {
   const { selected: item } = useApp();
   if (!item) return null;
-  return <DetailsDrawerView key={`${item.mediaType}-${item.id}`} item={item} />;
+  return <DetailsView key={`${item.mediaType}-${item.id}`} item={item} />;
 }
 
-function DetailsDrawerView({ item }: { item: MediaItem }) {
-  const { streams, selectedEpisode, loadEpisodeStreams, closeDetails, openDetails, playStream, playTrailer } = useApp();
+function needsDetailsHydration(item: MediaItem) {
+  if (item.mediaType === "tv" && !item.seasons?.length) return true;
+  return !item.cast?.length && !item.related?.length && !item.trailerUrl;
+}
+
+function DetailsView({ item }: { item: MediaItem }) {
+  const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playStream, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally } = useApp();
+  const [detailsItem, setDetailsItem] = useState<MediaItem>(item);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [reviews, setReviews] = useState<ReviewInfo[]>([]);
+  const [person, setPerson] = useState<PersonDetails | null>(null);
+  const [personLoading, setPersonLoading] = useState(false);
+  const [personVisible, setPersonVisible] = useState(false);
+  const [sourcePickerVisible, setSourcePickerVisible] = useState(false);
+  const [logo, setLogo] = useState<string | null>(null);
+  const displayItem = detailsItem ?? item;
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [item.id, item.mediaType]);
+
+  useEffect(() => {
+    let active = true;
+    setDetailsItem(item);
+    if (!needsDetailsHydration(item)) {
+      setDetailsLoading(false);
+      return () => { active = false; };
+    }
+    setDetailsLoading(true);
+    void getDetails(item)
+      .then((details) => {
+        if (active) setDetailsItem(details);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setDetailsLoading(false);
+      });
+    return () => { active = false; };
+  }, [item.id, item.mediaType]);
 
   useEffect(() => {
     let active = true;
@@ -25,129 +70,726 @@ function DetailsDrawerView({ item }: { item: MediaItem }) {
     return () => { active = false; };
   }, [item.id, item.mediaType]);
 
-  const playableCount = streams.filter((stream) => Boolean(stream.url)).length;
-  const isTv = item.mediaType === "tv";
-  const sourceLabel = selectedEpisode ? `Sources · S${selectedEpisode.season} E${selectedEpisode.episode}` : "Sources";
+  useEffect(() => {
+    let active = true;
+    setLogo(null);
+    void getLogoUrl({ mediaType: item.mediaType, id: item.id }).then((url) => {
+      if (active) setLogo(url);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [item.id, item.mediaType]);
+
+  const playableCount = streams.filter(isBrowserPlayableStream).length;
+  const isTv = displayItem.mediaType === "tv";
+  const inWatchlist = watchlist.some((entry) => entry.mediaType === item.mediaType && entry.id === item.id);
+  const canPlayBest = streams.length > 0;
+  const detailWatched = isWatched(displayItem, selectedEpisode?.season, selectedEpisode?.episode);
+  const continueLabel = buildContinueLabel(displayItem, selectedEpisode);
+  const detailMeta = buildDetailMeta(displayItem, settings.showBudget);
+  // Clearlogos (bundled from the app, no background tiles). Providers we have
+  // no clearlogo for are skipped rather than shown as white TMDB tiles.
+  const serviceLogos = [...(displayItem.providerLogos ?? []), ...(displayItem.networkLogos ?? [])]
+    .map((logo) => ({ name: canonicalServiceName(logo.name), logo: serviceClearLogo(logo.name) }))
+    .filter((logo): logo is { name: string; logo: string } => Boolean(logo.logo))
+    .filter((logo, index, arr) => arr.findIndex((candidate) => candidate.name === logo.name) === index)
+    .slice(0, 4);
+
+  const playBest = () => {
+    if (isTv && !selectedEpisode) {
+      setToast(isTv ? "Pick an episode to find sources first." : "No sources found yet.");
+      return;
+    }
+    setSourcePickerVisible(true);
+  };
+
+  const openEpisodeSources = async (season: number, episode: number) => {
+    setSourcePickerVisible(true);
+    const found = await loadEpisodeStreams(displayItem, season, episode);
+    if (!found.length) setToast("No sources found for this episode yet.");
+  };
+
+  const addToWatchlist = async () => {
+    if (!traktClient.isConnected) {
+      setToast("Connect Trakt in Settings to use Watchlist.");
+      return;
+    }
+    try {
+      await traktClient.addToWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
+      setToast("Added to Trakt watchlist.");
+      void refreshData();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Could not add to watchlist.");
+    }
+  };
+
+  const removeFromWatchlist = async () => {
+    if (!traktClient.isConnected) {
+      setToast("Connect Trakt in Settings to remove watchlist items.");
+      return;
+    }
+    try {
+      await traktClient.removeFromWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
+      setToast("Removed from Trakt watchlist.");
+      void refreshData();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Could not remove watchlist item.");
+    }
+  };
+
+  const markWatched = async () => {
+    const season = selectedEpisode?.season ?? item.seasonNumber ?? null;
+    const episode = selectedEpisode?.episode ?? item.episodeNumber ?? null;
+    const alreadyWatched = detailWatched;
+    // Update the badge + Continue Watching instantly, before Trakt round-trips.
+    markWatchedLocally({ mediaType: displayItem.mediaType, id: displayItem.id, season, episode }, !alreadyWatched);
+    let saved = false;
+    try {
+      if (authClient.session) {
+        await saveProgress(authClient, {
+          media_type: displayItem.mediaType,
+          show_tmdb_id: displayItem.id,
+          profile_id: activeProfile?.id ?? null,
+          season,
+          episode,
+          episode_title: displayItem.episodeTitle ?? null,
+          title: displayItem.title,
+          progress: alreadyWatched ? 0 : 1,
+          duration_seconds: 1,
+          position_seconds: alreadyWatched ? 0 : 1,
+          backdrop_path: displayItem.backdrop?.replace(config.backdropBase, "") ?? null,
+          poster_path: displayItem.image?.replace(config.imageBase, "") ?? null
+        }, activeProfile?.id ?? null);
+        saved = true;
+      }
+      if (traktClient.isConnected) {
+        // Register in Trakt history so the watched badge syncs everywhere (parity
+        // with the app). Toggle removes it from history.
+        const ref = { mediaType: displayItem.mediaType, tmdbId: displayItem.id, season, episode };
+        if (alreadyWatched) await traktClient.removeFromHistory(ref);
+        else await traktClient.addToHistory(ref);
+        saved = true;
+      }
+      setToast(saved ? (alreadyWatched ? "Removed from watched." : "Marked as watched.") : "Connect ARVIO Cloud or Trakt to sync watched state.");
+      if (saved) void refreshData();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Could not update watched state.");
+    }
+  };
+
+  const openPerson = async (castMember: PersonCredit) => {
+    setPersonVisible(true);
+    setPersonLoading(true);
+    setPerson(null);
+    try {
+      const details = await getPersonDetails(castMember.id);
+      if (!details) {
+        setToast("Could not load cast details.");
+        setPersonVisible(false);
+        return;
+      }
+      setPerson(details);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Could not load cast details.");
+      setPersonVisible(false);
+    } finally {
+      setPersonLoading(false);
+    }
+  };
 
   return (
-    <aside className="details-drawer">
-      <button className="close" onClick={closeDetails} aria-label="Close"><X size={22} /></button>
-      <div className="detail-backdrop" style={{ backgroundImage: item.backdrop ? `url(${item.backdrop})` : undefined }} />
+    <article className="details-drawer">
+      <div className="detail-backdrop" style={{ backgroundImage: displayItem.backdrop ? `url(${displayItem.backdrop})` : undefined }} />
       <div className="detail-body">
-        <p className="eyebrow">{isTv ? "Series" : "Movie"} {item.rating ? `• ⭐ ${item.rating}` : ""}</p>
-        <h2>{item.title}</h2>
-        <p>{item.overview || "No overview available."}</p>
-        <div className="chips">
-          {item.year && <span>{item.year}</span>}
-          {item.duration && <span>{item.duration}</span>}
-          {streams.length > 0 && <span>{playableCount}/{streams.length} web playable</span>}
+        <section className="detail-hero-content">
+          <div className="detail-title-line">
+            {logo ? <img className="detail-clearlogo" src={logo} alt={displayItem.title} /> : <h2>{displayItem.title}</h2>}
+          </div>
+          <p>{displayItem.overview || "No overview available."}</p>
+          <div className="detail-rating-line">
+            {displayItem.rating ? (
+              <span className="imdb-lockup">
+                <img src={IMDB_LOGO} alt="IMDb" />
+                <b>{displayItem.rating}</b>
+              </span>
+            ) : null}
+            {detailWatched && <span className="detail-watched-chip"><BadgeCheck size={13} /> Watched</span>}
+            {displayItem.genres?.slice(0, 3).map((genre) => <span key={genre}>{genre}</span>)}
+          </div>
+          <div className="chips detail-metadata">
+            {detailMeta.map((meta) => <span key={meta}>{meta}</span>)}
+            {streams.length > 0 && <span>{playableCount}/{streams.length} web playable</span>}
+          </div>
+          {serviceLogos.length ? (
+            <div className="detail-service-logos" aria-label="Streaming and network availability">
+              {serviceLogos.map((service) => (
+                <span key={service.name} title={service.name}>
+                  <img src={service.logo} alt={service.name} />
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <div className="detail-actions">
+            <button type="button" className="primary" onClick={playBest}>
+              <Play size={18} fill="currentColor" /> {continueLabel}
+            </button>
+            {inWatchlist ? (
+              <button type="button" className="secondary text-button" onClick={() => void removeFromWatchlist()}><Trash2 size={18} /> Remove</button>
+            ) : (
+              <button type="button" className="secondary text-button" onClick={() => void addToWatchlist()}><Bookmark size={18} /> Watchlist</button>
+            )}
+            <button type="button" className={`secondary text-button ${detailWatched ? "is-active" : ""}`} onClick={() => void markWatched()}><BadgeCheck size={18} /> {detailWatched ? "Watched" : "Mark Watched"}</button>
+            {displayItem.trailerUrl && (
+              <button type="button" className="secondary text-button" onClick={() => void playTrailer(displayItem)}>
+                <Play size={18} fill="currentColor" /> Trailer
+              </button>
+            )}
+          </div>
+          {!canPlayBest && !isTv && (
+            <p className="detail-action-hint">
+              {streams.length ? "The installed addons returned sources, but none have a direct browser-playable URL yet." : "Sources will appear here when an installed addon returns results."}
+            </p>
+          )}
+        </section>
+
+        <div className="detail-layout">
+          {isTv ? (
+            <SeasonEpisodes item={displayItem} loadingDetails={detailsLoading} selectedEpisode={selectedEpisode} isWatched={isWatched} onPlayEpisode={(s, e) => void openEpisodeSources(s, e)} />
+          ) : null}
+
+          {displayItem.cast?.length ? (
+            <section className="detail-section detail-wide">
+              <h3>Cast</h3>
+              <RailScroller className="mini-strip" ariaLabel="cast">
+                {displayItem.cast.map((person) => (
+                  <button type="button" className="mini-card person cast-card" key={person.id} onClick={() => void openPerson(person)}>
+                    {person.image ? <img src={person.image} alt="" /> : <UserCircle size={30} />}
+                    <strong>{person.name}</strong>
+                    <span>{person.character || "Cast"}</span>
+                  </button>
+                ))}
+              </RailScroller>
+            </section>
+          ) : null}
+
+          {reviews.length > 0 && (
+            <section className="detail-section detail-wide">
+              <h3>Reviews</h3>
+              <div className="review-list">
+                {reviews.map((review) => (
+                  <article className="review-card" key={review.id}>
+                    <div className="review-head">
+                      {review.avatar ? <img src={review.avatar} alt="" /> : <UserCircle size={26} />}
+                      <strong>{review.author}</strong>
+                      {review.rating != null && <span className="review-rating"><Star size={13} fill="currentColor" /> {review.rating}</span>}
+                    </div>
+                    <p>{review.content.length > 600 ? `${review.content.slice(0, 600)}...` : review.content}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {displayItem.related?.length ? (
+            <section className="detail-section related detail-wide">
+              <h3>More Like This</h3>
+              <RailScroller className="rail-strip compact" ariaLabel="more like this">
+                {displayItem.related.map((related) => (
+                  <MediaCard
+                    key={`related-${related.mediaType}-${related.id}`}
+                    item={related}
+                    onOpen={openDetails}
+                    posterMode={settings.cardLayoutMode === "poster"}
+                  />
+                ))}
+              </RailScroller>
+            </section>
+          ) : null}
         </div>
-        <div className="detail-actions">
-          <button className="primary" onClick={() => streams[0] && playStream(streams[0])} disabled={!streams.length}>
-            <Play size={18} fill="currentColor" /> Play best
-          </button>
-          <button className="secondary text-button" onClick={() => traktClient.addToWatchlist({ mediaType: item.mediaType, tmdbId: item.id }).catch(() => undefined)}><Bookmark size={18} /> Watchlist</button>
-          <button className="secondary text-button" onClick={() => traktClient.removeFromWatchlist({ mediaType: item.mediaType, tmdbId: item.id }).catch(() => undefined)}><Trash2 size={18} /> Remove</button>
-          <button className="secondary text-button" onClick={() => {
-            void saveProgress(authClient, {
-              media_type: item.mediaType,
-              show_tmdb_id: item.id,
-              title: item.title,
-              progress: 1,
-              duration_seconds: 1,
-              position_seconds: 1,
-              backdrop_path: item.backdrop?.replace(config.backdropBase, "") ?? null,
-              poster_path: item.image?.replace(config.imageBase, "") ?? null
-            }).catch(() => undefined);
-            void traktClient.scrobble("stop", { mediaType: item.mediaType, tmdbId: item.id, progress: 100 }).catch(() => undefined);
-          }}><BadgeCheck size={18} /> Watched</button>
-        </div>
-
-        {item.trailerUrl && (
-          <button className="trailer-link" onClick={() => void playTrailer(item)}>
-            <Play size={18} fill="currentColor" /> Watch trailer
-          </button>
-        )}
-
-        {isTv && item.seasons?.length ? (
-          <SeasonEpisodes item={item} selectedEpisode={selectedEpisode} onPlayEpisode={(s, e) => loadEpisodeStreams(item, s, e)} />
-        ) : null}
-
-        {(!isTv || selectedEpisode || streams.length > 0) && (
-          <section className="detail-section">
-            <h3>{sourceLabel}</h3>
-            <div className="source-list">
-              {streams.length === 0 && (
-                <p className="empty">{isTv && !selectedEpisode ? "Pick an episode to find sources." : "No web-playable sources found from installed addons yet."}</p>
-              )}
-              {streams.map((stream, index) => (
-                <button key={`${stream.addonId}-${index}`} className={`source-row ${stream.url ? "" : "is-locked"}`} onClick={() => playStream(stream)}>
-                  <div>
-                    <strong>{stream.source}</strong>
-                    <span>{stream.addonName} {stream.description ? `• ${stream.description}` : ""} {stream.url ? "" : "• not web-playable"}</span>
-                  </div>
-                  <span className="quality">{stream.quality || "HD"}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {item.cast?.length ? (
-          <section className="detail-section">
-            <h3>Cast</h3>
-            <div className="mini-strip">
-              {item.cast.map((person) => (
-                <article className="mini-card person" key={person.id}>
-                  {person.image ? <img src={person.image} alt="" /> : <UserCircle size={30} />}
-                  <strong>{person.name}</strong>
-                  <span>{person.character || "Cast"}</span>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {reviews.length > 0 && (
-          <section className="detail-section">
-            <h3>Reviews</h3>
-            <div className="review-list">
-              {reviews.map((review) => (
-                <article className="review-card" key={review.id}>
-                  <div className="review-head">
-                    {review.avatar ? <img src={review.avatar} alt="" /> : <UserCircle size={26} />}
-                    <strong>{review.author}</strong>
-                    {review.rating != null && <span className="review-rating"><Star size={13} fill="currentColor" /> {review.rating}</span>}
-                  </div>
-                  <p>{review.content.length > 600 ? `${review.content.slice(0, 600)}…` : review.content}</p>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {item.related?.length ? (
-          <section className="detail-section related">
-            <h3>More Like This</h3>
-            <div className="rail-strip compact">
-              {item.related.map((related) => <MediaCard key={`related-${related.mediaType}-${related.id}`} item={related} onOpen={openDetails} />)}
-            </div>
-          </section>
-        ) : null}
       </div>
-    </aside>
+      <PersonModal
+        visible={personVisible}
+        loading={personLoading}
+        person={person}
+        onClose={() => setPersonVisible(false)}
+        onOpenMedia={(media) => {
+          setPersonVisible(false);
+          void openDetails(media);
+        }}
+        posterMode={settings.cardLayoutMode === "poster"}
+      />
+      <SourcePickerModal
+        visible={sourcePickerVisible}
+        item={displayItem}
+        streams={streams}
+        installedAddons={installedAddons}
+        selectedEpisode={selectedEpisode}
+        activeProfileId={activeProfile?.id ?? null}
+        onClose={() => setSourcePickerVisible(false)}
+        onPlay={(stream) => {
+          playStream(stream);
+          if (stream.url) setSourcePickerVisible(false);
+        }}
+        onToast={setToast}
+        loading={busy === "Finding sources"}
+      />
+    </article>
   );
 }
 
-function SeasonEpisodes({ item, selectedEpisode, onPlayEpisode }: {
+function SourcePickerModal({
+  visible,
+  item,
+  streams,
+  installedAddons,
+  selectedEpisode,
+  activeProfileId,
+  onClose,
+  onPlay,
+  onToast,
+  loading
+}: {
+  visible: boolean;
   item: MediaItem;
+  streams: StreamSource[];
+  installedAddons: InstalledAddon[];
   selectedEpisode: { season: number; episode: number } | null;
+  activeProfileId: string | null;
+  onClose: () => void;
+  onPlay: (stream: StreamSource) => void;
+  onToast: (message: string) => void;
+  loading: boolean;
+}) {
+  const { settings } = useApp();
+  const [addonFilter, setAddonFilter] = useState("all");
+  const [mode, setMode] = useState<"all" | "playable">("all");
+  const [query, setQuery] = useState("");
+  // Addon subtitles for this title, fetched in the background when the panel
+  // opens so the VLC/Infuse buttons can attach them synchronously on click.
+  const [panelSubtitles, setPanelSubtitles] = useState<SubtitleTrack[]>([]);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    setAddonFilter("all");
+    setMode("all");
+    setQuery("");
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, visible]);
+
+  useEffect(() => {
+    setPanelSubtitles([]);
+    if (!visible || !item) return undefined;
+    let active = true;
+    void fetchSubtitlesForItem(
+      installedAddons,
+      item,
+      selectedEpisode?.season ?? item.seasonNumber ?? undefined,
+      selectedEpisode?.episode ?? item.episodeNumber ?? undefined
+    ).then((subs) => { if (active) setPanelSubtitles(subs); }).catch(() => undefined);
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, item?.id, selectedEpisode?.season, selectedEpisode?.episode]);
+
+  const addons = useMemo(() => {
+    const unique = new Map<string, { id: string; name: string; count: number }>();
+    installedAddons
+      .filter((addon) => addon.enabled !== false && addonHasResource(addon, "stream"))
+      .forEach((addon) => unique.set(addon.id, { id: addon.id, name: addon.name, count: 0 }));
+    streams.forEach((stream) => {
+      const id = stream.addonId || stream.addonName;
+      const existing = unique.get(id);
+      unique.set(id, {
+        id,
+        name: existing?.name || stream.addonName,
+        count: (existing?.count ?? 0) + 1
+      });
+    });
+    return Array.from(unique.values());
+  }, [installedAddons, streams]);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return streams.filter((stream) => {
+      if (addonFilter !== "all" && (stream.addonId || stream.addonName) !== addonFilter) return false;
+      if (mode === "playable" && !isBrowserPlayableStream(stream)) return false;
+      if (!needle) return true;
+      return `${stream.source} ${stream.addonName} ${stream.description ?? ""} ${stream.quality ?? ""} ${stream.size ?? ""}`.toLowerCase().includes(needle);
+    }).sort((a, b) => sourcePickerScore(b) - sourcePickerScore(a));
+  }, [addonFilter, mode, query, streams]);
+
+  // Warm the direct CDN URLs of the top debrid picks while the user is still
+  // looking at the list — pressing Play then skips the resolver round-trips
+  // (which ride the Netlify proxy in production and cost 1-3s each).
+  const prefetchSignature = filtered.slice(0, 3).map((stream) => stream.url ?? "").join("|");
+  useEffect(() => {
+    filtered.slice(0, 3).forEach((stream) => {
+      if (!isUncachedDebridStream(stream)) prefetchDebridDirectUrl(stream.url);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefetchSignature]);
+
+  const playable = streams.filter(isBrowserPlayableStream).length;
+  const title = selectedEpisode ? `${item.title} - S${selectedEpisode.season} E${selectedEpisode.episode}` : item.title;
+  const openExternal = (player: "vlc" | "infuse", stream: StreamSource) => {
+    if (!stream.url) {
+      onToast("This source has no direct URL for an external player.");
+      return;
+    }
+    // Build the launch target. Use the prefetch-cached CDN url if we already
+    // have it; otherwise hand VLC the raw source (it follows the redirect
+    // itself). Subtitles are attached only when synchronously present.
+    const cachedCdn = parseDebridStream(stream.url) ? cachedDebridDirectUrl(stream.url) : null;
+    let target = cachedCdn ? { ...stream, url: cachedCdn, originalUrl: stream.url } : stream;
+    if (!target.subtitles?.length && panelSubtitles.length) target = { ...target, subtitles: panelSubtitles };
+    // Persist the pending record and toast BEFORE launching. Both are
+    // synchronous (localStorage / React state) so they don't consume the user
+    // gesture, and writing first guarantees the return-to-app "mark finished"
+    // prompt has its record even if the scheme navigation freezes/unloads the
+    // page the instant it fires.
+    onToast(
+      player === "infuse"
+        ? "Opening in Infuse..."
+        : externalLaunchMode("vlc") === "playlist"
+          ? "VLC playlist saved — open it from your downloads to play."
+          : "Opening in VLC..."
+    );
+    createPendingExternalPlayback({
+      player,
+      item,
+      stream: target,
+      title,
+      profileId: activeProfileId,
+      season: selectedEpisode?.season ?? item.seasonNumber ?? null,
+      episode: selectedEpisode?.episode ?? item.episodeNumber ?? null
+    });
+    // The deep link MUST fire synchronously inside the click — iOS Safari blocks
+    // navigation to custom schemes (vlc-x-callback://) once the user gesture is
+    // lost, so the app would appear to do nothing. Launch last.
+    openExternalPlayer(player, target, title, settings.defaultSubtitle);
+  };
+  const copyUrl = async (stream: StreamSource) => {
+    const copied = await copyStreamUrl(stream).catch(() => false);
+    onToast(copied ? "Stream URL copied." : "Could not copy this stream URL.");
+  };
+  const downloadSource = async (stream: StreamSource) => {
+    if (!stream.url) {
+      onToast("This source has no direct URL to download.");
+      return;
+    }
+    // Resolve debrid streams to the final CDN file URL first (the download
+    // proxy must get the real file, not the torrentio redirect chain, which
+    // 403s server egress). Hard 20s timeout — jsonRequest has none, and a
+    // stalled proxy call would leave "Preparing" up forever.
+    let target = stream;
+    const debridInfo = parseDebridStream(stream.url);
+    if (debridInfo) {
+      onToast("Preparing download...");
+      const direct = cachedDebridDirectUrl(stream.url) ?? await Promise.race([
+        resolveDebridDirectUrl(debridInfo).then((result) => result?.url ?? null).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000))
+      ]);
+      if (!direct) {
+        onToast("Could not prepare this download — the source may not be cached. Try a [TB+] source.");
+        return;
+      }
+      target = { ...stream, url: direct, originalUrl: stream.url };
+    }
+    const href = downloadStreamUrl(target, title);
+    if (!href) {
+      onToast("Could not start this download.");
+      return;
+    }
+    // Same-tab navigation: an attachment response never replaces the page in a
+    // browser tab, and the installed PWA opens it in its Safari sheet — both
+    // proven to reach the download proxy. (A pre-opened window.open tab is NOT
+    // used: standalone PWAs silently ignore location changes on sheet handles.)
+    window.location.href = href;
+    onToast("Download started — check your browser downloads.");
+  };
+
+  if (!visible || typeof document === "undefined") return null;
+  return createPortal(
+    <section className="source-modal" role="dialog" aria-modal="true" aria-label="Choose source">
+      <div className="source-modal-bg" onClick={onClose} />
+      <div className="source-panel">
+        <header className="source-panel-head">
+          <div>
+            <p className="eyebrow">sources</p>
+            <h2>{title}</h2>
+            <span>{playable}/{streams.length} browser playable. Highest quality and largest files are shown first.</span>
+          </div>
+          <button type="button" className="person-close" onClick={onClose} aria-label="Close source picker"><X size={24} /></button>
+        </header>
+
+        <div className="source-toolbar">
+          <label className="source-search">
+            <Search size={18} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search quality, release, provider" />
+          </label>
+          <div className="source-filter-group" aria-label="Source mode">
+            <button type="button" className={mode === "all" ? "is-active" : ""} onClick={() => setMode("all")}><Filter size={16} /> All sources</button>
+            <button type="button" className={mode === "playable" ? "is-active" : ""} onClick={() => setMode("playable")}>Browser playable</button>
+          </div>
+        </div>
+
+        <div className="source-addon-tabs">
+          <button type="button" className={addonFilter === "all" ? "is-active" : ""} onClick={() => setAddonFilter("all")}>All Addons</button>
+          {addons.map((addon) => (
+            <button type="button" key={addon.id} className={addonFilter === addon.id ? "is-active" : ""} onClick={() => setAddonFilter(addon.id)}>
+              {addon.name}{addon.count > 0 ? ` ${addon.count}` : ""}
+            </button>
+          ))}
+        </div>
+
+        <div className="source-picker-list">
+          {filtered.length === 0 && (
+            <p className="source-empty">
+              {loading
+                ? "Searching addons..."
+                : addonFilter !== "all"
+                  ? `${addons.find((addon) => addon.id === addonFilter)?.name ?? "This addon"} returned no sources for this title.`
+                  : "No sources match this filter."}
+            </p>
+          )}
+          {filtered.map((stream, index) => {
+            const locked = !stream.url;
+            const playability = streamPlayability(stream);
+            const playable = playability.mode === "direct" || playability.mode === "remux" || playability.mode === "transcode";
+            const uncached = isUncachedDebridStream(stream);
+            const statusLabel = uncached
+              ? "Not cached — downloads first, slow start"
+              : "Use of external player is recommended";
+            const statusClass = uncached ? "needs-vlc" : "recommend-external";
+            return (
+              <article key={`${stream.addonId}-${stream.source}-${index}`} className={`source-picker-row ${locked ? "is-locked" : ""}`}>
+                <span className="source-rank">{index + 1}</span>
+                <span className="source-main">
+                  <strong>{stream.source || stream.addonName}</strong>
+                  <em>{stream.addonName}{stream.description ? ` - ${stream.description}` : ""}</em>
+                  <span className="source-status-line">
+                    <span className={`source-playback-status ${statusClass}`}>
+                      {statusLabel}
+                    </span>
+                  </span>
+                  <span className="stream-badges">
+                    {streamBadges(stream).map((badge) => (
+                      <span key={badge.label} className={`stream-badge ${badge.tone ?? ""}`}>{badge.label}</span>
+                    ))}
+                  </span>
+                </span>
+                <span className="source-side">
+                  <b>{stream.quality || "HD"}</b>
+                  <small>{locked ? "Needs resolver" : playability.mode === "direct" ? "Browser" : playability.mode === "remux" ? "Remux" : playability.mode === "transcode" ? "Transcode" : "External"}</small>
+                  <span className="source-row-actions">
+                    <button type="button" className="source-action primary-action" disabled={locked || !playable} onClick={() => onPlay(stream)}>
+                      <Play size={13} fill="currentColor" /> Play
+                    </button>
+                    <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("vlc", stream)}>
+                      <ExternalLink size={13} /> VLC
+                    </button>
+                    <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("infuse", stream)}>
+                      <ExternalLink size={13} /> Infuse
+                    </button>
+                    <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void downloadSource(stream)} aria-label="Download this source">
+                      <Download size={13} />
+                    </button>
+                    <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void copyUrl(stream)} aria-label="Copy stream URL">
+                      <Copy size={13} />
+                    </button>
+                  </span>
+                </span>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </section>,
+    document.body
+  );
+}
+
+function PersonModal({
+  visible,
+  loading,
+  person,
+  onClose,
+  onOpenMedia,
+  posterMode
+}: {
+  visible: boolean;
+  loading: boolean;
+  person: PersonDetails | null;
+  onClose: () => void;
+  onOpenMedia: (item: MediaItem) => void;
+  posterMode: boolean;
+}) {
+  useEffect(() => {
+    if (!visible) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, visible]);
+
+  if (!visible) return null;
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <section className="person-modal" role="dialog" aria-modal="true" aria-label={person?.name ?? "Cast details"}>
+      <div className="person-modal-bg" onClick={onClose} />
+      <div className="person-panel">
+        <button type="button" className="person-close" onClick={onClose} aria-label="Close cast details"><X size={24} /></button>
+        {loading ? (
+          <div className="person-loading">Loading cast details...</div>
+        ) : person ? (
+          <>
+            <aside className="person-sidebar">
+              <div className="person-photo">
+                {person.profilePath ? <img src={person.profilePath} alt="" /> : <UserCircle size={74} />}
+              </div>
+              <h2>{person.name}</h2>
+              <div className="person-facts">
+                {person.birthday ? <span><CalendarDays size={15} /> {formatDate(person.birthday)}</span> : null}
+                {person.placeOfBirth ? <span><MapPin size={15} /> {person.placeOfBirth}</span> : null}
+              </div>
+            </aside>
+            <div className="person-content">
+              {person.biography ? (
+                <section>
+                  <p className="eyebrow">Biography</p>
+                  <p className="person-bio">{person.biography}</p>
+                </section>
+              ) : null}
+              {person.knownFor.length ? (
+                <section>
+                  <p className="eyebrow">Known For</p>
+                  <RailScroller className={`person-known-rail ${posterMode ? "is-poster" : ""}`} ariaLabel={`${person.name} known for`}>
+                    {person.knownFor.map((item) => (
+                      <button type="button" className="person-known-card" key={`${item.mediaType}-${item.id}`} onClick={() => onOpenMedia(item)}>
+                        <div>{item.backdrop || item.image ? <img src={item.backdrop || item.image} alt="" /> : <Clapperboard size={32} />}</div>
+                        <strong>{item.title}</strong>
+                        <span>{item.subtitle || item.year || (item.mediaType === "tv" ? "Series" : "Movie")}</span>
+                      </button>
+                    ))}
+                  </RailScroller>
+                </section>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+      </div>
+    </section>,
+    document.body
+  );
+}
+
+function formatDate(date: string) {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function streamBadges(stream: StreamSource) {
+  const text = `${stream.source} ${stream.description ?? ""} ${stream.size ?? ""}`.toLowerCase();
+  const labels: Array<{ label: string; tone?: string }> = [];
+  const quality = stream.quality || detectSourceBadge(text);
+  if (quality) labels.push({ label: quality, tone: quality === "4K" ? "gold" : "" });
+  if (text.includes("hdr10+") || text.includes("hdr")) labels.push({ label: "HDR" });
+  if (text.includes("dolby vision") || /\bdv\b/i.test(text)) labels.push({ label: "DV" });
+  if (text.includes("atmos")) labels.push({ label: "ATMOS" });
+  else if (text.includes("7.1")) labels.push({ label: "7.1" });
+  else if (text.includes("5.1")) labels.push({ label: "5.1" });
+  const size = stream.size || text.match(/\b\d+(?:\.\d+)?\s?(?:gb|mb|tb)\b/i)?.[0]?.toUpperCase();
+  if (size) labels.push({ label: size });
+  if (stream.behaviorHints?.cached) labels.push({ label: "CACHED", tone: "ok" });
+  if (/real-?debrid|premiumize|torbox|\brd\b|\bpm\b|\bdebrid\b/i.test(text)) labels.push({ label: "DEBRID", tone: "ok" });
+  if (stream.url) labels.push({ label: "DIRECT", tone: "ok" });
+  const mode = streamPlayability(stream).mode;
+  if (mode === "direct") labels.push({ label: "WEB", tone: "ok" });
+  else if (mode === "remux") labels.push({ label: "REMUX", tone: "ok" });
+  else if (mode === "transcode") labels.push({ label: "TRANSCODE", tone: "ok" });
+  else if (stream.url) labels.push({ label: "TRY", tone: "warn" });
+  if (!stream.url) labels.push({ label: "ANDROID", tone: "warn" });
+  const seen = new Set<string>();
+  return labels.filter((badge) => {
+    if (seen.has(badge.label)) return false;
+    seen.add(badge.label);
+    return true;
+  }).slice(0, 7);
+}
+
+function addonHasResource(addon: InstalledAddon, resource: string) {
+  const resources = addon.resources ?? [];
+  if (!resources.length) return true;
+  return resources.some((item) => typeof item === "string" ? item === resource : item.name === resource);
+}
+
+function detectSourceBadge(text: string) {
+  if (text.includes("2160") || text.includes("4k")) return "4K";
+  if (text.includes("1080")) return "1080p";
+  if (text.includes("720")) return "720p";
+  if (text.includes("480")) return "480p";
+  return "";
+}
+
+function buildDetailMeta(item: MediaItem, showBudget: boolean) {
+  const meta = [
+    item.releaseDate || item.year || null,
+    item.duration || null,
+    item.mediaType === "tv" && item.numberOfSeasons ? `${item.numberOfSeasons} season${item.numberOfSeasons === 1 ? "" : "s"}` : null,
+    item.mediaType === "tv" && item.numberOfEpisodes ? `${item.numberOfEpisodes} episodes` : null,
+    item.mediaType === "tv" && item.lastAirDate ? `Last aired ${item.lastAirDate}` : null,
+    item.status || null,
+    item.originalLanguage ? item.originalLanguage.toUpperCase() : null
+  ];
+  if (showBudget && item.mediaType === "movie") {
+    meta.push(formatMoney(item.budget, "Budget"));
+    meta.push(formatMoney(item.revenue, "Box office"));
+  }
+  return meta.filter((value): value is string => Boolean(value));
+}
+
+function buildContinueLabel(item: MediaItem, selectedEpisode: { season: number; episode: number } | null) {
+  const season = selectedEpisode?.season ?? item.seasonNumber ?? null;
+  const episode = selectedEpisode?.episode ?? item.episodeNumber ?? null;
+  if (item.mediaType === "tv") {
+    return season && episode ? `Continue S${season} E${episode}` : "Choose episode";
+  }
+  const progress = item.progress ?? 0;
+  return progress >= 1 && progress <= 94 ? `Continue ${Math.round(progress)}%` : "Play";
+}
+
+function formatMoney(value: number | null | undefined, label: string) {
+  if (!value || value <= 0) return null;
+  const compact = new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+    style: "currency",
+    currency: "USD"
+  }).format(value);
+  return `${label} ${compact}`;
+}
+
+function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPlayEpisode }: {
+  item: MediaItem;
+  loadingDetails: boolean;
+  selectedEpisode: { season: number; episode: number } | null;
+  isWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => boolean;
   onPlayEpisode: (season: number, episode: number) => void;
 }) {
   const seasons = item.seasons ?? [];
   const [season, setSeason] = useState(seasons[0]?.seasonNumber ?? 1);
   const [episodes, setEpisodes] = useState<EpisodeInfo[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (seasons.length && !seasons.some((entry) => entry.seasonNumber === season)) {
+      setSeason(seasons[0]?.seasonNumber ?? 1);
+    }
+  }, [season, seasons]);
 
   useEffect(() => {
     let active = true;
@@ -160,11 +802,12 @@ function SeasonEpisodes({ item, selectedEpisode, onPlayEpisode }: {
   }, [item.id, season]);
 
   return (
-    <section className="detail-section">
+    <section className="detail-section episodes-section detail-wide">
       <h3>Episodes</h3>
       <div className="season-tabs">
         {seasons.map((s) => (
           <button
+            type="button"
             key={s.id}
             className={`season-tab ${s.seasonNumber === season ? "is-active" : ""}`}
             onClick={() => setSeason(s.seasonNumber)}
@@ -172,30 +815,46 @@ function SeasonEpisodes({ item, selectedEpisode, onPlayEpisode }: {
             {s.name || `Season ${s.seasonNumber}`}
           </button>
         ))}
+        {!seasons.length && loadingDetails ? <span className="season-tab is-loading">Loading seasons...</span> : null}
       </div>
-      <div className="episode-list">
-        {loading && <p className="empty">Loading episodes…</p>}
+      <RailScroller className="episode-list" ariaLabel={`season ${season} episodes`}>
+        {(loading || loadingDetails) && <p className="empty">Loading episodes...</p>}
+        {!loading && !loadingDetails && !episodes.length ? <p className="empty">No episodes found.</p> : null}
         {!loading && episodes.map((episode) => {
           const active = selectedEpisode?.season === season && selectedEpisode?.episode === episode.episodeNumber;
+          const episodeRating = episode.imdbRating || (episode.voteAverage && episode.voteAverage > 0 ? episode.voteAverage.toFixed(1) : "");
+          const watched = isWatched(item, season, episode.episodeNumber);
           return (
             <button
+              type="button"
               key={episode.id}
-              className={`episode-row ${active ? "is-active" : ""}`}
+              className={`episode-row ${active ? "is-active" : ""} ${watched ? "is-watched" : ""}`}
               onClick={() => onPlayEpisode(season, episode.episodeNumber)}
             >
               <div className="episode-still">
                 {episode.still ? <img src={episode.still} alt="" /> : <Clapperboard size={24} />}
+                <span className="episode-chip episode-chip-left">S{season} E{episode.episodeNumber.toString().padStart(2, "0")}</span>
+                {episode.airDate && <span className="episode-chip episode-chip-center">{episode.airDate}</span>}
+                {watched && <span className="watched-badge episode-watched-badge" aria-label="Watched"><BadgeCheck size={12} /></span>}
                 <span className="episode-play"><Play size={18} fill="currentColor" /></span>
               </div>
               <div className="episode-info">
-                <strong>{episode.episodeNumber}. {episode.name}</strong>
-                <span>{episode.airDate || ""}{episode.runtime ? ` • ${episode.runtime}m` : ""}</span>
+                <strong>{episode.name}</strong>
+                <span className="episode-subline">
+                  {episode.runtime ? `${episode.runtime}m` : `Episode ${episode.episodeNumber}`}
+                  {episodeRating && (
+                    <em className="episode-imdb">
+                      <img src={IMDB_LOGO} alt="IMDb" loading="lazy" />
+                      {episodeRating}
+                    </em>
+                  )}
+                </span>
                 <p>{episode.overview || ""}</p>
               </div>
             </button>
           );
         })}
-      </div>
+      </RailScroller>
     </section>
   );
 }

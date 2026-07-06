@@ -6,5 +6,8 @@
   "display": "standalone",
   "background_color": "#02070c",
   "theme_color": "#02070c",
-  "icons": []
+  "icons": [
+    { "src": "/arvio-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/arvio-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
 }
