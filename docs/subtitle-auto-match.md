@@ -99,8 +99,9 @@ target-language candidates exist.
   non-positive durations to a nominal ~2s, or every item is rejected (`end < start`) and the
   buffered path silently returns 0 for that whole content category: scans crawl at realtime pace,
   and realtime windows carry a systematic ~600ms render-lag skew that suppresses well-synced subs
-  to ≈ the 0.70 threshold. `bufDiag`/`resolverDump` log lines show extraction health; realtime
-  reference intervals ≠ authored cue times — buffered is the trustworthy source.
+  to ≈ the 0.70 threshold. Realtime reference intervals ≠ authored cue times — buffered is the
+  trustworthy source. (When debugging extraction, temporarily log resolver class/field/item
+  counts inside `extractBufferedIntervals` — that's how both resolver bugs were found.)
 - Guards on the buffered read: candidate-time-range sanity filter; **self-match guard by TEXT** —
   sample up to 8 buffered cue texts and drop the read if ≥half match the previously displayed
   candidate's own (normalized) lines. Guard history, do not regress:
@@ -222,8 +223,12 @@ default is SRT for extensionless URLs.
 
 Debug via `adb logcat` tag `SubMatch`:
 - `reference source=…` — scan entered scoring (after source-wait).
-- `align src=buffer|realtime|buffer+realtime buffered=N total=M refs=[…] candCues=[…]` —
-  reference vs first candidate sample; `src=buffer` + score **exactly 1.00** = self-match red flag.
-- `[builtin] candidate … score=X` — per-candidate verdicts.
+- `align src=buffer|realtime|buffer+realtime buffered=N total=M refs=[…] candNear=[…]` —
+  reference intervals vs the first candidate's cues nearest the scan window; `src=buffer` +
+  score **exactly 1.00** = self-match red flag; `buffered=0` = extraction dead (see §2 warning).
+- `[builtin] candidate … score=X` / `[hearing] candidate …` — per-candidate verdicts.
+- Rare warnings that flag real faults: `realtime self-cue interval dropped` (reference track
+  switch didn't land), `subtitle fetch skipped: no imdbId`, `load child '<name>' failed`,
+  `hearing aborted`, `match cache write failed`.
 Toast decoder: "Matched · N%" = verified; "(remembered)" = cache hit; "(sync unverified)" =
 fallback pick; "No well-synced … (best N%)" = rejection with evidence.

@@ -1280,13 +1280,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun scheduleSubtitleSelection(fallbackLanguage: String?) {
-        if (hasManualSubtitleSelection) {
-            android.util.Log.i(
-                "SubMatch",
-                "scheduleSubtitleSelection blocked: manual=true selected=${_uiState.value.selectedSubtitle?.label ?: "OFF"} scanning=${_uiState.value.isFindingBestMatch}"
-            )
-            return
-        }
+        if (hasManualSubtitleSelection) return
         val currentSel = _uiState.value.selectedSubtitle
         subtitleSelectionJob?.cancel()
         subtitleSelectionJob = viewModelScope.launch {
@@ -1344,13 +1338,7 @@ class PlayerViewModel @Inject constructor(
             }
         }
 
-        if (hasManualSubtitleSelection) {
-            android.util.Log.i(
-                "SubMatch",
-                "applyPref blocked: manual=true selected=${_uiState.value.selectedSubtitle?.label ?: "OFF"} scanning=${_uiState.value.isFindingBestMatch} subs=${subtitles.size}"
-            )
-            return
-        }
+        if (hasManualSubtitleSelection) return
         if (isSubtitleDisabledPreference(preference)) {
             _uiState.value = _uiState.value.copy(selectedSubtitle = null)
             return
@@ -2811,10 +2799,6 @@ class PlayerViewModel @Inject constructor(
                 .sortedByDescending { weightedSubtitleScore(streamSrc, it.id) }
                 .take(MATCH_MAX_CANDIDATES)
             if (candidates.isEmpty()) {
-                android.util.Log.i(
-                    "SubMatch",
-                    "scan end: no candidates (subs=${subs.size} target=$targetLang) — AI fallback? ai=$aiSubtitleEnabled keyLen=${aiApiKey.length}"
-                )
                 endMatch()
                 // No candidates at all in the target language — AI translation is the only
                 // possible target-language subtitle; fall back to it when available.
@@ -2997,9 +2981,6 @@ class PlayerViewModel @Inject constructor(
         var bufferedCount = 0
         var lastRefCount = 0
         var lastProgressElapsed = 0L
-        var lastDiagRaw = -1
-        var lastDiagKept = -1
-        var lastDiagRealtime = -1
         val startedAt = System.currentTimeMillis()
         while (true) {
             // Sanity-filter buffered timestamps: they must land within the candidate subtitles'
@@ -3012,8 +2993,6 @@ class PlayerViewModel @Inject constructor(
             // switch hasn't landed and we'd be scoring the candidate against itself. Timing-based
             // detection is unusable here: subs cut from the same master share cue timings across
             // languages (a constant-delta check froze scans by discarding legit references).
-            var diagSampled = 0
-            var diagHits = 0
             val buffered = run {
                 if (previousTexts.isNullOrEmpty() || bufferedRaw.isEmpty()) return@run bufferedRaw
                 val sampled = runCatching { bufferedCueTextsProvider?.invoke(8) }
@@ -3021,9 +3000,8 @@ class PlayerViewModel @Inject constructor(
                     .map { normalizeCueTextForCompare(it) }
                     .filter { it.isNotEmpty() }
                 if (sampled.isEmpty()) return@run bufferedRaw
-                diagSampled = sampled.size
-                diagHits = sampled.count { it in previousTexts }
-                if (diagHits * 2 >= diagSampled) emptyList() else bufferedRaw
+                val hits = sampled.count { it in previousTexts }
+                if (hits * 2 >= sampled.size) emptyList() else bufferedRaw
             }
             val realtime = synchronized(referenceIntervals) { referenceIntervals.toList() }
             // Realtime intervals that overlap a buffered one describe the same cue — drop them.
@@ -3032,20 +3010,6 @@ class PlayerViewModel @Inject constructor(
                 if (buffered.none { b -> r.first < b.second && b.first < r.second }) merged.add(r)
             }
             refs = merged.sortedBy { it.first }
-            // Diagnostics: log whenever the tick's composition changes — pinpoints whether slow
-            // scans starve at extraction (raw=0), at the guard (raw>0 kept=0), or at realtime.
-            if (bufferedRaw.size != lastDiagRaw || buffered.size != lastDiagKept ||
-                realtime.size != lastDiagRealtime
-            ) {
-                lastDiagRaw = bufferedRaw.size
-                lastDiagKept = buffered.size
-                lastDiagRealtime = realtime.size
-                android.util.Log.i(
-                    "SubMatch",
-                    "tick raw=${bufferedRaw.size} kept=${buffered.size} realtime=${realtime.size} " +
-                        "guardSampled=$diagSampled guardHits=$diagHits refs=${refs.size}"
-                )
-            }
             bufferedCount = buffered.size
 
             val elapsed = System.currentTimeMillis() - startedAt
