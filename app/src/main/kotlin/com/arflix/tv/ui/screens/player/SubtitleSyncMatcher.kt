@@ -30,24 +30,26 @@ object SubtitleSyncMatcher {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    suspend fun loadCues(url: String): List<TimedCue> = withContext(Dispatchers.IO) {
+    /** Downloads a subtitle and returns its decoded (UTF-8, gunzipped) text, or null on failure. */
+    suspend fun loadRaw(url: String): String? = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use emptyList()
-                val body = response.body ?: return@use emptyList()
+                if (!response.isSuccessful) return@use null
+                val body = response.body ?: return@use null
                 val raw = body.bytes()
-                val text = if (looksGzipped(url, raw)) {
+                if (looksGzipped(url, raw)) {
                     GZIPInputStream(raw.inputStream()).bufferedReader(Charsets.UTF_8).readText()
                 } else {
                     String(raw, Charsets.UTF_8)
                 }
-                parseCues(text)
             }
         }.onFailure { error ->
-            Log.w(TAG, "loadCues failed url=$url err=${error.message}")
-        }.getOrDefault(emptyList())
+            Log.w(TAG, "loadRaw failed url=$url err=${error.message}")
+        }.getOrNull()
     }
+
+    suspend fun loadCues(url: String): List<TimedCue> = loadRaw(url)?.let { parseCues(it) } ?: emptyList()
 
     /**
      * Score a candidate's cues against the collected spoken samples. For each sample we look at

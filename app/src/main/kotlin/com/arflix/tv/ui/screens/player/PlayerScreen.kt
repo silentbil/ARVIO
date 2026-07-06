@@ -764,10 +764,16 @@ fun PlayerScreen(
             .setDefaultRequestProperties(baseRequestHeaders)
     }
     val mediaCache = remember(context) { PlaybackCacheSingleton.getInstance(context) }
-    val cacheDataSourceFactory = remember(httpDataSourceFactory, mediaCache) {
+    // Wrap the OkHttp factory so file:// URIs also work — matched subtitles are served from a
+    // local cache file (already downloaded by the scan) instead of re-fetching addon servers.
+    // http/https still routes through the same OkHttp client as before.
+    val fileCapableDataSourceFactory = remember(httpDataSourceFactory) {
+        androidx.media3.datasource.DefaultDataSource.Factory(context, httpDataSourceFactory)
+    }
+    val cacheDataSourceFactory = remember(fileCapableDataSourceFactory, mediaCache) {
         CacheDataSource.Factory()
             .setCache(mediaCache)
-            .setUpstreamDataSourceFactory(httpDataSourceFactory)
+            .setUpstreamDataSourceFactory(fileCapableDataSourceFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
     // Non-cached factory for heavy/debrid progressive streams to avoid disk I/O bottleneck
@@ -1847,6 +1853,12 @@ fun PlayerScreen(
                         !userSelectedSourceManually &&
                         tryAdvanceToNextStream()
                     ) {
+                        // Restart the startup clock immediately: the real reset happens only after
+                        // the next stream resolves (async). Without this, the loop re-evaluates the
+                        // stale clock on the very next iteration and fires a failover burst that
+                        // burns through the entire source list in milliseconds.
+                        streamSelectedTime = System.currentTimeMillis()
+                        startupRecoverAttempted = false
                         continue
                     }
                     startupHardFailureReported = true

@@ -2426,15 +2426,22 @@ class PlayerViewModel @Inject constructor(
             }
 
             val resolvedSelected = if (selected != null) {
-                finalList.firstOrNull { it.id == selected.id }
-                    ?: finalList.firstOrNull { selected.url.isNotBlank() && it.url == selected.url }
-                    // After MediaItem rebuild groupIndex can change, making generated IDs stale.
-                    // Fall back to lang+label match for embedded subs so the nonce-based
-                    // LaunchedEffect fires with the freshly-indexed version.
-                    ?: if (selected.isEmbedded) finalList.firstOrNull {
-                        it.isEmbedded && it.lang == selected.lang && it.label == selected.label
-                    } else null
-                    ?: selected
+                if (!selected.isEmbedded && selected.url.startsWith("file:")) {
+                    // A matched subtitle localized to a cache file — keep it as-is. Remapping to
+                    // the addon-list entry (same id) would swap the URL back to the remote server
+                    // and re-trigger a MediaItem rebuild with the slow remote source.
+                    selected
+                } else {
+                    finalList.firstOrNull { it.id == selected.id }
+                        ?: finalList.firstOrNull { selected.url.isNotBlank() && it.url == selected.url }
+                        // After MediaItem rebuild groupIndex can change, making generated IDs stale.
+                        // Fall back to lang+label match for embedded subs so the nonce-based
+                        // LaunchedEffect fires with the freshly-indexed version.
+                        ?: if (selected.isEmbedded) finalList.firstOrNull {
+                            it.isEmbedded && it.lang == selected.lang && it.label == selected.label
+                        } else null
+                        ?: selected
+                }
             } else {
                 null
             }
@@ -2714,22 +2721,6 @@ class PlayerViewModel @Inject constructor(
                 return@launch
             }
 
-            // Last resort when the scan fails outright and no AI fallback is active: behave like
-            // the classic non-AI flow and pick the best release-name-scored candidate. A current
-            // selection survives only if it's already in the target language — a fallback-language
-            // stand-in (e.g. embedded English picked while the addon list was still loading) must
-            // not outlive a failed scan. Sync is unverified, so it is deliberately not remembered
-            // in the match cache.
-            fun selectLastResort() {
-                if (_uiState.value.isAiTranslating) return
-                val current = _uiState.value.selectedSubtitle
-                if (current != null && normalizeLanguage(current.lang) == targetLang) return
-                candidates.firstOrNull()?.let {
-                    selectSubtitle(it, isUserAction = false)
-                    showMatchToast("Selected ${it.label} (sync unverified)")
-                }
-            }
-
             // A previously matched subtitle for this exact stream (same file → same sync) that is
             // still offered by the addons wins immediately — no need to rescan. Skipped for
             // user-triggered rescans, which mean the remembered pick is unwanted.
@@ -2738,8 +2729,12 @@ class PlayerViewModel @Inject constructor(
                     candidates.firstOrNull { it.id == cached.id && it.provider == cached.provider }
                 }
                 if (remembered != null) {
+                    // Serve from a local cache file so the MediaItem rebuild doesn't stall on a
+                    // slow addon server (download bounded by the matcher's client timeouts).
+                    val local = SubtitleSyncMatcher.loadRaw(remembered.url)
+                        ?.let { localizeSubtitle(remembered, it) } ?: remembered
                     endMatch()
-                    selectSubtitle(remembered, isUserAction = false)
+                    selectSubtitle(local, isUserAction = false)
                     showMatchToast("Matched: ${remembered.label} (remembered)")
                     return@launch
                 }
@@ -2762,9 +2757,42 @@ class PlayerViewModel @Inject constructor(
             )
             updateMatchStatus("Finding best subtitle ($sourceLabel)…")
 
-            val loaded = candidates.map { sub ->
-                async { sub to SubtitleSyncMatcher.loadCues(sub.url) }
-            }.awaitAll().filter { it.second.isNotEmpty() }
+            // Keep the raw text alongside the parsed cues: the winning subtitle is later served to
+            // ExoPlayer from a local cache file (already downloaded here) instead of re-fetching
+            // a possibly slow addon server during the MediaItem rebuild.
+            val loadedRaw = candidates.map { sub ->
+                async { sub to SubtitleSyncMatcher.loadRaw(sub.url) }
+            }.awaitAll()
+            val rawBySubKey = loadedRaw.mapNotNull { (sub, raw) ->
+                raw?.let { "${sub.provider}|${sub.id}" to it }
+            }.toMap()
+            val loaded = loadedRaw.mapNotNull { (sub, raw) ->
+                val cues = raw?.let { SubtitleSyncMatcher.parseCues(it) }.orEmpty()
+                if (cues.isEmpty()) null else sub to cues
+            }
+
+            /** Select [sub], serving it from a local file when its text was downloaded. */
+            fun selectServedLocally(sub: Subtitle) {
+                val localized = rawBySubKey["${sub.provider}|${sub.id}"]
+                    ?.let { localizeSubtitle(sub, it) } ?: sub
+                selectSubtitle(localized, isUserAction = false)
+            }
+
+            // Last resort when the scan fails outright and no AI fallback is active: behave like
+            // the classic non-AI flow and pick the best release-name-scored candidate. A current
+            // selection survives only if it's already in the target language — a fallback-language
+            // stand-in (e.g. embedded English picked while the addon list was still loading) must
+            // not outlive a failed scan. Sync is unverified, so it is deliberately not remembered
+            // in the match cache.
+            fun selectLastResort() {
+                if (_uiState.value.isAiTranslating) return
+                val current = _uiState.value.selectedSubtitle
+                if (current != null && normalizeLanguage(current.lang) == targetLang) return
+                candidates.firstOrNull()?.let {
+                    selectServedLocally(it)
+                    showMatchToast("Selected ${it.label} (sync unverified)")
+                }
+            }
 
             if (loaded.isEmpty()) {
                 endMatch()
@@ -2795,7 +2823,8 @@ class PlayerViewModel @Inject constructor(
             }
             val best = scored?.maxByOrNull { it.second }
             if (best != null && best.second >= successThreshold) {
-                selectSubtitle(best.first, isUserAction = false)
+                selectServedLocally(best.first)
+                // Cache the original (addon) identity — the local file is per-session transient.
                 writeCachedMatch(best.first)
                 showMatchToast("Matched: ${best.first.label} · ${(best.second * 100).toInt()}% ($sourceLabel)")
             } else {
@@ -3124,6 +3153,25 @@ class PlayerViewModel @Inject constructor(
         val cacheable = target.isNotBlank() && !subtitle.isEmbedded && !subtitle.isBitmap &&
             subtitle.url.isNotBlank() && normalizeLanguage(subtitle.lang) == target
         writeCachedMatch(if (cacheable) subtitle else null)
+    }
+
+    /**
+     * Writes downloaded subtitle text to a small local cache file and returns a copy of [sub]
+     * pointing at it (file:// URI). ExoPlayer then side-loads the matched subtitle instantly
+     * during the MediaItem rebuild instead of re-downloading it from a possibly slow/flaky addon
+     * server — which is what used to leave the player stuck buffering after a match. Also
+     * normalizes the content (UTF-8, gunzipped) as a side effect.
+     */
+    private fun localizeSubtitle(sub: Subtitle, raw: String): Subtitle {
+        return runCatching {
+            val dir = java.io.File(context.cacheDir, "matched_subs").apply { mkdirs() }
+            // Keep the directory bounded; files are ~100KB and keyed stably per subtitle.
+            dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(39)?.forEach { it.delete() }
+            val ext = if (raw.trimStart().startsWith("WEBVTT")) "vtt" else "srt"
+            val file = java.io.File(dir, "${("${sub.provider}|${sub.id}").hashCode().toUInt()}.$ext")
+            file.writeText(raw)
+            sub.copy(url = file.toURI().toString())
+        }.getOrDefault(sub)
     }
 
     private fun showMatchToast(message: String) {
