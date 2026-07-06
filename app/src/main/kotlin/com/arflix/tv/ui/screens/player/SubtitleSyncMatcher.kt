@@ -74,13 +74,21 @@ object SubtitleSyncMatcher {
         return hits.toDouble() / samples.size
     }
 
+    /** Reference windows longer than this are merged back-to-back cues, not a single cue. */
+    private const val SINGLE_CUE_MAX_MS = 7_000L
+
     /**
      * Score a candidate against a synced reference (a built-in subtitle's cue-visible intervals)
-     * purely by timing. For each reference interval we measure how much of it is covered by the
-     * union of the candidate's cues, and average the fractions. A synced candidate has cues at
-     * the same times → high coverage; an offset candidate → low. Union (not best-single-cue)
-     * because realtime-collected reference intervals merge back-to-back cues into long windows
-     * that span several candidate cues. Language-agnostic (no translation needed).
+     * purely by timing, averaging a per-window overlap fraction.
+     *
+     * Two regimes per reference window:
+     * - Normal windows (a single cue, ≤ [SINGLE_CUE_MAX_MS]): best overlap by any *one* candidate
+     *   cue. This is what discriminates offsets — in dialogue-dense scenes a shifted sub still has
+     *   *chains* of cues touching any window, but no single cue aligns with it.
+     * - Long windows (realtime collection merges back-to-back cues): coverage by the union of the
+     *   candidate's cues, since even a perfectly synced sub needs several cues to span them.
+     *
+     * Language-agnostic (no translation needed).
      */
     fun scoreByTiming(cues: List<TimedCue>, referenceIntervals: List<Pair<Long, Long>>): Double {
         if (cues.isEmpty() || referenceIntervals.isEmpty()) return 0.0
@@ -88,19 +96,26 @@ object SubtitleSyncMatcher {
         var sum = 0.0
         for ((rs, re) in referenceIntervals) {
             val refDur = (re - rs).coerceAtLeast(1L)
-            var covered = 0L
-            var cursor = rs
-            for (c in sorted) {
-                if (c.endMs <= cursor) continue
-                if (c.startMs >= re) break
-                val s = maxOf(c.startMs, cursor)
-                val e = minOf(c.endMs, re)
-                if (e > s) {
-                    covered += e - s
-                    cursor = e
+            val fraction = if (refDur <= SINGLE_CUE_MAX_MS) {
+                sorted.maxOfOrNull { c ->
+                    (minOf(re, c.endMs) - maxOf(rs, c.startMs)).toDouble() / refDur
+                } ?: 0.0
+            } else {
+                var covered = 0L
+                var cursor = rs
+                for (c in sorted) {
+                    if (c.endMs <= cursor) continue
+                    if (c.startMs >= re) break
+                    val s = maxOf(c.startMs, cursor)
+                    val e = minOf(c.endMs, re)
+                    if (e > s) {
+                        covered += e - s
+                        cursor = e
+                    }
                 }
+                covered.toDouble() / refDur
             }
-            sum += (covered.toDouble() / refDur).coerceIn(0.0, 1.0)
+            sum += fraction.coerceIn(0.0, 1.0)
         }
         return sum / referenceIntervals.size
     }
