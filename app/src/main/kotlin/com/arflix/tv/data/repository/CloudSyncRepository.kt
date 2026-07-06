@@ -490,7 +490,7 @@ class CloudSyncRepository @Inject constructor(
         // Global AI subtitle settings (non-profile-scoped)
         root.put("subtitleAiEnabled", prefs[subtitleAiEnabledKey] ?: false)
         root.put("subtitleAiAutoSelect", prefs[subtitleAiAutoSelectKey] ?: false)
-        root.put("subtitleAiFindBestMatch", prefs[subtitleAiFindBestMatchKey] ?: true)
+        root.put("subtitleAiFindBestMatch", prefs[subtitleAiFindBestMatchKey] ?: false)
         root.put("subtitleAiApiKey", prefs[subtitleAiApiKeyKey] ?: "")
         root.put("subtitleAiModel", prefs[subtitleAiModelKey] ?: "GROQ_LLAMA_70B")
         root.put("subtitleRemoveHearingImpaired", prefs[subtitleRemoveHearingImpairedKey] ?: true)
@@ -1229,7 +1229,7 @@ class CloudSyncRepository @Inject constructor(
             context.settingsDataStore.edit { prefs ->
                 prefs[subtitleAiEnabledKey] = root.optBoolean("subtitleAiEnabled", false)
                 prefs[subtitleAiAutoSelectKey] = root.optBoolean("subtitleAiAutoSelect", false)
-                prefs[subtitleAiFindBestMatchKey] = root.optBoolean("subtitleAiFindBestMatch", true)
+                prefs[subtitleAiFindBestMatchKey] = root.optBoolean("subtitleAiFindBestMatch", false)
                 val apiKey = root.optString("subtitleAiApiKey", "")
                 if (apiKey.isNotBlank()) prefs[subtitleAiApiKeyKey] = apiKey
                 val model = root.optString("subtitleAiModel", "GROQ_LLAMA_70B")

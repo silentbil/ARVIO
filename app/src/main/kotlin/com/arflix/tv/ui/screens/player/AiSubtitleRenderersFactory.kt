@@ -47,6 +47,19 @@ class AiSubtitleRenderersFactory(
         return emptyList()
     }
 
+    /**
+     * Text of the currently-buffered cues of the selected text track. Lets "Find best match"
+     * verify WHICH track the buffer belongs to (by comparing against the displayed candidate's
+     * own lines) — timing-based self-detection false-positived on subs cut from the same master.
+     */
+    fun extractBufferedCueTexts(maxCount: Int): List<String> {
+        for (renderer in offsetRenderers) {
+            val texts = renderer.extractAllCueTexts()
+            if (texts.isNotEmpty()) return texts.take(maxCount)
+        }
+        return emptyList()
+    }
+
     override fun buildAudioSink(
         context: Context,
         enableFloatOutput: Boolean,
@@ -350,7 +363,7 @@ private class SubtitleOffsetRenderer(
 
     // ── Reflection-based cue extraction ──────────────────────────────────────
 
-    private fun extractAllCueTexts(): List<String> {
+    fun extractAllCueTexts(): List<String> {
         val removeHI = translationManager.removeHearingImpaired
         val texts = mutableSetOf<String>()
 
@@ -413,32 +426,117 @@ private class SubtitleOffsetRenderer(
         return texts.toList()
     }
 
+    private var bufDiagLogged = 0
+
     /** Buffered cue intervals (startMs, endMs) for text-carrying cues, from the modern resolver. */
     fun extractBufferedIntervals(maxCount: Int): List<Pair<Long, Long>> {
         val intervals = ArrayList<Pair<Long, Long>>()
         // Cue buffer timestamps are on ExoPlayer's internal stream timeline, which adds a large
         // base offset; subtract the renderer's stream offset to get 0-based media time.
         val offsetMs = readStreamOffsetUs() / 1000L
+        var resolverFound = false
+        var fieldUsed: String? = null
         try {
-            val resolverField = findField(baseRenderer.javaClass, "cuesResolver") ?: return emptyList()
-            val resolver = resolverField.get(baseRenderer) ?: return emptyList()
-            for (candidate in listOf("cuesWithTimingList", "cueGroupsByStartTime", "cueGroups", "cueGroupList", "groups")) {
-                val f = findField(resolver.javaClass, candidate) ?: continue
-                val v = f.get(resolver) ?: continue
-                val items: Collection<*> = when (v) {
-                    is Map<*, *> -> v.values
-                    is Collection<*> -> v
-                    else -> continue
+            val resolverField = findField(baseRenderer.javaClass, "cuesResolver")
+            val resolver = resolverField?.get(baseRenderer)
+            resolverFound = resolver != null
+            if (resolver != null) {
+                // Media3 has multiple resolver impls chosen per track cue-replacement behavior:
+                // MergingCuesResolver ("cuesWithTimingList") and ReplacingCuesResolver
+                // ("cuesWithTimings") — probe both; content differs per rip (MKV SubRip vs VTT).
+                for (candidate in listOf(
+                    "cuesWithTimingList", "cuesWithTimings",
+                    "cueGroupsByStartTime", "cueGroups", "cueGroupList", "groups"
+                )) {
+                    val f = findField(resolver.javaClass, candidate) ?: continue
+                    val v = f.get(resolver) ?: continue
+                    val items: Collection<*> = when (v) {
+                        is Map<*, *> -> v.values
+                        is Collection<*> -> v
+                        else -> continue
+                    }
+                    for (item in items) {
+                        val (s, e) = item?.let(::intervalFromCueWrapper) ?: continue
+                        intervals.add((s - offsetMs) to (e - offsetMs))
+                    }
+                    if (intervals.isNotEmpty()) {
+                        fieldUsed = candidate
+                        break
+                    }
                 }
-                for (item in items) {
-                    val (s, e) = item?.let(::intervalFromCueWrapper) ?: continue
-                    intervals.add((s - offsetMs) to (e - offsetMs))
+                if (intervals.isEmpty()) {
+                    // Unknown impl/field name (new media3 version?) — scan every field for a
+                    // cue-carrying collection, like the text extractor already does.
+                    var cls: Class<*>? = resolver.javaClass
+                    outer@ while (cls != null && cls != Any::class.java) {
+                        for (f in cls.declaredFields) {
+                            try {
+                                f.isAccessible = true
+                                val v = f.get(resolver) ?: continue
+                                val items: Collection<*> = when (v) {
+                                    is Map<*, *> -> v.values
+                                    is Collection<*> -> v
+                                    else -> continue
+                                }
+                                for (item in items) {
+                                    val (s, e) = item?.let(::intervalFromCueWrapper) ?: continue
+                                    intervals.add((s - offsetMs) to (e - offsetMs))
+                                }
+                                if (intervals.isNotEmpty()) {
+                                    fieldUsed = "fallback:${f.name}"
+                                    break@outer
+                                }
+                            } catch (_: Exception) {
+                            }
+                        }
+                        cls = cls.superclass
+                    }
                 }
-                if (intervals.isNotEmpty()) break
             }
         } catch (_: Exception) {
         }
-        return intervals.filter { it.first >= 0 }.distinct().sortedBy { it.first }.take(maxCount)
+        val out = intervals.filter { it.first >= 0 }.distinct().sortedBy { it.first }.take(maxCount)
+        // Diagnostics: pinpoints whether slow scans starve at the reflection (resolver/field
+        // missing — e.g. R8), at the offset correction (raw > 0 but out = 0), or downstream.
+        if (bufDiagLogged < 10) {
+            bufDiagLogged++
+            android.util.Log.i(
+                "SubMatch",
+                "bufDiag resolver=$resolverFound field=$fieldUsed raw=${intervals.size} out=${out.size} offsetMs=$offsetMs"
+            )
+            // Extraction found nothing: dump the resolver's real shape once so the probe list can
+            // be corrected from evidence instead of guessed media3 internals.
+            if (resolverFound && intervals.isEmpty() && bufDiagLogged == 5) {
+                runCatching {
+                    val resolver = findField(baseRenderer.javaClass, "cuesResolver")?.get(baseRenderer)
+                    if (resolver != null) {
+                        val desc = buildString {
+                            append(resolver.javaClass.name).append(" {")
+                            var cls: Class<*>? = resolver.javaClass
+                            while (cls != null && cls != Any::class.java) {
+                                for (f in cls.declaredFields) {
+                                    runCatching {
+                                        f.isAccessible = true
+                                        val v = f.get(resolver)
+                                        val size = when (v) {
+                                            is Collection<*> -> "size=${v.size}"
+                                            is Map<*, *> -> "size=${v.size}"
+                                            null -> "null"
+                                            else -> v.javaClass.simpleName
+                                        }
+                                        append(" ${f.name}:$size;")
+                                    }
+                                }
+                                cls = cls.superclass
+                            }
+                            append(" }")
+                        }
+                        android.util.Log.i("SubMatch", "bufDiag resolverDump $desc")
+                    }
+                }
+            }
+        }
+        return out
     }
 
     /** The renderer's stream offset (µs) — the base added to buffer sample timestamps. */
@@ -465,7 +563,13 @@ private class SubtitleOffsetRenderer(
             endUs = startUs + 2_000_000L // CueGroup carries no duration — assume 2s on screen
         } else {
             val start = runCatching { findField(obj.javaClass, "startTimeUs")?.getLong(obj) }.getOrNull() ?: return null
-            val dur = runCatching { findField(obj.javaClass, "durationUs")?.getLong(obj) }.getOrNull() ?: 2_000_000L
+            // REPLACE-behavior tracks (ReplacingCuesResolver, e.g. MKV SubRip) carry
+            // durationUs = C.TIME_UNSET (large negative) — each cue lasts until replaced. The
+            // negative value made endUs < startUs and every item got rejected, silently killing
+            // the buffered fast path for that whole content category. Fall back to a nominal
+            // duration: the start timestamp carries the alignment signal.
+            val dur = runCatching { findField(obj.javaClass, "durationUs")?.getLong(obj) }.getOrNull()
+                ?.takeIf { it > 0L } ?: 2_000_000L
             startUs = start
             endUs = start + dur
         }

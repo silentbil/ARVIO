@@ -210,7 +210,7 @@ class PlayerViewModel @Inject constructor(
     // When true (default), activating AI first tries to auto-pick a synced addon subtitle in the
     // user's preferred language (Find Best Match); only if nothing matches does it translate the
     // built-in subtitle.
-    private var aiFindBestMatchFirst = true
+    private var aiFindBestMatchFirst = false
     // Normalized code of the user's preferred subtitle language (e.g. "he") — the target of both
     // "find best match" and AI translation. Blank when unset/disabled.
     @Volatile private var targetSubtitleLangCode = ""
@@ -285,16 +285,40 @@ class PlayerViewModel @Inject constructor(
     /** Set by the player screen: reads the selected text track's already-buffered cue intervals. */
     @Volatile var bufferedReferenceIntervalsProvider: ((Int) -> List<Pair<Long, Long>>)? = null
 
+    /** Set by the player screen: reads the selected text track's already-buffered cue texts. */
+    @Volatile var bufferedCueTextsProvider: ((Int) -> List<String>)? = null
+
+    // Normalized lines of the candidate displayed when the scan started — set for the duration of
+    // reference collection so BOTH the buffered and the realtime paths can reject self-cues (the
+    // reference track switch landing late/never would otherwise score a candidate against itself).
+    @Volatile private var matchPreviousTexts: Set<String>? = null
+    @Volatile private var refIntervalSelfText = false
+
     /** Rendered-cue callback from the player; records reference intervals during a built-in scan. */
-    fun onPlayerCues(hasText: Boolean, timeMs: Long) {
+    fun onPlayerCues(hasText: Boolean, timeMs: Long, textSample: String? = null) {
         if (!collectingReference || timeMs < 0) return
         if (hasText) {
-            if (refIntervalStart < 0) refIntervalStart = timeMs
+            if (refIntervalStart < 0) {
+                refIntervalStart = timeMs
+                refIntervalSelfText = false
+            }
+            val prev = matchPreviousTexts
+            if (prev != null && textSample != null &&
+                normalizeCueTextForCompare(textSample) in prev
+            ) {
+                refIntervalSelfText = true
+            }
         } else if (refIntervalStart in 0 until timeMs) {
             // An interval spanning a forward seek would record a bogus minutes-long "cue";
             // real cues never stay on screen this long — drop it.
-            if (timeMs - refIntervalStart <= MATCH_MAX_REF_INTERVAL_MS) {
+            val validLength = timeMs - refIntervalStart <= MATCH_MAX_REF_INTERVAL_MS
+            if (validLength && !refIntervalSelfText) {
                 synchronized(referenceIntervals) { referenceIntervals.add(refIntervalStart to timeMs) }
+            } else if (refIntervalSelfText) {
+                android.util.Log.w(
+                    "SubMatch",
+                    "realtime self-cue interval dropped ${refIntervalStart}..$timeMs — reference track switch not landed?"
+                )
             }
             refIntervalStart = -1L
         } else if (refIntervalStart >= 0) {
@@ -427,6 +451,10 @@ class PlayerViewModel @Inject constructor(
             isLoading = true,
             isLoadingStreams = false,
             selectedSubtitle = null,
+            // A new video means a new subtitle universe — stale externals from the previous
+            // title poisoned both the picker and the match scan (references from the new video
+            // scored against the old video's candidates).
+            subtitles = emptyList(),
             isAiTranslating = false,
             isAiAvailable = false,
             aiTargetLanguageName = "",
@@ -476,7 +504,7 @@ class PlayerViewModel @Inject constructor(
             // Load AI subtitle settings
             aiSubtitleEnabled = prefs[aiEnabledKey] ?: false
             aiSubtitleAutoSelect = prefs[aiAutoSelectKey] ?: false
-            aiFindBestMatchFirst = prefs[aiFindBestMatchKey] ?: true
+            aiFindBestMatchFirst = prefs[aiFindBestMatchKey] ?: false
             aiApiKey = prefs[aiApiKeyKey] ?: ""
             aiModel = runCatching {
                 SubtitleAiModel.valueOf(prefs[aiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)
@@ -571,58 +599,85 @@ class PlayerViewModel @Inject constructor(
                     selectedStreamUrl = resolvedProvidedUrl,
                     savedPosition = resumeData.positionMs
                 )
+                // NOTE: these background children share the load job — an uncaught exception in
+                // any of them cancels ALL siblings (that silently killed the subtitle flow).
+                // Every body is therefore failure-isolated and logged.
+                fun childFailed(name: String): (Throwable) -> Unit = { e ->
+                    if (e !is kotlinx.coroutines.CancellationException) {
+                        android.util.Log.w("PlayerViewModel", "load child '$name' failed: ${e.message}")
+                    }
+                }
                 launch {
                     kotlinx.coroutines.delay(1_500L)
-                    populateStreamsForProvidedUrl(
-                        mediaType = mediaType,
-                        mediaId = mediaId,
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        providedImdbId = providedImdbId,
-                        playbackUrl = resolvedProvidedUrl
-                    )
+                    runCatching {
+                        populateStreamsForProvidedUrl(
+                            mediaType = mediaType,
+                            mediaId = mediaId,
+                            seasonNumber = seasonNumber,
+                            episodeNumber = episodeNumber,
+                            providedImdbId = providedImdbId,
+                            playbackUrl = resolvedProvidedUrl
+                        )
+                    }.onFailure(childFailed("populateStreams"))
                 }
                 // Load IPTV and home-server sources from cache in parallel so the
                 // source picker in the player shows alternatives immediately.
                 homeServerAppendJob?.cancel()
                 homeServerAppendJob = launch {
-                    appendHomeServerSourcesInBackground(
-                        mediaType = mediaType,
-                        imdbId = currentImdbId,
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        timeoutMs = 5_000L
-                    )
+                    runCatching {
+                        appendHomeServerSourcesInBackground(
+                            mediaType = mediaType,
+                            imdbId = currentImdbId,
+                            seasonNumber = seasonNumber,
+                            episodeNumber = episodeNumber,
+                            timeoutMs = 5_000L
+                        )
+                    }.onFailure(childFailed("homeServerAppend"))
                 }
                 vodAppendJob?.cancel()
                 vodAppendJob = launch {
-                    appendVodSourceInBackground(
-                        mediaType = mediaType,
-                        imdbId = currentImdbId,
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        timeoutMs = 15_000L
-                    )
+                    runCatching {
+                        appendVodSourceInBackground(
+                            mediaType = mediaType,
+                            imdbId = currentImdbId,
+                            seasonNumber = seasonNumber,
+                            episodeNumber = episodeNumber,
+                            timeoutMs = 15_000L
+                        )
+                    }.onFailure(childFailed("vodAppend"))
                 }
                 // Fetch metadata in background
-                launch { fetchMediaMetadata(mediaType, mediaId) }
+                launch {
+                    runCatching { fetchMediaMetadata(mediaType, mediaId) }
+                        .onFailure(childFailed("metadata"))
+                }
                 // Fetch skip intervals in background (needs IMDB id)
                 launch {
-                    if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
-                        val cachedImdbId = currentImdbId ?: mediaRepository.getCachedImdbId(mediaType, mediaId)
-                        val imdbId = cachedImdbId ?: resolveExternalIds(mediaType, mediaId).imdbId
-                        if (!imdbId.isNullOrBlank()) {
-                            currentImdbId = imdbId
-                            if (cachedImdbId == null) mediaRepository.cacheImdbId(mediaType, mediaId, imdbId)
-                            fetchSkipIntervals(imdbId, seasonNumber, episodeNumber)
+                    runCatching {
+                        if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
+                            val cachedImdbId = currentImdbId ?: mediaRepository.getCachedImdbId(mediaType, mediaId)
+                            val imdbId = cachedImdbId ?: resolveExternalIds(mediaType, mediaId).imdbId
+                            if (!imdbId.isNullOrBlank()) {
+                                currentImdbId = imdbId
+                                if (cachedImdbId == null) mediaRepository.cacheImdbId(mediaType, mediaId, imdbId)
+                                fetchSkipIntervals(imdbId, seasonNumber, episodeNumber)
+                            }
                         }
-                    }
+                    }.onFailure(childFailed("skipIntervals"))
                 }
                 // Direct-URL playback must still fetch subtitle addons (e.g. OpenSubtitles).
-                launch {
+                // On viewModelScope (NOT a child of this load job): sibling children above
+                // (VOD/home-server/stream appends) occasionally throw, which cancels the whole
+                // load job and — because this block is registered last — killed the subtitle
+                // flow before its first line ran: no fetch, no selection, playback with
+                // subtitles silently Off. loadMedia cancels subtitleRefreshJob, so lifecycle
+                // stays correct across videos.
+                subtitleRefreshJob?.cancel()
+                subtitleRefreshJob = viewModelScope.launch {
                     _uiState.value = _uiState.value.copy(isLoadingSubtitles = true)
                     val cachedImdbId = currentImdbId ?: mediaRepository.getCachedImdbId(mediaType, mediaId)
-                    val imdbId = cachedImdbId ?: resolveExternalIds(mediaType, mediaId).imdbId
+                    val imdbId = cachedImdbId
+                        ?: runCatching { resolveExternalIds(mediaType, mediaId).imdbId }.getOrNull()
 
                     if (!imdbId.isNullOrBlank()) {
                         currentImdbId = imdbId
@@ -652,7 +707,15 @@ class PlayerViewModel @Inject constructor(
 
                         scheduleSubtitleSelection(currentOriginalLanguage)
                     } else {
+                        // No IMDb id → addon subs can't be fetched, but the selection flow must
+                        // still run: embedded tracks and the AI option exist regardless. Silently
+                        // stopping here left playback with NOTHING selected ("Off") and no scan.
+                        android.util.Log.w(
+                            "SubMatch",
+                            "subtitle fetch skipped: no imdbId for $mediaType/$mediaId — scheduling selection with embedded-only"
+                        )
                         _uiState.value = _uiState.value.copy(isLoadingSubtitles = false)
+                        scheduleSubtitleSelection(currentOriginalLanguage)
                     }
                 }
                 return@launch
@@ -1217,7 +1280,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun scheduleSubtitleSelection(fallbackLanguage: String?) {
-        if (hasManualSubtitleSelection) return
+        if (hasManualSubtitleSelection) {
+            android.util.Log.i(
+                "SubMatch",
+                "scheduleSubtitleSelection blocked: manual=true selected=${_uiState.value.selectedSubtitle?.label ?: "OFF"} scanning=${_uiState.value.isFindingBestMatch}"
+            )
+            return
+        }
         val currentSel = _uiState.value.selectedSubtitle
         subtitleSelectionJob?.cancel()
         subtitleSelectionJob = viewModelScope.launch {
@@ -1275,7 +1344,13 @@ class PlayerViewModel @Inject constructor(
             }
         }
 
-        if (hasManualSubtitleSelection) return
+        if (hasManualSubtitleSelection) {
+            android.util.Log.i(
+                "SubMatch",
+                "applyPref blocked: manual=true selected=${_uiState.value.selectedSubtitle?.label ?: "OFF"} scanning=${_uiState.value.isFindingBestMatch} subs=${subtitles.size}"
+            )
+            return
+        }
         if (isSubtitleDisabledPreference(preference)) {
             _uiState.value = _uiState.value.copy(selectedSubtitle = null)
             return
@@ -2504,6 +2579,7 @@ class PlayerViewModel @Inject constructor(
     private fun cancelFindBestMatch() {
         findMatchJob?.cancel()
         collectingReference = false
+        matchPreviousTexts = null
         if (_uiState.value.isFindingBestMatch || _uiState.value.isLiveAudioTranslating) {
             geminiLiveService.disconnect()
             _uiState.value = _uiState.value.copy(
@@ -2575,8 +2651,27 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Scan-failure fallback: activate AI translation when the feature can run (master toggle on,
+     * key present, source available). Deliberately NOT gated on auto-select — that setting only
+     * governs unprompted activation at playback start; a failed scan explicitly asked for the
+     * best available subtitle, and AI timing (from the built-in track) beats an unverified addon
+     * pick. Returns true when AI took over.
+     */
+    private fun tryAiFallbackAfterScan(): Boolean {
+        if (!aiSubtitleEnabled || aiApiKey.isBlank()) return false
+        if (findAiSourceSubtitle(_uiState.value.subtitles) == null) return false
+        activateAiTranslation()
+        showMatchToast("No well-synced subtitle found — using AI translation")
+        return true
+    }
+
     /** Existing behavior: translate the built-in/source subtitle to the target language. */
     fun activateAiTranslation() {
+        // Defense-in-depth: every caller is already gated on the AI master toggle (menu entry via
+        // isAiAvailable, interim via auto-select, fallback via tryAiFallbackAfterScan), but AI
+        // must never activate — and never spend API requests — when the feature is off.
+        if (!aiSubtitleEnabled) return
         // Re-resolve the source on every activation: an early activation (before embedded tracks
         // resolve) may have cached an external fallback source, and translation inherits the
         // source's timing — keep the cached one only when nothing better is available now.
@@ -2716,8 +2811,14 @@ class PlayerViewModel @Inject constructor(
                 .sortedByDescending { weightedSubtitleScore(streamSrc, it.id) }
                 .take(MATCH_MAX_CANDIDATES)
             if (candidates.isEmpty()) {
+                android.util.Log.i(
+                    "SubMatch",
+                    "scan end: no candidates (subs=${subs.size} target=$targetLang) — AI fallback? ai=$aiSubtitleEnabled keyLen=${aiApiKey.length}"
+                )
                 endMatch()
-                noMatch(null)
+                // No candidates at all in the target language — AI translation is the only
+                // possible target-language subtitle; fall back to it when available.
+                if (!_uiState.value.isAiTranslating && !tryAiFallbackAfterScan()) noMatch(null)
                 return@launch
             }
 
@@ -2786,6 +2887,9 @@ class PlayerViewModel @Inject constructor(
             // in the match cache.
             fun selectLastResort() {
                 if (_uiState.value.isAiTranslating) return
+                // AI translation first (when the feature can run) — verified timing beats any
+                // unverified addon pick, independent of the auto-select setting.
+                if (tryAiFallbackAfterScan()) return
                 val current = _uiState.value.selectedSubtitle
                 if (current != null && normalizeLanguage(current.lang) == targetLang) return
                 candidates.firstOrNull()?.let {
@@ -2836,6 +2940,10 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** Whitespace/tag-insensitive form for comparing renderer cue text against parsed file text. */
+    private fun normalizeCueTextForCompare(text: String): String =
+        text.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+
     /** Reference = a built-in track's cue timing (any language). Returns null if too little dialogue. */
     private suspend fun scoreAgainstBuiltIn(
         loaded: List<Pair<Subtitle, List<SubtitleSyncMatcher.TimedCue>>>,
@@ -2851,8 +2959,15 @@ class PlayerViewModel @Inject constructor(
         val aiAlreadyShowingSource = _uiState.value.isAiTranslating && aiSourceSubtitle?.id == referenceSub.id
         if (!aiAlreadyShowingSource) {
             hasManualSubtitleSelection = true
+            // Re-resolve the reference's track indices from the CURRENT list: a MediaItem rebuild
+            // (e.g. the previous scan's pick) reassigns embedded group indices, and a stale
+            // override target silently keeps the wrong track rendering.
+            val refResolved = _uiState.value.subtitles.firstOrNull {
+                it.isEmbedded && it.id == referenceSub.id &&
+                    it.groupIndex != null && it.trackIndex != null
+            } ?: referenceSub
             _uiState.value = _uiState.value.copy(
-                selectedSubtitle = referenceSub,
+                selectedSubtitle = refResolved,
                 isAiTranslating = false,
                 subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
             )
@@ -2870,16 +2985,21 @@ class PlayerViewModel @Inject constructor(
         // rendering in real time. Stops as soon as enough evidence accumulates.
         val candMin = loaded.minOf { it.second.firstOrNull()?.startMs ?: Long.MAX_VALUE }
         val candMax = loaded.maxOf { it.second.lastOrNull()?.endMs ?: 0L }
-        // Cues of the candidate that was on screen when the scan started — used to detect stale
-        // buffer reads that still mirror that track instead of the reference.
-        val previousCues = previousSubtitle?.let { prev ->
+        // Normalized cue texts of the candidate that was on screen when the scan started — used
+        // to detect stale buffer reads that still mirror that track instead of the reference.
+        val previousTexts: Set<String>? = previousSubtitle?.let { prev ->
             loaded.firstOrNull { it.first.id == prev.id }?.second
+                ?.mapTo(HashSet()) { normalizeCueTextForCompare(it.text) }
         }
+        matchPreviousTexts = previousTexts
         collectingReference = true
         var refs: List<Pair<Long, Long>> = emptyList()
         var bufferedCount = 0
         var lastRefCount = 0
         var lastProgressElapsed = 0L
+        var lastDiagRaw = -1
+        var lastDiagKept = -1
+        var lastDiagRealtime = -1
         val startedAt = System.currentTimeMillis()
         while (true) {
             // Sanity-filter buffered timestamps: they must land within the candidate subtitles'
@@ -2887,18 +3007,23 @@ class PlayerViewModel @Inject constructor(
             val bufferedRaw = runCatching {
                 bufferedReferenceIntervalsProvider?.invoke(MATCH_BUFFERED_REF_INTERVALS)
             }.getOrNull().orEmpty().filter { it.first in candMin..candMax }
-            // Self-match guard: if most buffered intervals coincide (to the millisecond range)
-            // with the previously-displayed candidate's own cues, the buffer still holds that
-            // track, not the reference — discard the read and rely on realtime this tick.
-            val selfMatches = if (previousCues == null) 0 else bufferedRaw.count { b ->
-                previousCues.any { c ->
-                    kotlin.math.abs(c.startMs - b.first) <= 60 && kotlin.math.abs(c.endMs - b.second) <= 60
-                }
-            }
-            val buffered = if (bufferedRaw.isNotEmpty() && selfMatches * 2 >= bufferedRaw.size) {
-                emptyList()
-            } else {
-                bufferedRaw
+            // Self-match guard: verify by TEXT which track the buffer belongs to. If the buffered
+            // cue texts match the previously-displayed candidate's own lines, the reference track
+            // switch hasn't landed and we'd be scoring the candidate against itself. Timing-based
+            // detection is unusable here: subs cut from the same master share cue timings across
+            // languages (a constant-delta check froze scans by discarding legit references).
+            var diagSampled = 0
+            var diagHits = 0
+            val buffered = run {
+                if (previousTexts.isNullOrEmpty() || bufferedRaw.isEmpty()) return@run bufferedRaw
+                val sampled = runCatching { bufferedCueTextsProvider?.invoke(8) }
+                    .getOrNull().orEmpty()
+                    .map { normalizeCueTextForCompare(it) }
+                    .filter { it.isNotEmpty() }
+                if (sampled.isEmpty()) return@run bufferedRaw
+                diagSampled = sampled.size
+                diagHits = sampled.count { it in previousTexts }
+                if (diagHits * 2 >= diagSampled) emptyList() else bufferedRaw
             }
             val realtime = synchronized(referenceIntervals) { referenceIntervals.toList() }
             // Realtime intervals that overlap a buffered one describe the same cue — drop them.
@@ -2907,6 +3032,20 @@ class PlayerViewModel @Inject constructor(
                 if (buffered.none { b -> r.first < b.second && b.first < r.second }) merged.add(r)
             }
             refs = merged.sortedBy { it.first }
+            // Diagnostics: log whenever the tick's composition changes — pinpoints whether slow
+            // scans starve at extraction (raw=0), at the guard (raw>0 kept=0), or at realtime.
+            if (bufferedRaw.size != lastDiagRaw || buffered.size != lastDiagKept ||
+                realtime.size != lastDiagRealtime
+            ) {
+                lastDiagRaw = bufferedRaw.size
+                lastDiagKept = buffered.size
+                lastDiagRealtime = realtime.size
+                android.util.Log.i(
+                    "SubMatch",
+                    "tick raw=${bufferedRaw.size} kept=${buffered.size} realtime=${realtime.size} " +
+                        "guardSampled=$diagSampled guardHits=$diagHits refs=${refs.size}"
+                )
+            }
             bufferedCount = buffered.size
 
             val elapsed = System.currentTimeMillis() - startedAt
@@ -2949,11 +3088,12 @@ class PlayerViewModel @Inject constructor(
             if (elapsed >= deadline) break
             updateMatchStatus(
                 if (refs.isEmpty()) "Searching for a match ($sourceLabel) — waiting for speech…"
-                else "Searching for a match ($sourceLabel) — comparing subtitles… (${refs.size})"
+                else "Searching for a match ($sourceLabel) — (${refs.size})"
             )
             delay(300)
         }
         collectingReference = false
+        matchPreviousTexts = null
         // Inconclusive after the hard cap (too few refs, or all clustered in one moment) — a pick
         // would be a guess; return null so the caller stays on the AI-translation fallback.
         // Floor matches the fast-accept span so a fast-accepted result isn't discarded here.
@@ -2967,10 +3107,15 @@ class PlayerViewModel @Inject constructor(
         }
 
         loaded.firstOrNull()?.let { (_, cues) ->
+            // Show the candidate cues NEAREST the first reference window — file-start cues say
+            // nothing about alignment at the scan position.
+            val firstRef = refs.firstOrNull()?.first ?: 0L
+            val nearIdx = cues.indexOfFirst { it.endMs >= firstRef }.coerceAtLeast(0)
+            val near = cues.subList(nearIdx, minOf(nearIdx + 3, cues.size))
             android.util.Log.i(
                 "SubMatch",
                 "align src=$srcLabel buffered=$bufferedCount total=${refs.size} " +
-                    "refs=${refs.take(3)} candCues=${cues.take(3).map { it.startMs to it.endMs }} " +
+                    "refs=${refs.take(3)} candNear=${near.map { it.startMs to it.endMs }} " +
                     "candRange=${cues.firstOrNull()?.startMs}..${cues.lastOrNull()?.endMs}"
             )
         }

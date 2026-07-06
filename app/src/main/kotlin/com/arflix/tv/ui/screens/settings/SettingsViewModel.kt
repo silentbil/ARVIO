@@ -197,7 +197,7 @@ data class SettingsUiState(
     // AI Subtitles
     val subtitleAiEnabled: Boolean = false,
     val subtitleAiAutoSelect: Boolean = false,
-    val subtitleAiFindBestMatch: Boolean = true,
+    val subtitleAiFindBestMatch: Boolean = false,
     val subtitleAiApiKey: String = "",
     val subtitleAiModel: SubtitleAiModel = SubtitleAiModel.GROQ_LLAMA_70B,
     val subtitleRemoveHearingImpaired: Boolean = true,
@@ -491,7 +491,7 @@ class SettingsViewModel @Inject constructor(
 
             val subtitleAiEnabled = prefs[subtitleAiEnabledKey] ?: false
             val subtitleAiAutoSelect = prefs[subtitleAiAutoSelectKey] ?: false
-            val subtitleAiFindBestMatch = prefs[subtitleAiFindBestMatchKey] ?: true
+            val subtitleAiFindBestMatch = prefs[subtitleAiFindBestMatchKey] ?: false
             val subtitleAiApiKey = prefs[subtitleAiApiKeyKey] ?: ""
             val subtitleAiModel = runCatching {
                 SubtitleAiModel.valueOf(prefs[subtitleAiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)

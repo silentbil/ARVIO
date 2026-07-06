@@ -819,11 +819,15 @@ fun PlayerScreen(
         viewModel.bufferedReferenceIntervalsProvider = { max ->
             aiRenderersFactory.extractBufferedReferenceIntervals(max)
         }
+        viewModel.bufferedCueTextsProvider = { max ->
+            aiRenderersFactory.extractBufferedCueTexts(max)
+        }
     }
     DisposableEffect(aiRenderersFactory) {
         onDispose {
             aiRenderersFactory.audioCaptureProcessor?.onChunk = null
             viewModel.bufferedReferenceIntervalsProvider = null
+            viewModel.bufferedCueTextsProvider = null
             viewModel.geminiLiveService.disconnect()
         }
     }
@@ -915,7 +919,11 @@ fun PlayerScreen(
                     // Feed the selected text track's rendered cues to "Find best match" so it can
                     // read a built-in subtitle's timing (embedded tracks have no URL to parse).
                     override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
-                        viewModel.onPlayerCues(cueGroup.cues.isNotEmpty(), cueGroup.presentationTimeUs / 1000L)
+                        viewModel.onPlayerCues(
+                            cueGroup.cues.isNotEmpty(),
+                            cueGroup.presentationTimeUs / 1000L,
+                            cueGroup.cues.firstOrNull()?.text?.toString()
+                        )
                     }
 
                     override fun onIsPlayingChanged(playing: Boolean) {
@@ -1602,21 +1610,45 @@ fun PlayerScreen(
         }
 
         if (subtitle.isEmbedded && subtitle.groupIndex != null && subtitle.trackIndex != null) {
-            // For embedded subs, just select the track directly
-            val groups = exoPlayer.currentTracks.groups
-            val params = exoPlayer.trackSelectionParameters.buildUpon()
-                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-            if (subtitle.groupIndex in groups.indices &&
-                groups[subtitle.groupIndex].type == C.TRACK_TYPE_TEXT) {
-                params.setOverrideForType(
-                    androidx.media3.common.TrackSelectionOverride(
-                        groups[subtitle.groupIndex].mediaTrackGroup,
-                        subtitle.trackIndex
-                    )
-                )
+            // Embedded subs: apply a track override. Track lists refresh asynchronously (e.g.
+            // right after a MediaItem rebuild), so retry briefly with freshly-resolved indices
+            // instead of a one-shot: a stale one-shot either selected the WRONG track via the
+            // preferred-language fallback (find-best-match then scored a candidate against
+            // itself) or, if it just disabled text, starved the scan of reference cues.
+            repeat(20) { attempt ->
+                val groups = exoPlayer.currentTracks.groups
+                val fresh = latestUiState.subtitles.firstOrNull {
+                    it.isEmbedded && it.id == subtitle.id &&
+                        it.groupIndex != null && it.trackIndex != null
+                } ?: subtitle
+                val gi = fresh.groupIndex
+                val ti = fresh.trackIndex
+                val valid = gi != null && ti != null && gi in groups.indices &&
+                    groups[gi].type == C.TRACK_TYPE_TEXT &&
+                    ti < groups[gi].mediaTrackGroup.length
+                val params = exoPlayer.trackSelectionParameters.buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                if (valid) {
+                    params
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        // Clear the preferred-language fallback: with an explicit override it's
+                        // redundant, and if the override turns invalid it silently selects a
+                        // DIFFERENT track.
+                        .setPreferredTextLanguage(null)
+                        .setOverrideForType(
+                            androidx.media3.common.TrackSelectionOverride(
+                                groups[gi!!].mediaTrackGroup,
+                                ti!!
+                            )
+                        )
+                    exoPlayer.trackSelectionParameters = params.build()
+                    return@LaunchedEffect
+                }
+                // Not ready yet: showing the wrong track is worse than showing nothing.
+                params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                exoPlayer.trackSelectionParameters = params.build()
+                delay(500)
             }
-            exoPlayer.trackSelectionParameters = params.build()
             return@LaunchedEffect
         }
 
