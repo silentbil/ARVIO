@@ -26,6 +26,15 @@ function formatRuntime(minutesRaw?: string | number | null): string {
   return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
 }
 
+// "S1 · E9 · Whisper" for a Continue Watching / Up Next card. Only shown when
+// the item carries episode info (CW rails populate season/episode/title).
+function formatEpisodeLine(item: MediaItem): string {
+  if (item.mediaType !== "tv" || !item.seasonNumber || !item.episodeNumber) return "";
+  const code = `S${item.seasonNumber} · E${item.episodeNumber}`;
+  const title = item.episodeTitle?.trim();
+  return title ? `${code} · ${title}` : code;
+}
+
 function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   item: MediaItem;
   onOpen: (item: MediaItem) => void;
@@ -81,6 +90,8 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
 
   const dateLabel = formatReleaseDate(item.releaseDate) || item.subtitle || year;
   const runtimeLabel = formatRuntime(item.duration || runtime);
+  const episodeLine = formatEpisodeLine(item);
+  const isUpNext = item.timeRemainingLabel === "Up next";
 
   return (
     <button
@@ -113,10 +124,17 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
         )}
       </div>
       <strong>{item.title}</strong>
-      <div className="card-meta-row">
-        <span className="card-date">{dateLabel}</span>
-        {runtimeLabel && <span className="card-runtime">{runtimeLabel}</span>}
-      </div>
+      {episodeLine ? (
+        <div className="card-episode-line">
+          {isUpNext && <span className="card-upnext">Up next</span>}
+          <span className="card-episode">{episodeLine}</span>
+        </div>
+      ) : (
+        <div className="card-meta-row">
+          <span className="card-date">{dateLabel}</span>
+          {runtimeLabel && <span className="card-runtime">{runtimeLabel}</span>}
+        </div>
+      )}
     </button>
   );
 }
