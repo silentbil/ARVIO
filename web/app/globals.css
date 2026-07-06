@@ -2174,10 +2174,10 @@ input:focus {
   background: rgba(255, 255, 255, 0.04);
   border-radius: 18px;
   padding: 24px;
-  /* Tab contents range from ~200px to ~7000px tall — without a floor the
-     card's bottom border leaps on every tab switch. Fill the viewport so the
-     visible frame stays put regardless of which section is open. */
-  min-height: calc(100vh - clamp(96px, 12vh, 130px) - 96px);
+  /* Size to content — a small floor keeps short sections from looking cramped
+     without forcing a huge empty void (a full-viewport min-height made the
+     Accounts panel a giant near-empty box). */
+  min-height: 220px;
 }
 .settings-panel-card h2 {
   margin: 0 0 18px;

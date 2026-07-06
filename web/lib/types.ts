@@ -356,6 +356,13 @@ export interface IptvSnapshot {
   loadedAt: number;
 }
 
+export interface HomeServerCollectionConfig {
+  id: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+}
+
 export interface HomeServerConfig {
   id: string;
   type: "plex" | "jellyfin" | "emby";
@@ -365,6 +372,14 @@ export interface HomeServerConfig {
   username?: string;
   password?: string;
   enabled: boolean;
+  // APK-parity fields (carried through cloud sync so a server configured on the
+  // TV resolves as a source in the web app without re-entry).
+  serverId?: string;
+  userId?: string;
+  userName?: string;
+  accountToken?: string; // Plex account token (accessToken is the server token)
+  collections?: HomeServerCollectionConfig[];
+  lastConnectedAt?: number;
 }
 
 export interface QualityFilterConfig {

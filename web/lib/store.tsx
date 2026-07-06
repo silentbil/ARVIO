@@ -752,9 +752,13 @@ export function AppProvider({
   // were appended asynchronously (they carry addonId "iptv_xtream_vod").
   const mergeStreams = useCallback((incoming: StreamSource[]) => {
     setStreams((prev) => {
-      const vod = prev.filter((source) => source.addonId === "iptv_xtream_vod");
+      // Preserve the supplemental sources injected in parallel (Xtream VOD and
+      // home-server files) when the addon/debrid streams resolve.
+      const extras = prev.filter(
+        (source) => source.addonId === "iptv_xtream_vod" || source.addonId === "home_server"
+      );
       const seen = new Set(incoming.map((s) => s.url ?? s.source));
-      return [...incoming, ...vod.filter((s) => !seen.has(s.url ?? s.source))];
+      return [...incoming, ...extras.filter((s) => !seen.has(s.url ?? s.source))];
     });
   }, []);
 
@@ -778,6 +782,36 @@ export function AppProvider({
         });
       } catch {
         // VOD is best-effort; addon sources are unaffected on failure.
+      }
+    })();
+  }, []);
+
+  // Match the opened title on the user's home servers (Jellyfin/Emby/Plex) and
+  // append any files found as sources — parity with the Android app, which
+  // surfaces home-server media in the same source list as addons.
+  const appendHomeServerSources = useCallback((item: MediaItem, season?: number, episode?: number) => {
+    const servers = settingsRef.current.homeServers;
+    if (!servers?.length || item.isHomeServer) return;
+    void (async () => {
+      try {
+        const { resolveHomeServerMovieSources, resolveHomeServerEpisodeSources } = await import("./homeserver");
+        const target = {
+          title: item.title,
+          year: item.year ? Number(item.year) || undefined : undefined,
+          imdbId: item.imdbId ?? undefined,
+          tmdbId: item.id > 0 ? item.id : undefined
+        };
+        const sources = season && episode
+          ? await resolveHomeServerEpisodeSources(servers, target, season, episode)
+          : await resolveHomeServerMovieSources(servers, target);
+        if (!sources.length) return;
+        setStreams((prev) => {
+          const seen = new Set(prev.map((s) => s.url ?? s.source));
+          const fresh = sources.filter((s) => s.url && !seen.has(s.url));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+      } catch {
+        // Best-effort; addon/debrid sources are unaffected on failure.
       }
     })();
   }, []);
@@ -808,12 +842,14 @@ export function AppProvider({
     if (item.mediaType === "movie") {
       setBusy("Finding sources");
       appendVodSources(withResumeEpisode);
+      appendHomeServerSources(withResumeEpisode);
       const found = await getStreamsProgressive(addonsRef.current, withResumeEpisode, undefined, undefined, setStreams).catch(() => []);
       mergeStreams(found);
     } else if (withResumeEpisode.seasonNumber && withResumeEpisode.episodeNumber) {
       setSelectedEpisode({ season: withResumeEpisode.seasonNumber, episode: withResumeEpisode.episodeNumber });
       setBusy("Finding sources");
       appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
+      appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
       const found = await getStreamsProgressive(
         addonsRef.current,
         withResumeEpisode,
@@ -832,6 +868,7 @@ export function AppProvider({
     setStreams([]);
     setBusy("Finding sources");
     appendVodSources(item, season, episode);
+    appendHomeServerSources(item, season, episode);
     const found = await getStreamsProgressive(addonsRef.current, item, season, episode, setStreams).catch(() => []);
     mergeStreams(found);
     setBusy("");

@@ -1,10 +1,11 @@
 import type { AuthClient } from "./auth";
 import { config, hasNetlifyBackendConfig } from "./config";
+import { parseHomeServerConnectionJson, serializeHomeServerConnectionJson } from "./homeserver";
 import { jsonRequest } from "./http";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { tmdbImageUrl } from "./mediaImages";
 import type { TraktToken } from "./trakt";
-import type { AppSettings, HomeServerConfig, InstalledAddon, IptvPlaylistEntry, MediaItem, Profile, QualityFilterConfig, WatchHistoryEntry } from "./types";
+import type { AppSettings, InstalledAddon, IptvPlaylistEntry, MediaItem, Profile, QualityFilterConfig, WatchHistoryEntry } from "./types";
 
 export interface CloudPayload {
   version: number;
@@ -358,7 +359,7 @@ function androidProfileSettings(settings: AppSettings) {
     subtitleStylized: settings.subtitleStylized,
     secondarySubtitle: settings.secondarySubtitle || "Off",
     filterSubtitlesByLanguage: settings.filterSubtitlesByLanguage,
-    homeServerConnectionJson: JSON.stringify(settings.homeServers ?? []),
+    homeServerConnectionJson: serializeHomeServerConnectionJson(settings.homeServers),
     torrServerBaseUrl: settings.torrServerBaseUrl || null,
     catalogueRowLayoutModes: {},
     cardLayoutMode: settings.cardLayoutMode,
@@ -408,12 +409,11 @@ function settingsFromAndroidProfile(value: unknown): Partial<AppSettings> {
   if ("secondarySubtitle" in state) partial.secondarySubtitle = String(state.secondarySubtitle || "");
   if ("filterSubtitlesByLanguage" in state) partial.filterSubtitlesByLanguage = Boolean(state.filterSubtitlesByLanguage);
   if ("homeServerConnectionJson" in state && typeof state.homeServerConnectionJson === "string" && state.homeServerConnectionJson.trim()) {
-    try {
-      const parsed = JSON.parse(state.homeServerConnectionJson) as HomeServerConfig[];
-      if (Array.isArray(parsed)) partial.homeServers = parsed;
-    } catch {
-      // Ignore malformed older Android payloads.
-    }
+    // The Android app writes { connections: [...] } with its own field names;
+    // parseHomeServerConnectionJson handles that shape, a bare array, or a
+    // single object, and maps to the web HomeServerConfig.
+    const parsed = parseHomeServerConnectionJson(state.homeServerConnectionJson);
+    if (parsed.length) partial.homeServers = parsed;
   }
   if ("cardLayoutMode" in state) partial.cardLayoutMode = String(state.cardLayoutMode) === "poster" ? "poster" : "landscape";
   if ("frameRateMatchingMode" in state) partial.frameRateMatchingMode = webFrameRateMode(state.frameRateMatchingMode);

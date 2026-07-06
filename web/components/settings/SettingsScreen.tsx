@@ -630,27 +630,66 @@ function HomeServerSection() {
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [testing, setTesting] = useState(false);
 
   const servers = safeArray(settings.homeServers);
   const update = (next: HomeServerConfig[]) => updateSettings({ homeServers: next });
 
+  const buildDraft = (): HomeServerConfig => ({
+    id: crypto.randomUUID(),
+    type,
+    name: name.trim() || type,
+    url: url.trim(),
+    token: token.trim() || undefined,
+    username: username.trim() || undefined,
+    password: password || undefined,
+    enabled: true
+  });
+
+  const testConnection = async () => {
+    if (!url.trim()) {
+      setToast("Enter a Home Server URL first.");
+      return;
+    }
+    if (type === "plex" && !token.trim()) {
+      setToast("Plex needs an access token (X-Plex-Token).");
+      return;
+    }
+    setTesting(true);
+    try {
+      const { testHomeServerConnection } = await import("@/lib/homeserver");
+      const result = await testHomeServerConnection(buildDraft());
+      setToast(result.ok
+        ? `Connected to ${result.serverName || "server"}${result.libraryCount ? ` — ${result.libraryCount} libraries` : ""}.`
+        : `Could not connect: ${result.error}`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Connection test failed.");
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <Panel title="Home Server">
-      <p className="empty">Connect Plex, Jellyfin, or Emby. Plex requires an access token. Jellyfin/Emby can use an API token or username + password. Movies play through the browser proxy when the source codec is browser-compatible.</p>
+      <p className="empty">Connect Plex, Jellyfin, or Emby. Plex requires an access token (X-Plex-Token). Jellyfin/Emby can use an API token or username + password. Matched movies and episodes appear as sources in the player, and cloud-sync with the Android app.</p>
       <div className="inline-form">
         <Select value={type} onChange={setType} options={[["jellyfin", "Jellyfin"], ["emby", "Emby"], ["plex", "Plex"]]} />
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
         <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://server:8096" />
-        <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="API token (optional)" />
-        <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username (optional)" />
-        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" />
+        <input value={token} onChange={(e) => setToken(e.target.value)} placeholder={type === "plex" ? "X-Plex-Token (required)" : "API token (optional)"} />
+        {type !== "plex" && <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username (optional)" />}
+        {type !== "plex" && <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" />}
+        <button type="button" className="secondary" disabled={testing} onClick={() => void testConnection()}>
+          {testing ? "Testing…" : "Test"}
+        </button>
         <button type="button" className="primary" onClick={() => {
           if (!url.trim()) {
             setToast("Enter a Home Server URL first.");
             return;
           }
-          update([{ id: crypto.randomUUID(), type, name: name || type, url: url.trim(), token: token.trim(), username: username.trim() || undefined, password: password || undefined, enabled: true }, ...servers]);
+          update([buildDraft(), ...servers]);
           setName(""); setUrl(""); setToken(""); setUsername(""); setPassword("");
+          setToast("Home server saved.");
         }}><Plus size={18} /> Add</button>
       </div>
       <div className="settings-list">

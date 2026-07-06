@@ -1,13 +1,12 @@
 import { AppShell } from "@/components/shell/AppShell";
 import { AppProvider } from "@/lib/store";
 
-// The app shell HTML references hashed CSS/JS that changes each deploy, so it
-// must not be durably edge-cached (that stranded iOS PWAs on old bundles). But
-// force-dynamic (render every request) removed all caching and tripped rate
-// limits. Middle ground: revalidate every 60s — cacheable enough to absorb
-// traffic, fresh enough that a deploy lands within a minute, and the client
-// self-updater/version.json closes the remaining gap.
-export const revalidate = 60;
+// Fully static: this is a pure client-side SPA, so the homepage is a plain
+// prerendered HTML file served straight from the CDN — zero serverless-function
+// invocations (dynamic/revalidate rendering invoked a function per request and
+// tripped Netlify usage limits → 429s). Stale bundles are handled entirely
+// client-side by UpdateWatcher (polls no-store /version.json and hard-reloads).
+export const dynamic = "force-static";
 
 export default function Page() {
   return (
