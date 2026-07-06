@@ -140,6 +140,10 @@ class SubtitleTranslationManager(
     }
 
     suspend fun preTranslateWindow(texts: List<String>) {
+        // The lookahead triggers fire whenever a text track renders cues — including tracks
+        // selected under the hood by "find best match" with AI translation off. Never spend
+        // API requests unless translation is actually active.
+        if (!isEnabled) return
         val uncached = texts.filter { !cache.containsKey(it) && !inFlight.containsKey(it) }
         if (uncached.isEmpty()) return
         uncached.chunked(40).forEach { chunk ->

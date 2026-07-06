@@ -135,6 +135,9 @@ data class PlayerUiState(
     val matchToast: String? = null,
     // Persistent status shown on screen for the whole duration of a "Find best match" scan.
     val matchStatusText: String = "",
+    // Full name of the preferred subtitle language (e.g. "Hebrew") — drives the "Find Best Match"
+    // menu entry. Independent of AI availability: the timing scan needs no AI/API key.
+    val matchLanguageName: String = "",
     // Episode title for TV shows (e.g. "The Devil's Verdict"), populated from TMDB season details
     val episodeTitle: String? = null,
     // Plot synopsis from TMDB, used in the pause overlay metadata block
@@ -211,6 +214,9 @@ class PlayerViewModel @Inject constructor(
     // Normalized code of the user's preferred subtitle language (e.g. "he") — the target of both
     // "find best match" and AI translation. Blank when unset/disabled.
     @Volatile private var targetSubtitleLangCode = ""
+    // One auto-run of "find best match" per playback/stream — applyPreferredSubtitle re-runs on
+    // every subtitle-list update and must not restart a completed scan.
+    private var autoMatchAttempted = false
     private var aiApiKey = ""
     private var aiModel = SubtitleAiModel.GROQ_LLAMA_70B
     private var aiRemoveHearingImpaired = true
@@ -413,6 +419,7 @@ class PlayerViewModel @Inject constructor(
         primaryStreamResolutionFinal = false
         hasManualSubtitleSelection = false
         userPickedSubtitle = false
+        autoMatchAttempted = false
         aiSourceSubtitle = null
         val cachedItem = mediaRepository.getCachedItem(mediaType, mediaId)
         val cachedLogoUrl = mediaRepository.peekCachedLogoUrl(mediaType, mediaId)
@@ -464,7 +471,7 @@ class PlayerViewModel @Inject constructor(
                 .let { if (isSubtitleDisabledPreference(it)) "" else it }
             val secondarySub = prefs[secondarySubtitleKey()]?.trim().orEmpty()
                 .let { if (isSubtitleDisabledPreference(it)) "" else it }
-            targetSubtitleLangCode = normalizeLanguage(preferredSub)
+            setTargetSubtitleLang(normalizeLanguage(preferredSub))
 
             // Load AI subtitle settings
             aiSubtitleEnabled = prefs[aiEnabledKey] ?: false
@@ -1227,10 +1234,19 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** Keeps [targetSubtitleLangCode] and the menu-facing [PlayerUiState.matchLanguageName] in sync. */
+    private fun setTargetSubtitleLang(code: String) {
+        targetSubtitleLangCode = code
+        val name = if (code.isBlank()) "" else languageCodeToName(code)
+        if (_uiState.value.matchLanguageName != name) {
+            _uiState.value = _uiState.value.copy(matchLanguageName = name)
+        }
+    }
+
     private fun applyPreferredSubtitle(preference: String, subtitles: List<Subtitle>, fallbackLanguage: String?) {
         val normalizedPref = normalizeLanguage(preference)
         if (normalizedPref.isNotBlank() && !isSubtitleDisabledPreference(preference)) {
-            targetSubtitleLangCode = normalizedPref
+            setTargetSubtitleLang(normalizedPref)
         }
 
         // Highest priority: an embedded (muxed) track in the preferred language is inherently in
@@ -1409,6 +1425,15 @@ class PlayerViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(selectedSubtitle = externalMatch, isAiTranslating = false, isAiAvailable = false, aiTargetLanguageName = "")
                     }
                 }
+            }
+            // "Find best match first" auto-runs the scan even without AI auto-select: it verifies
+            // sync on top of the classic release-name pick. AI translation is deliberately NOT
+            // auto-activated here — that's what the auto-select toggle controls — and the raw
+            // reference cues stay hidden while scanning, so on no-match the classic pick above
+            // simply returns to screen.
+            if (aiFindBestMatchFirst && !autoMatchAttempted && !hasManualSubtitleSelection) {
+                autoMatchAttempted = true
+                findBestSubtitleMatch()
             }
         }
     }
@@ -2208,6 +2233,7 @@ class PlayerViewModel @Inject constructor(
             cancelFindBestMatch()
             hasManualSubtitleSelection = false
             userPickedSubtitle = false
+            autoMatchAttempted = false
             aiSourceSubtitle = null
             translationManager.isEnabled = false
 
@@ -2499,17 +2525,24 @@ class PlayerViewModel @Inject constructor(
      * found, fall back to the AI translation option when one is available.
      */
     fun runFindBestMatch(isUserAction: Boolean = true) {
-        // Defense-in-depth: the menu entries are already hidden when the AI feature is off, but
-        // nothing below should ever run without it.
-        if (!aiSubtitleEnabled) return
+        // The timing-based scan is AI-independent — no aiSubtitleEnabled gate. Only the optional
+        // AI interim below and the hearing fallback (gated at the scoring dispatch) need AI.
         // A user-triggered rescan means the current (possibly remembered) pick is unwanted —
         // forget the cached entry and scan fresh; the auto-run keeps using the cache.
-        if (isUserAction) writeCachedMatch(null)
-        // Show AI translation immediately (if a source exists) so the user sees subtitles right
-        // away — and because the AI source (English) track is then selected under the hood, the
-        // match can read its cue timing without ever putting English on screen. Then run the match
-        // in the background and upgrade to a synced addon sub if one is found; otherwise stay on AI.
-        val source = findAiSourceSubtitle(_uiState.value.subtitles) ?: aiSourceSubtitle
+        if (isUserAction) writeCachedMatch(null) else autoMatchAttempted = true
+        // With AI auto-select on, show AI translation immediately (if a source exists) so the
+        // user sees subtitles right away — and because the AI source (English) track is then
+        // selected under the hood, the match can read its cue timing without ever putting English
+        // on screen. Then run the match in the background and upgrade to a synced addon sub if
+        // one is found; otherwise stay on AI.
+        // With AI auto-select OFF (or the AI feature disabled), the user opted out of automatic
+        // AI translation entirely: the scan runs "silent" (reference cues hidden, zero AI/API
+        // usage) and falls back to whatever was selected before.
+        val source = if (aiSubtitleEnabled && aiSubtitleAutoSelect) {
+            findAiSourceSubtitle(_uiState.value.subtitles) ?: aiSourceSubtitle
+        } else {
+            null
+        }
         if (source != null) {
             activateAiTranslation()
             findBestSubtitleMatch(
@@ -2681,12 +2714,16 @@ class PlayerViewModel @Inject constructor(
                 return@launch
             }
 
-            // Last resort when the scan fails outright and nothing else is showing (no AI
-            // fallback active, no previous selection to restore): behave like the classic non-AI
-            // flow and pick the best release-name-scored candidate. Sync is unverified, so it is
-            // deliberately not remembered in the match cache.
+            // Last resort when the scan fails outright and no AI fallback is active: behave like
+            // the classic non-AI flow and pick the best release-name-scored candidate. A current
+            // selection survives only if it's already in the target language — a fallback-language
+            // stand-in (e.g. embedded English picked while the addon list was still loading) must
+            // not outlive a failed scan. Sync is unverified, so it is deliberately not remembered
+            // in the match cache.
             fun selectLastResort() {
-                if (_uiState.value.isAiTranslating || _uiState.value.selectedSubtitle != null) return
+                if (_uiState.value.isAiTranslating) return
+                val current = _uiState.value.selectedSubtitle
+                if (current != null && normalizeLanguage(current.lang) == targetLang) return
                 candidates.firstOrNull()?.let {
                     selectSubtitle(it, isUserAction = false)
                     showMatchToast("Selected ${it.label} (sync unverified)")
@@ -2743,9 +2780,10 @@ class PlayerViewModel @Inject constructor(
                 // AI translation is already on screen as the fallback — the hearing path is too
                 // unreliable to risk replacing it, so just stay on AI.
                 _uiState.value.isAiTranslating -> null
-                // The hearing reference streams audio to the Gemini Live API — a Groq key can't
-                // open that connection, so don't try (it would just hang until the hard cap).
-                aiModel != SubtitleAiModel.GEMINI_FLASH_25 -> null
+                // The hearing reference streams audio to the Gemini Live API — it needs the AI
+                // feature on, a key, and the Gemini model (a Groq key can't open that connection).
+                !aiSubtitleEnabled || aiApiKey.isBlank() ||
+                    aiModel != SubtitleAiModel.GEMINI_FLASH_25 -> null
                 else -> scoreAgainstHearing(loaded, sourceLabel)
             }
             endMatch()

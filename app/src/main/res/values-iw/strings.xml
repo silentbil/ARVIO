@@ -208,8 +208,8 @@
     <string name="ai_model_desc">בחר ספק ומודל לתרגום</string>
     <string name="ai_auto_select_title">בחירה אוטומטית של תרגום בינה מלאכותית</string>
     <string name="ai_auto_select_desc">הפעל אוטומטית כאשר קיים תרגום מובנה כלשהו</string>
-    <string name="ai_find_best_match_title">חיפוש התאמה לתוסף באמצעות בינה מלאכותית</string>
-    <string name="ai_find_best_match_desc">בחירה אוטומטית של כתובית מסונכרנת מההרחבות שלך</string>
+    <string name="ai_find_best_match_title">חיפוש אוטומטי של הכתובית המתאימה ביותר</string>
+    <string name="ai_find_best_match_desc">בחירה אוטומטית של הכתובית המסונכרנת ביותר מההרחבות שלך</string>
     <string name="ai_remove_hi_title">הסר טקסט למוגבלי שמיעה</string>
     <string name="ai_remove_hi_desc">הסר סימוני [סוגריים] למוגבלי שמיעה לפני תרגום</string>
     <string name="ai_api_key_title">מפתח API</string>

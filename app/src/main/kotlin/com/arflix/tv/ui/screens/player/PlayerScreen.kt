@@ -447,13 +447,16 @@ fun PlayerScreen(
                 ))
             }
             .toMutableList()
-        // When AI is available but no subtitles exist in the target language yet, inject a
-        // synthetic empty group so the AI option is reachable in the picker.
-        if (uiState.isAiAvailable && uiState.aiTargetLanguageName.isNotBlank() &&
-            groups.none { (name, _) -> name.equals(uiState.aiTargetLanguageName, ignoreCase = true) }) {
-            groups.add(0, Pair(uiState.aiTargetLanguageName, emptyList()))
+        // When no subtitles exist in the target language yet, inject a synthetic empty group so
+        // the "Find Best Match" entry (AI-independent) and the AI option stay reachable.
+        val headerGroupName = uiState.matchLanguageName.ifBlank {
+            if (uiState.isAiAvailable) uiState.aiTargetLanguageName else ""
         }
-        // "Find Best Match (AI)" is rendered inside the target-language (e.g. Hebrew) group as its
+        if (headerGroupName.isNotBlank() &&
+            groups.none { (name, _) -> name.equals(headerGroupName, ignoreCase = true) }) {
+            groups.add(0, Pair(headerGroupName, emptyList()))
+        }
+        // "Find Best Match" is rendered inside the target-language (e.g. Hebrew) group as its
         // first item, alongside the AI translation option — not as a global picker entry.
         groups.toList()
     }
@@ -2406,10 +2409,13 @@ fun PlayerScreen(
                                     }
                                     else -> {
                                         val group = subtitleGroups.getOrNull(subtitleLangIndex - 1)
+                                        val matchGroup = latestUiState.matchLanguageName.isNotBlank() &&
+                                            group?.first?.equals(latestUiState.matchLanguageName, ignoreCase = true) == true
                                         val aiGroup = latestUiState.isAiAvailable &&
                                             latestUiState.aiTargetLanguageName.isNotBlank() &&
                                             group?.first?.equals(latestUiState.aiTargetLanguageName, ignoreCase = true) == true
-                                        val trackCount = (group?.second?.size ?: 0) + if (aiGroup) 2 else 0
+                                        val headerCount = (if (matchGroup) 1 else 0) + (if (aiGroup) 1 else 0)
+                                        val trackCount = (group?.second?.size ?: 0) + headerCount
                                         if (subtitleTrackIndex < trackCount - 1) subtitleTrackIndex++
                                     }
                                 }
@@ -2474,14 +2480,19 @@ fun PlayerScreen(
                                     }
                                 } else {
                                     val group = subtitleGroups.getOrNull(subtitleLangIndex - 1)
+                                    val matchGroup = latestUiState.matchLanguageName.isNotBlank() &&
+                                        group?.first?.equals(latestUiState.matchLanguageName, ignoreCase = true) == true
                                     val aiGroup = latestUiState.isAiAvailable &&
                                         latestUiState.aiTargetLanguageName.isNotBlank() &&
                                         group?.first?.equals(latestUiState.aiTargetLanguageName, ignoreCase = true) == true
-                                    // In the AI/target-language group, index 0 = Find Best Match, 1 = AI translate, 2+ = subs.
-                                    val realIdx = if (aiGroup) subtitleTrackIndex - 2 else subtitleTrackIndex
-                                    if (aiGroup && subtitleTrackIndex == 0) {
+                                    // Target-language group headers: Find Best Match first (AI-independent),
+                                    // then the AI translate entry when AI is available, then the subs.
+                                    val aiHeaderIdx = if (matchGroup) 1 else 0
+                                    val headerCount = aiHeaderIdx + (if (aiGroup) 1 else 0)
+                                    val realIdx = subtitleTrackIndex - headerCount
+                                    if (matchGroup && subtitleTrackIndex == 0) {
                                         viewModel.runFindBestMatch()
-                                    } else if (aiGroup && subtitleTrackIndex == 1) {
+                                    } else if (aiGroup && subtitleTrackIndex == aiHeaderIdx) {
                                         if (!latestUiState.isAiTranslating) viewModel.activateAiTranslation()
                                     } else {
                                         group?.second?.getOrNull(realIdx)?.second
@@ -2689,6 +2700,16 @@ fun PlayerScreen(
                         val pipSubScale = if (isInPipMode) 0.4f else 1f
                         setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, baseSizeSp * (subtitleSizePct / 100f) * pipSubScale)
                         setBottomPaddingFraction((subtitleVerticalPct / 100f).coerceIn(0f, 0.5f))
+                        // "Find best match" without AI showing selects the built-in reference
+                        // track under the hood to read its timing — hide its raw (e.g. English)
+                        // cues while the scan runs. Display-only: the scan's cue collection
+                        // listens on the player, not this view. With AI translating, the
+                        // on-screen text is the translation, so nothing is hidden.
+                        visibility = if (uiState.isFindingBestMatch && !uiState.isAiTranslating) {
+                            android.view.View.INVISIBLE
+                        } else {
+                            android.view.View.VISIBLE
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -3321,6 +3342,7 @@ fun PlayerScreen(
                 isAiTranslating = uiState.isAiTranslating,
                 isAiAvailable = uiState.isAiAvailable,
                 aiTargetLanguageName = uiState.aiTargetLanguageName,
+                matchLanguageName = uiState.matchLanguageName,
                 audioTracks = audioTracks,
                 selectedAudioIndex = selectedAudioIndex,
                 activeTab = subtitleMenuTab,
@@ -4188,6 +4210,7 @@ private fun SubtitleMenu(
     isAiTranslating: Boolean = false,
     isAiAvailable: Boolean = false,
     aiTargetLanguageName: String = "",
+    matchLanguageName: String = "",
     isLiveAudioTranslating: Boolean = false,
     isFindingBestMatch: Boolean = false,
     audioTracks: List<AudioTrackInfo>,
@@ -4339,8 +4362,12 @@ private fun SubtitleMenu(
                                 }
                             } else {
                                 val isLiveAudioGroup = selectedGroup.first == "Live Audio"
+                                val isMatchGroup = matchLanguageName.isNotBlank() &&
+                                    selectedGroup.first.equals(matchLanguageName, ignoreCase = true)
                                 val isAiGroup = isAiAvailable && aiTargetLanguageName.isNotBlank() &&
                                     selectedGroup.first.equals(aiTargetLanguageName, ignoreCase = true)
+                                val aiHeaderIdx = if (isMatchGroup) 1 else 0
+                                val headerCount = aiHeaderIdx + (if (isAiGroup) 1 else 0)
                                 LazyColumn(
                                     state = trackListState,
                                     modifier = Modifier
@@ -4349,26 +4376,28 @@ private fun SubtitleMenu(
                                         .padding(start = 8.dp),
                                     verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    if (isAiGroup) {
-                                        // First: "Find Best Match (AI)" — runs the match logic.
+                                    if (isMatchGroup) {
+                                        // First: "Find Best Match" — timing scan, works without AI.
                                         item {
                                             TrackMenuItem(
                                                 label = if (isFindingBestMatch) "Scanning…" else "Find Best Match",
-                                                subtitle = "AI",
+                                                subtitle = "Auto",
                                                 subtitleDetail = "Auto-pick the best-synced subtitle",
                                                 isSelected = isFindingBestMatch,
                                                 isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == 0,
                                                 onClick = { /* D-pad only */ }
                                             )
                                         }
-                                        // Second: translate the built-in subtitle with AI.
+                                    }
+                                    if (isAiGroup) {
+                                        // Translate the built-in subtitle with AI.
                                         item {
                                             TrackMenuItem(
                                                 label = aiTargetLanguageName,
                                                 subtitle = "AI",
                                                 subtitleDetail = null,
                                                 isSelected = isAiTranslating,
-                                                isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == 1,
+                                                isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == aiHeaderIdx,
                                                 onClick = { /* D-pad only */ }
                                             )
                                         }
@@ -4392,7 +4421,7 @@ private fun SubtitleMenu(
                                                 .ifBlank { subtitle.id }
                                                 .ifBlank { null }
                                         }
-                                        val itemIdx = if (isAiGroup) idx + 2 else idx
+                                        val itemIdx = idx + headerCount
                                         TrackMenuItem(
                                             label = mainLabel,
                                             subtitle = badge,
@@ -4603,6 +4632,8 @@ private fun SubtitleMenu(
                         // Grouped by language
                         subtitleGroups.forEach { (langName, indexedSubs) ->
                             val isLiveAudioGroup = langName == "Live Audio"
+                            val isMatchGroup = matchLanguageName.isNotBlank() &&
+                                langName.equals(matchLanguageName, ignoreCase = true)
                             val isAiGroup = isAiAvailable && aiTargetLanguageName.isNotBlank() &&
                                 langName.equals(aiTargetLanguageName, ignoreCase = true)
                             item(key = "mobile_header_$langName") {
@@ -4635,11 +4666,11 @@ private fun SubtitleMenu(
                                     )
                                 }
                             }
-                            if (isAiGroup) {
+                            if (isMatchGroup) {
                                 item(key = "mobile_find_best_match_item") {
                                     MobileTrackItem(
                                         name = if (isFindingBestMatch) "Scanning…" else "Find Best Match",
-                                        description = "AI",
+                                        description = "Auto",
                                         isSelected = isFindingBestMatch,
                                         onClick = { onFindBestMatch(); onClose() }
                                     )
@@ -4651,6 +4682,8 @@ private fun SubtitleMenu(
                                             .background(Color.White.copy(alpha = 0.06f))
                                     )
                                 }
+                            }
+                            if (isAiGroup) {
                                 item(key = "mobile_ai_item") {
                                     MobileTrackItem(
                                         name = aiTargetLanguageName,

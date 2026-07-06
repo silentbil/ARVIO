@@ -322,6 +322,10 @@ private class SubtitleOffsetRenderer(
      * while TextRenderer.render() has the subtitle buffer populated.
      */
     fun triggerPreTranslation() {
+        // No AI translation active → no lookahead. tryPeriodicLookahead already checks this;
+        // this first-cue trigger fires for any newly selected track (e.g. the reference track
+        // "find best match" selects with AI off) and must not spend API requests either.
+        if (!translationManager.isEnabled) return
         if (preTranslatedUpToUs != Long.MIN_VALUE &&
             preTranslatedUpToUs > currentPositionUs + PREFETCH_TRIGGER_US) {
             return
