@@ -170,7 +170,7 @@ class TelegramSearchMatcher @Inject constructor() {
     private fun cleanTitle(title: String): String {
         val stripped = title.replace(":", "").replace("  ", " ").trim()
         return java.text.Normalizer.normalize(stripped, java.text.Normalizer.Form.NFKD)
-            .replace("\\p{Mn}+".toRegex(), "")
+            .replace(TelegramSearchMatcherRegexes.DIACRITICS_REGEX, "")
     }
 
     private fun normalize(text: String): String =
@@ -179,4 +179,8 @@ class TelegramSearchMatcher @Inject constructor() {
             .replace(MULTI_SPACE, " ")
             .trim()
             .lowercase()
+}
+
+private object TelegramSearchMatcherRegexes {
+    val DIACRITICS_REGEX = Regex("\\p{Mn}+")
 }

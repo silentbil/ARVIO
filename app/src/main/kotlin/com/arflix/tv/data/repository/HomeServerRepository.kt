@@ -900,7 +900,7 @@ class HomeServerRepository @Inject constructor(
     }
 
     private fun fetchPublicInfo(serverUrl: String): ServerInfo {
-        val info = runCatching { getJson(buildUrl(serverUrl, "/System/Info/Public")) }.getOrNull()
+        val info = try { getJson(buildUrl(serverUrl, "/System/Info/Public")) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         if (info != null && info.entrySet().isNotEmpty()) {
             return ServerInfo(
                 serverName = info.string("ServerName"),
@@ -910,7 +910,7 @@ class HomeServerRepository @Inject constructor(
             )
         }
 
-        val plexIdentity = runCatching { getText(buildUrl(serverUrl, "/identity")) }.getOrNull()
+        val plexIdentity = try { getText(buildUrl(serverUrl, "/identity")) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         val (plexName, plexId) = parsePlexIdentity(plexIdentity.orEmpty())
         return ServerInfo(
             serverName = plexName,
@@ -2282,12 +2282,11 @@ class HomeServerRepository @Inject constructor(
         takeIf { it.isJsonObject }?.asJsonObject
 
     private fun JsonElement.asStringOrNull(): String? =
-        runCatching { takeUnless { it.isJsonNull }?.asString }.getOrNull()
+        try { takeUnless { it.isJsonNull }?.asString } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
 
-    private val xmlAttributeRegexCache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
 
     private fun String.xmlAttribute(name: String): String {
-        val pattern = xmlAttributeRegexCache.getOrPut(name) { Regex("""\b${Regex.escape(name)}=["']([^"']*)["']""") }
+        val pattern = HomeServerXmlRegexCache.getRegex(name)
         return pattern.find(this)?.groupValues?.getOrNull(1).orEmpty().xmlDecoded()
     }
 
