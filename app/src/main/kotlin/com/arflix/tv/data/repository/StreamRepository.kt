@@ -40,6 +40,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -1410,7 +1411,10 @@ class StreamRepository @Inject constructor(
     private val ADDON_EXTENDED_EPISODE_TIMEOUT_MS = 45_000L
     private val ADDON_EXTENDED_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 35_000L
     // Subtitles should not block playback but need enough time on slow connections.
-    private val SUBTITLE_TIMEOUT_MS = 6_000L
+    // Generous because aggregator addons (AIOStreams) fan out to upstreams server-side and can
+    // take 10s+ cold (or 502 outright, then succeed warm — hence the retry). Fetches run in
+    // parallel and in the background, so a slow addon delays nothing.
+    private val SUBTITLE_TIMEOUT_MS = 20_000L
     // If addons return nothing, allow Xtream VOD lookup to recover playback.
     private val VOD_LOOKUP_TIMEOUT_MS = 6_000L
     // If addons already returned streams, keep VOD lookup shorter to avoid UI delay.
@@ -2754,21 +2758,24 @@ class StreamRepository @Inject constructor(
             else -> ""
         }
 
-        subtitleAddons.flatMap { addon ->
-            runCatching {
-                withTimeout(SUBTITLE_TIMEOUT_MS) {
-                    val addonUrl = addon.url ?: return@withTimeout emptyList<Subtitle>()
-                    val (baseUrl, queryParams) = getAddonBaseUrl(addonUrl)
-                    val url = buildSubtitlesUrl(
-                        baseUrl = baseUrl,
-                        type = type,
-                        id = contentId,
-                        addonQueryParams = queryParams,
-                        videoHash = videoHash,
-                        videoSize = videoSize
-                    )
-                    val response = streamApi.getSubtitles(url)
-                    response.subtitles?.mapIndexed { index, sub ->
+        // Query addons in parallel — with a generous timeout, sequential fetches would stack
+        // each slow addon's latency onto the total.
+        subtitleAddons.map { addon ->
+            async {
+                suspend fun attempt(): List<Subtitle> = runCatching {
+                    withTimeout(SUBTITLE_TIMEOUT_MS) {
+                        val addonUrl = addon.url ?: return@withTimeout emptyList<Subtitle>()
+                        val (baseUrl, queryParams) = getAddonBaseUrl(addonUrl)
+                        val url = buildSubtitlesUrl(
+                            baseUrl = baseUrl,
+                            type = type,
+                            id = contentId,
+                            addonQueryParams = queryParams,
+                            videoHash = videoHash,
+                            videoSize = videoSize
+                        )
+                        val response = streamApi.getSubtitles(url)
+                        response.subtitles?.mapIndexed { index, sub ->
                             val normalizedLang = normalizeLanguageCode(sub.lang)
                             val langFallback = sub.lang?.trim()?.lowercase()?.take(2) ?: "und"
                             Subtitle(
@@ -2779,9 +2786,21 @@ class StreamRepository @Inject constructor(
                                 provider = addon.name
                             )
                         } ?: emptyList()
+                    }
+                }.onFailure {
+                    Log.w("StreamRepository", "subtitles fetch failed addon=${addon.name} err=${it.message}")
+                }.getOrDefault(emptyList())
+
+                // Aggregator endpoints (AIOStreams) often hang or 502 on the first (cold) hit and
+                // succeed once their upstream fan-out is warm — one retry recovers those.
+                var subs = attempt()
+                if (subs.isEmpty()) {
+                    delay(1_500)
+                    subs = attempt()
                 }
-            }.getOrDefault(emptyList())
-        }
+                subs
+            }
+        }.awaitAll().flatten()
     }
 
     private fun buildSubtitlesUrl(
