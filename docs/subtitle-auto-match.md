@@ -121,14 +121,19 @@ target-language candidates exist.
 
 | Condition | Values |
 |---|---|
-| Target reached | ≥ 8 intervals AND span ≥ 30s |
+| Target reached | ≥ 8 intervals AND span ≥ 30s **AND ≥ 4 buffered** |
 | Early accept | ≥ 4 intervals, span ≥ 30s, some candidate ≥ 0.8 |
 | Fast accept | ≥ 5 intervals, span ≥ 15s, some candidate ≥ 0.85 |
 | Give-up (no speech yet) | 4 min |
 | Give-up (stagnation) | 90s since last new interval (clock **frozen while paused**) |
 | Absolute ceiling | 10 min |
 
-Post-loop: `< 2` intervals or span `< 15s` ⇒ inconclusive (fall to ladder).
+Post-loop: `< 2` intervals or span `< 15s` ⇒ inconclusive (fall to ladder). Also inconclusive:
+best score `< 0.70` with `< 4` buffered intervals — a REJECT from a realtime-dominated reference
+is untrustworthy (July 2026, From S03E03: a verified-synced sub scored 0.65 on buffered=2/9 refs
+collected in a sparse-dialogue recap, then 0.85 for ALL candidates once buffered coverage
+existed). Accepts remain reference-agnostic — only the reject verdict needs buffered quorum
+(`MATCH_MIN_BUFFERED_FOR_REJECT = 4`).
 
 ### Scoring (`SubtitleSyncMatcher.scoreByTiming`) — HYBRID, calibrated
 
@@ -147,7 +152,9 @@ narrow — do not nudge thresholds or the metric without fresh A/B evidence.
 
 ## 3. Selection & the local-file trick
 
-Selecting an **external** subtitle rebuilds the MediaItem (re-prepare). Economics:
+Selecting an **external** subtitle rebuilds the MediaItem (re-prepare) — *unless* the track was
+side-loaded at startup by **Preload Subtitles** mode (see §3b), in which case selection is a pure
+`TrackSelectionOverride` with no rebuild. Economics of the rebuild path:
 - Video re-open: debrid streams are deliberately **not disk-cached** (I/O bottleneck) — usually
   fine, occasionally slow/stale.
 - Subtitle download during rebuild was the common stall (slow addon proxies) ⇒ matched subs are
@@ -156,8 +163,56 @@ Selecting an **external** subtitle rebuilds the MediaItem (re-prepare). Economic
   a `file://` copy (same id). The data source chain wraps OkHttp in `DefaultDataSource` for
   file support. The tracks-changed remap keeps `file:` selections as-is (would otherwise swap
   back to the remote URL and re-trigger a rebuild).
-- **Do NOT preload all subs into the MediaItem** — tried historically and reverted: ExoPlayer
-  eagerly downloads every side-loaded config at prepare (30+ requests), plus encoding issues.
+- **Do NOT preload all REMOTE subs into the MediaItem** — tried historically and reverted:
+  ExoPlayer eagerly downloads every side-loaded config at prepare (30+ requests), plus encoding
+  issues. Preload Subtitles mode (§3b) is the sanctioned exception because it attaches **local
+  file copies only** — the eager read is free and encoding is already normalized.
+
+## 3b. Preload Subtitles mode (July 2026)
+
+Opt-in setting **"Preload Subtitles"** (`subtitle_preload_enabled`, global, cloud-synced, row 39
+in Settings → Subtitles, default **off**). Modeled on NuvioTV's `AddonSubtitleStartupMode` but
+scoped to the preferred language and downloading files ourselves.
+
+Flow:
+1. `PlayerViewModel.preloadSubtitles()` runs after every addon-subtitle merge (all 3 fetch sites
+   + the no-imdbId branch): downloads preferred-language external subs (cap
+   `MAX_PRELOAD_SUBS = 15`) via `SubtitleSyncMatcher.loadRaw` → `localizeSubtitle` (same
+   `matched_subs/` files the scan serves) and publishes them as
+   `PlayerUiState.preloadedSubtitles` + `subtitlePreloadComplete` (always set, even on empty —
+   the gate must never hang; also pre-set when no preferred language).
+2. PlayerScreen's prepare effect **gates** the initial `setMediaSource` on
+   `subtitlePreloadComplete` (timeout 20s), attaches all `file://` configs, then **re-anchors
+   `streamSelectedTime` and clears `startupRecoverAttempted`** — otherwise a slow subtitle addon
+   would eat the startup watchdog budget and trigger source failover.
+3. Sidecar configs only merge through a `DefaultMediaSourceFactory`; the dedicated
+   `preloadMediaSourceFactory` streams video **uncached** (debrid I/O rule) while supporting
+   `file://` for the subs. HLS keeps working via the M3U8 mime hint (loses only chunkless prep);
+   DASH needs the explicit `APPLICATION_MPD` mime because DefaultMediaSourceFactory doesn't
+   recognize the "/dash"/"format=dash" URL shapes.
+4. Selection: the subtitle-switch effect first looks for an attached text track whose format id
+   matches `subtitleTrackId(subtitle)` and applies a `TrackSelectionOverride` (no rebuild). This
+   catches the **find-best-match winner** too: `subtitleTrackId` is provider|id-based (never a
+   URL hash for id-carrying subs), so the scan's localized `file://` copy resolves to the same
+   attached track. Non-attached picks fall back to the rebuild path, which in preload mode
+   re-attaches the preloaded set + the new sub and then pins the exact track by id (language
+   preference alone is ambiguous with several same-language tracks attached).
+- `subtitleTrackId` ids are provider-qualified with `|` — never `:`, because ExoPlayer prefixes
+  side-loaded format ids with `periodIndex:` and matching strips at the last `:`.
+- Mid-session source switches don't reset `subtitlePreloadComplete` — the files are per-title,
+  the gate passes instantly and the new MediaItem re-attaches the same copies.
+- ⚠ Ordering side effect: the gate guarantees the scan starts BEFORE the player exposes embedded
+  tracks (prepare waits for the very fetch that triggers selection). Two AI-interim fixes hang on
+  this (pre-preload both were masked because prepare raced ahead of the fetch):
+  1. No source at scan start → interim silently skipped and `autoMatchAttempted` blocks re-runs ⇒
+     late activation from `updatePlayerTextTracks` (scan running + auto-select + embedded source
+     just arrived). `activateAiTranslation` also resolves a blank `aiTargetLanguageName` from the
+     preferred-language code — the silent path never populated it, and a blank target made the
+     manager translate to nothing.
+  2. Interim activated early with an EXTERNAL English source → the scan's reference-track switch
+     (`scoreAgainstBuiltIn`) used to hard-set `isAiTranslating = false` when the AI source ≠
+     reference, killing the interim mid-scan. It now MIGRATES the interim onto the reference
+     (embedded non-bitmap = the preferred AI source) instead of disabling it.
 
 Subtitle MIME sniffing strips trailing slashes (`…/sub.vtt/?q=` is VTT — AIOStreams shape);
 default is SRT for extensionless URLs.

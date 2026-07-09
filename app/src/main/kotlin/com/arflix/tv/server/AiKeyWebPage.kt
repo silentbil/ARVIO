@@ -75,7 +75,7 @@ $sharedCss
   <a id="geminiLink" href="/gemini" class="provider-btn">
     <span class="badge badge-gemini">BETTER QUALITY</span>
     <span class="name">Google Gemini</span>
-    <span class="model">Gemini 2.5 Flash · Free tier available</span>
+    <span class="model">Gemini 3.5 Flash · Free tier available</span>
   </a>
 </div>
 <script>

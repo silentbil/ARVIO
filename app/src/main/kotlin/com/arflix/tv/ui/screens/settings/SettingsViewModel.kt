@@ -198,6 +198,7 @@ data class SettingsUiState(
     val subtitleAiEnabled: Boolean = false,
     val subtitleAiAutoSelect: Boolean = false,
     val subtitleAiFindBestMatch: Boolean = false,
+    val subtitlePreloadEnabled: Boolean = true,
     val subtitleAiApiKey: String = "",
     val subtitleAiModel: SubtitleAiModel = SubtitleAiModel.GROQ_LLAMA_70B,
     val subtitleRemoveHearingImpaired: Boolean = true,
@@ -288,6 +289,7 @@ class SettingsViewModel @Inject constructor(
     private val subtitleAiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
     private val subtitleAiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
     private val subtitleAiFindBestMatchKey = booleanPreferencesKey("subtitle_ai_find_best_match")
+    private val subtitlePreloadEnabledKey = booleanPreferencesKey("subtitle_preload_enabled")
     private val subtitleAiApiKeyKey = stringPreferencesKey("subtitle_ai_api_key")
     private val subtitleAiModelKey = stringPreferencesKey("subtitle_ai_model")
     private val subtitleRemoveHearingImpairedKey = booleanPreferencesKey("subtitle_remove_hearing_impaired")
@@ -492,6 +494,7 @@ class SettingsViewModel @Inject constructor(
             val subtitleAiEnabled = prefs[subtitleAiEnabledKey] ?: false
             val subtitleAiAutoSelect = prefs[subtitleAiAutoSelectKey] ?: false
             val subtitleAiFindBestMatch = prefs[subtitleAiFindBestMatchKey] ?: false
+            val subtitlePreloadEnabled = prefs[subtitlePreloadEnabledKey] ?: true
             val subtitleAiApiKey = prefs[subtitleAiApiKeyKey] ?: ""
             val subtitleAiModel = runCatching {
                 SubtitleAiModel.valueOf(prefs[subtitleAiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)
@@ -562,6 +565,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleAiEnabled = subtitleAiEnabled,
                 subtitleAiAutoSelect = subtitleAiAutoSelect,
                 subtitleAiFindBestMatch = subtitleAiFindBestMatch,
+                subtitlePreloadEnabled = subtitlePreloadEnabled,
                 subtitleAiApiKey = subtitleAiApiKey,
                 subtitleAiModel = subtitleAiModel,
                 subtitleRemoveHearingImpaired = subtitleRemoveHearingImpaired,
@@ -1306,6 +1310,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[subtitleAiFindBestMatchKey] = enabled }
             _uiState.value = _uiState.value.copy(subtitleAiFindBestMatch = enabled)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun setSubtitlePreloadEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitlePreloadEnabledKey] = enabled }
+            _uiState.value = _uiState.value.copy(subtitlePreloadEnabled = enabled)
             syncLocalStateToCloud(silent = true)
         }
     }

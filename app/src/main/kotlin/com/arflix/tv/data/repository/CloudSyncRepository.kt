@@ -353,6 +353,7 @@ class CloudSyncRepository @Inject constructor(
     private val subtitleAiEnabledKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_enabled")
     private val subtitleAiAutoSelectKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_auto_select")
     private val subtitleAiFindBestMatchKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_find_best_match")
+    private val subtitlePreloadEnabledKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_preload_enabled")
     private val subtitleAiApiKeyKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_api_key")
     private val subtitleAiModelKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_model")
     private val subtitleRemoveHearingImpairedKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_remove_hearing_impaired")
@@ -491,6 +492,7 @@ class CloudSyncRepository @Inject constructor(
         root.put("subtitleAiEnabled", prefs[subtitleAiEnabledKey] ?: false)
         root.put("subtitleAiAutoSelect", prefs[subtitleAiAutoSelectKey] ?: false)
         root.put("subtitleAiFindBestMatch", prefs[subtitleAiFindBestMatchKey] ?: false)
+        root.put("subtitlePreloadEnabled", prefs[subtitlePreloadEnabledKey] ?: true)
         root.put("subtitleAiApiKey", prefs[subtitleAiApiKeyKey] ?: "")
         root.put("subtitleAiModel", prefs[subtitleAiModelKey] ?: "GROQ_LLAMA_70B")
         root.put("subtitleRemoveHearingImpaired", prefs[subtitleRemoveHearingImpairedKey] ?: true)
@@ -1230,6 +1232,12 @@ class CloudSyncRepository @Inject constructor(
                 prefs[subtitleAiEnabledKey] = root.optBoolean("subtitleAiEnabled", false)
                 prefs[subtitleAiAutoSelectKey] = root.optBoolean("subtitleAiAutoSelect", false)
                 prefs[subtitleAiFindBestMatchKey] = root.optBoolean("subtitleAiFindBestMatch", false)
+                // Only apply when the backup actually carries the field — backups pushed by app
+                // versions that predate the setting must not reset it (realtime sync pulls after
+                // EVERY push from any device, so one old-version device would keep wiping it).
+                if (root.has("subtitlePreloadEnabled")) {
+                    prefs[subtitlePreloadEnabledKey] = root.optBoolean("subtitlePreloadEnabled", false)
+                }
                 val apiKey = root.optString("subtitleAiApiKey", "")
                 if (apiKey.isNotBlank()) prefs[subtitleAiApiKeyKey] = apiKey
                 val model = root.optString("subtitleAiModel", "GROQ_LLAMA_70B")

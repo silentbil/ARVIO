@@ -65,6 +65,10 @@ private fun Addon.isVodStreamingAddon(): Boolean =
 
 private const val PLAYBACK_DIAGNOSTICS = true
 
+// "Preload Subtitles" mode: cap on how many preferred-language subs are downloaded and
+// side-loaded at startup (each becomes a MediaItem SubtitleConfiguration read at prepare).
+private const val MAX_PRELOAD_SUBS = 15
+
 private fun playbackDiag(message: String) {
     if (PLAYBACK_DIAGNOSTICS) {
         System.err.println("[PlaybackDiag] $message")
@@ -86,6 +90,16 @@ data class PlayerUiState(
     val streamSelectionNonce: Int = 0,
     val selectedSubtitle: Subtitle? = null,
     val subtitleSelectionNonce: Int = 0,
+    // "Preload Subtitles" mode: preferred-language addon subs downloaded to local files before
+    // playback so they can be side-loaded into the initial MediaItem — switching then needs only
+    // a track override, not a MediaItem rebuild (no visible video reload). Default ON.
+    val subtitlePreloadEnabled: Boolean = true,
+    // Localized (file://) copies ready to attach. Separate from [subtitles]: menu entries keep
+    // their remote URLs so scan/download flows are unaffected.
+    val preloadedSubtitles: List<Subtitle> = emptyList(),
+    // True once preloading for this video finished (even with zero results) — the prepare gate
+    // in PlayerScreen waits on this (with a timeout) before building the MediaItem.
+    val subtitlePreloadComplete: Boolean = false,
     val savedPosition: Long = 0,
     val preferredAudioLanguage: String = "en",
     val preferredSubtitleLang: String = "",
@@ -217,6 +231,9 @@ class PlayerViewModel @Inject constructor(
     // One auto-run of "find best match" per playback/stream — applyPreferredSubtitle re-runs on
     // every subtitle-list update and must not restart a completed scan.
     private var autoMatchAttempted = false
+    // "Preload Subtitles" mode (read once per video load, like the AI flags).
+    private var subtitlePreloadEnabled = false
+    private var subtitlePreloadJob: Job? = null
     private var aiApiKey = ""
     private var aiModel = SubtitleAiModel.GROQ_LLAMA_70B
     private var aiRemoveHearingImpaired = true
@@ -225,6 +242,7 @@ class PlayerViewModel @Inject constructor(
     private val aiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
     private val aiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
     private val aiFindBestMatchKey = booleanPreferencesKey("subtitle_ai_find_best_match")
+    private val subtitlePreloadKey = booleanPreferencesKey("subtitle_preload_enabled")
     private val aiApiKeyKey = globalStringPreferencesKey("subtitle_ai_api_key")
     private val aiModelKey = globalStringPreferencesKey("subtitle_ai_model")
     private val aiRemoveHearingImpairedKey = booleanPreferencesKey("subtitle_remove_hearing_impaired")
@@ -251,7 +269,13 @@ class PlayerViewModel @Inject constructor(
     ).also { mgr ->
         mgr.onTranslatingChanged = { isTranslating -> _isTranslatingLive.value = isTranslating }
         mgr.onBatchResult = { success, errorMessage ->
-            if (!success && !aiErrorToastShown) {
+            // Content-policy blocks are not actionable (Gemini's non-configurable output filter
+            // on raw movie dialogue) and don't stop translation of other windows — the service
+            // already bisected the batch to salvage what it could. Don't consume the one toast
+            // per session on them; keep it for real errors (bad key, rate limit).
+            if (!success && errorMessage == TRANSLATION_ERROR_CONTENT_BLOCKED) {
+                android.util.Log.w("SubtitleTranslation", "batch content-blocked — toast suppressed")
+            } else if (!success && !aiErrorToastShown) {
                 aiErrorToastShown = true
                 val msg = when {
                     errorMessage == "API key missing" -> context.getString(R.string.player_ai_no_key)
@@ -434,6 +458,7 @@ class PlayerViewModel @Inject constructor(
         lastWatchHistorySavedPositionSeconds = -1L
         subtitleRefreshJob?.cancel()
         subtitleSelectionJob?.cancel()
+        subtitlePreloadJob?.cancel()
         // Cancel any in-flight "Find best match" scan from the previous title — otherwise it can
         // finish on this new session and select/restore a stale subtitle or poison the match cache
         // (its stream cache key resolves to the new stream). Same-VM path only, e.g. play-next.
@@ -509,6 +534,7 @@ class PlayerViewModel @Inject constructor(
             aiSubtitleEnabled = prefs[aiEnabledKey] ?: false
             aiSubtitleAutoSelect = prefs[aiAutoSelectKey] ?: false
             aiFindBestMatchFirst = prefs[aiFindBestMatchKey] ?: false
+            subtitlePreloadEnabled = prefs[subtitlePreloadKey] ?: true
             aiApiKey = prefs[aiApiKeyKey] ?: ""
             aiModel = runCatching {
                 SubtitleAiModel.valueOf(prefs[aiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)
@@ -539,7 +565,10 @@ class PlayerViewModel @Inject constructor(
                 subtitleOffset = subOffset,
                 autoPlayNext = autoPlayNext,
                 showLoadingStats = showLoadingStats,
-                volumeBoostDb = volumeBoostDb
+                volumeBoostDb = volumeBoostDb,
+                subtitlePreloadEnabled = subtitlePreloadEnabled,
+                // Nothing to preload without a preferred language — don't make the gate wait.
+                subtitlePreloadComplete = normalizeLanguage(preferredSub).isBlank()
             )
 
             // If stream URL provided, use it directly (except magnet links, which require resolution).
@@ -708,6 +737,7 @@ class PlayerViewModel @Inject constructor(
                             subtitles = mergedSubs,
                             isLoadingSubtitles = false
                         )
+                        preloadSubtitles(mergedSubs)
 
                         scheduleSubtitleSelection(currentOriginalLanguage)
                     } else {
@@ -719,6 +749,8 @@ class PlayerViewModel @Inject constructor(
                             "subtitle fetch skipped: no imdbId for $mediaType/$mediaId — scheduling selection with embedded-only"
                         )
                         _uiState.value = _uiState.value.copy(isLoadingSubtitles = false)
+                        // No addon subs will arrive — unblock the preload prepare gate.
+                        preloadSubtitles(emptyList())
                         scheduleSubtitleSelection(currentOriginalLanguage)
                     }
                 }
@@ -1058,6 +1090,7 @@ class PlayerViewModel @Inject constructor(
                         subtitles = mergedSubs,
                         isLoadingSubtitles = false
                     )
+                    preloadSubtitles(mergedSubs)
                     scheduleSubtitleSelection(currentOriginalLanguage)
                 }
 
@@ -2363,6 +2396,7 @@ class PlayerViewModel @Inject constructor(
                         }
                     )
                     _uiState.value = _uiState.value.copy(subtitles = merged)
+                    preloadSubtitles(merged)
 
                     scheduleSubtitleSelection(currentOriginalLanguage)
                 }
@@ -2517,6 +2551,19 @@ class PlayerViewModel @Inject constructor(
                 subtitles = finalList,
                 selectedSubtitle = resolvedSelected
             )
+
+            // Late AI-interim activation for a running scan. The preload gate defers prepare
+            // until the addon-subtitle fetch completes, so the scan now reliably STARTS before
+            // the player exposes any embedded track — runFindBestMatch then found no AI source
+            // and went silent, and autoMatchAttempted blocks any re-run (the pre-preload flow
+            // only worked because prepare raced ahead of the fetch). Join the interim as soon
+            // as an embedded source appears while the scan is still running.
+            if (_uiState.value.isFindingBestMatch && !_uiState.value.isAiTranslating &&
+                aiSubtitleEnabled && aiSubtitleAutoSelect &&
+                findAiSourceSubtitle(finalList) != null
+            ) {
+                activateAiTranslation()
+            }
 
             val currentSel = _uiState.value.selectedSubtitle
             val preferred = getDefaultSubtitle()
@@ -2673,15 +2720,24 @@ class PlayerViewModel @Inject constructor(
         // AI activation is not a specific user track pick — a late embedded preferred-language
         // track may still displace it.
         userPickedSubtitle = false
+        // The silent-scan path never populates aiTargetLanguageName (it's set only when a source
+        // existed at scan start) — resolve from the preferred-language code so a late activation
+        // doesn't hand the manager a BLANK target (which silently translates to nothing).
         val targetLangName = _uiState.value.aiTargetLanguageName
+            .ifBlank { if (targetSubtitleLangCode.isNotBlank()) languageCodeToName(targetSubtitleLangCode) else "" }
         if (targetLangName.isNotBlank()) translationManager.targetLanguage = targetLangName
         translationManager.isEnabled = true
         translationManager.reset()
         aiErrorToastShown = false
+        android.util.Log.i(
+            "SubMatch",
+            "AI translation activated: source=${source.lang}/${source.label} target=$targetLangName"
+        )
         _uiState.value = _uiState.value.copy(
             selectedSubtitle = source,
             isAiTranslating = true,
             isAiAvailable = true,
+            aiTargetLanguageName = targetLangName,
             aiErrorToast = null
         )
     }
@@ -2954,11 +3010,31 @@ class PlayerViewModel @Inject constructor(
                 it.isEmbedded && it.id == referenceSub.id &&
                     it.groupIndex != null && it.trackIndex != null
             } ?: referenceSub
-            _uiState.value = _uiState.value.copy(
-                selectedSubtitle = refResolved,
-                isAiTranslating = false,
-                subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
-            )
+            if (_uiState.value.isAiTranslating) {
+                // AI interim is running on a DIFFERENT source — with the preload gate this is
+                // the common case: activation happens before embedded tracks resolve, so the
+                // source is an external English sub. Killing the interim here (the historical
+                // behavior of this branch) is what made AI "never start" during scans. Instead,
+                // migrate the translation onto the reference: it's an embedded non-bitmap text
+                // track — precisely the preferred AI source — with strictly better (muxed)
+                // timing than the external sub.
+                android.util.Log.i(
+                    "SubMatch",
+                    "reference switch: migrating AI interim source ${aiSourceSubtitle?.label} -> ${refResolved.label}"
+                )
+                aiSourceSubtitle = refResolved
+                translationManager.reset()
+                _uiState.value = _uiState.value.copy(
+                    selectedSubtitle = refResolved,
+                    subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    selectedSubtitle = refResolved,
+                    isAiTranslating = false,
+                    subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
+                )
+            }
         }
 
         // The reference-track selection propagates asynchronously (compose → track selector →
@@ -3030,7 +3106,16 @@ class PlayerViewModel @Inject constructor(
             // also cover a minimum stretch of the video.
             val span = if (refs.size >= 2) refs.last().second - refs.first().first else 0L
             val spanOk = span >= MATCH_MIN_REF_SPAN_MS
-            if (spanOk && refs.size >= MATCH_TARGET_REF_INTERVALS) break
+            // Target-reached needs BUFFERED quorum: realtime-dominated references carry render-lag
+            // skew and merged pseudo-cues that suppress well-synced subs (a verified-perfect sub
+            // scored 0.65 on buffered=2/9 refs from a sparse-dialogue recap, then 0.85 once
+            // buffered coverage existed — From S03E03, July 2026). Keep collecting instead of
+            // concluding from weak evidence; the accept breaks below stay reference-agnostic
+            // (a HIGH score is trustworthy on any reference) and the give-up timers still bound
+            // the scan.
+            if (spanOk && refs.size >= MATCH_TARGET_REF_INTERVALS &&
+                bufferedCount >= MATCH_MIN_BUFFERED_FOR_REJECT
+            ) break
             // Early accept: scoring is free, so score incrementally — once some candidate is
             // already clearly in sync there's no need to keep collecting up to the target.
             val bestNow = if (refs.size >= MATCH_EARLY_ACCEPT_REFS) {
@@ -3088,7 +3173,7 @@ class PlayerViewModel @Inject constructor(
             )
         }
 
-        return loaded.map { (sub, cues) ->
+        val results = loaded.map { (sub, cues) ->
             val s = SubtitleSyncMatcher.scoreByTiming(cues, refs)
             android.util.Log.i(
                 "SubMatch",
@@ -3097,6 +3182,18 @@ class PlayerViewModel @Inject constructor(
             )
             sub to s
         }
+        // A LOW score from a realtime-dominated reference (give-up exit without buffered quorum)
+        // is not evidence of a bad sub — report inconclusive instead of a confident
+        // "no well-synced subtitle (best N%)" reject. Accepts pass through unchanged.
+        val best = results.maxOfOrNull { it.second } ?: 0.0
+        if (best < MATCH_SUCCESS_THRESHOLD_TIMING && bufferedCount < MATCH_MIN_BUFFERED_FOR_REJECT) {
+            android.util.Log.i(
+                "SubMatch",
+                "verdict withheld: best=${"%.2f".format(best)} but buffered=$bufferedCount/${refs.size} — inconclusive"
+            )
+            return null
+        }
+        return results
     }
 
     /** Reference = AI hearing transcription (fallback when there's no built-in English track). */
@@ -3285,6 +3382,58 @@ class PlayerViewModel @Inject constructor(
             file.writeText(raw)
             sub.copy(url = file.toURI().toString())
         }.getOrDefault(sub)
+    }
+
+    /**
+     * "Preload Subtitles" mode: download the preferred-language addon subtitles to local cache
+     * files (same UTF-8/gunzipped [localizeSubtitle] files the match scan serves) so PlayerScreen
+     * can side-load them ALL into the initial MediaItem — switching between them is then a track
+     * override with no MediaItem rebuild. The historical "never preload all subs" revert was about
+     * ExoPlayer eagerly fetching 30+ REMOTE configs at prepare; local files make that eager read
+     * free and encoding-safe. Incremental: re-invocations only download subs not yet localized.
+     * Every path ends with [PlayerUiState.subtitlePreloadComplete] = true so the prepare gate in
+     * PlayerScreen never waits on a dead job (it also has its own timeout).
+     */
+    private fun preloadSubtitles(subs: List<Subtitle>) {
+        if (!subtitlePreloadEnabled) return
+        val target = targetSubtitleLangCode
+        val alreadyPreloaded = _uiState.value.preloadedSubtitles
+            .map { "${it.provider}|${it.id}|${it.lang}" }
+            .toSet()
+        val candidates = if (target.isBlank()) emptyList() else subs
+            .filter { sub ->
+                !sub.isEmbedded && !sub.isBitmap && sub.url.isNotBlank() &&
+                    !sub.url.startsWith("file:") &&
+                    normalizeLanguage(sub.lang) == target &&
+                    "${sub.provider}|${sub.id}|${sub.lang}" !in alreadyPreloaded
+            }
+            .take(MAX_PRELOAD_SUBS)
+        if (candidates.isEmpty()) {
+            if (!_uiState.value.subtitlePreloadComplete) {
+                _uiState.value = _uiState.value.copy(subtitlePreloadComplete = true)
+            }
+            return
+        }
+        subtitlePreloadJob?.cancel()
+        subtitlePreloadJob = viewModelScope.launch {
+            val localized = candidates.map { sub ->
+                async(Dispatchers.IO) {
+                    SubtitleSyncMatcher.loadRaw(sub.url)
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { raw -> localizeSubtitle(sub, raw) }
+                        ?.takeIf { it.url.startsWith("file:") }
+                }
+            }.awaitAll().filterNotNull()
+            android.util.Log.d(
+                "SubMatch",
+                "preload done: ${localized.size}/${candidates.size} candidates localized (target=$target)"
+            )
+            _uiState.value = _uiState.value.copy(
+                preloadedSubtitles = (_uiState.value.preloadedSubtitles + localized)
+                    .distinctBy { "${it.provider}|${it.id}|${it.lang}" },
+                subtitlePreloadComplete = true
+            )
+        }
     }
 
     private fun showMatchToast(message: String) {
@@ -4084,6 +4233,9 @@ class PlayerViewModel @Inject constructor(
         private const val MATCH_FAST_ACCEPT_REFS = 5    // …with at least this many refs
         private const val MATCH_FAST_ACCEPT_SCORE = 0.85 // …scoring at least this
         private const val MATCH_MIN_REF_SPAN_MS = 30_000L // refs must cover this much video before any accept
+        // A REJECT verdict requires at least this many buffered (authored-timing) reference
+        // intervals — realtime-only references systematically under-score synced subs (§2 skew).
+        private const val MATCH_MIN_BUFFERED_FOR_REJECT = 4
         private const val MATCH_TRACK_SWITCH_SETTLE_MS = 1_500L // let the reference-track switch reach the renderer
         private const val MATCH_BUFFERED_REF_INTERVALS = 12  // max upcoming cues to read from the buffer per poll
         private const val MATCH_EMBEDDED_WAIT_MS = 8_000L    // grace period for async embedded tracks

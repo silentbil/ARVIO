@@ -216,7 +216,7 @@ private val tvGeneralSectionIds = setOf(
 private fun tvGeneralRowsForSection(section: String): List<Int> {
     return when (section) {
         "language" -> listOf(0, 3)
-        "subtitles" -> listOf(1, 2, 38, 4, 5, 6, 7, 8, 9)
+        "subtitles" -> listOf(1, 2, 38, 39, 4, 5, 6, 7, 8, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
         "playback" -> listOf(10, 11, 12, 13, 14, 37, 34, 16, 15, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 36)
@@ -904,6 +904,7 @@ fun SettingsScreen(
                                                 29 -> showAiModelDialog = true
                                                 30 -> viewModel.setSubtitleAiAutoSelect(!uiState.subtitleAiAutoSelect)
                                                 38 -> viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch)
+                                                39 -> viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled)
                                                 31 -> viewModel.setSubtitleRemoveHearingImpaired(!uiState.subtitleRemoveHearingImpaired)
                                                 32 -> showAiApiKeyDialog = true
                                                 33 -> viewModel.startAiKeyServer()
@@ -1332,6 +1333,7 @@ fun SettingsScreen(
                             subtitleAiEnabled = uiState.subtitleAiEnabled,
                             subtitleAiAutoSelect = uiState.subtitleAiAutoSelect,
                             subtitleAiFindBestMatch = uiState.subtitleAiFindBestMatch,
+                            subtitlePreloadEnabled = uiState.subtitlePreloadEnabled,
                             subtitleAiApiKey = uiState.subtitleAiApiKey,
                             subtitleAiModel = uiState.subtitleAiModel,
                             subtitleRemoveHearingImpaired = uiState.subtitleRemoveHearingImpaired,
@@ -1339,6 +1341,7 @@ fun SettingsScreen(
                             onSubtitleAiModelClick = { showAiModelDialog = true },
                             onSubtitleAiAutoSelectToggle = { viewModel.setSubtitleAiAutoSelect(it) },
                             onSubtitleAiFindBestMatchToggle = { viewModel.setSubtitleAiFindBestMatch(it) },
+                            onSubtitlePreloadToggle = { viewModel.setSubtitlePreloadEnabled(it) },
                             onSubtitleRemoveHearingImpairedToggle = { viewModel.setSubtitleRemoveHearingImpaired(it) },
                             onSubtitleAiApiKeyClick = { showAiApiKeyDialog = true },
                             onSubtitleAiQrClick = { viewModel.startAiKeyServer() },
@@ -3434,6 +3437,14 @@ private fun MobileSettingsMainPage(
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.Subtitles,
+                    title = stringResource(R.string.subtitle_preload_title),
+                    subtitle = stringResource(R.string.subtitle_preload_desc),
+                    value = if (uiState.subtitlePreloadEnabled) "On" else "Off",
+                    isFocused = false,
+                    onClick = { viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled) }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Subtitles,
                     title = stringResource(R.string.filter_subtitles),
                     value = if (uiState.filterSubtitlesByLanguage) "On" else "Off",
                     isFocused = false,
@@ -3727,7 +3738,7 @@ private fun MobileSettingsSubPage(
                         subtitle = stringResource(R.string.ai_model_desc),
                         value = when (uiState.subtitleAiModel) {
                             com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq - Llama 3.3 70B"
-                            com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 2.5 Flash"
+                            com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 3.5 Flash"
                         },
                         isFocused = false,
                         onClick = onSubtitleAiModelClick
@@ -4751,6 +4762,7 @@ private fun TvGeneralSettingsRows(
     subtitleAiEnabled: Boolean = false,
     subtitleAiAutoSelect: Boolean = false,
     subtitleAiFindBestMatch: Boolean = false,
+    subtitlePreloadEnabled: Boolean = false,
     subtitleAiApiKey: String = "",
     subtitleAiModel: com.arflix.tv.ui.screens.player.SubtitleAiModel = com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B,
     subtitleRemoveHearingImpaired: Boolean = true,
@@ -4758,6 +4770,7 @@ private fun TvGeneralSettingsRows(
     onSubtitleAiModelClick: () -> Unit = {},
     onSubtitleAiAutoSelectToggle: (Boolean) -> Unit = {},
     onSubtitleAiFindBestMatchToggle: (Boolean) -> Unit = {},
+    onSubtitlePreloadToggle: (Boolean) -> Unit = {},
     onSubtitleRemoveHearingImpairedToggle: (Boolean) -> Unit = {},
     onSubtitleAiApiKeyClick: () -> Unit = {},
     onSubtitleAiQrClick: () -> Unit = {},
@@ -4857,7 +4870,7 @@ private fun TvGeneralSettingsRows(
                     subtitle = stringResource(R.string.ai_model_desc),
                     value = when (subtitleAiModel) {
                         com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq - Llama 3.3 70B"
-                        com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 2.5 Flash"
+                        com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google - Gemini 3.5 Flash"
                     },
                     isFocused = focusedIndex == localIndex,
                     onClick = onSubtitleAiModelClick,
@@ -4866,6 +4879,7 @@ private fun TvGeneralSettingsRows(
                 30 -> SettingsToggleRow(stringResource(R.string.ai_auto_select_title), stringResource(R.string.ai_auto_select_desc), subtitleAiAutoSelect, focusedIndex == localIndex, onSubtitleAiAutoSelectToggle, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
                 // AI-independent: the timing-based match scan needs no API key.
                 38 -> SettingsToggleRow(stringResource(R.string.ai_find_best_match_title), stringResource(R.string.ai_find_best_match_desc), subtitleAiFindBestMatch, focusedIndex == localIndex, onSubtitleAiFindBestMatchToggle, Modifier.settingsFocusSlot(localIndex))
+                39 -> SettingsToggleRow(stringResource(R.string.subtitle_preload_title), stringResource(R.string.subtitle_preload_desc), subtitlePreloadEnabled, focusedIndex == localIndex, onSubtitlePreloadToggle, Modifier.settingsFocusSlot(localIndex))
                 31 -> SettingsToggleRow(stringResource(R.string.ai_remove_hi_title), stringResource(R.string.ai_remove_hi_desc), subtitleRemoveHearingImpaired, focusedIndex == localIndex, onSubtitleRemoveHearingImpairedToggle, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
                 32 -> SettingsRow(Icons.Default.VpnKey, stringResource(R.string.ai_api_key_title), stringResource(R.string.ai_api_key_desc), maskAiApiKey(subtitleAiApiKey, stringResource(R.string.ai_key_not_set)), focusedIndex == localIndex, onSubtitleAiApiKeyClick, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
                 33 -> SettingsRow(Icons.Default.QrCode, stringResource(R.string.ai_scan_qr_title), stringResource(R.string.ai_scan_qr_desc), "", focusedIndex == localIndex, onSubtitleAiQrClick, Modifier.settingsFocusSlot(localIndex).alpha(if (subtitleAiEnabled) 1f else 0.4f))
@@ -5310,7 +5324,7 @@ private fun GeneralSettings(
             subtitle = stringResource(R.string.ai_model_desc),
             value = when (subtitleAiModel) {
                 com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B -> "Groq – Llama 3.3 70B"
-                com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google – Gemini 2.5 Flash"
+                com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25 -> "Google – Gemini 3.5 Flash"
             },
             isFocused = focusedIndex == 29,
             onClick = onSubtitleAiModelClick,
@@ -5392,7 +5406,7 @@ private fun AiModelDialog(
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val options = listOf(
         Triple(com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B, "Groq – Llama 3.3 70B", stringResource(R.string.ai_groq_model_note)),
-        Triple(com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25, "Google – Gemini 2.5 Flash", stringResource(R.string.ai_gemini_model_note))
+        Triple(com.arflix.tv.ui.screens.player.SubtitleAiModel.GEMINI_FLASH_25, "Google – Gemini 3.5 Flash", stringResource(R.string.ai_gemini_model_note))
     )
     BackHandler { onDismiss() }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {

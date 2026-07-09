@@ -210,6 +210,8 @@
     <string name="ai_auto_select_desc">הפעל אוטומטית כאשר קיים תרגום מובנה כלשהו</string>
     <string name="ai_find_best_match_title">חיפוש אוטומטי של הכתובית המתאימה ביותר</string>
     <string name="ai_find_best_match_desc">בחירה אוטומטית של הכתובית המסונכרנת ביותר מההרחבות שלך</string>
+    <string name="subtitle_preload_title">טעינת כתוביות מראש</string>
+    <string name="subtitle_preload_desc">המתן לכתוביות לפני תחילת הווידאו כך שהחלפה ביניהן תהיה מיידית</string>
     <string name="ai_remove_hi_title">הסר טקסט למוגבלי שמיעה</string>
     <string name="ai_remove_hi_desc">הסר סימוני [סוגריים] למוגבלי שמיעה לפני תרגום</string>
     <string name="ai_api_key_title">מפתח API</string>

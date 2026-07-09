@@ -88,6 +88,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -163,6 +164,7 @@ import com.arflix.tv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Job
 import androidx.compose.runtime.rememberCoroutineScope
 import okhttp3.Cookie
@@ -485,6 +487,22 @@ fun PlayerScreen(
 
     // Track stream selection time (for future diagnostics)
     var streamSelectedTime by remember { mutableStateOf<Long?>(null) }
+    // Post-selection status for the loading overlay ("Loading subtitles…" during the preload
+    // gate, "Loading video stream…" while preparing). Overrides uiState.streamLoadPhase, which
+    // only covers source discovery and goes blank once a source is picked.
+    var startupPhase by remember { mutableStateOf<String?>(null) }
+    // Failover notice, displayed ON TOP of startupPhase for a fixed minimum time: a fast source
+    // switch (resolve can take <100ms) would otherwise overwrite it as an unreadable blink.
+    // Overlaying instead of delaying keeps the actual failover at full speed.
+    var switchNotice by remember { mutableStateOf<String?>(null) }
+    var switchNoticeUntilMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(switchNoticeUntilMs) {
+        if (switchNotice != null) {
+            val remaining = switchNoticeUntilMs - System.currentTimeMillis()
+            if (remaining > 0) delay(remaining)
+            switchNotice = null
+        }
+    }
     var playbackIssueReported by remember { mutableStateOf(false) }
     var startupRecoverAttempted by remember { mutableStateOf(false) }
     var startupHardFailureReported by remember { mutableStateOf(false) }
@@ -679,6 +697,14 @@ fun PlayerScreen(
                 }
                 currentStreamIndex = nextIndex
                 triedStreamIndexes = triedStreamIndexes + nextIndex
+                val next = streams[nextIndex]
+                switchNotice = buildString {
+                    append("Source not starting — switching")
+                    val desc = listOf(next.quality, next.size).filter { it.isNotBlank() }.joinToString(" · ")
+                    if (desc.isNotBlank()) append(" ($desc)")
+                    append("…")
+                }
+                switchNoticeUntilMs = System.currentTimeMillis() + 2_500L
                 userSelectedSourceManually = false
                 playbackIssueReported = false
                 startupRecoverAttempted = false
@@ -792,6 +818,14 @@ fun PlayerScreen(
     val mediaSourceFactory = remember(httpDataSourceFactory) {
         DefaultMediaSourceFactory(context)
             .setDataSourceFactory(cacheDataSourceFactory)
+    }
+    // "Preload Subtitles" mode: sidecar subtitle configs only merge through a
+    // DefaultMediaSourceFactory, but the cached one above would route heavy/debrid video through
+    // the disk cache (I/O bottleneck). This variant keeps file:// support for the local subtitle
+    // copies while streaming video uncached, like directProgressiveFactory.
+    val preloadMediaSourceFactory = remember(fileCapableDataSourceFactory) {
+        DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(fileCapableDataSourceFactory)
     }
 
     // ExoPlayer - tuned for both small and very large files. The byte cap scales
@@ -1441,6 +1475,7 @@ fun PlayerScreen(
             val prepareStartMs = streamSelectedTime ?: System.currentTimeMillis()
             bufferingStartTime = null
             hasPlaybackStarted = false  // Reset for new stream
+            startupPhase = "Loading video stream…"
             firstVideoFrameRendered = false
             readyPlayingSinceMs = null
             playbackIssueReported = false
@@ -1505,25 +1540,68 @@ fun PlayerScreen(
             // Track when stream was selected
             // (Moved up before frame rate probe)
 
+            // "Preload Subtitles" mode: hold prepare until the ViewModel finished downloading the
+            // preferred-language subs to local files (or the gate times out), then side-load ALL
+            // of them into the initial MediaItem. Switching between them later is a pure track
+            // override — no MediaItem rebuild, no visible reload. Only local file:// copies are
+            // attached: the historical "never preload all subs" revert was about ExoPlayer eagerly
+            // fetching every REMOTE side-loaded config at prepare.
+            var preloadedSubtitleConfigs = emptyList<MediaItem.SubtitleConfiguration>()
+            if (latestUiState.subtitlePreloadEnabled) {
+                if (!latestUiState.subtitlePreloadComplete) {
+                    startupPhase = "Loading subtitles…"
+                }
+                val gateStartMs = System.currentTimeMillis()
+                val gateReady = withTimeoutOrNull(SUBTITLE_PRELOAD_GATE_TIMEOUT_MS) {
+                    snapshotFlow { latestUiState.subtitlePreloadComplete }.first { it }
+                } != null
+                preloadedSubtitleConfigs = buildExternalSubtitleConfigurations(
+                    latestUiState.preloadedSubtitles.filter { it.url.startsWith("file:") }
+                )
+                playbackStartupDiag(
+                    "subtitle preload gate ${if (gateReady) "ready" else "TIMEOUT"} " +
+                        "waitMs=${System.currentTimeMillis() - gateStartMs} attached=${preloadedSubtitleConfigs.size}"
+                )
+                // Startup watchdog bills elapsed time from streamSelectedTime — don't charge the
+                // gate to it, or slow subtitle addons would trigger source failover.
+                streamSelectedTime = System.currentTimeMillis()
+                startupRecoverAttempted = false
+            }
+
             // Only add the selected subtitle to ExoPlayer (not all 30+).
             // Loading all external subs slows down preparation and causes non-UTF8 subs to fail.
+            // (Preloaded LOCAL copies above are the exception — reading them at prepare is free.)
             val isHlsStream = isLikelyHlsPlaybackUrl(url, latestUiState.selectedStream)
+            val urlLower = url.lowercase()
+            val isDashStream = urlLower.contains(".mpd") || urlLower.contains("/dash") || urlLower.contains("format=dash")
             val mediaItemBuilder = MediaItem.Builder().setUri(Uri.parse(url))
             if (isHlsStream) {
                 mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8)
+            }
+            if (preloadedSubtitleConfigs.isNotEmpty()) {
+                mediaItemBuilder.setSubtitleConfigurations(preloadedSubtitleConfigs)
+                // DefaultMediaSourceFactory infers DASH from an explicit MIME type, not from the
+                // "/dash"/"format=dash" URL shapes the dedicated-factory routing recognizes.
+                if (isDashStream && !isHlsStream) {
+                    mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_MPD)
+                }
             }
             val mediaItem = mediaItemBuilder.build()
 
             // Use protocol-specific media source for faster startup:
             // - HLS: chunkless preparation enabled (saves 1-3s)
             // - DASH/Progressive: dedicated factories for optimal handling
-            val urlLower = url.lowercase()
             val isHeavy = isLikelyHeavyStream(latestUiState.selectedStream)
             val isRemoteHttp = urlLower.startsWith("http://") || urlLower.startsWith("https://")
             val mediaSource: MediaSource = when {
+                // Sidecar subtitle configs only merge through a DefaultMediaSourceFactory; the
+                // preload variant streams video uncached (like directProgressiveFactory) and
+                // resolves HLS/DASH from the MIME hints set above.
+                preloadedSubtitleConfigs.isNotEmpty() ->
+                    preloadMediaSourceFactory.createMediaSource(mediaItem)
                 isHlsStream ->
                     hlsFactory.createMediaSource(mediaItem)
-                urlLower.contains(".mpd") || urlLower.contains("/dash") || urlLower.contains("format=dash") ->
+                isDashStream ->
                     dashFactory.createMediaSource(mediaItem)
                 isHeavy || isRemoteHttp ->
                     // Bypass disk cache for large/debrid progressive streams to avoid I/O bottleneck
@@ -1547,12 +1625,15 @@ fun PlayerScreen(
             // No manual startup gate - trust the CDN/debrid while keeping enough safety margin.
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
+            startupPhase = "Starting playback…"
             playbackStartupDiag(
                 "prepare issued setupMs=${System.currentTimeMillis() - prepareStartMs} source=${uiState.selectedStream?.addonId}/${uiState.selectedStream?.quality}/${uiState.selectedStream?.size} host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}"
             )
 
             // Prefer currently selected subtitle language (if any), otherwise keep text disabled.
-            val subtitle = uiState.selectedSubtitle
+            // latestUiState, not the captured uiState: the preload gate above can wait several
+            // seconds, during which the auto-selection flow usually picks a subtitle.
+            val subtitle = latestUiState.selectedSubtitle
             if (subtitle != null) {
                 exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
                     .buildUpon()
@@ -1652,11 +1733,60 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
 
+        // External subtitle side-loaded at startup ("Preload Subtitles"): switching is just a
+        // track override — no MediaItem rebuild, no visible reload. This also catches the
+        // find-best-match winner: its localized file:// copy keeps the same provider|id-based
+        // track id as the attached remote entry (subtitleTrackId never hashes an id-carrying
+        // sub's URL).
+        if (latestUiState.subtitlePreloadEnabled) {
+            val targetTrackId = subtitleTrackId(subtitle)
+            repeat(2) { attempt ->
+                val groups = exoPlayer.currentTracks.groups
+                for (gi in groups.indices) {
+                    val group = groups[gi]
+                    if (group.type != C.TRACK_TYPE_TEXT) continue
+                    for (ti in 0 until group.length) {
+                        val fid = group.getTrackFormat(ti).id?.trim().orEmpty()
+                        val matches = fid.isNotBlank() &&
+                            (fid == targetTrackId || fid.substringAfterLast(':') == targetTrackId)
+                        if (matches) {
+                            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                .buildUpon()
+                                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                // Explicit override — the preferred-language fallback would
+                                // silently select a DIFFERENT same-language attached track.
+                                .setPreferredTextLanguage(null)
+                                .setOverrideForType(
+                                    androidx.media3.common.TrackSelectionOverride(
+                                        group.mediaTrackGroup,
+                                        ti
+                                    )
+                                )
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                .build()
+                            return@LaunchedEffect
+                        }
+                    }
+                }
+                // Track list can lag right after playback starts — one short retry before
+                // falling back to the rebuild path below.
+                if (attempt == 0) delay(400)
+            }
+        }
+
         // External subtitle: rebuild MediaItem with just this one subtitle
         if (subtitle.url.isNotBlank() && exoPlayer.playbackState != Player.STATE_IDLE) {
             val currentPosition = exoPlayer.currentPosition
             val wasPlaying = exoPlayer.isPlaying
-            val subtitleConfigs = buildExternalSubtitleConfigurations(listOf(subtitle))
+            // In preload mode keep the local preloaded tracks attached across the rebuild —
+            // otherwise the first non-attached pick would strip them and every later switch
+            // back would rebuild again.
+            val attachSubs = if (latestUiState.subtitlePreloadEnabled) {
+                latestUiState.preloadedSubtitles.filter { it.url.startsWith("file:") } + subtitle
+            } else {
+                listOf(subtitle)
+            }
+            val subtitleConfigs = buildExternalSubtitleConfigurations(attachSubs)
             val mediaItemBuilder = MediaItem.Builder()
                 .setUri(Uri.parse(url))
                 .setSubtitleConfigurations(subtitleConfigs)
@@ -1676,6 +1806,41 @@ fun PlayerScreen(
                 .setSelectUndeterminedTextLanguage(true)
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                 .build()
+
+            // With several same-language tracks attached (preload mode), the language preference
+            // above can land on the wrong one — pin the exact track once the rebuilt track list
+            // resolves. Language preference stays as the fallback if the config never loads.
+            if (subtitleConfigs.size > 1) {
+                val targetTrackId = subtitleTrackId(subtitle)
+                repeat(10) {
+                    delay(500)
+                    val groups = exoPlayer.currentTracks.groups
+                    for (gi in groups.indices) {
+                        val group = groups[gi]
+                        if (group.type != C.TRACK_TYPE_TEXT) continue
+                        for (ti in 0 until group.length) {
+                            val fid = group.getTrackFormat(ti).id?.trim().orEmpty()
+                            val matches = fid.isNotBlank() &&
+                                (fid == targetTrackId || fid.substringAfterLast(':') == targetTrackId)
+                            if (matches) {
+                                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                    .buildUpon()
+                                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                    .setPreferredTextLanguage(null)
+                                    .setOverrideForType(
+                                        androidx.media3.common.TrackSelectionOverride(
+                                            group.mediaTrackGroup,
+                                            ti
+                                        )
+                                    )
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                    .build()
+                                return@LaunchedEffect
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2784,7 +2949,14 @@ fun PlayerScreen(
                     logoUrl = uiState.logoUrl,
                     title = uiState.title,
                     progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
-                    phaseLabel = if (uiState.showLoadingStats) uiState.streamLoadPhase else null
+                    // streamLoadPhase covers source discovery; startupPhase takes over from
+                    // stream selection ("Loading subtitles…"/"Loading video stream…") until the
+                    // first frame renders; switchNotice overlays both for 2.5s on failover.
+                    // Unlike the percentage ring, the phase text is not gated on
+                    // showLoadingStats — status feedback should always be visible.
+                    phaseLabel = switchNotice
+                        ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
+                        ?: uiState.streamLoadPhase
                 )
             }
         }
@@ -3923,14 +4095,16 @@ private fun PulsingLogo(
                 style = ArflixTypography.sectionTitle.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
                 color = Color.White
             )
-            if (!phaseLabel.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = phaseLabel,
-                    style = ArflixTypography.caption,
-                    color = TextSecondary
-                )
-            }
+        }
+        // Independent of the progress ring: post-selection phases ("Loading video stream…",
+        // "Loading subtitles…") have no meaningful percentage but still need to show.
+        if (!phaseLabel.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(if (progress != null) 6.dp else 16.dp))
+            Text(
+                text = phaseLabel,
+                style = ArflixTypography.caption,
+                color = TextSecondary
+            )
         }
     }
 }
@@ -5094,9 +5268,17 @@ private fun detectAudioCodecLabel(codec: String?, trackLabel: String?): String? 
     }
 }
 
+// Identity must survive URL swaps (remote → localized file:// copy), so it never hashes the URL
+// of an id-carrying sub. Provider-qualified because "Preload Subtitles" attaches many addons'
+// subs at once and bare numeric ids can collide across providers. '|' separator, never ':' —
+// ExoPlayer prefixes side-loaded format ids with "periodIndex:" and matching strips at the
+// last ':'.
 private fun subtitleTrackId(subtitle: Subtitle): String {
     val explicit = subtitle.id.trim()
-    if (explicit.isNotBlank()) return explicit
+    if (explicit.isNotBlank()) {
+        val provider = subtitle.provider.trim()
+        return if (provider.isBlank()) explicit else "$provider|$explicit"
+    }
 
     val normalizedUrl = subtitle.url.trim().ifBlank {
         "${subtitle.lang.trim().lowercase()}|${subtitle.label.trim().lowercase()}"
@@ -5104,6 +5286,11 @@ private fun subtitleTrackId(subtitle: Subtitle): String {
     val stableHash = normalizedUrl.hashCode().toUInt().toString(16)
     return "ext_$stableHash"
 }
+
+// "Preload Subtitles" prepare gate: max time the initial prepare waits for the ViewModel to
+// finish downloading preferred-language subs. Below the player's hard startup timeout so a slow
+// subtitle addon can never trigger source failover (the gate also re-anchors the startup clock).
+private const val SUBTITLE_PRELOAD_GATE_TIMEOUT_MS = 20_000L
 
 private fun audioTrackKey(track: AudioTrackInfo): String {
     return listOf(
