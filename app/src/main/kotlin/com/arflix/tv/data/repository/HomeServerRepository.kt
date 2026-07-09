@@ -114,14 +114,14 @@ internal data class HomeServerCandidateInfo(
 internal object HomeServerMatcher {
     fun normalizeTitle(title: String): String {
         val ascii = Normalizer.normalize(title, Normalizer.Form.NFD)
-            .replace(DIACRITICS_REGEX, "")
+            .replace(HomeServerRegexes.DIACRITICS_REGEX, "")
         return ascii
             .lowercase(Locale.US)
             .replace("&", " and ")
-            .replace(NON_ALPHA_NUM_REGEX, " ")
-            .replace(ARTICLES_REGEX, " ")
+            .replace(HomeServerRegexes.NON_ALPHA_NUM_REGEX, " ")
+            .replace(HomeServerRegexes.ARTICLES_REGEX, " ")
             .trim()
-            .replace(MULTI_SPACE_REGEX, " ")
+            .replace(HomeServerRegexes.MULTI_SPACE_REGEX, " ")
     }
 
     fun score(
@@ -664,7 +664,7 @@ class HomeServerRepository @Inject constructor(
 
     private fun createConnectionId(serverUrl: String, kind: HomeServerKind, userIdentity: String): String {
         return "${kind.name}:${serverUrl.trimEnd('/').lowercase(Locale.US)}:${userIdentity.lowercase(Locale.US)}"
-            .replace(CONNECTION_ID_SANITIZER_REGEX, "_")
+            .replace(HomeServerRegexes.CONNECTION_ID_SANITIZER_REGEX, "_")
     }
 
     private fun connectionIdentity(connection: HomeServerConnection): String {
@@ -1099,7 +1099,7 @@ class HomeServerRepository @Inject constructor(
     }
 
     private fun parsePlexResourcesXml(xml: String): List<PlexResourceDevice> {
-        return PLEX_DEVICE_REGEX.findAll(xml)
+        return HomeServerRegexes.PLEX_DEVICE_REGEX.findAll(xml)
             .map { match ->
                 val attrs = match.groupValues.getOrNull(1).orEmpty()
                     .ifBlank { match.groupValues.getOrNull(3).orEmpty() }
@@ -1111,7 +1111,7 @@ class HomeServerRepository @Inject constructor(
                     clientIdentifier = attrs.xmlAttribute("clientIdentifier"),
                     accessToken = attrs.xmlAttribute("accessToken"),
                     owned = attrs.xmlBooleanAttribute("owned"),
-                    connections = PLEX_CONNECTION_REGEX.findAll(body)
+                    connections = HomeServerRegexes.PLEX_CONNECTION_REGEX.findAll(body)
                         .map { connection ->
                             val connectionAttrs = connection.groupValues.getOrNull(1).orEmpty()
                             PlexResourceConnection(
@@ -2084,7 +2084,7 @@ class HomeServerRepository @Inject constructor(
             ?.trim()
             ?.lowercase(Locale.US)
             ?.replace("matroska", "mkv")
-            ?.replace(NON_ALPHA_NUM_STRICT_REGEX, "")
+            ?.replace(HomeServerRegexes.NON_ALPHA_NUM_STRICT_REGEX, "")
             .orEmpty()
         return normalized.takeIf { it.isNotBlank() && it.length <= 5 }
     }
@@ -2388,17 +2388,6 @@ class HomeServerRepository @Inject constructor(
 }
 
 
-private val DIACRITICS_REGEX = Regex("\\p{Mn}+")
-private val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
-private val ARTICLES_REGEX = Regex("\\b(the|a|an)\\b")
-private val MULTI_SPACE_REGEX = Regex("\\s+")
-private val CONNECTION_ID_SANITIZER_REGEX = Regex("[^a-z0-9:._-]+")
-private val NON_ALPHA_NUM_STRICT_REGEX = Regex("[^a-z0-9]")
-private val PLEX_DEVICE_REGEX = Regex(
-    """<Device\b([^>]*)>(.*?)</Device>|<Device\b([^>]*)/>""",
-    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
-)
-private val PLEX_CONNECTION_REGEX = Regex("""<Connection\b([^>]*)/?\s*>""", RegexOption.IGNORE_CASE)
 
 
 
@@ -2411,4 +2400,17 @@ private object HomeServerXmlRegexCache {
             Regex("\\b${Regex.escape(name)}=[\"']([^\"']*)[\"']")
         }
     }
+}
+private object HomeServerRegexes {
+    val DIACRITICS_REGEX = Regex("\\p{Mn}+")
+    val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
+    val ARTICLES_REGEX = Regex("\\b(the|a|an)\\b")
+    val MULTI_SPACE_REGEX = Regex("\\s+")
+    val CONNECTION_ID_SANITIZER_REGEX = Regex("[^a-z0-9:._-]+")
+    val NON_ALPHA_NUM_STRICT_REGEX = Regex("[^a-z0-9]")
+    val PLEX_DEVICE_REGEX = Regex(
+    """<Device\b([^>]*)>(.*?)</Device>|<Device\b([^>]*)/>""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+)
+    val PLEX_CONNECTION_REGEX = Regex("""<Connection\b([^>]*)/?\s*>""", RegexOption.IGNORE_CASE)
 }
