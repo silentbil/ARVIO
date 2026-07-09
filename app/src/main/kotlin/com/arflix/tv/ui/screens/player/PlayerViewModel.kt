@@ -434,6 +434,10 @@ class PlayerViewModel @Inject constructor(
         lastWatchHistorySavedPositionSeconds = -1L
         subtitleRefreshJob?.cancel()
         subtitleSelectionJob?.cancel()
+        // Cancel any in-flight "Find best match" scan from the previous title — otherwise it can
+        // finish on this new session and select/restore a stale subtitle or poison the match cache
+        // (its stream cache key resolves to the new stream). Same-VM path only, e.g. play-next.
+        cancelFindBestMatch()
         vodAppendJob?.cancel()
         homeServerAppendJob?.cancel()
         streamPrewarmJob?.cancel()
