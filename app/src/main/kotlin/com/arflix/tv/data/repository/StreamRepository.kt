@@ -2085,12 +2085,18 @@ class StreamRepository @Inject constructor(
             val totalAddons = prioritizedAddons.size + (if (telegramEnabled) 1 else 0)
 
             suspend fun sendProgress() {
+                // Dedup is scoped PER ADDON (addonId in the key, here and at every other stream
+                // merge site): aggregators (AIOStreams) legitimately return the same debrid
+                // resolve-URLs as the standalone addons they wrap (Torrentio/Debridio on the same
+                // account). A global URL key silently dropped most of the aggregator's list —
+                // whichever addon responded first won — gutting its tab in the source menu
+                // (38 fetched, 12 shown). The same file under two addon tabs is honest.
                 val deduped = aggregatedStreams
                     .filter { stream ->
                         val u = stream.url?.trim().orEmpty()
                         u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                     }
-                    .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                    .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
                 val filtered = applyQualityRegexFilters(deduped)
                 if (completed == totalAddons) {
                     val createdAtMs = System.currentTimeMillis()
@@ -2502,12 +2508,18 @@ class StreamRepository @Inject constructor(
             val totalAddons = prioritizedAddons.size + (if (telegramEnabled) 1 else 0)
 
             suspend fun sendProgress() {
+                // Dedup is scoped PER ADDON (addonId in the key, here and at every other stream
+                // merge site): aggregators (AIOStreams) legitimately return the same debrid
+                // resolve-URLs as the standalone addons they wrap (Torrentio/Debridio on the same
+                // account). A global URL key silently dropped most of the aggregator's list —
+                // whichever addon responded first won — gutting its tab in the source menu
+                // (38 fetched, 12 shown). The same file under two addon tabs is honest.
                 val deduped = aggregatedStreams
                     .filter { stream ->
                         val u = stream.url?.trim().orEmpty()
                         u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                     }
-                    .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                    .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
                 val filtered = applyQualityRegexFilters(deduped)
                 if (completed == totalAddons) {
                     val finalResult = StreamResult(filtered, emptyList())

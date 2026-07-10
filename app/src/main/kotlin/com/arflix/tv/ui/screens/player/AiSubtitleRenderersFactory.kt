@@ -6,8 +6,10 @@ import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.text.TextOutput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -58,6 +60,29 @@ class AiSubtitleRenderersFactory(
             if (texts.isNotEmpty()) return texts.take(maxCount)
         }
         return emptyList()
+    }
+
+    override fun buildAudioRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        audioSink: AudioSink,
+        eventHandler: Handler,
+        eventListener: AudioRendererEventListener,
+        out: ArrayList<Renderer>
+    ) {
+        // EXTENSION_RENDERER_MODE_PREFER exists only for the Amlogic/SEI *video* C2 decoder hang
+        // (PlayerScreen preferExtensionDecoder). For AUDIO, FFmpeg-first software-decodes every
+        // E-AC3/TrueHD/DTS stream to PCM — killing AVR bitstream passthrough — and jellyfin-ffmpeg's
+        // TrueHD path fails outright. Always build audio with mode ON: the platform
+        // MediaCodecAudioRenderer (whose DefaultAudioSink auto-detects AVR capabilities and
+        // bitstreams via bypass) goes first; FFmpeg stays strictly a fallback for codecs the
+        // device can neither passthrough nor decode.
+        super.buildAudioRenderers(
+            context, EXTENSION_RENDERER_MODE_ON, mediaCodecSelector,
+            enableDecoderFallback, audioSink, eventHandler, eventListener, out
+        )
     }
 
     override fun buildAudioSink(

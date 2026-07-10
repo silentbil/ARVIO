@@ -1243,7 +1243,7 @@ class DetailsViewModel @Inject constructor(
                             sortPlayableStreamsFirst(
                                 progressive.streams
                                     .filter { !it.url.isNullOrBlank() && !it.url.orEmpty().startsWith("magnet:", ignoreCase = true) }
-                                    .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                                    .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
                             )
                         )
                     }
@@ -1277,7 +1277,7 @@ class DetailsViewModel @Inject constructor(
                             sortPlayableStreamsFirst(
                                 progressive.streams
                                     .filter { !it.url.isNullOrBlank() && !it.url.orEmpty().startsWith("magnet:", ignoreCase = true) }
-                                    .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                                    .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
                             )
                         )
                     }
@@ -1470,7 +1470,7 @@ class DetailsViewModel @Inject constructor(
                                     val pluginStreams = results.map { it.toStreamSource() }
                                     val merged = sortPlayableStreamsFirst(
                                         (current.streams + pluginStreams)
-                                            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                                            .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
                                     )
                                     _uiState.value = current.copy(
                                         streams = merged,
@@ -1546,7 +1546,7 @@ class DetailsViewModel @Inject constructor(
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
                         val mergedStreams = sortPlayableStreamsFirst(
                             (progressive.streams + existingVod)
-                                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
                         )
                         Log.d(
                             TAG,
@@ -1607,7 +1607,7 @@ class DetailsViewModel @Inject constructor(
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
                         val mergedStreams = sortPlayableStreamsFirst(
                             (progressive.streams + existingVod)
-                                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
                         )
                         val addonCount = streamRepository.installedAddons.first()
                             .count { it.isVodStreamingAddon() }
@@ -2508,7 +2508,7 @@ class DetailsViewModel @Inject constructor(
         }
         val mergedStreams = sortPlayableStreamsFirst(
             (latest + validSources)
-                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
         )
         _uiState.value = _uiState.value.copy(
             streams = mergedStreams,
@@ -2566,7 +2566,7 @@ class DetailsViewModel @Inject constructor(
         }
         val mergedStreams = sortPlayableStreamsFirst(
             (latest + validVodSources)
-                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
         )
         _uiState.value = _uiState.value.copy(
             streams = mergedStreams,

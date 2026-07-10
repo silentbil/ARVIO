@@ -250,15 +250,28 @@ fun StreamSelector(
         }
     }
     // Addon order first so "All Sources" groups by the user's installed-addon order.
-    // Within each addon, best quality floats up (resolution → release → size).
+    // Within each addon, best quality floats up (resolution → release → size) — EXCEPT
+    // aggregator addons (AIOStreams): they sort server-side per the user's own web config, so
+    // their streams keep arrival order (same exemption as PlayerViewModel.keepsOwnStreamOrder;
+    // re-sorting here silently overrode the user's configured order in the source menu).
     val orderedPresentations = remember(presentations, addonOrder) {
-        presentations.sortedWith(
-            compareBy<SourcePresentation> { addonOrder[sourceTabId(it.stream)] ?: Int.MAX_VALUE }
-                .thenByDescending { it.resolutionScore }
-                .thenByDescending { it.releaseScore }
-                .thenByDescending { it.sizeBytes }
-                .thenBy { it.title.lowercase() }
-        )
+        val qualityOrder = compareByDescending<IndexedValue<SourcePresentation>> { it.value.resolutionScore }
+            .thenByDescending { it.value.releaseScore }
+            .thenByDescending { it.value.sizeBytes }
+            .thenBy { it.value.title.lowercase() }
+        presentations.withIndex()
+            .sortedWith(
+                compareBy<IndexedValue<SourcePresentation>> {
+                    addonOrder[sourceTabId(it.value.stream)] ?: Int.MAX_VALUE
+                }.then { a, b ->
+                    if (keepsOwnStreamOrder(a.value.stream) && keepsOwnStreamOrder(b.value.stream)) {
+                        a.index.compareTo(b.index)
+                    } else {
+                        qualityOrder.compare(a, b)
+                    }
+                }
+            )
+            .map { it.value }
     }
 
     // Filter streams by selected tab
@@ -976,6 +989,12 @@ private object StreamRegexes {
     val CHANNEL_TAG_PATTERN = Regex("""^\[.+]$""")
     val MD_NOISE = Regex("""[`*_]{1,4}""")
 }
+
+/** Aggregator addons (AIOStreams) sort results server-side per the user's own web config —
+ *  keep their arrival order instead of re-sorting. Mirror of PlayerViewModel.keepsOwnStreamOrder. */
+private fun keepsOwnStreamOrder(stream: StreamSource): Boolean =
+    stream.addonName.contains("aiostream", ignoreCase = true) ||
+        stream.addonId.contains("aiostream", ignoreCase = true)
 
 private fun sourceTabId(stream: StreamSource): String {
     val baseName = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName

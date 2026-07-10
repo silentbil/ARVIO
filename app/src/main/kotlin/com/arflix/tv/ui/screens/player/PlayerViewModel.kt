@@ -914,7 +914,7 @@ class PlayerViewModel @Inject constructor(
                     val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
                     val mergedStreams = sortStreamsByQualityAndSize(
                         (allStreams + existingVod)
-                            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" },
+                            .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" },
                         preferredLanguage
                     )
                     lastMergedStreams = mergedStreams
@@ -1008,7 +1008,7 @@ class PlayerViewModel @Inject constructor(
                                     if (remainingMs > 0L) delay(remainingMs)
                                     snapshot = sortStreamsByQualityAndSize(
                                         (_uiState.value.streams + snapshot)
-                                            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" },
+                                            .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" },
                                         preferredLanguage
                                     )
                                 }
@@ -1062,7 +1062,7 @@ class PlayerViewModel @Inject constructor(
                         if (remainingMs > 0L) delay(remainingMs)
                         lastMergedStreams = sortStreamsByQualityAndSize(
                             (_uiState.value.streams + lastMergedStreams)
-                                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" },
+                                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" },
                             preferredLanguage
                         )
                     }
@@ -3994,7 +3994,7 @@ class PlayerViewModel @Inject constructor(
         val latest = _uiState.value.streams
 
         val updated = (latest + validSources)
-            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+            .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
         val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
         val sortedStreams = sortStreamsByQualityAndSize(updated, preferredLanguage)
         val shouldAutoplayHomeServer = _uiState.value.selectedStreamUrl.isNullOrBlank()
@@ -4056,7 +4056,7 @@ class PlayerViewModel @Inject constructor(
         val latest = _uiState.value.streams
 
         val updated = (latest + validVodSources)
-            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+            .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
         val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
         val sortedStreams = sortStreamsByQualityAndSize(updated, preferredLanguage)
         val shouldAutoplayVod = _uiState.value.selectedStreamUrl.isNullOrBlank()
@@ -4136,7 +4136,7 @@ class PlayerViewModel @Inject constructor(
 
             val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
             val mergedStreams = (allStreams + existingVod)
-                .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
 
             val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }
             val sortedStreams = sortStreamsByQualityAndSize(mergedStreams, preferredLanguage)
