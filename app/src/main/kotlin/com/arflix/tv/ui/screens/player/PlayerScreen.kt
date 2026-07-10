@@ -2956,6 +2956,16 @@ fun PlayerScreen(
                     // showLoadingStats — status feedback should always be visible.
                     phaseLabel = switchNotice
                         ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
+                            ?.let { phase ->
+                                // Name the addons still being queried so a chronically slow one
+                                // identifies itself to the user ("Loading subtitles… (bla)").
+                                val pending = uiState.pendingSubtitleAddons
+                                if (phase.startsWith("Loading subtitles") && pending.isNotEmpty()) {
+                                    val shown = pending.take(2).joinToString(", ")
+                                    val more = pending.size - 2
+                                    "Loading subtitles… ($shown${if (more > 0) " +$more" else ""})"
+                                } else phase
+                            }
                         ?: uiState.streamLoadPhase
                 )
             }
@@ -3070,15 +3080,33 @@ fun PlayerScreen(
             )
         }
 
-        // "Find best match" status toast
+        // "Find best match" outcome — same top-center pill and spot as the scanning indicator
+        // above (a bottom toast would sit on the subtitles and interrupt watching).
         uiState.matchToast?.let { msg ->
-            Toast(
-                message = msg,
-                type = ToastType.INFO,
-                isVisible = true,
-                durationMs = 4000,
-                onDismiss = { viewModel.dismissMatchToast() }
-            )
+            LaunchedEffect(msg) {
+                delay(4000)
+                viewModel.dismissMatchToast()
+            }
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    // Slide below the scanning pill on the rare frames both are visible
+                    // (e.g. a remembered-match toast fired before the scan state cleared).
+                    .padding(top = if (hasPlaybackStarted && uiState.isFindingBestMatch) 60.dp else 16.dp)
+                    .background(
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.72f),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .zIndex(6f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = msg,
+                    style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
+                )
+            }
         }
 
         // Netflix-style Controls Overlay
@@ -5288,9 +5316,11 @@ private fun subtitleTrackId(subtitle: Subtitle): String {
 }
 
 // "Preload Subtitles" prepare gate: max time the initial prepare waits for the ViewModel to
-// finish downloading preferred-language subs. Below the player's hard startup timeout so a slow
-// subtitle addon can never trigger source failover (the gate also re-anchors the startup clock).
-private const val SUBTITLE_PRELOAD_GATE_TIMEOUT_MS = 20_000L
+// finish downloading preferred-language subs. The primary bound is the 10s addon-fetch soft
+// deadline (slow addons get dropped there); this cap only covers IMDb-id resolution plus the
+// file downloads on top of it, and stays below the player's hard startup timeout so a slow
+// subtitle pipeline can never trigger source failover (the gate also re-anchors the clock).
+private const val SUBTITLE_PRELOAD_GATE_TIMEOUT_MS = 14_000L
 
 private fun audioTrackKey(track: AudioTrackInfo): String {
     return listOf(

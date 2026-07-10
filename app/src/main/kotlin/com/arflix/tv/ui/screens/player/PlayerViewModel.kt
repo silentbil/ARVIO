@@ -100,6 +100,9 @@ data class PlayerUiState(
     // True once preloading for this video finished (even with zero results) — the prepare gate
     // in PlayerScreen waits on this (with a timeout) before building the MediaItem.
     val subtitlePreloadComplete: Boolean = false,
+    // Addon names still being queried for subtitles (preload mode) — shown on the loading
+    // screen so a chronically slow addon identifies itself to the user.
+    val pendingSubtitleAddons: List<String> = emptyList(),
     val savedPosition: Long = 0,
     val preferredAudioLanguage: String = "en",
     val preferredSubtitleLang: String = "",
@@ -723,7 +726,9 @@ class PlayerViewModel @Inject constructor(
                                 imdbId = imdbId,
                                 season = seasonNumber,
                                 episode = episodeNumber,
-                                stream = null
+                                stream = null,
+                                softDeadlineMs = subtitleFetchSoftDeadline(),
+                                onPendingAddons = pendingSubtitleAddonsReporter()
                             )
                         }.getOrDefault(emptyList())
 
@@ -1076,7 +1081,9 @@ class PlayerViewModel @Inject constructor(
                             imdbId = effectiveStreamId,
                             season = seasonNumber,
                             episode = episodeNumber,
-                            stream = null
+                            stream = null,
+                            softDeadlineMs = subtitleFetchSoftDeadline(),
+                            onPendingAddons = pendingSubtitleAddonsReporter()
                         )
                     }.getOrDefault(emptyList())
 
@@ -3385,6 +3392,21 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
+     * Preload mode only: cap the addon-list wait at 10s — completed addons are harvested, the
+     * stragglers are cancelled and DROPPED for this playback (user decision: a slow addon should
+     * cost its own subs, not everyone's startup time). Null (classic wait-for-all) when the mode
+     * is off: with no prepare gate there is nothing to hold up, so dropping subs buys nothing.
+     */
+    private fun subtitleFetchSoftDeadline(): Long? =
+        if (subtitlePreloadEnabled) SUBTITLE_FETCH_SOFT_DEADLINE_MS else null
+
+    /** Streams the names of still-pending subtitle addons to the loading screen (preload mode). */
+    private fun pendingSubtitleAddonsReporter(): ((List<String>) -> Unit)? =
+        if (!subtitlePreloadEnabled) null else { pending ->
+            _uiState.value = _uiState.value.copy(pendingSubtitleAddons = pending)
+        }
+
+    /**
      * "Preload Subtitles" mode: download the preferred-language addon subtitles to local cache
      * files (same UTF-8/gunzipped [localizeSubtitle] files the match scan serves) so PlayerScreen
      * can side-load them ALL into the initial MediaItem — switching between them is then a track
@@ -4236,6 +4258,8 @@ class PlayerViewModel @Inject constructor(
         // A REJECT verdict requires at least this many buffered (authored-timing) reference
         // intervals — realtime-only references systematically under-score synced subs (§2 skew).
         private const val MATCH_MIN_BUFFERED_FOR_REJECT = 4
+        // Preload mode: max wait for the addon subtitle lists before slow addons are dropped.
+        private const val SUBTITLE_FETCH_SOFT_DEADLINE_MS = 10_000L
         private const val MATCH_TRACK_SWITCH_SETTLE_MS = 1_500L // let the reference-track switch reach the renderer
         private const val MATCH_BUFFERED_REF_INTERVALS = 12  // max upcoming cues to read from the buffer per poll
         private const val MATCH_EMBEDDED_WAIT_MS = 8_000L    // grace period for async embedded tracks

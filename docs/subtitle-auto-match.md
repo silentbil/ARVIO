@@ -170,9 +170,9 @@ side-loaded at startup by **Preload Subtitles** mode (see §3b), in which case s
 
 ## 3b. Preload Subtitles mode (July 2026)
 
-Opt-in setting **"Preload Subtitles"** (`subtitle_preload_enabled`, global, cloud-synced, row 39
-in Settings → Subtitles, default **off**). Modeled on NuvioTV's `AddonSubtitleStartupMode` but
-scoped to the preferred language and downloading files ourselves.
+Setting **"Preload Subtitles"** (`subtitle_preload_enabled`, global, cloud-synced, row 39
+in Settings → Subtitles, default **ON** since July 2026). Modeled on NuvioTV's
+`AddonSubtitleStartupMode` but scoped to the preferred language and downloading files ourselves.
 
 Flow:
 1. `PlayerViewModel.preloadSubtitles()` runs after every addon-subtitle merge (all 3 fetch sites
@@ -182,9 +182,13 @@ Flow:
    `PlayerUiState.preloadedSubtitles` + `subtitlePreloadComplete` (always set, even on empty —
    the gate must never hang; also pre-set when no preferred language).
 2. PlayerScreen's prepare effect **gates** the initial `setMediaSource` on
-   `subtitlePreloadComplete` (timeout 20s), attaches all `file://` configs, then **re-anchors
+   `subtitlePreloadComplete` (cap 14s), attaches all `file://` configs, then **re-anchors
    `streamSelectedTime` and clears `startupRecoverAttempted`** — otherwise a slow subtitle addon
-   would eat the startup watchdog budget and trigger source failover.
+   would eat the startup watchdog budget and trigger source failover. The primary time bound is
+   upstream: in preload mode the addon-list fetch gets a **10s soft deadline**
+   (`fetchSubtitlesForSelectedStream(softDeadlineMs)`) — finished addons are harvested, slow ones
+   are cancelled and dropped for this playback, and the pending addon names stream to the loading
+   screen ("Loading subtitles… (addon)") so slow addons identify themselves to the user.
 3. Sidecar configs only merge through a `DefaultMediaSourceFactory`; the dedicated
    `preloadMediaSourceFactory` streams video **uncached** (debrid I/O rule) while supporting
    `file://` for the subs. HLS keeps working via the M3U8 mime hint (loses only chunkless prep);

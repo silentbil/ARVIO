@@ -2711,12 +2711,22 @@ class StreamRepository @Inject constructor(
      * Fetch subtitles for the currently selected stream (important for OpenSubtitles matching).
      * Many subtitle providers (esp. OpenSubtitles) work best when `videoHash` and `videoSize` are provided.
      */
+    /**
+     * @param softDeadlineMs When set, don't let slow addons hold the merged list hostage: after
+     *   this long, harvest the addons that finished and CANCEL the rest (their subs are dropped
+     *   for this fetch). Used by the subtitle-preload prepare gate, where every extra second is
+     *   startup delay. Null = classic behavior (wait for all, each capped by [SUBTITLE_TIMEOUT_MS]).
+     * @param onPendingAddons Reports the names of addons still in flight whenever the set changes
+     *   (and finally an empty list) — surfaces WHICH addon is slow on the loading screen.
+     */
     suspend fun fetchSubtitlesForSelectedStream(
         mediaType: MediaType,
         imdbId: String,
         season: Int?,
         episode: Int?,
-        stream: StreamSource?
+        stream: StreamSource?,
+        softDeadlineMs: Long? = null,
+        onPendingAddons: ((List<String>) -> Unit)? = null
     ): List<Subtitle> = withContext(Dispatchers.IO) {
         val allAddons = installedAddons.first()
         // Include:
@@ -2760,8 +2770,8 @@ class StreamRepository @Inject constructor(
 
         // Query addons in parallel — with a generous timeout, sequential fetches would stack
         // each slow addon's latency onto the total.
-        subtitleAddons.map { addon ->
-            async {
+        val jobs = subtitleAddons.map { addon ->
+            addon.name to async {
                 suspend fun attempt(): List<Subtitle> = runCatching {
                     withTimeout(SUBTITLE_TIMEOUT_MS) {
                         val addonUrl = addon.url ?: return@withTimeout emptyList<Subtitle>()
@@ -2800,7 +2810,35 @@ class StreamRepository @Inject constructor(
                 }
                 subs
             }
-        }.awaitAll().flatten()
+        }
+
+        if (softDeadlineMs == null && onPendingAddons == null) {
+            return@withContext jobs.map { it.second }.awaitAll().flatten()
+        }
+
+        val deadlineAt = softDeadlineMs?.let { System.currentTimeMillis() + it }
+        var lastPending: List<String>? = null
+        while (true) {
+            val pending = jobs.filter { !it.second.isCompleted }.map { it.first }
+            if (pending != lastPending) {
+                lastPending = pending
+                onPendingAddons?.invoke(pending)
+            }
+            if (pending.isEmpty()) break
+            if (deadlineAt != null && System.currentTimeMillis() >= deadlineAt) {
+                Log.w(
+                    "StreamRepository",
+                    "subtitle fetch soft deadline (${softDeadlineMs}ms) — dropping slow addons: $pending"
+                )
+                jobs.forEach { (_, job) -> if (!job.isCompleted) job.cancel() }
+                break
+            }
+            delay(150)
+        }
+        onPendingAddons?.invoke(emptyList())
+        jobs.mapNotNull { (_, job) ->
+            if (job.isCompleted && !job.isCancelled) job.await() else null
+        }.flatten()
     }
 
     private fun buildSubtitlesUrl(
