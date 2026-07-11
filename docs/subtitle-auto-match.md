@@ -171,8 +171,8 @@ side-loaded at startup by **Preload Subtitles** mode (see §3b), in which case s
 ## 3b. Preload Subtitles mode (July 2026)
 
 Setting **"Preload Subtitles"** (`subtitle_preload_enabled`, global, cloud-synced, row 39
-in Settings → Subtitles, default **ON** since July 2026). Modeled on NuvioTV's
-`AddonSubtitleStartupMode` but scoped to the preferred language and downloading files ourselves.
+in Settings → Subtitles, default **ON** since July 2026). Scoped to the preferred
+language, downloading the files ourselves before prepare.
 
 Flow:
 1. `PlayerViewModel.preloadSubtitles()` runs after every addon-subtitle merge (all 3 fetch sites

@@ -239,6 +239,8 @@
     <string name="ai_find_best_match_desc">Auto-pick the best-synced subtitle from your addons</string>
     <string name="subtitle_preload_title">Preload Subtitles</string>
     <string name="subtitle_preload_desc">Wait for subtitles before starting the video so switching them is instant</string>
+    <string name="dv_compat_title">Dolby Vision Compatibility</string>
+    <string name="dv_compat_desc">Play Dolby Vision releases as HDR10 when this device can\'t decode them</string>
     <string name="ai_remove_hi_title">Remove Hearing Impaired Text</string>
     <string name="ai_remove_hi_desc">Strip [bracketed] hearing-impaired markers before translation</string>
     <string name="ai_api_key_title">API Key</string>

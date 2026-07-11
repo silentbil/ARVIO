@@ -354,6 +354,7 @@ class CloudSyncRepository @Inject constructor(
     private val subtitleAiAutoSelectKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_auto_select")
     private val subtitleAiFindBestMatchKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_ai_find_best_match")
     private val subtitlePreloadEnabledKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_preload_enabled")
+    private val dolbyVisionCompatKey = androidx.datastore.preferences.core.booleanPreferencesKey("dolby_vision_compat")
     private val subtitleAiApiKeyKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_api_key")
     private val subtitleAiModelKey = androidx.datastore.preferences.core.stringPreferencesKey("subtitle_ai_model")
     private val subtitleRemoveHearingImpairedKey = androidx.datastore.preferences.core.booleanPreferencesKey("subtitle_remove_hearing_impaired")
@@ -493,6 +494,7 @@ class CloudSyncRepository @Inject constructor(
         root.put("subtitleAiAutoSelect", prefs[subtitleAiAutoSelectKey] ?: false)
         root.put("subtitleAiFindBestMatch", prefs[subtitleAiFindBestMatchKey] ?: false)
         root.put("subtitlePreloadEnabled", prefs[subtitlePreloadEnabledKey] ?: true)
+        root.put("dolbyVisionCompatEnabled", prefs[dolbyVisionCompatKey] ?: true)
         root.put("subtitleAiApiKey", prefs[subtitleAiApiKeyKey] ?: "")
         root.put("subtitleAiModel", prefs[subtitleAiModelKey] ?: "GROQ_LLAMA_70B")
         root.put("subtitleRemoveHearingImpaired", prefs[subtitleRemoveHearingImpairedKey] ?: true)
@@ -1237,6 +1239,10 @@ class CloudSyncRepository @Inject constructor(
                 // EVERY push from any device, so one old-version device would keep wiping it).
                 if (root.has("subtitlePreloadEnabled")) {
                     prefs[subtitlePreloadEnabledKey] = root.optBoolean("subtitlePreloadEnabled", false)
+                }
+                // has() guard: backups from app versions predating this field must not reset it.
+                if (root.has("dolbyVisionCompatEnabled")) {
+                    prefs[dolbyVisionCompatKey] = root.optBoolean("dolbyVisionCompatEnabled", true)
                 }
                 val apiKey = root.optString("subtitleAiApiKey", "")
                 if (apiKey.isNotBlank()) prefs[subtitleAiApiKeyKey] = apiKey

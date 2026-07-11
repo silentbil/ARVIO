@@ -802,9 +802,36 @@ fun PlayerScreen(
             .setUpstreamDataSourceFactory(fileCapableDataSourceFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
-    // Non-cached factory for heavy/debrid progressive streams to avoid disk I/O bottleneck
+    // Dolby Vision compatibility (see com.arflix.tv.player.dv): on devices
+    // whose display/decoder can't do DV, profile-7 remux MKVs are rewritten on the fly to their
+    // HDR10 HEVC base layer. The policy is probed once; the per-prepare decision (user toggle +
+    // per-URL force from the black-video watchdog) is read through the provider so it always
+    // reflects the CURRENT state — extractors are created at prepare time.
+    val dvPolicy = remember { com.arflix.tv.player.dv.DolbyVisionBaseLayerPolicy.resolve(context, bridgeReady = false) }
+    val dvForcedStripUrls = remember { mutableSetOf<String>() }
+    fun dvStripEnabledNow(): Boolean =
+        latestUiState.dolbyVisionCompatEnabled ||
+            dvForcedStripUrls.contains(latestUiState.selectedStreamUrl.orEmpty())
+    val dvStripExtractorsFactory = remember(dvPolicy) {
+        if (!dvPolicy.mapToHevc) null else {
+            android.util.Log.i(
+                "DvCompat",
+                "policy=${dvPolicy.decision} displayDv=${dvPolicy.displayDv} hdr10=${dvPolicy.displayHdr10} dvP7Decoder=${dvPolicy.codecSupportsDvheDtb} — DV strip available"
+            )
+            com.arflix.tv.player.dv.DolbyVisionStripExtractorsFactory(
+                androidx.media3.extractor.DefaultExtractorsFactory(),
+                enabledProvider = ::dvStripEnabledNow
+            )
+        }
+    }
+
+    // Non-cached factory for heavy/debrid progressive streams to avoid disk I/O bottleneck.
+    // The DV variant only differs by the rewriting ExtractorsFactory (MKV-only inside).
     val directProgressiveFactory = remember(httpDataSourceFactory) {
         ProgressiveMediaSource.Factory(httpDataSourceFactory)
+    }
+    val directProgressiveDvFactory = remember(httpDataSourceFactory, dvStripExtractorsFactory) {
+        dvStripExtractorsFactory?.let { ProgressiveMediaSource.Factory(httpDataSourceFactory, it) }
     }
 
     // Protocol-specific media source factories for faster startup
@@ -816,7 +843,8 @@ fun PlayerScreen(
         DashMediaSource.Factory(httpDataSourceFactory)
     }
     val mediaSourceFactory = remember(httpDataSourceFactory) {
-        DefaultMediaSourceFactory(context)
+        (dvStripExtractorsFactory?.let { DefaultMediaSourceFactory(context, it) }
+            ?: DefaultMediaSourceFactory(context))
             .setDataSourceFactory(cacheDataSourceFactory)
     }
     // "Preload Subtitles" mode: sidecar subtitle configs only merge through a
@@ -824,7 +852,8 @@ fun PlayerScreen(
     // the disk cache (I/O bottleneck). This variant keeps file:// support for the local subtitle
     // copies while streaming video uncached, like directProgressiveFactory.
     val preloadMediaSourceFactory = remember(fileCapableDataSourceFactory) {
-        DefaultMediaSourceFactory(context)
+        (dvStripExtractorsFactory?.let { DefaultMediaSourceFactory(context, it) }
+            ?: DefaultMediaSourceFactory(context))
             .setDataSourceFactory(fileCapableDataSourceFactory)
     }
 
@@ -1604,8 +1633,10 @@ fun PlayerScreen(
                 isDashStream ->
                     dashFactory.createMediaSource(mediaItem)
                 isHeavy || isRemoteHttp ->
-                    // Bypass disk cache for large/debrid progressive streams to avoid I/O bottleneck
-                    directProgressiveFactory.createMediaSource(mediaItem)
+                    // Bypass disk cache for large/debrid progressive streams to avoid I/O
+                    // bottleneck. The DV variant additionally rewrites DV P7 MKUs to their
+                    // HDR10 base layer (enabled-check happens inside the extractors factory).
+                    (directProgressiveDvFactory ?: directProgressiveFactory).createMediaSource(mediaItem)
                 else -> mediaSourceFactory.createMediaSource(mediaItem)
             }
 
@@ -2123,6 +2154,28 @@ fun PlayerScreen(
                             "black video failure no_first_frame elapsedMs=$stuckMs " +
                                 "state=${exoPlayer.playbackState} failovers=$autoAdvanceAttempts"
                         )
+                        // Last resort before abandoning the source: if this looks like Dolby
+                        // Vision and the strip pipeline exists but wasn't active for this URL
+                        // (policy said the device handles DV natively, or the toggle is off),
+                        // force-strip THIS url and re-prepare once before giving up on it.
+                        val currentUrl = latestUiState.selectedStreamUrl.orEmpty()
+                        if (dvStripExtractorsFactory != null &&
+                            currentUrl.isNotBlank() &&
+                            !dvStripEnabledNow() &&
+                            isLikelyDolbyVisionStream(latestUiState.selectedStream) &&
+                            dvForcedStripUrls.add(currentUrl)
+                        ) {
+                            android.util.Log.i("DvCompat", "black-video exhausted — forcing DV strip for this source")
+                            val resumeAt = exoPlayer.currentPosition.coerceAtLeast(0L)
+                            val keepPlaying = exoPlayer.playWhenReady
+                            exoPlayer.stop()
+                            exoPlayer.seekTo(resumeAt)
+                            exoPlayer.prepare()
+                            exoPlayer.playWhenReady = keepPlaying
+                            blackVideoRecoveryStage = 0
+                            blackVideoReadySinceMs = null
+                            continue
+                        }
                         if (allowStartupSourceFallback &&
                             !userSelectedSourceManually &&
                             tryAdvanceToNextStream()

@@ -94,6 +94,10 @@ data class PlayerUiState(
     // playback so they can be side-loaded into the initial MediaItem — switching then needs only
     // a track override, not a MediaItem rebuild (no visible video reload). Default ON.
     val subtitlePreloadEnabled: Boolean = true,
+    // Dolby Vision compatibility: strip DV P7 metadata so remuxes play as HDR10 on devices
+    // without a DV decoder (see com.arflix.tv.player.dv). Default ON; the device policy
+    // additionally gates activation to devices that actually need it.
+    val dolbyVisionCompatEnabled: Boolean = true,
     // Localized (file://) copies ready to attach. Separate from [subtitles]: menu entries keep
     // their remote URLs so scan/download flows are unaffected.
     val preloadedSubtitles: List<Subtitle> = emptyList(),
@@ -246,6 +250,7 @@ class PlayerViewModel @Inject constructor(
     private val aiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
     private val aiFindBestMatchKey = booleanPreferencesKey("subtitle_ai_find_best_match")
     private val subtitlePreloadKey = booleanPreferencesKey("subtitle_preload_enabled")
+    private val dolbyVisionCompatPrefKey = booleanPreferencesKey("dolby_vision_compat")
     private val aiApiKeyKey = globalStringPreferencesKey("subtitle_ai_api_key")
     private val aiModelKey = globalStringPreferencesKey("subtitle_ai_model")
     private val aiRemoveHearingImpairedKey = booleanPreferencesKey("subtitle_remove_hearing_impaired")
@@ -570,6 +575,7 @@ class PlayerViewModel @Inject constructor(
                 showLoadingStats = showLoadingStats,
                 volumeBoostDb = volumeBoostDb,
                 subtitlePreloadEnabled = subtitlePreloadEnabled,
+                dolbyVisionCompatEnabled = prefs[dolbyVisionCompatPrefKey] ?: true,
                 // Nothing to preload without a preferred language — don't make the gate wait.
                 subtitlePreloadComplete = normalizeLanguage(preferredSub).isBlank()
             )
