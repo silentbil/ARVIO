@@ -900,7 +900,7 @@ class HomeServerRepository @Inject constructor(
     }
 
     private fun fetchPublicInfo(serverUrl: String): ServerInfo {
-        val info = runCatching { getJson(buildUrl(serverUrl, "/System/Info/Public")) }.getOrNull()
+        val info = try { getJson(buildUrl(serverUrl, "/System/Info/Public")) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         if (info != null && info.entrySet().isNotEmpty()) {
             return ServerInfo(
                 serverName = info.string("ServerName"),
@@ -910,7 +910,7 @@ class HomeServerRepository @Inject constructor(
             )
         }
 
-        val plexIdentity = runCatching { getText(buildUrl(serverUrl, "/identity")) }.getOrNull()
+        val plexIdentity = try { getText(buildUrl(serverUrl, "/identity")) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         val (plexName, plexId) = parsePlexIdentity(plexIdentity.orEmpty())
         return ServerInfo(
             serverName = plexName,
@@ -1039,7 +1039,7 @@ class HomeServerRepository @Inject constructor(
                 accountToken = trimmedAccountToken,
                 lastConnectedAt = System.currentTimeMillis()
             )
-            val info = runCatching { fetchSystemInfo(candidate) }
+            val info = try { Result.success(fetchSystemInfo(candidate)) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; Result.failure(e) }
                 .getOrElse { error ->
                     lastError = error
                     null
@@ -1061,7 +1061,7 @@ class HomeServerRepository @Inject constructor(
                 serverId = info.serverId.ifBlank { candidate.serverId },
                 lastConnectedAt = System.currentTimeMillis()
             )
-            val collections = runCatching { fetchCollections(shell) }
+            val collections = try { Result.success(fetchCollections(shell)) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; Result.failure(e) }
                 .getOrElse { error ->
                     lastError = error
                     emptyList()
