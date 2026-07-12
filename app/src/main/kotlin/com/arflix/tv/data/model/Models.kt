@@ -173,7 +173,11 @@ data class StreamSource(
     // Stremio "sources" are commonly tracker URLs. Keeping them helps P2P playback (TorrServer) work
     // across more addons.
     val sources: List<String> = emptyList(),
-    val description: String? = null
+    val description: String? = null,
+    // Raw Stremio "name" field (e.g. AIOStreams' "2160p (4k) [TB]\nRemux\nExtended"). Carries
+    // clean, delimited quality tags that garbage filenames run together ("4Kremux") — used for
+    // chip/label detection in the source menu.
+    val rawLabel: String? = null
 ) : Serializable
 
 /**
