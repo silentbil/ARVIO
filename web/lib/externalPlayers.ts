@@ -189,7 +189,36 @@ export function downloadStreamUrl(stream: StreamSource, title: string) {
 
 export function downloadStream(stream: StreamSource, title: string) {
   const href = downloadStreamUrl(stream, title);
-  if (!href || typeof window === "undefined") return false;
-  window.location.href = href;
-  return true;
+  if (!href) return false;
+  return triggerDownload(href, cleanFilename(title));
+}
+
+// Start a download via a programmatic <a download> click — the reliable path in
+// real browser tabs AND installed PWAs. `window.location.href = href` navigated
+// the whole tab: a non-200 (rate-limited/expired token) then left a blank page
+// with no feedback, and even a 200 attachment could replace the app in some
+// engines. The anchor keeps the app in place and lets the browser's own
+// download manager own the transfer (the download proxy sets Content-
+// Disposition: attachment, so this never opens an inline preview).
+export function triggerDownload(href: string, filename: string) {
+  if (typeof document === "undefined") return false;
+  try {
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = filename || "arvio-download";
+    a.rel = "noopener";
+    a.style.position = "fixed";
+    a.style.left = "-9999px";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 4000);
+    return true;
+  } catch {
+    try {
+      window.location.href = href;
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

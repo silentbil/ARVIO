@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { copyStreamUrl, downloadStreamUrl, externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
+import { copyStreamUrl, downloadStreamUrl, externalLaunchMode, openExternalPlayer, triggerDownload } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -515,12 +515,13 @@ function SourcePickerModal({
       onToast("Could not start this download.");
       return;
     }
-    // Same-tab navigation: an attachment response never replaces the page in a
-    // browser tab, and the installed PWA opens it in its Safari sheet — both
-    // proven to reach the download proxy. (A pre-opened window.open tab is NOT
-    // used: standalone PWAs silently ignore location changes on sheet handles.)
-    window.location.href = href;
-    onToast("Download started — check your browser downloads.");
+    // Programmatic <a download> click — reliable in real browser tabs AND
+    // installed PWAs, and keeps the app in place (the old window.location.href
+    // navigated the whole tab, so a rate-limited/expired download left a blank
+    // page with no feedback). The download proxy sets Content-Disposition:
+    // attachment, so the browser's download manager owns the transfer.
+    const started = triggerDownload(href, `${title}.${/\.mp4(?:[?#/]|$)/i.test(`${target.url} ${target.source ?? ""}`) ? "mp4" : "mkv"}`);
+    onToast(started ? "Download started — check your browser downloads." : "Could not start this download.");
   };
 
   if (!visible || typeof document === "undefined") return null;
