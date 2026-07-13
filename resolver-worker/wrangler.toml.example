@@ -1,0 +1,15 @@
+name = "arvio-resolver"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+# After creating the Worker, bind a KV namespace for short-lived source cache:
+# wrangler kv namespace create RESOLVER_KV
+#
+# [[kv_namespaces]]
+# binding = "RESOLVER_KV"
+# id = "replace_with_namespace_id"
+
+[vars]
+ALLOWED_ORIGINS = "https://web.arvio.tv,http://localhost:3100,http://localhost:3101"
+SOURCE_CACHE_TTL_SECONDS = "180"
+ADDON_TIMEOUT_MS = "6500"

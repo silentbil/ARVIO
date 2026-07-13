@@ -1,0 +1,16 @@
+name = "arvio-resolver"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+routes = [
+  { pattern = "resolve.arvio.tv/*", zone_name = "arvio.tv" }
+]
+
+[vars]
+ALLOWED_ORIGINS = "https://web.arvio.tv,http://localhost:3000,http://localhost:3100,http://localhost:3101"
+SOURCE_CACHE_TTL_SECONDS = "180"
+ADDON_TIMEOUT_MS = "15000"
+ADDON_EXTENDED_TIMEOUT_MS = "35000"
+
+[[kv_namespaces]]
+binding = "RESOLVER_KV"
+id = "26a386f371184d1b89c51940367e2d2c"
