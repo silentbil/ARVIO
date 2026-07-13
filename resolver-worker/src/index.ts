@@ -139,6 +139,15 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders(request, env) });
 
     try {
+      // Edge cache for the app's TMDB metadata calls (route: web.arvio.tv/api/tmdb/*).
+      // Serving these from Cloudflare keeps the several-hundred-request startup
+      // burst off Netlify entirely — Netlify's per-IP abuse limiter once flagged a
+      // household IP and every app boot re-triggered it (white screen / "No
+      // episodes found"). Misses go to the stable netlify.app hostname from
+      // Cloudflare egress, so client IPs never hit Netlify's counters for TMDB.
+      if (url.pathname.startsWith("/api/tmdb/") && request.method === "GET") {
+        return tmdbEdgeCache(request);
+      }
       if (url.pathname === "/health") {
         return json({ ok: true, service: "arvio-resolver" }, request, env);
       }
@@ -163,6 +172,43 @@ export default {
     }
   }
 };
+
+// Cache-first proxy for /api/tmdb/* on web.arvio.tv. Hits are served from the
+// Cloudflare edge cache; misses fetch the same path from the site's stable
+// netlify.app hostname (NOT web.arvio.tv — that would loop back into this
+// worker) and are cached for 6h, matching the route's own s-maxage.
+const TMDB_ORIGIN = "https://arvio-web.netlify.app";
+
+async function tmdbEdgeCache(request: Request): Promise<Response> {
+  const input = new URL(request.url);
+  const cache = caches.default;
+  const cacheKey = new Request(`https://web.arvio.tv${input.pathname}${input.search}`, { method: "GET" });
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    const response = new Response(hit.body, hit);
+    response.headers.set("x-arvio-edge", "hit");
+    return response;
+  }
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${TMDB_ORIGIN}${input.pathname}${input.search}`, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(15_000)
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "TMDB origin unreachable" }), {
+      status: 502,
+      headers: JSON_HEADERS
+    });
+  }
+  const response = new Response(upstream.body, upstream);
+  response.headers.set("x-arvio-edge", "miss");
+  if (upstream.ok) {
+    response.headers.set("cache-control", "public, max-age=300, s-maxage=21600");
+    await cache.put(cacheKey, response.clone());
+  }
+  return response;
+}
 
 async function sources(request: Request, env: Env) {
   const payload = await request.json<SourcesRequest>().catch(() => null);

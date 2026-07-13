@@ -2,7 +2,11 @@ name = "arvio-resolver"
 main = "src/index.ts"
 compatibility_date = "2026-07-01"
 routes = [
-  { pattern = "resolve.arvio.tv/*", zone_name = "arvio.tv" }
+  { pattern = "resolve.arvio.tv/*", zone_name = "arvio.tv" },
+  # TMDB metadata edge cache: keeps the app's startup burst off Netlify (its
+  # per-IP abuse limiter flagged a household IP once — white screens). Misses
+  # are fetched from arvio-web.netlify.app via Cloudflare egress.
+  { pattern = "web.arvio.tv/api/tmdb/*", zone_name = "arvio.tv" }
 ]
 
 [vars]
