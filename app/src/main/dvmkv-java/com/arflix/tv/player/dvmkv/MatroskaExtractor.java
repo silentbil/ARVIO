@@ -1804,7 +1804,7 @@ public class MatroskaExtractor implements Extractor {
       input.readFully(blockAdditionalData, 0, contentSize);
       track.pendingDolbyVisionBlockAdditionalData = blockAdditionalData;
 
-      if (dolbyVisionSampleTransformer != null) {
+      if (dolbyVisionSampleTransformer != null && track.dolbyVisionProfile == 7) {
         try {
           byte[] transformed =
               dolbyVisionSampleTransformer.onDolbyVisionBlockAdditionalData(
@@ -2055,7 +2055,9 @@ public class MatroskaExtractor implements Extractor {
         // If there is supplemental data, the structure of the sample data is:
         // encryption data (if any) || sample size (4 bytes) || sample data || supplemental data
         deferSupplementalMainSampleSizePrefix =
-            CODEC_ID_H265.equals(track.codecId) && dolbyVisionSampleTransformer != null;
+            CODEC_ID_H265.equals(track.codecId)
+                && dolbyVisionSampleTransformer != null
+                && track.dolbyVisionProfile == 7;
         if (!deferSupplementalMainSampleSizePrefix) {
           int sampleSize = size + sampleStrippedBytes.limit() - sampleBytesRead;
           writeSupplementalMainSampleSizePrefix(output, sampleSize);
@@ -2066,7 +2068,14 @@ public class MatroskaExtractor implements Extractor {
       sampleEncodingHandled = true;
     }
     size += sampleStrippedBytes.limit();
-    if (CODEC_ID_H265.equals(track.codecId) && dolbyVisionSampleTransformer != null) {
+    // Only Profile 7 tracks enter the DV transform path. Non-DV and Profile 5 HEVC samples fall
+    // through to the stock streaming write below — no full-frame materialization, no per-frame
+    // allocation, so normal 4K remuxes are byte-for-byte the stock extractor's behavior.
+    boolean dolbyVisionTransform =
+        CODEC_ID_H265.equals(track.codecId)
+            && dolbyVisionSampleTransformer != null
+            && track.dolbyVisionProfile == 7;
+    if (dolbyVisionTransform) {
       try {
         // Phase-2 seam: sample event is surfaced here. Payload replacement is added in a later
         // step once DV conversion is wired for full HEVC access units.
@@ -2077,7 +2086,7 @@ public class MatroskaExtractor implements Extractor {
       }
     }
 
-    if (CODEC_ID_H265.equals(track.codecId) && dolbyVisionSampleTransformer != null) {
+    if (dolbyVisionTransform) {
       int remainingSampleBytes = size - sampleBytesRead;
       if (dolbyVisionSampleBuffer.length < remainingSampleBytes) {
         dolbyVisionSampleBuffer = new byte[remainingSampleBytes];
@@ -2629,6 +2638,10 @@ public class MatroskaExtractor implements Extractor {
     public float minMasteringLuminance = Format.NO_VALUE;
     public byte @MonotonicNonNull [] dolbyVisionConfigBytes;
     public byte @MonotonicNonNull [] pendingDolbyVisionBlockAdditionalData;
+    // Dolby Vision profile parsed from the track's DV config (Format.NO_VALUE when not DV).
+    // Only Profile 7 (dual-layer, HDR10-compatible base) is strippable to HEVC; Profile 5
+    // (IPTPQc2, no base layer) and non-DV tracks must NOT enter the transform/relabel path.
+    public int dolbyVisionProfile = Format.NO_VALUE;
 
     // Audio elements. Initially set to their default values.
     public int channelCount = 1;
@@ -2867,6 +2880,7 @@ public class MatroskaExtractor implements Extractor {
         DolbyVisionConfig dolbyVisionConfig =
             DolbyVisionConfig.parse(new ParsableByteArray(this.dolbyVisionConfigBytes));
         if (dolbyVisionConfig != null) {
+          dolbyVisionProfile = dolbyVisionConfig.profile;
           codecs = dolbyVisionConfig.codecs;
           mimeType = MimeTypes.VIDEO_DOLBY_VISION;
           if (dolbyVisionSampleTransformer != null) {
@@ -2883,7 +2897,12 @@ public class MatroskaExtractor implements Extractor {
                 mimeType = MimeTypes.VIDEO_H265;
               }
             }
-            if (MimeTypes.VIDEO_DOLBY_VISION.equals(mimeType) && hevcCodecsString != null) {
+            // Relabel to base-layer HEVC ONLY for Profile 7. Profile 5 has no HDR10-compatible
+            // base layer, so presenting it as plain HEVC produces broken colours / decode
+            // failure — leave it as Dolby Vision (it plays natively, or fails cleanly to
+            // source failover on devices without a DV decoder).
+            if (MimeTypes.VIDEO_DOLBY_VISION.equals(mimeType) && hevcCodecsString != null
+                && dolbyVisionProfile == 7) {
               if (DolbyVisionCompatibility.isHdr10BaseLayerModeActive()) {
                 mimeType = MimeTypes.VIDEO_H265;
                 codecs = hevcCodecsString;

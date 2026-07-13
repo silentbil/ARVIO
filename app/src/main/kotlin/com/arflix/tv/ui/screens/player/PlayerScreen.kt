@@ -295,10 +295,16 @@ fun PlayerScreen(
         )
     }
     val preferExtensionDecoder = remember(deviceType) {
+        // Prefer the FFmpeg *software* decoder ONLY for the specific SEI "Box R" whose C2
+        // hardware video decoder hangs during allocation. The broad "any Amlogic" match was
+        // removed: it forced software 4K decode on capable Amlogic boxes (Homatics, Mi Box),
+        // which can't keep up → no first frame → source skip, while the same remuxes play fine
+        // on their hardware decoders (it is hardware-first for video and never
+        // blanket-forces software on a device class). setEnableDecoderFallback(true) below still
+        // drops to software automatically if a hardware decoder concretely fails.
         deviceType == com.arflix.tv.util.DeviceType.TV &&
             (
-                Build.HARDWARE.contains("amlogic", ignoreCase = true) ||
-                    Build.MANUFACTURER.contains("sei", ignoreCase = true) ||
+                Build.MANUFACTURER.contains("sei", ignoreCase = true) ||
                     Build.MODEL.contains("Box R", ignoreCase = true)
                 )
     }
@@ -665,7 +671,11 @@ fun PlayerScreen(
 
     // Track current stream index for auto-advancement on error
     var currentStreamIndex by remember { mutableIntStateOf(0) }
-    fun tryAdvanceToNextStream(skipAddonId: String? = null, recordCurrentFailure: Boolean = true): Boolean {
+    fun tryAdvanceToNextStream(
+        skipAddonId: String? = null,
+        recordCurrentFailure: Boolean = true,
+        reason: String = "Source didn't start"
+    ): Boolean {
         val streams = uiState.streams
         return if (streams.size <= 1) {
             viewModel.onFailoverAttempt(success = false)
@@ -699,12 +709,13 @@ fun PlayerScreen(
                 triedStreamIndexes = triedStreamIndexes + nextIndex
                 val next = streams[nextIndex]
                 switchNotice = buildString {
-                    append("Source not starting — switching")
+                    append(reason)
+                    append(" — switching")
                     val desc = listOf(next.quality, next.size).filter { it.isNotBlank() }.joinToString(" · ")
-                    if (desc.isNotBlank()) append(" ($desc)")
+                    if (desc.isNotBlank()) append(" to $desc")
                     append("…")
                 }
-                switchNoticeUntilMs = System.currentTimeMillis() + 2_500L
+                switchNoticeUntilMs = System.currentTimeMillis() + 3_500L
                 userSelectedSourceManually = false
                 playbackIssueReported = false
                 startupRecoverAttempted = false
@@ -809,6 +820,11 @@ fun PlayerScreen(
     // reflects the CURRENT state — extractors are created at prepare time.
     val dvPolicy = remember { com.arflix.tv.player.dv.DolbyVisionBaseLayerPolicy.resolve(context, bridgeReady = false) }
     val dvForcedStripUrls = remember { mutableSetOf<String>() }
+    // Audio recovery rungs (applied via the track selector before giving up on a
+    // source): a URL first gets safe-audio (constrain channels + no tunneling), then audio-disabled
+    // (video keeps playing). Each fires once per URL; cleared on new-source load.
+    val safeAudioForcedUrls = remember { mutableSetOf<String>() }
+    val audioDisabledForcedUrls = remember { mutableSetOf<String>() }
     fun dvStripEnabledNow(): Boolean =
         latestUiState.dolbyVisionCompatEnabled ||
             dvForcedStripUrls.contains(latestUiState.selectedStreamUrl.orEmpty())
@@ -1129,6 +1145,45 @@ fun PlayerScreen(
                                 }
                             }
 
+                            // Audio recovery ladder — try to save the SAME source
+                            // before skipping. An audio-track init/write failure (e.g. TrueHD/DTS
+                            // the device can't render, or a channel layout it rejects) shouldn't
+                            // lose an otherwise-good video source. Rung 1: constrain channels + no
+                            // tunneling. Rung 2: drop audio entirely so video still plays.
+                            val isAudioFailure =
+                                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                                    error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
+                                    "audiotrack" in timeoutMessage || "audio track" in timeoutMessage
+                            if (isAudioFailure) {
+                                val currentUrl = latestUiState.selectedStreamUrl.orEmpty()
+                                val selector = this@apply.trackSelector as? androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+                                val resumeAt = this@apply.currentPosition.coerceAtLeast(0L)
+                                val keepPlaying = this@apply.playWhenReady
+                                if (selector != null && currentUrl.isNotBlank() &&
+                                    safeAudioForcedUrls.add(currentUrl)
+                                ) {
+                                    playbackStartupDiag("audio recovery: safe-audio for source")
+                                    selector.parameters = selector.buildUponParameters()
+                                        .setConstrainAudioChannelCountToDeviceCapabilities(true)
+                                        .setTunnelingEnabled(false)
+                                        .build()
+                                    this@apply.stop(); this@apply.prepare()
+                                    this@apply.seekTo(resumeAt); this@apply.playWhenReady = keepPlaying
+                                    return
+                                }
+                                if (selector != null && currentUrl.isNotBlank() &&
+                                    audioDisabledForcedUrls.add(currentUrl)
+                                ) {
+                                    playbackStartupDiag("audio recovery: audio-disabled for source")
+                                    selector.parameters = selector.buildUponParameters()
+                                        .setDisabledTrackTypes(setOf(C.TRACK_TYPE_AUDIO))
+                                        .build()
+                                    this@apply.stop(); this@apply.prepare()
+                                    this@apply.seekTo(resumeAt); this@apply.playWhenReady = keepPlaying
+                                    return
+                                }
+                            }
+
                             // Auto-advance when the startup URL is clearly dead — HTTP 4xx/5xx
                             // or DNS/SSL/network failures. Even if the user manually picked this
                             // source, a dead URL isn't something they "selected" — it should
@@ -1141,7 +1196,7 @@ fun PlayerScreen(
                             if (!hasPlaybackStarted &&
                                 allowStartupSourceFallback &&
                                 !userSelectedSourceManually &&
-                                tryAdvanceToNextStream(deadAddonId)
+                                tryAdvanceToNextStream(deadAddonId, reason = classifyPlaybackFailure(error))
                             ) {
                                 return
                             }
@@ -1556,11 +1611,19 @@ fun PlayerScreen(
                 firstVideoFrameRendered = false
                 val selector = exoPlayer.trackSelector as? androidx.media3.exoplayer.trackselection.DefaultTrackSelector
                 selector?.let {
+                    // Reset per-source track state, then re-apply any audio-recovery rung this
+                    // exact URL already earned (the selector params are global, so a new source
+                    // must clear a previous source's disabled/constrained audio).
+                    val audioDisabled = audioDisabledForcedUrls.contains(url)
+                    val safeAudio = safeAudioForcedUrls.contains(url)
                     it.parameters = it.buildUponParameters()
                         .setPreferredVideoMimeType(null)
                         .setExceedVideoConstraintsIfNecessary(allowVideoExceedCodecCapabilities)
                         .setExceedAudioConstraintsIfNecessary(allowAudioExceedCodecCapabilities)
                         .setExceedRendererCapabilitiesIfNecessary(allowRendererExceedCodecCapabilities)
+                        .setDisabledTrackTypes(if (audioDisabled) setOf(C.TRACK_TYPE_AUDIO) else emptySet())
+                        .setConstrainAudioChannelCountToDeviceCapabilities(safeAudio || audioDisabled)
+                        .setTunnelingEnabled(if (safeAudio || audioDisabled) false else it.parameters.tunnelingEnabled)
                         .build()
                 }
             }
@@ -2035,7 +2098,7 @@ fun PlayerScreen(
                         if (allowMidPlaybackSourceFallback &&
                             !userSelectedSourceManually &&
                             longRebufferCount >= 1 &&
-                            tryAdvanceToNextStream()
+                            tryAdvanceToNextStream(reason = "Buffering too slow")
                         ) {
                             continue
                         }
@@ -2077,9 +2140,17 @@ fun PlayerScreen(
                         "hard startup timeout elapsedMs=$startupBufferDuration hardTimeoutMs=$hardTimeoutMs " +
                             "state=${exoPlayer.playbackState} failovers=$autoAdvanceAttempts"
                     )
+                    // Distinguish the two failure shapes: still BUFFERING = the stream is too slow
+                    // to load (uncached/slow host); READY without a frame = the device couldn't
+                    // decode the video (codec/resolution). The user sees which it is.
+                    val startupReason = if (exoPlayer.playbackState == Player.STATE_READY) {
+                        "Video can't play on this device"
+                    } else {
+                        "Source too slow to load"
+                    }
                     if (allowStartupSourceFallback &&
                         !userSelectedSourceManually &&
-                        tryAdvanceToNextStream()
+                        tryAdvanceToNextStream(reason = startupReason)
                     ) {
                         // Restart the startup clock immediately: the real reset happens only after
                         // the next stream resolves (async). Without this, the loop re-evaluates the
@@ -2178,7 +2249,7 @@ fun PlayerScreen(
                         }
                         if (allowStartupSourceFallback &&
                             !userSelectedSourceManually &&
-                            tryAdvanceToNextStream()
+                            tryAdvanceToNextStream(reason = "No video — device can't decode this format")
                         ) {
                             continue
                         }
@@ -5563,6 +5634,63 @@ private fun playbackErrorMessageFor(
         "$reason. Try another source."
     } else {
         "$reason during startup. Trying another source may work."
+    }
+}
+
+/**
+ * Short, user-facing reason for a playback failure — shown on the "switching source" notice and the
+ * terminal error. it unwraps the cause chain for an HTTP
+ * status (blocked/removed/expired/rate-limited/unavailable) and otherwise distinguishes
+ * decode/unsupported vs invalid-content vs timeout/offline, so the user gets a real clue instead of
+ * a generic "failed".
+ */
+private fun classifyPlaybackFailure(error: androidx.media3.common.PlaybackException): String {
+    // Walk the cause chain looking for an HTTP status — the most actionable signal.
+    var cause: Throwable? = error
+    var httpStatus = -1
+    while (cause != null && httpStatus < 0) {
+        if (cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+            httpStatus = cause.responseCode
+        }
+        cause = cause.cause
+    }
+    if (httpStatus > 0) {
+        return when (httpStatus) {
+            403 -> "Source blocked"
+            404 -> "Source removed"
+            410 -> "Source expired"
+            429 -> "Source rate-limited"
+            in 500..599 -> "Source unavailable"
+            else -> "Source error ($httpStatus)"
+        }
+    }
+
+    val msg = buildString {
+        append(error.message.orEmpty())
+        append(' ')
+        append(error.cause?.message.orEmpty())
+    }.lowercase()
+    val isDns = "unknownhost" in msg || "unable to resolve host" in msg ||
+        "no address associated with hostname" in msg
+
+    return when {
+        isDns -> "Source offline"
+        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+            "Video format not supported by this device"
+        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
+            "Unplayable content"
+        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+            "timeout" in msg || "timed out" in msg || "sockettimeout" in msg ->
+            "Source too slow to load"
+        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+            "Source rejected request"
+        else -> "Playback error"
     }
 }
 

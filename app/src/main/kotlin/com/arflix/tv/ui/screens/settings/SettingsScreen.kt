@@ -3645,6 +3645,14 @@ private fun MobileSettingsSubPage(
                         onClick = { viewModel.cycleFrameRateMatchingMode() }
                     )
                     MobileSettingsRow(
+                        icon = Icons.Default.Movie,
+                        title = stringResource(R.string.dv_compat_title),
+                        subtitle = stringResource(R.string.dv_compat_desc),
+                        value = if (uiState.dolbyVisionCompatEnabled) "On" else "Off",
+                        isFocused = false,
+                        onClick = { viewModel.setDolbyVisionCompatEnabled(!uiState.dolbyVisionCompatEnabled) }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.HighQuality,
                         title = stringResource(R.string.quality_filters),
                         value = uiState.qualityFilterPresetLabel,

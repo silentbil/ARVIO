@@ -33,11 +33,17 @@ churn. The DV7 RPU rides in Matroska **BlockAdditional**, which stock media3 dis
    `DolbyVisionCompatibility.setHdr10BaseLayerModeActive` flag that gates the vendored
    extractor's format rewrite (`video/dolby-vision` → `video/H265` + container's base-layer
    codec string).
-3. Per sample, `DolbyVisionStripTransformer` drops the BlockAdditional RPU and strips RPU/EL NALs
-   (`HevcDvRpuStripper`). **Profile 5 passes through untouched** (no BL-compatible base layer —
-   stripping would render purple/green). Any strip failure returns the ORIGINAL sample; the
-   extractor additionally try/catches the transformer per sample — degradation, never hard error.
-4. Last-resort ladder: if black-video recovery exhausts its stages on a `isLikelyDolbyVisionStream`
+3. **Profile-7 gate (vendored extractor):** the DV transform/relabel path only engages for tracks
+   whose parsed DV config is **Profile 7** (`Track.dolbyVisionProfile == 7`, set in
+   `initializeFormat`). Non-DV HEVC (no DV config) and **Profile 5** tracks fall through to the
+   stock streaming write — no full-frame materialization, no per-frame allocation (a normal 4K
+   remux is byte-for-byte stock behavior), and the format is NOT relabeled to HEVC (P5 has no
+   HDR10 base layer — relabeling it would render broken colours). Gate covers all three sample
+   sites + `handleBlockAdditionalData` + the codec relabel.
+4. Per sample (P7 only), `DolbyVisionStripTransformer` drops the BlockAdditional RPU and strips
+   RPU/EL NALs (`HevcDvRpuStripper`). Any strip failure returns the ORIGINAL sample; the extractor
+   additionally try/catches the transformer per sample — degradation, never hard error.
+5. Last-resort ladder: if black-video recovery exhausts its stages on a `isLikelyDolbyVisionStream`
    source while strip was NOT active (native-DV policy or toggle off), the URL is added to
    `dvForcedStripUrls` and the source is re-prepared once with strip forced, before advancing to
    the next source.
