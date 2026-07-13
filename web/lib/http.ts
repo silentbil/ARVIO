@@ -21,6 +21,14 @@ function cleanErrorMessage(status: number, raw: string): string {
   return trimmed.length > 240 ? `${trimmed.slice(0, 240)}...` : trimmed;
 }
 
+export class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 export async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -32,7 +40,7 @@ export async function jsonRequest<T>(url: string, init: RequestInit = {}): Promi
   });
   if (!response.ok) {
     const message = await response.text().catch(() => "");
-    throw new Error(cleanErrorMessage(response.status, message));
+    throw new HttpError(response.status, cleanErrorMessage(response.status, message));
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

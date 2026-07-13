@@ -111,6 +111,14 @@ export function mapTmdbItem(item: TmdbItem, fallbackType: MediaType): MediaItem 
   };
 }
 
+// When the host rate-limits this client (Netlify per-IP 429 — seen when one
+// household IP gets flagged), every further request only extends the penalty
+// window, and the retry below would DOUBLE the burst. Back off globally: no
+// retry on 429, and short-circuit all TMDB calls for a cooldown so the limit
+// can decay. Callers already render retryable/partial UI on failure.
+let tmdbCooldownUntil = 0;
+const TMDB_COOLDOWN_MS = 30_000;
+
 async function tmdb<T>(path: string, params: Record<string, string | number | undefined> = {}) {
   const url = new URL(`/api/tmdb/${path.replace(/^\/+/, "")}`, window.location.origin);
   // Never surface adult titles anywhere in the app (discover/search/trending).
@@ -118,6 +126,9 @@ async function tmdb<T>(path: string, params: Record<string, string | number | un
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
+  if (Date.now() < tmdbCooldownUntil) {
+    throw new Error("Rate limited — TMDB requests are pausing briefly.");
+  }
   // Timeout + one retry. Callers swallow failures and render partial UI (a
   // details page without seasons/cast, "No episodes found"), so a single
   // dropped request during the startup burst must not be terminal — and a
@@ -130,6 +141,10 @@ async function tmdb<T>(path: string, params: Record<string, string | number | un
       });
     } catch (error) {
       lastError = error;
+      if ((error as { status?: number }).status === 429) {
+        tmdbCooldownUntil = Date.now() + TMDB_COOLDOWN_MS;
+        break;
+      }
       if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
     }
   }
