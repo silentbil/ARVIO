@@ -34,7 +34,7 @@ function isTorrentioResolve(url?: string | null) {
   return Boolean(url && /torrentio\.strem\.fun\/(?:resolve\/)?(?:torbox|realdebrid)/i.test(url));
 }
 
-export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, title: string, preferredSubtitleLang = "") {
+export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, title: string, preferredSubtitleLang = "", mode: "play" | "download" = "play") {
   // External players decode everything natively. Prefer the ORIGINAL file over
   // a debrid-transcoded HLS variant — UNLESS the original is a torrentio
   // /resolve/ redirect, in which case the resolved CDN url in `stream.url` is
@@ -69,7 +69,11 @@ export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, 
     return `infuse://x-callback-url/play?${params.toString()}`;
   }
 
-  return `vlc-x-callback://x-callback-url/stream?${params.toString()}`;
+  // VLC's "download" action saves the file to VLC's own storage (offline
+  // playback) instead of just streaming it — the reliable way to get a large
+  // file onto an iPad, where a browser tab can't (WebKit memory limit). "stream"
+  // just plays it.
+  return `vlc-x-callback://x-callback-url/${mode === "download" ? "download" : "stream"}?${params.toString()}`;
 }
 
 // iOS home-screen webapps (standalone PWAs) silently DROP custom-scheme
@@ -114,7 +118,7 @@ function launchScheme(href: string) {
   }
 }
 
-function isAppleMobile() {
+export function isAppleMobile() {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
   // iPadOS 13+ masquerades as Macintosh but has touch points.
@@ -162,6 +166,16 @@ export function openExternalPlayer(player: ExternalPlayer, stream: StreamSource,
     return downloadVlcPlaylist(stream, title, preferredSubtitleLang);
   }
   const href = externalPlayerUrl(player, stream, title, preferredSubtitleLang);
+  if (!href) return false;
+  launchScheme(href);
+  return true;
+}
+
+// Save a file into VLC's own storage for offline playback (iOS: the reliable
+// way to get a large file onto the device — a browser tab can't). Uses VLC's
+// `download` action; always the scheme launch (never the desktop .m3u path).
+export function downloadToVlc(stream: StreamSource, title: string, preferredSubtitleLang = "") {
+  const href = externalPlayerUrl("vlc", stream, title, preferredSubtitleLang, "download");
   if (!href) return false;
   launchScheme(href);
   return true;

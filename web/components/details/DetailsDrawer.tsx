@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { copyStreamUrl, downloadStreamUrl, externalLaunchMode, openExternalPlayer, triggerDownload } from "@/lib/externalPlayers";
+import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, openExternalPlayer, triggerDownload } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -509,6 +509,19 @@ function SourcePickerModal({
         return;
       }
       target = { ...stream, url: direct, originalUrl: stream.url };
+    }
+    // iOS/iPadOS can't reliably download a multi-GB file in a browser tab —
+    // WebKit buffers the whole response in memory and hits the per-tab limit at a
+    // random point, with no resume (every browser on iOS is WebKit, incl.
+    // Chrome). Hand the resolved direct URL to VLC's `download` action instead:
+    // it saves the file to VLC's own storage (outside the browser memory limit)
+    // for offline playback on the device. Desktop keeps the normal file download.
+    if (isAppleMobile()) {
+      const ok = downloadToVlc(target, title, settings.defaultSubtitle);
+      onToast(ok
+        ? "Downloading to VLC for offline playback. If VLC doesn't open, install it from the App Store."
+        : "Could not hand this download to VLC.");
+      return;
     }
     const href = downloadStreamUrl(target, title);
     if (!href) {
