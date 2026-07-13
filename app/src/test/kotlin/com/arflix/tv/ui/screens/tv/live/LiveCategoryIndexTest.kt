@@ -41,6 +41,53 @@ class LiveCategoryIndexTest {
             .inOrder()
     }
 
+    @Test
+    fun normalPagedCategoriesNeverMoveFavoritesAheadOfProviderOrder() {
+        val providerWindow = listOf(
+            channel("list:1", "Provider First", "News"),
+            channel("list:2", "Provider Second", "News"),
+            channel("list:3", "Provider Third", "News"),
+        )
+        val favorites = listOf(providerWindow[2])
+
+        val allChannels = selectPagedChannelsInProviderOrder(
+            categoryId = "all",
+            providerWindow = providerWindow,
+            favoriteChannels = favorites,
+            recentChannels = emptyList(),
+            limit = 100,
+        )
+        val providerGroup = selectPagedChannelsInProviderOrder(
+            categoryId = "grp:list:news",
+            providerWindow = providerWindow,
+            favoriteChannels = favorites,
+            recentChannels = emptyList(),
+            limit = 100,
+        )
+
+        assertThat(allChannels.map { it.id }).containsExactly("list:1", "list:2", "list:3").inOrder()
+        assertThat(providerGroup.map { it.id }).containsExactly("list:1", "list:2", "list:3").inOrder()
+    }
+
+    @Test
+    fun favoritesCategoryStillUsesSavedFavoriteOrder() {
+        val providerWindow = listOf(
+            channel("list:1", "Provider First", "News"),
+            channel("list:2", "Provider Second", "News"),
+            channel("list:3", "Provider Third", "News"),
+        )
+
+        val result = selectPagedChannelsInProviderOrder(
+            categoryId = "fav",
+            providerWindow = providerWindow,
+            favoriteChannels = listOf(providerWindow[2], providerWindow[0]),
+            recentChannels = emptyList(),
+            limit = 100,
+        )
+
+        assertThat(result.map { it.id }).containsExactly("list:3", "list:1").inOrder()
+    }
+
     private fun channel(id: String, name: String, group: String): IptvChannel =
         IptvChannel(
             id = id,

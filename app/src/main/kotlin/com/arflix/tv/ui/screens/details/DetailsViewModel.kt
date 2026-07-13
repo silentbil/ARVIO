@@ -24,6 +24,7 @@ import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
@@ -1243,7 +1244,7 @@ class DetailsViewModel @Inject constructor(
                             sortPlayableStreamsFirst(
                                 progressive.streams
                                     .filter { !it.url.isNullOrBlank() && !it.url.orEmpty().startsWith("magnet:", ignoreCase = true) }
-                                    .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                                    .distinctBy(::providerScopedStreamIdentity)
                             )
                         )
                     }
@@ -1277,7 +1278,7 @@ class DetailsViewModel @Inject constructor(
                             sortPlayableStreamsFirst(
                                 progressive.streams
                                     .filter { !it.url.isNullOrBlank() && !it.url.orEmpty().startsWith("magnet:", ignoreCase = true) }
-                                    .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                                    .distinctBy(::providerScopedStreamIdentity)
                             )
                         )
                     }
@@ -1470,7 +1471,7 @@ class DetailsViewModel @Inject constructor(
                                     val pluginStreams = results.map { it.toStreamSource() }
                                     val merged = sortPlayableStreamsFirst(
                                         (current.streams + pluginStreams)
-                                            .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                                            .distinctBy(::providerScopedStreamIdentity)
                                     )
                                     _uiState.value = current.copy(
                                         streams = merged,
@@ -1546,7 +1547,7 @@ class DetailsViewModel @Inject constructor(
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
                         val mergedStreams = sortPlayableStreamsFirst(
                             (progressive.streams + existingVod)
-                                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                                .distinctBy(::providerScopedStreamIdentity)
                         )
                         Log.d(
                             TAG,
@@ -1607,7 +1608,7 @@ class DetailsViewModel @Inject constructor(
                         val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
                         val mergedStreams = sortPlayableStreamsFirst(
                             (progressive.streams + existingVod)
-                                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                                .distinctBy(::providerScopedStreamIdentity)
                         )
                         val addonCount = streamRepository.installedAddons.first()
                             .count { it.isVodStreamingAddon() }
@@ -2508,7 +2509,7 @@ class DetailsViewModel @Inject constructor(
         }
         val mergedStreams = sortPlayableStreamsFirst(
             (latest + validSources)
-                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                .distinctBy(::providerScopedStreamIdentity)
         )
         _uiState.value = _uiState.value.copy(
             streams = mergedStreams,
@@ -2566,7 +2567,7 @@ class DetailsViewModel @Inject constructor(
         }
         val mergedStreams = sortPlayableStreamsFirst(
             (latest + validVodSources)
-                .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                .distinctBy(::providerScopedStreamIdentity)
         )
         _uiState.value = _uiState.value.copy(
             streams = mergedStreams,

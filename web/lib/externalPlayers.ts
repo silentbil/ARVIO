@@ -34,7 +34,7 @@ function isTorrentioResolve(url?: string | null) {
   return Boolean(url && /torrentio\.strem\.fun\/(?:resolve\/)?(?:torbox|realdebrid)/i.test(url));
 }
 
-export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, title: string, preferredSubtitleLang = "") {
+export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, title: string, preferredSubtitleLang = "", mode: "play" | "download" = "play") {
   // External players decode everything natively. Prefer the ORIGINAL file over
   // a debrid-transcoded HLS variant — UNLESS the original is a torrentio
   // /resolve/ redirect, in which case the resolved CDN url in `stream.url` is
@@ -69,7 +69,11 @@ export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, 
     return `infuse://x-callback-url/play?${params.toString()}`;
   }
 
-  return `vlc-x-callback://x-callback-url/stream?${params.toString()}`;
+  // VLC's "download" action saves the file to VLC's own storage (offline
+  // playback) instead of just streaming it — the reliable way to get a large
+  // file onto an iPad, where a browser tab can't (WebKit memory limit). "stream"
+  // just plays it.
+  return `vlc-x-callback://x-callback-url/${mode === "download" ? "download" : "stream"}?${params.toString()}`;
 }
 
 // iOS home-screen webapps (standalone PWAs) silently DROP custom-scheme
@@ -114,7 +118,7 @@ function launchScheme(href: string) {
   }
 }
 
-function isAppleMobile() {
+export function isAppleMobile() {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
   // iPadOS 13+ masquerades as Macintosh but has touch points.
@@ -167,6 +171,16 @@ export function openExternalPlayer(player: ExternalPlayer, stream: StreamSource,
   return true;
 }
 
+// Save a file into VLC's own storage for offline playback (iOS: the reliable
+// way to get a large file onto the device — a browser tab can't). Uses VLC's
+// `download` action; always the scheme launch (never the desktop .m3u path).
+export function downloadToVlc(stream: StreamSource, title: string, preferredSubtitleLang = "") {
+  const href = externalPlayerUrl("vlc", stream, title, preferredSubtitleLang, "download");
+  if (!href) return false;
+  launchScheme(href);
+  return true;
+}
+
 export async function copyStreamUrl(stream: StreamSource) {
   const targetUrl = stream.originalUrl ?? stream.url;
   if (!targetUrl || typeof navigator === "undefined" || !navigator.clipboard) return false;
@@ -189,7 +203,36 @@ export function downloadStreamUrl(stream: StreamSource, title: string) {
 
 export function downloadStream(stream: StreamSource, title: string) {
   const href = downloadStreamUrl(stream, title);
-  if (!href || typeof window === "undefined") return false;
-  window.location.href = href;
-  return true;
+  if (!href) return false;
+  return triggerDownload(href, cleanFilename(title));
+}
+
+// Start a download via a programmatic <a download> click — the reliable path in
+// real browser tabs AND installed PWAs. `window.location.href = href` navigated
+// the whole tab: a non-200 (rate-limited/expired token) then left a blank page
+// with no feedback, and even a 200 attachment could replace the app in some
+// engines. The anchor keeps the app in place and lets the browser's own
+// download manager own the transfer (the download proxy sets Content-
+// Disposition: attachment, so this never opens an inline preview).
+export function triggerDownload(href: string, filename: string) {
+  if (typeof document === "undefined") return false;
+  try {
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = filename || "arvio-download";
+    a.rel = "noopener";
+    a.style.position = "fixed";
+    a.style.left = "-9999px";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 4000);
+    return true;
+  } catch {
+    try {
+      window.location.href = href;
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

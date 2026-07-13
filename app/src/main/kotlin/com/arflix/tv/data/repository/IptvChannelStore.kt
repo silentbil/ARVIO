@@ -416,7 +416,8 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
 
     private companion object {
         const val DATABASE_NAME = "arvio_iptv_channels.db"
-        const val DATABASE_VERSION = 1
+        // v2 rebuilds snapshots created before provider-order imports became canonical.
+        const val DATABASE_VERSION = 2
         const val MAX_SQL_ARGS = 900
     }
 }

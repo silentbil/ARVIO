@@ -2982,17 +2982,36 @@ class IptvRepository @Inject constructor(
     ): List<IptvChannel> {
         resolveXtreamCredentials(playlist)?.let { creds ->
             onProgress(IptvLoadProgress(context.getString(R.string.iptv_xtream_detected), 6))
-            runCatching {
-                withTimeoutOrNull(120_000L) {
-                    fetchXtreamLiveChannels(creds, onProgress)
-                } ?: throw IllegalStateException(context.getString(R.string.iptv_xtream_timeout))
-            }
-                .onSuccess { channels ->
-                    if (channels.isNotEmpty()) {
-                        onProgress(IptvLoadProgress(context.getString(R.string.iptv_loaded_api, channels.size), 95))
-                        return channels
-                    }
+            val (playlistResult, apiResult) = coroutineScope {
+                val providerPlaylist = async(Dispatchers.IO) {
+                    runCatching {
+                        fetchAndParseM3uOnce(
+                            url = normalizeStoredIptvUrl(playlist.m3uUrl),
+                            onProgress = onProgress,
+                            client = iptvCatalogHttpClient,
+                        )
+                    }.getOrDefault(emptyList())
                 }
+                val providerApi = async(Dispatchers.IO) {
+                    runCatching {
+                        withTimeoutOrNull(120_000L) {
+                            fetchXtreamLiveChannels(creds, onProgress)
+                        } ?: throw IllegalStateException(context.getString(R.string.iptv_xtream_timeout))
+                    }.getOrDefault(emptyList())
+                }
+                providerPlaylist.await() to providerApi.await()
+            }
+
+            val providerOrdered = mergeXtreamChannelsInProviderOrder(playlistResult, apiResult)
+            if (providerOrdered.isNotEmpty()) {
+                onProgress(
+                    IptvLoadProgress(
+                        context.getString(R.string.iptv_loaded_api, providerOrdered.size),
+                        95,
+                    )
+                )
+                return providerOrdered
+            }
         }
         return fetchAndParseM3uWithRetries(playlist.m3uUrl, onProgress)
     }
@@ -3002,21 +3021,6 @@ class IptvRepository @Inject constructor(
         onProgress: (IptvLoadProgress) -> Unit
     ): List<IptvChannel> {
         val normalizedUrl = normalizeStoredIptvUrl(url)
-        resolveXtreamCredentials(normalizedUrl)?.let { creds ->
-            onProgress(IptvLoadProgress(context.getString(R.string.iptv_xtream_detected), 6))
-            runCatching {
-                withTimeoutOrNull(120_000L) {
-                    fetchXtreamLiveChannels(creds, onProgress)
-                } ?: throw IllegalStateException(context.getString(R.string.iptv_xtream_timeout))
-            }
-                .onSuccess { channels ->
-                    if (channels.isNotEmpty()) {
-                        onProgress(IptvLoadProgress(context.getString(R.string.iptv_loaded_api, channels.size), 95))
-                        return channels
-                    }
-                }
-        }
-
         var lastError: Throwable? = null
         val maxAttempts = 2
         repeat(maxAttempts) { attempt ->
@@ -3054,6 +3058,7 @@ class IptvRepository @Inject constructor(
 
     private data class XtreamLiveStream(
         @SerializedName("stream_id") val streamId: Int? = null,
+        @SerializedName("num") val providerNumber: String? = null,
         val name: String? = null,
         @SerializedName("stream_icon") val streamIcon: String? = null,
         @SerializedName("epg_channel_id") val epgChannelId: String? = null,
@@ -5278,6 +5283,7 @@ class IptvRepository @Inject constructor(
                 epgId = stream.epgChannelId?.trim()?.takeIf { it.isNotBlank() },
                 rawTitle = name,
                 xtreamStreamId = streamId,
+                providerChannelNumber = stream.providerNumber?.trim()?.takeIf { it.isNotBlank() },
                 catchupDays = (stream.tvArchiveDuration ?: stream.tvArchive ?: 0).coerceAtLeast(0),
                 catchupType = if ((stream.tvArchive ?: 0) > 0 || (stream.tvArchiveDuration ?: 0) > 0) "xtream" else null
             )
@@ -5338,7 +5344,8 @@ class IptvRepository @Inject constructor(
 
     private fun fetchAndParseM3uOnce(
         url: String,
-        onProgress: (IptvLoadProgress) -> Unit
+        onProgress: (IptvLoadProgress) -> Unit,
+        client: OkHttpClient = iptvHttpClient,
     ): List<IptvChannel> {
         val request = Request.Builder()
             .url(validatedIptvHttpUrl(url, "IPTV playlist URL"))
@@ -5346,7 +5353,7 @@ class IptvRepository @Inject constructor(
             .header("Accept", "*/*")
             .get()
             .build()
-        iptvHttpClient.newCall(request).execute().use { response ->
+        client.newCall(request).execute().use { response ->
             val raw = response.body?.byteStream() ?: throw IllegalStateException(context.getString(R.string.iptv_m3u_empty))
             val contentLength = response.body?.contentLength()?.takeIf { it > 0L }
             val progressStream = ProgressInputStream(raw) { bytesRead ->

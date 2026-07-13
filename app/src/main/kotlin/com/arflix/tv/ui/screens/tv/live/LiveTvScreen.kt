@@ -177,6 +177,21 @@ private fun chooseStartupChannelId(
     return filteredChannels.first().id
 }
 
+internal fun selectPagedChannelsInProviderOrder(
+    categoryId: String,
+    providerWindow: List<IptvChannel>,
+    favoriteChannels: List<IptvChannel>,
+    recentChannels: List<IptvChannel>,
+    limit: Int,
+): List<IptvChannel> {
+    val source = when (categoryId) {
+        "fav" -> favoriteChannels
+        "recent" -> recentChannels
+        else -> providerWindow
+    }
+    return if (source.size <= limit) source else source.subList(0, limit)
+}
+
 /**
  * Live TV screen — Arvio spec §1. Three focus regions: Sidebar ↔ MiniPlayer ↔ EPG.
  * Preserves every IPTV feature from the legacy [com.arflix.tv.ui.screens.tv.TvScreen]
@@ -578,23 +593,20 @@ fun LiveTvScreen(
                     }
                     return out
                 }
-                fun mergePriorityWithWindow(baseWindow: List<IptvChannel>): List<IptvChannel> {
-                    if (favoriteChannels.isEmpty()) return baseWindow.take(pageLimit)
-                    val seen = LinkedHashSet<String>(pageLimit)
-                    val merged = ArrayList<IptvChannel>(pageLimit)
-                    fun add(channel: IptvChannel) {
-                        if (merged.size >= pageLimit) return
-                        if (seen.add(channel.id)) merged += channel
-                    }
-                    favoriteChannels.forEach(::add)
-                    baseWindow.forEach(::add)
-                    return merged
-                }
                 when (selectedCategoryId) {
-                    "fav" -> favoriteChannels.take(pageLimit)
-                    "recent" -> recentChannels.take(pageLimit)
-                    "all" -> mergePriorityWithWindow(
-                        viewModel.iptvRepository.pagedChannelWindow(null, null, 0, pageLimit)
+                    "fav", "recent" -> selectPagedChannelsInProviderOrder(
+                        categoryId = selectedCategoryId,
+                        providerWindow = emptyList(),
+                        favoriteChannels = favoriteChannels,
+                        recentChannels = recentChannels,
+                        limit = pageLimit,
+                    )
+                    "all" -> selectPagedChannelsInProviderOrder(
+                        categoryId = selectedCategoryId,
+                        providerWindow = viewModel.iptvRepository.pagedChannelWindow(null, null, 0, pageLimit),
+                        favoriteChannels = favoriteChannels,
+                        recentChannels = recentChannels,
+                        limit = pageLimit,
                     )
                     else -> {
                         val resolvedGroup = resolvePagedGroup(enrichedState.value.tree)
@@ -629,10 +641,20 @@ fun LiveTvScreen(
                                         "category=$selectedCategoryId rows=${recoveredWindow.size}"
                                 )
                             }
-                            mergePriorityWithWindow(recoveredWindow)
+                            selectPagedChannelsInProviderOrder(
+                                categoryId = selectedCategoryId,
+                                providerWindow = recoveredWindow,
+                                favoriteChannels = favoriteChannels,
+                                recentChannels = recentChannels,
+                                limit = pageLimit,
+                            )
                         } else {
-                            mergePriorityWithWindow(
-                                viewModel.iptvRepository.pagedChannelWindow(null, null, 0, pageLimit)
+                            selectPagedChannelsInProviderOrder(
+                                categoryId = selectedCategoryId,
+                                providerWindow = viewModel.iptvRepository.pagedChannelWindow(null, null, 0, pageLimit),
+                                favoriteChannels = favoriteChannels,
+                                recentChannels = recentChannels,
+                                limit = pageLimit,
                             )
                         }
                     }

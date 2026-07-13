@@ -253,7 +253,8 @@ private class HomeFocusState(
     // index for the current row so pressing Up later returns to the same position.
     // Netflix preserves horizontal scroll position across rows; without this,
     // every Down press resets to item 0 which is jarring.
-    val rowItemIndices = mutableMapOf<Int, Int>()
+    // Catalog IDs remain stable while background loads insert or reorder rows.
+    val rowItemIndicesByCategoryId = mutableMapOf<String, Int>()
 
     companion object {
         // `userHasNavigated` is saved as the 4th element (0/1). Without it,
@@ -334,6 +335,23 @@ private fun getFocusedItem(categories: List<Category>, rowIndex: Int, itemIndex:
 private fun homeRowItemKey(item: MediaItem): String {
     val episodeSuffix = item.nextEpisode?.let { "_S${it.seasonNumber}E${it.episodeNumber}" }.orEmpty()
     return "${item.mediaType.name}-${item.id}$episodeSuffix"
+}
+
+internal fun stableHomeRowKey(layout: String, categoryId: String): String =
+    "${layout}_home_row_$categoryId"
+
+internal fun resolveHomeCategoryIndex(
+    categoryIds: List<String>,
+    preferredCategoryId: String?,
+    fallbackIndex: Int
+): Int {
+    if (categoryIds.isEmpty()) return 0
+    val preferredIndex = preferredCategoryId?.let(categoryIds::indexOf) ?: -1
+    return if (preferredIndex >= 0) {
+        preferredIndex
+    } else {
+        fallbackIndex.coerceIn(0, categoryIds.lastIndex)
+    }
 }
 
 @androidx.compose.runtime.Immutable
@@ -2235,7 +2253,8 @@ private fun HomeInputLayer(
         if (hasProfile) focusState.sidebarFocusIndex = 2
     }
 
-    LaunchedEffect(focusState.currentRowIndex, categories) {
+    // Row insertion/reordering must not replace the focused catalog identity.
+    LaunchedEffect(focusState.currentRowIndex) {
         preferredCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
     }
 
@@ -2253,9 +2272,7 @@ private fun HomeInputLayer(
     //
     // The new approach is purely defensive: only clamp out-of-bounds indices,
     // never jump to a different row, never re-request focus.
-    val categoryIds = remember(categories) {
-        categories.joinToString(",") { it.id }
-    }
+    val categoryIds = remember(categories) { categories.map { it.id } }
     LaunchedEffect(categoryIds) {
         if (categories.isEmpty()) return@LaunchedEffect
 
@@ -2270,15 +2287,12 @@ private fun HomeInputLayer(
 
         // If the preferred category still exists, restore the row index to it.
         // Otherwise keep the current index but clamp to valid range.
-        val restoredRow = preferredCategoryId
-            ?.let { id -> categories.indexOfFirst { it.id == id } }
-            ?.takeIf { it >= 0 }
-        if (restoredRow != null) {
-            focusState.currentRowIndex = restoredRow
-        } else {
-            focusState.currentRowIndex = focusState.currentRowIndex
-                .coerceIn(0, (categories.size - 1).coerceAtLeast(0))
-        }
+        focusState.currentRowIndex = resolveHomeCategoryIndex(
+            categoryIds = categoryIds,
+            preferredCategoryId = preferredCategoryId,
+            fallbackIndex = focusState.currentRowIndex
+        )
+        preferredCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
 
         // Clamp item index if it's beyond the current row's bounds.
         // Do NOT reset to 0 or jump rows — that's what caused the trip.
@@ -2412,13 +2426,21 @@ private fun HomeInputLayer(
                             true
                         } else if (focusState.currentRowIndex > 0) {
                             // Save current item position before leaving this row
-                            focusState.rowItemIndices[focusState.currentRowIndex] = focusState.currentItemIndex
+                            categories.getOrNull(focusState.currentRowIndex)?.id?.let { categoryId ->
+                                focusState.rowItemIndicesByCategoryId[categoryId] = focusState.currentItemIndex
+                            }
                             focusState.currentRowIndex--
                             // Restore saved position for the target row (or 0 if never visited)
-                            focusState.currentItemIndex = focusState.rowItemIndices[focusState.currentRowIndex] ?: 0
+                            val targetCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
+                            focusState.currentItemIndex = targetCategoryId
+                                ?.let(focusState.rowItemIndicesByCategoryId::get)
+                                ?: 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
                         } else {
+                            categories.getOrNull(focusState.currentRowIndex)?.id?.let { categoryId ->
+                                focusState.rowItemIndicesByCategoryId[categoryId] = focusState.currentItemIndex
+                            }
                             focusState.isSidebarFocused = true
                             true
                         }
@@ -2429,15 +2451,23 @@ private fun HomeInputLayer(
                         focusState.userHasNavigated = true
                         if (focusState.isSidebarFocused) {
                             focusState.isSidebarFocused = false
-                            focusState.currentItemIndex = 0
+                            val targetCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
+                            focusState.currentItemIndex = targetCategoryId
+                                ?.let(focusState.rowItemIndicesByCategoryId::get)
+                                ?: focusState.currentItemIndex
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
                         } else if (!focusState.isSidebarFocused && focusState.currentRowIndex < categories.size - 1) {
                             // Save current item position before leaving this row
-                            focusState.rowItemIndices[focusState.currentRowIndex] = focusState.currentItemIndex
+                            categories.getOrNull(focusState.currentRowIndex)?.id?.let { categoryId ->
+                                focusState.rowItemIndicesByCategoryId[categoryId] = focusState.currentItemIndex
+                            }
                             focusState.currentRowIndex++
                             // Restore saved position for the target row (or 0 if never visited)
-                            focusState.currentItemIndex = focusState.rowItemIndices[focusState.currentRowIndex] ?: 0
+                            val targetCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
+                            focusState.currentItemIndex = targetCategoryId
+                                ?.let(focusState.rowItemIndicesByCategoryId::get)
+                                ?: 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
                         } else {
@@ -2450,6 +2480,9 @@ private fun HomeInputLayer(
                             if (focusState.isSidebarFocused) {
                                 onExitApp()
                             } else {
+                                categories.getOrNull(focusState.currentRowIndex)?.id?.let { categoryId ->
+                                    focusState.rowItemIndicesByCategoryId[categoryId] = focusState.currentItemIndex
+                                }
                                 focusState.isSidebarFocused = true
                             }
                             true
@@ -2721,7 +2754,7 @@ private fun MobileHomeRowsLayer(
 
         itemsIndexed(
             items = categories,
-            key = { index, category -> "mobile_home_row_${category.id}_$index" },
+            key = { _, category -> stableHomeRowKey("mobile", category.id) },
             contentType = { _, _ -> "mobile_home_category_row" }
         ) { _, category ->
             val isContinueWatching = category.id == "continue_watching"
@@ -3067,7 +3100,7 @@ private fun TvHomeRowsLayer(
             ) {
                 itemsIndexed(
                     items = renderedCategories,
-                    key = { index, category -> "tv_home_row_${category.id}_${rowWindowStart + index}" },
+                    key = { _, category -> stableHomeRowKey("tv", category.id) },
                     contentType = { _, category ->
                         when {
                             category.id.startsWith("collection_row_") -> "home_collection_row"
@@ -3084,10 +3117,11 @@ private fun TvHomeRowsLayer(
                     val onRowLoadMore = remember(category.id) {
                         { onLoadMoreCategory(category.id) }
                     }
-                    val onRowItemFocused = remember(actualRowIndex) {
+                    val onRowItemFocused = remember(actualRowIndex, category.id) {
                         { item: MediaItem, itemIdx: Int ->
                             focusState.currentRowIndex = actualRowIndex
                             focusState.currentItemIndex = itemIdx
+                            focusState.rowItemIndicesByCategoryId[category.id] = itemIdx
                             focusState.isSidebarFocused = false
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                         }

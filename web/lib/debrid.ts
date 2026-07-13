@@ -5,7 +5,7 @@ import { jsonRequest, proxiedUrl } from "./http";
 // debrid service for a transcoded HLS stream instead of punting to VLC.
 // API calls go through /api/proxy because the debrid APIs lack CORS headers.
 
-export type DebridProvider = "torbox" | "realdebrid";
+export type DebridProvider = "torbox" | "realdebrid" | "premiumize" | "alldebrid";
 
 export type DebridStreamInfo = {
   provider: DebridProvider;
@@ -21,8 +21,16 @@ export type TranscodeResult =
 // Matches torrentio-style debrid stream URLs, both the newer
 // /resolve/<provider>/<key>/<hash>[/idx][/file] shape and the older
 // /<provider>/<key>/<hash>[/idx][/file] shape. Provider may be separated by
-// "/" or "=" (config-in-path style).
-const TORRENTIO_RESOLVE = /\/(?:resolve\/)?(torbox|realdebrid|real-debrid)(?:=|\/)([^/]+)\/([a-fA-F0-9]{40})(?:\/(\d+))?(?:\/([^/?#]+))?/;
+// "/" or "=" (config-in-path style). Provider tokens are the full names
+// torrentio emits (verified against live torrentio stream URLs).
+const TORRENTIO_RESOLVE = /\/(?:resolve\/)?(torbox|realdebrid|real-debrid|premiumize|alldebrid)(?:=|\/)([^/]+)\/([a-fA-F0-9]{40})(?:\/(\d+))?(?:\/([^/?#]+))?/;
+
+function normalizeProvider(raw: string): DebridProvider {
+  if (raw === "torbox") return "torbox";
+  if (raw === "premiumize") return "premiumize";
+  if (raw === "alldebrid") return "alldebrid";
+  return "realdebrid";
+}
 
 export function parseDebridStream(url: string | null | undefined): DebridStreamInfo | null {
   if (!url) return null;
@@ -31,7 +39,7 @@ export function parseDebridStream(url: string | null | undefined): DebridStreamI
   const [, provider, apiKey, infoHash, , fileName] = match;
   if (!apiKey || apiKey.length < 8) return null;
   return {
-    provider: provider === "torbox" ? "torbox" : "realdebrid",
+    provider: normalizeProvider(provider),
     apiKey,
     infoHash: infoHash.toLowerCase(),
     fileName: fileName ? safeDecode(fileName) : undefined
@@ -40,9 +48,26 @@ export function parseDebridStream(url: string | null | undefined): DebridStreamI
 
 export async function resolveTranscodeStream(info: DebridStreamInfo): Promise<TranscodeResult> {
   try {
-    return info.provider === "torbox" ? await torboxTranscode(info) : await realDebridTranscode(info);
+    if (info.provider === "torbox") return await torboxTranscode(info);
+    if (info.provider === "realdebrid") return await realDebridTranscode(info);
+    // Premiumize/AllDebrid have no server-side transcoding endpoint. Their files
+    // still direct-play/remux in the browser; if a codec truly can't decode,
+    // the player's error screen offers VLC/Infuse (which decode anything).
+    return { error: "This debrid service has no web transcoding — use VLC/Infuse for this source." };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Transcoding failed" };
+  }
+}
+
+// Dispatch to the provider's direct-CDN-URL resolver. Every provider returns a
+// plain https file URL the browser can fetch/remux and the worker can proxy for
+// download — so download + remux work identically once resolved.
+async function directUrlForProvider(info: DebridStreamInfo): Promise<TranscodeResult> {
+  switch (info.provider) {
+    case "torbox": return torboxDirectUrl(info);
+    case "realdebrid": return realDebridDirectUrl(info);
+    case "premiumize": return premiumizeDirectUrl(info);
+    case "alldebrid": return allDebridDirectUrl(info);
   }
 }
 
@@ -72,7 +97,7 @@ export async function resolveDebridDirectUrl(info: DebridStreamInfo): Promise<Tr
   const cached = directUrlCache.get(key);
   if (cached && cached.result.url && Date.now() - cached.at < DIRECT_URL_TTL_MS) return cached.result;
   try {
-    const result = info.provider === "torbox" ? await torboxDirectUrl(info) : await realDebridDirectUrl(info);
+    const result = await directUrlForProvider(info);
     if (result.url) directUrlCache.set(key, { at: Date.now(), result });
     return result;
   } catch (error) {
@@ -291,6 +316,115 @@ async function realDebridTranscode(info: DebridStreamInfo): Promise<TranscodeRes
   const any = findStreamUrl(transcoded);
   if (any) return { url: any };
   return { error: "Real-Debrid has no transcode for this file (it may not be streamable)." };
+}
+
+// ---------- Premiumize ----------
+// Docs: POST /transfer/directdl with src=magnet returns the file tree for a
+// cached torrent immediately (content[].link is the direct CDN url). Bearer
+// auth; all calls ride /api/proxy (no CORS on the debrid API). Verified URL
+// token against live torrentio: /resolve/premiumize/<key>/<hash>/<file>.
+type PmContentItem = { path?: string; link?: string; size?: number };
+type PmDirectDl = { status?: string; message?: string; content?: PmContentItem[] };
+
+async function premiumizeDirectUrl(info: DebridStreamInfo): Promise<TranscodeResult> {
+  const magnet = `magnet:?xt=urn:btih:${info.infoHash}`;
+  const payload = await jsonRequest<PmDirectDl>(
+    proxiedUrl("https://www.premiumize.me/api/transfer/directdl", {
+      Authorization: `Bearer ${info.apiKey}`,
+      "content-type": "application/x-www-form-urlencoded"
+    }),
+    { method: "POST", body: new URLSearchParams({ src: magnet }).toString(), cache: "no-store" }
+  ).catch(() => null);
+  if (!payload || payload.status !== "success") {
+    return { error: payload?.message || "Premiumize could not open this torrent (it may not be cached)." };
+  }
+  const videos = (payload.content ?? []).filter((item) => item.link && VIDEO_FILE.test(item.path ?? ""));
+  if (!videos.length) return { error: "Premiumize returned no downloadable video file for this source." };
+  const pick = pickDebridFile(videos, info.fileName, (item) => item.path ?? "", (item) => item.size ?? 0);
+  return pick?.link ? { url: pick.link } : { error: "Premiumize returned no direct download URL." };
+}
+
+// ---------- AllDebrid ----------
+// Docs (v4, Bearer auth, agent no longer required): magnet/upload adds/looks up
+// by infohash → magnet/status(id) reports ready + gives file links → link/unlock
+// turns a locked link into a direct CDN url. Verified URL token against live
+// torrentio: /resolve/alldebrid/<key>/<hash>/<file>.
+type AdEnvelope<T> = { status?: string; data?: T; error?: { code?: string; message?: string } };
+type AdMagnet = { id?: number; hash?: string; ready?: boolean; name?: string };
+type AdStatusFile = { n?: string; l?: string; s?: number; e?: AdStatusFile[] };
+type AdStatus = { id?: number; status?: string; statusCode?: number; links?: Array<{ link?: string; filename?: string; size?: number }>; files?: AdStatusFile[] };
+
+async function adPost<T>(path: string, apiKey: string, form: Record<string, string>) {
+  return jsonRequest<AdEnvelope<T>>(
+    proxiedUrl(`https://api.alldebrid.com/v4${path}`, {
+      Authorization: `Bearer ${apiKey}`,
+      "content-type": "application/x-www-form-urlencoded"
+    }),
+    { method: "POST", body: new URLSearchParams(form).toString(), cache: "no-store" }
+  );
+}
+
+async function allDebridDirectUrl(info: DebridStreamInfo): Promise<TranscodeResult> {
+  // Upload/look up the magnet — for a cached torrent this returns immediately
+  // with an id we can query. (Re-uploading an existing magnet is idempotent.)
+  const upload = await adPost<{ magnets?: AdMagnet[] }>("/magnet/upload", info.apiKey, {
+    "magnets[]": `magnet:?xt=urn:btih:${info.infoHash}`
+  }).catch(() => null);
+  if (!upload || upload.status !== "success") {
+    return { error: upload?.error?.message || "AllDebrid could not open this torrent." };
+  }
+  const magnet = (upload.data?.magnets ?? [])[0];
+  if (!magnet?.id) return { error: "AllDebrid did not return a magnet id for this source." };
+
+  const status = await adPost<{ magnets?: AdStatus }>("/magnet/status", info.apiKey, { id: String(magnet.id) }).catch(() => null);
+  if (!status || status.status !== "success") {
+    return { error: status?.error?.message || "AllDebrid could not read this torrent's status." };
+  }
+  // status.data.magnets is an object (single) when queried by id.
+  const detail = status.data?.magnets;
+  if (!detail || (detail.statusCode !== undefined && detail.statusCode !== 4)) {
+    // statusCode 4 = "Ready". Anything else means it's still downloading/queued.
+    return { error: "This file is not cached on AllDebrid yet. Start it once, then try again." };
+  }
+  // Prefer the flat `links` list; fall back to the nested `files` tree (v4.1).
+  const flat = (detail.links ?? [])
+    .filter((entry) => entry.link && VIDEO_FILE.test(entry.filename ?? ""))
+    .map((entry) => ({ name: entry.filename ?? "", link: entry.link!, size: entry.size ?? 0 }));
+  const nested = flat.length ? [] : flattenAdFiles(detail.files ?? []);
+  const candidates = flat.length ? flat : nested;
+  if (!candidates.length) return { error: "AllDebrid returned no downloadable video file for this source." };
+  const pick = pickDebridFile(candidates, info.fileName, (c) => c.name, (c) => c.size);
+  if (!pick?.link) return { error: "AllDebrid returned no link for this file." };
+
+  // The link from status is a locked AllDebrid link — unlock it to the CDN url.
+  const unlocked = await adPost<{ link?: string }>("/link/unlock", info.apiKey, { link: pick.link }).catch(() => null);
+  if (!unlocked || unlocked.status !== "success") {
+    return { error: unlocked?.error?.message || "AllDebrid could not unlock this file." };
+  }
+  return unlocked.data?.link ? { url: unlocked.data.link } : { error: "AllDebrid returned no direct download URL." };
+}
+
+function flattenAdFiles(files: AdStatusFile[], prefix = ""): Array<{ name: string; link: string; size: number }> {
+  const out: Array<{ name: string; link: string; size: number }> = [];
+  for (const file of files) {
+    const name = `${prefix}${file.n ?? ""}`;
+    if (file.l && VIDEO_FILE.test(name)) out.push({ name, link: file.l, size: file.s ?? 0 });
+    if (file.e?.length) out.push(...flattenAdFiles(file.e, `${name}/`));
+  }
+  return out;
+}
+
+// Shared file picker for Premiumize/AllDebrid: prefer the exact filename the
+// stream URL named, then a substring match, then the largest video file —
+// identical to the TorBox/RD heuristic so multi-file torrents resolve the right
+// episode.
+function pickDebridFile<T>(items: T[], wantedName: string | undefined, nameOf: (item: T) => string, sizeOf: (item: T) => number): T | undefined {
+  const wanted = wantedName?.toLowerCase();
+  return (
+    items.find((item) => wanted && nameOf(item).toLowerCase().split("/").pop() === wanted) ??
+    items.find((item) => wanted && nameOf(item).toLowerCase().includes(wanted)) ??
+    items.slice().sort((a, b) => sizeOf(b) - sizeOf(a))[0]
+  );
 }
 
 // ---------- helpers ----------

@@ -127,6 +127,54 @@ internal fun shouldTryNativeAnimeFallback(
     return language.isNullOrBlank() || language == "ja"
 }
 
+internal fun providerScopedStreamIdentity(stream: StreamSource): String {
+    return listOf(
+        stream.addonId.trim(),
+        stream.url?.trim().orEmpty(),
+        stream.source.trim()
+    ).joinToString("|")
+}
+
+internal fun streamAddonConfigurationFingerprint(addons: List<Addon>): String {
+    return addons.joinToString("\n") { addon ->
+        val manifest = addon.manifest
+        val manifestResources: List<AddonResource>? = manifest?.resources
+        val manifestTypes: List<String>? = manifest?.types
+        val manifestPrefixes: List<String>? = manifest?.idPrefixes
+        val resources = manifestResources.orEmpty().joinToString(";") { resource ->
+            val resourceTypes: List<String>? = resource.types
+            listOf(
+                resource.name,
+                resourceTypes.orEmpty().joinToString(","),
+                resource.idPrefixes.orEmpty().joinToString(",")
+            ).joinToString(":")
+        }
+        listOf(
+            addon.id,
+            addon.isInstalled.toString(),
+            addon.isEnabled.toString(),
+            addon.runtimeKind.name,
+            addon.type.name,
+            addon.installSource.name,
+            addon.url.orEmpty(),
+            addon.transportUrl.orEmpty(),
+            manifest?.id.orEmpty(),
+            manifest?.version.orEmpty(),
+            manifestTypes.orEmpty().joinToString(","),
+            manifestPrefixes.orEmpty().joinToString(","),
+            resources
+        ).joinToString("|")
+    }
+}
+
+internal fun streamAddonConfigurationRevision(addons: List<Addon>): String {
+    val fingerprint = streamAddonConfigurationFingerprint(addons)
+    return MessageDigest.getInstance("SHA-256")
+        .digest(fingerprint.toByteArray(Charsets.UTF_8))
+        .take(12)
+        .joinToString("") { byte -> "%02x".format(byte) }
+}
+
 /**
  * Repository for stream resolution from Stremio addons
  * Enhanced with addon management
@@ -1194,7 +1242,7 @@ class StreamRepository @Inject constructor(
      */
     private fun getStreamAddons(addons: List<Addon>, type: String, id: String): List<Addon> {
         val normalizedType = type.trim().lowercase(Locale.US)
-        val currentFingerprint = streamAddonsFingerprint(addons)
+        val currentFingerprint = streamAddonConfigurationFingerprint(addons)
 
         val baseCandidates: List<Addon> = synchronized(streamAddonsCache) {
             if (currentFingerprint != cachedStreamAddonsFingerprint) {
@@ -1268,32 +1316,6 @@ class StreamRepository @Inject constructor(
             val idPrefixes = manifest?.idPrefixes
             if (!idMatchesAnyPrefix(id, idPrefixes)) return@filter false
             true
-        }
-    }
-
-    private fun streamAddonsFingerprint(addons: List<Addon>): String {
-        return addons.joinToString("\n") { addon ->
-            val manifest = addon.manifest
-            val resources = manifest?.resources.orEmpty().joinToString(";") { resource ->
-                listOf(
-                    resource.name,
-                    resource.types.orEmpty().joinToString(","),
-                    resource.idPrefixes.orEmpty().joinToString(",")
-                ).joinToString(":")
-            }
-            listOf(
-                addon.id,
-                addon.isInstalled.toString(),
-                addon.isEnabled.toString(),
-                addon.runtimeKind.name,
-                addon.type.name,
-                addon.url.orEmpty(),
-                addon.transportUrl.orEmpty(),
-                manifest?.id.orEmpty(),
-                manifest?.version.orEmpty(),
-                manifest?.idPrefixes.orEmpty().joinToString(","),
-                resources
-            ).joinToString("|")
         }
     }
 
@@ -1433,9 +1455,10 @@ class StreamRepository @Inject constructor(
         type: String,
         imdbId: String,
         season: Int? = null,
-        episode: Int? = null
+        episode: Int? = null,
+        addonRevision: String
     ): String {
-        return "$profileId|$type|$imdbId|${season ?: 0}|${episode ?: 0}"
+        return "$profileId|$type|$imdbId|${season ?: 0}|${episode ?: 0}|addons:$addonRevision"
     }
 
     private fun cacheTtlMsFor(result: StreamResult): Long {
@@ -1971,7 +1994,8 @@ class StreamRepository @Inject constructor(
         val cacheKey = streamCacheKey(
             profileId = profileManager.getProfileIdSync(),
             type = "movie",
-            imdbId = imdbId
+            imdbId = imdbId,
+            addonRevision = streamAddonConfigurationRevision(streamAddons)
         )
         val profileId = profileManager.getProfileIdSync()
         if (!forceRefresh) {
@@ -2025,7 +2049,8 @@ class StreamRepository @Inject constructor(
             val cacheKey = streamCacheKey(
                 profileId = profileId,
                 type = "movie",
-                imdbId = imdbId
+                imdbId = imdbId,
+                addonRevision = streamAddonConfigurationRevision(streamAddons)
             )
             if (!forceRefresh) {
                 var warmCache: CachedStreamResult? = null
@@ -2119,7 +2144,7 @@ class StreamRepository @Inject constructor(
                         val u = stream.url?.trim().orEmpty()
                         u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                     }
-                    .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                    .distinctBy(::providerScopedStreamIdentity)
                 val filtered = applyQualityRegexFilters(deduped)
                 if (completed == totalAddons) {
                     val createdAtMs = System.currentTimeMillis()
@@ -2400,7 +2425,8 @@ class StreamRepository @Inject constructor(
             type = EPISODE_STREAM_CACHE_TYPE,
             imdbId = imdbId,
             season = season,
-            episode = episode
+            episode = episode,
+            addonRevision = streamAddonConfigurationRevision(streamAddons)
         )
         if (!forceRefresh) {
             synchronized(streamResultCache) {
@@ -2468,7 +2494,8 @@ class StreamRepository @Inject constructor(
                 type = EPISODE_STREAM_CACHE_TYPE,
                 imdbId = imdbId,
                 season = season,
-                episode = episode
+                episode = episode,
+                addonRevision = streamAddonConfigurationRevision(streamAddons)
             )
             if (!forceRefresh) {
                 var staleCache: CachedStreamResult? = null
@@ -2543,7 +2570,7 @@ class StreamRepository @Inject constructor(
                         val u = stream.url?.trim().orEmpty()
                         u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                     }
-                    .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
+                    .distinctBy(::providerScopedStreamIdentity)
                 val filtered = applyQualityRegexFilters(deduped)
                 if (completed == totalAddons) {
                     val finalResult = StreamResult(filtered, emptyList())

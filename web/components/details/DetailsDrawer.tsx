@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { copyStreamUrl, downloadStreamUrl, externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
+import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, openExternalPlayer, triggerDownload } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -510,17 +510,31 @@ function SourcePickerModal({
       }
       target = { ...stream, url: direct, originalUrl: stream.url };
     }
+    // iOS/iPadOS can't reliably download a multi-GB file in a browser tab —
+    // WebKit buffers the whole response in memory and hits the per-tab limit at a
+    // random point, with no resume (every browser on iOS is WebKit, incl.
+    // Chrome). Hand the resolved direct URL to VLC's `download` action instead:
+    // it saves the file to VLC's own storage (outside the browser memory limit)
+    // for offline playback on the device. Desktop keeps the normal file download.
+    if (isAppleMobile()) {
+      const ok = downloadToVlc(target, title, settings.defaultSubtitle);
+      onToast(ok
+        ? "Downloading to VLC for offline playback. If VLC doesn't open, install it from the App Store."
+        : "Could not hand this download to VLC.");
+      return;
+    }
     const href = downloadStreamUrl(target, title);
     if (!href) {
       onToast("Could not start this download.");
       return;
     }
-    // Same-tab navigation: an attachment response never replaces the page in a
-    // browser tab, and the installed PWA opens it in its Safari sheet — both
-    // proven to reach the download proxy. (A pre-opened window.open tab is NOT
-    // used: standalone PWAs silently ignore location changes on sheet handles.)
-    window.location.href = href;
-    onToast("Download started — check your browser downloads.");
+    // Programmatic <a download> click — reliable in real browser tabs AND
+    // installed PWAs, and keeps the app in place (the old window.location.href
+    // navigated the whole tab, so a rate-limited/expired download left a blank
+    // page with no feedback). The download proxy sets Content-Disposition:
+    // attachment, so the browser's download manager owns the transfer.
+    const started = triggerDownload(href, `${title}.${/\.mp4(?:[?#/]|$)/i.test(`${target.url} ${target.source ?? ""}`) ? "mp4" : "mkv"}`);
+    onToast(started ? "Download started — check your browser downloads." : "Could not start this download.");
   };
 
   if (!visible || typeof document === "undefined") return null;
@@ -718,7 +732,7 @@ function streamBadges(stream: StreamSource) {
   const size = stream.size || text.match(/\b\d+(?:\.\d+)?\s?(?:gb|mb|tb)\b/i)?.[0]?.toUpperCase();
   if (size) labels.push({ label: size });
   if (stream.behaviorHints?.cached) labels.push({ label: "CACHED", tone: "ok" });
-  if (/real-?debrid|premiumize|torbox|\brd\b|\bpm\b|\bdebrid\b/i.test(text)) labels.push({ label: "DEBRID", tone: "ok" });
+  if (parseDebridStream(stream.url) || /real-?debrid|premiumize|alldebrid|torbox|\brd\b|\bpm\b|\bad\b|\bdebrid\b/i.test(text)) labels.push({ label: "DEBRID", tone: "ok" });
   if (stream.url) labels.push({ label: "DIRECT", tone: "ok" });
   const mode = streamPlayability(stream).mode;
   if (mode === "direct") labels.push({ label: "WEB", tone: "ok" });
