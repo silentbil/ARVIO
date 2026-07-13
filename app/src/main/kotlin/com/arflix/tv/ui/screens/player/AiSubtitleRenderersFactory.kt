@@ -11,6 +11,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.text.TextOutput
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -82,6 +83,29 @@ class AiSubtitleRenderersFactory(
         super.buildAudioRenderers(
             context, EXTENSION_RENDERER_MODE_ON, mediaCodecSelector,
             enableDecoderFallback, audioSink, eventHandler, eventListener, out
+        )
+    }
+
+    override fun buildVideoRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        eventHandler: Handler,
+        eventListener: VideoRendererEventListener,
+        allowedVideoJoiningTimeMs: Long,
+        out: ArrayList<Renderer>
+    ) {
+        // VIDEO is ALWAYS hardware-first, exactly like NuvioTV (which ships no software video
+        // renderer at all and never guesses by device name). The bundled jellyfin FFmpeg *video*
+        // decoder must never be PREFERRED — software 4K HEVC/DV decode can't keep up on TV boxes
+        // (Homatics/Mi Box), producing audio-but-no-video → source skip, while the hardware
+        // decoder plays fine. Forcing MODE_ON keeps the platform MediaCodecVideoRenderer first;
+        // enableDecoderFallback + forceDisableMediaCodecAsynchronousQueueing (set on the factory)
+        // handle genuine hardware failures/hangs reactively — no device-class heuristic.
+        super.buildVideoRenderers(
+            context, EXTENSION_RENDERER_MODE_ON, mediaCodecSelector,
+            enableDecoderFallback, eventHandler, eventListener, allowedVideoJoiningTimeMs, out
         )
     }
 

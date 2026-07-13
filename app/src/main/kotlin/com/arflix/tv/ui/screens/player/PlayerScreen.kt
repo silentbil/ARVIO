@@ -294,20 +294,13 @@ fun PlayerScreen(
             isTvDevice = deviceType == com.arflix.tv.util.DeviceType.TV
         )
     }
-    val preferExtensionDecoder = remember(deviceType) {
-        // Prefer the FFmpeg *software* decoder ONLY for the specific SEI "Box R" whose C2
-        // hardware video decoder hangs during allocation. The broad "any Amlogic" match was
-        // removed: it forced software 4K decode on capable Amlogic boxes (Homatics, Mi Box),
-        // which can't keep up → no first frame → source skip, while the same remuxes play fine
-        // on their hardware decoders (it is hardware-first for video and never
-        // blanket-forces software on a device class). setEnableDecoderFallback(true) below still
-        // drops to software automatically if a hardware decoder concretely fails.
-        deviceType == com.arflix.tv.util.DeviceType.TV &&
-            (
-                Build.MANUFACTURER.contains("sei", ignoreCase = true) ||
-                    Build.MODEL.contains("Box R", ignoreCase = true)
-                )
-    }
+    // No device-name decoder guessing — matches NuvioTV, which is hardware-first for video and
+    // never branches on Build.MODEL/HARDWARE. The old (amlogic/sei/"Box R") heuristic force-fed
+    // capable boxes to the FFmpeg *software* video decoder ("Box R" even caught the Homatics Box R
+    // 4K Plus), causing audio-but-no-video → source skip. Video is now hardware-first for EVERY
+    // device (buildVideoRenderers forces MODE_ON), with enableDecoderFallback +
+    // forceDisableMediaCodecAsynchronousQueueing handling real hardware failures/hangs reactively.
+    val preferExtensionDecoder = false
     val allowVideoExceedCodecCapabilities = remember(deviceType, preferExtensionDecoder) {
         !preferExtensionDecoder && !deviceType.isTouchDevice()
     }

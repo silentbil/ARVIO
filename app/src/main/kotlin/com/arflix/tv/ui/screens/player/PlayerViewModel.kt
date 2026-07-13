@@ -602,6 +602,12 @@ class PlayerViewModel @Inject constructor(
                         url = providedStreamUrl
                     )
                 }
+                // Show a status while the debrid/source link resolves. Without this the initial-play
+                // path sat 5-10s with no overlay text (selectedStreamUrl not set yet, so startupPhase
+                // is gated off), unlike the manual selectStream() path which already labels this step.
+                if (providedStream != null) {
+                    _uiState.value = _uiState.value.copy(streamLoadPhase = "Preparing stream")
+                }
                 val resolvedProvidedStream = providedStream?.let { stream ->
                     runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrNull() ?: stream
                 }
