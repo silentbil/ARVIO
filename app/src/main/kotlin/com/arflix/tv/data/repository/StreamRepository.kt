@@ -1432,6 +1432,10 @@ class StreamRepository @Inject constructor(
     private val ADDON_EXTENDED_TIMEOUT_MS = 30_000L
     private val ADDON_EXTENDED_EPISODE_TIMEOUT_MS = 45_000L
     private val ADDON_EXTENDED_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 35_000L
+    // Aggregators (AIOStreams/Comet/MediaFusion): cover the ~10-15s cold case without the full
+    // 30s. Progressive fetch means these seconds never block the fast addons' results.
+    private val ADDON_AGGREGATOR_TIMEOUT_MS = 12_000L
+    private val ADDON_AGGREGATOR_EPISODE_TIMEOUT_MS = 15_000L
     // Subtitles should not block playback but need enough time on slow connections.
     // Generous because aggregator addons (AIOStreams) fan out to upstreams server-side and can
     // take 10s+ cold (or 502 outright, then succeed warm — hence the retry). Fetches run in
@@ -1543,6 +1547,24 @@ class StreamRepository @Inject constructor(
             haystack.contains("telegram")
     }
 
+    /**
+     * Aggregators fan out to many upstreams server-side and merge per request, so cold responses
+     * reach 10-15s on popular releases (F1 returned 55 streams but at 15s cold) — the default 6s
+     * timeout silently dropped them. They get a middle-ground timeout (not the 30s reserved for
+     * telegram/flix). Safe because the movie/episode fetch is progressive: fast addons already
+     * showed; the aggregator just appends when it lands.
+     */
+    private fun addonIsSlowAggregator(addon: Addon): Boolean {
+        val haystack = listOf(
+            addon.id, addon.name, addon.url.orEmpty(), addon.transportUrl.orEmpty(),
+            addon.manifest?.id.orEmpty(), addon.manifest?.name.orEmpty()
+        ).joinToString(" ").lowercase(Locale.US)
+        return haystack.contains("aiostreams") ||
+            haystack.contains("aio-streams") ||
+            haystack.contains("comet") ||
+            haystack.contains("mediafusion")
+    }
+
     private fun latencyBucket(ms: Long): String = when {
         ms < 500L -> "lt_500ms"
         ms < 2_000L -> "lt_2s"
@@ -1570,10 +1592,10 @@ class StreamRepository @Inject constructor(
         year: Int? = null
     ): List<StreamSource> {
         val startedAt = System.currentTimeMillis()
-        val addonTimeoutMs = if (addonNeedsExtendedStreamTimeout(addon)) {
-            ADDON_EXTENDED_TIMEOUT_MS
-        } else {
-            ADDON_TIMEOUT_MS
+        val addonTimeoutMs = when {
+            addonNeedsExtendedStreamTimeout(addon) -> ADDON_EXTENDED_TIMEOUT_MS
+            addonIsSlowAggregator(addon) -> ADDON_AGGREGATOR_TIMEOUT_MS
+            else -> ADDON_TIMEOUT_MS
         }
         return try {
             withTimeout(addonTimeoutMs) {
@@ -1667,6 +1689,7 @@ class StreamRepository @Inject constructor(
         val addonTimeoutMs = when {
             extendedTimeout -> ADDON_EXTENDED_EPISODE_TIMEOUT_MS
             nativeAnimeAddonHint -> ADDON_NATIVE_ANIME_EPISODE_TIMEOUT_MS
+            addonIsSlowAggregator(addon) -> ADDON_AGGREGATOR_EPISODE_TIMEOUT_MS
             else -> ADDON_EPISODE_TIMEOUT_MS
         }
         return try {
@@ -2110,6 +2133,12 @@ class StreamRepository @Inject constructor(
             val totalAddons = prioritizedAddons.size + (if (telegramEnabled) 1 else 0)
 
             suspend fun sendProgress() {
+                // Dedup is scoped PER ADDON (addonId in the key, here and at every other stream
+                // merge site): aggregators (AIOStreams) legitimately return the same debrid
+                // resolve-URLs as the standalone addons they wrap (Torrentio/Debridio on the same
+                // account). A global URL key silently dropped most of the aggregator's list —
+                // whichever addon responded first won — gutting its tab in the source menu
+                // (38 fetched, 12 shown). The same file under two addon tabs is honest.
                 val deduped = aggregatedStreams
                     .filter { stream ->
                         val u = stream.url?.trim().orEmpty()
@@ -2338,7 +2367,8 @@ class StreamRepository @Inject constructor(
                     },
                     subtitles = embeddedSubs,
                     sources = stream.sources ?: emptyList(),
-                    description = stream.description?.trim()?.takeIf { it.isNotBlank() }
+                    description = stream.description?.trim()?.takeIf { it.isNotBlank() },
+                    rawLabel = stream.name?.trim()?.takeIf { it.isNotBlank() }
                 )
             }
     }
@@ -2529,6 +2559,12 @@ class StreamRepository @Inject constructor(
             val totalAddons = prioritizedAddons.size + (if (telegramEnabled) 1 else 0)
 
             suspend fun sendProgress() {
+                // Dedup is scoped PER ADDON (addonId in the key, here and at every other stream
+                // merge site): aggregators (AIOStreams) legitimately return the same debrid
+                // resolve-URLs as the standalone addons they wrap (Torrentio/Debridio on the same
+                // account). A global URL key silently dropped most of the aggregator's list —
+                // whichever addon responded first won — gutting its tab in the source menu
+                // (38 fetched, 12 shown). The same file under two addon tabs is honest.
                 val deduped = aggregatedStreams
                     .filter { stream ->
                         val u = stream.url?.trim().orEmpty()

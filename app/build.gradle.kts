@@ -158,6 +158,9 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDir("src/main/tdlib-java")
+            // Vendored media3 1.9.0 Matroska extractor with Dolby Vision P7 sample hooks
+            // (see dvmkv/package-info.java for the re-vendoring procedure on media3 bumps).
+            java.srcDir("src/main/dvmkv-java")
         }
     }
 
@@ -231,6 +234,9 @@ ksp {
 
     // Core library desugaring for Java 8+ APIs
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+
+    // Nullness annotations used by the vendored media3 Matroska extractor (src/main/dvmkv-java).
+    compileOnly("org.checkerframework:checker-qual:3.43.0")
 
     // Core Android
     implementation("androidx.core:core-ktx:1.12.0")

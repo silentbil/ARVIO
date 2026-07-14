@@ -13,6 +13,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -250,15 +253,28 @@ fun StreamSelector(
         }
     }
     // Addon order first so "All Sources" groups by the user's installed-addon order.
-    // Within each addon, best quality floats up (resolution → release → size).
+    // Within each addon, best quality floats up (resolution → release → size) — EXCEPT
+    // aggregator addons (AIOStreams): they sort server-side per the user's own web config, so
+    // their streams keep arrival order (same exemption as PlayerViewModel.keepsOwnStreamOrder;
+    // re-sorting here silently overrode the user's configured order in the source menu).
     val orderedPresentations = remember(presentations, addonOrder) {
-        presentations.sortedWith(
-            compareBy<SourcePresentation> { addonOrder[sourceTabId(it.stream)] ?: Int.MAX_VALUE }
-                .thenByDescending { it.resolutionScore }
-                .thenByDescending { it.releaseScore }
-                .thenByDescending { it.sizeBytes }
-                .thenBy { it.title.lowercase() }
-        )
+        val qualityOrder = compareByDescending<IndexedValue<SourcePresentation>> { it.value.resolutionScore }
+            .thenByDescending { it.value.releaseScore }
+            .thenByDescending { it.value.sizeBytes }
+            .thenBy { it.value.title.lowercase() }
+        presentations.withIndex()
+            .sortedWith(
+                compareBy<IndexedValue<SourcePresentation>> {
+                    addonOrder[sourceTabId(it.value.stream)] ?: Int.MAX_VALUE
+                }.then { a, b ->
+                    if (keepsOwnStreamOrder(a.value.stream) && keepsOwnStreamOrder(b.value.stream)) {
+                        a.index.compareTo(b.index)
+                    } else {
+                        qualityOrder.compare(a, b)
+                    }
+                }
+            )
+            .map { it.value }
     }
 
     // Filter streams by selected tab
@@ -902,7 +918,12 @@ private data class SourcePresentation(
     val sizeBytes: Long,
     val sortCached: Boolean,
     val sortDirect: Boolean,
-    val description: String? = null
+    val description: String? = null,
+    // Parsed from aggregator descriptions (AIOStreams "📦 55.5 GB · 67.9 ᴹᵇᵖˢ" / "🔌Torrentio |
+    // ⚙️ ThePirateBay" lines) or the release name; null when the addon doesn't provide them.
+    val bitrateLabel: String? = null,
+    val editionLabel: String? = null,
+    val upstreamLabel: String? = null,
 )
 
 @androidx.compose.runtime.Immutable
@@ -965,6 +986,12 @@ private object StreamRegexes {
     val HDR10_PLUS = Regex("""\b(HDR10\+|HDR10\s*PLUS|HDR\s*10\s*\+)\b""", RegexOption.IGNORE_CASE)
     val HDR10 = Regex("""\bHDR10\b""", RegexOption.IGNORE_CASE)
     val HDR = Regex("""\bHDR(10\+?|10)?\b""", RegexOption.IGNORE_CASE)
+    // Aggregator descriptions write bitrate with superscript glyphs ("67.9 ᴹᵇᵖˢ") or plain "Mbps".
+    val BITRATE = Regex("""(\d+(?:\.\d+)?)\s*(?:Mbps|ᴹᵇᵖˢ)""", RegexOption.IGNORE_CASE)
+    val EDITION = Regex(
+        """\b(Extended(?:\s+Cut)?|Director'?s\s+Cut|Theatrical(?:\s+Cut)?|Unrated|Uncut|Remastered|Special\s+Edition|Ultimate\s+Edition|Criterion)\b""",
+        RegexOption.IGNORE_CASE
+    )
     val IMAX = Regex("""\bIMAX\b""", RegexOption.IGNORE_CASE)
     val WHITESPACE = Regex("""\s+""")
     val SIZE_PATTERN_1 = Regex("""(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""")
@@ -976,6 +1003,12 @@ private object StreamRegexes {
     val CHANNEL_TAG_PATTERN = Regex("""^\[.+]$""")
     val MD_NOISE = Regex("""[`*_]{1,4}""")
 }
+
+/** Aggregator addons (AIOStreams) sort results server-side per the user's own web config —
+ *  keep their arrival order instead of re-sorting. Mirror of PlayerViewModel.keepsOwnStreamOrder. */
+private fun keepsOwnStreamOrder(stream: StreamSource): Boolean =
+    stream.addonName.contains("aiostream", ignoreCase = true) ||
+        stream.addonId.contains("aiostream", ignoreCase = true)
 
 private fun sourceTabId(stream: StreamSource): String {
     val baseName = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
@@ -1111,6 +1144,14 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         append(stream.addonName)
         append(' ')
         append(stream.behaviorHints?.filename.orEmpty())
+        append(' ')
+        // Aggregators (AIOStreams) put clean, word-delimited metadata in the description
+        // ("Dolby Vision • HDR10", "TrueHD • Atmos") and the name field ("Remux", "Extended") —
+        // essential for garbage scene filenames like "4Kremux2160.www.atomohd.click.mkv" and
+        // "...UHDRemux..." where \bREMUX\b can't match the run-together tokens.
+        append(stream.description.orEmpty())
+        append(' ')
+        append(stream.rawLabel.orEmpty())
     }
 
     val resolutionLabel = when {
@@ -1240,7 +1281,18 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         sizeBytes = getSizeBytes(stream),
         sortCached = isReady,
         sortDirect = !stream.url.isNullOrBlank() && stream.url.startsWith("http", true),
-        description = cleanStreamDescription(stream.description, rawTitle)
+        description = cleanStreamDescription(stream.description, rawTitle),
+        bitrateLabel = StreamRegexes.BITRATE.find(stream.description.orEmpty())
+            ?.let { "${it.groupValues[1]} Mbps" },
+        editionLabel = StreamRegexes.EDITION
+            .find("$rawTitle ${stream.description.orEmpty()} ${stream.rawLabel.orEmpty()}")
+            ?.value?.replaceFirstChar { it.uppercase() },
+        upstreamLabel = stream.description.orEmpty().lines()
+            .firstOrNull { it.trimStart().startsWith("🔌") }
+            // Keep "Torrentio | ThePirateBay", drop the emoji decorations.
+            ?.replace(Regex("""[^\p{L}\p{N} .+|\-]"""), "")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() },
     )
 }
 
@@ -1275,6 +1327,12 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
         append(presentation.stream.quality)
         append(' ')
         append(presentation.chips.joinToString(" "))
+        append(' ')
+        // Description + name carry word-delimited HDR/DV/audio/remux metadata that garbage
+        // filenames lack.
+        append(presentation.stream.description.orEmpty())
+        append(' ')
+        append(presentation.stream.rawLabel.orEmpty())
     }
 
     when (presentation.resolutionLabel) {
@@ -1300,11 +1358,15 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
         "AV1" -> add(SourceBadge("AV1"))
     }
 
+    // DV and HDR10/HDR10+ are not mutually exclusive — DV remuxes carry an HDR10 base layer and
+    // releases advertise both ("DV HDR10"). Show them together like the aggregators do; the
+    // generic HDR badge only stands in when nothing more specific matched.
+    val hasDv = StreamRegexes.DV.containsMatchIn(blob)
+    if (hasDv) add(SourceBadge("DV", SourceBadgeImages.DOLBY_VISION))
     when {
-        StreamRegexes.DV.containsMatchIn(blob) -> add(SourceBadge("DV", SourceBadgeImages.DOLBY_VISION))
         StreamRegexes.HDR10_PLUS.containsMatchIn(blob) -> add(SourceBadge("HDR10+", SourceBadgeImages.HDR10_PLUS))
         StreamRegexes.HDR10.containsMatchIn(blob) -> add(SourceBadge("HDR10", SourceBadgeImages.HDR10))
-        StreamRegexes.HDR.containsMatchIn(blob) -> add(SourceBadge("HDR", SourceBadgeImages.HDR))
+        !hasDv && StreamRegexes.HDR.containsMatchIn(blob) -> add(SourceBadge("HDR", SourceBadgeImages.HDR))
     }
     if (StreamRegexes.IMAX.containsMatchIn(blob)) {
         add(SourceBadge("IMAX", SourceBadgeImages.IMAX))
@@ -1326,7 +1388,15 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
 }.distinctBy { it.text }
 
 private fun rowSubtitle(presentation: SourcePresentation): String {
-    return presentation.addonLabel
+    // Addon (with the aggregator's upstream provider when known), then edition and bitrate
+    val addonPart = presentation.upstreamLabel
+        ?.let { "${presentation.addonLabel} — $it" }
+        ?: presentation.addonLabel
+    return listOfNotNull(
+        addonPart,
+        presentation.editionLabel,
+        presentation.bitrateLabel
+    ).joinToString("  ·  ")
 }
 
 private fun languageBadgeText(language: String?): String? {
@@ -1760,7 +1830,9 @@ private fun OledSourceRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(92.dp)
+            // Min height keeps list rhythm; long release names grow the row instead of
+            // getting ellipsized (the tail is what differentiates sources).
+            .heightIn(min = 92.dp)
             .padding(horizontal = 3.dp, vertical = 1.dp)
             .focusProperties { canFocus = false }
             .clip(RoundedCornerShape(15.dp))
@@ -1788,8 +1860,18 @@ private fun OledSourceRow(
                 .fillMaxHeight(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            // Badges take a bounded ~42% and WRAP into 2-3 rows instead of a single row that
+            // eats the whole card on high-chip sources; the filename then always keeps ≥55%.
+            OledBadgeFlow(
+                presentation = presentation,
+                maxBadges = 8,
+                modifier = Modifier.weight(0.42f)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(0.58f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Full filename, wrapped — an ellipsized release name hides exactly the
+                    // parts that differentiate sources (edition, audio, group).
                     Text(
                         text = presentation.rawTitle,
                         style = ArflixTypography.body.copy(
@@ -1798,8 +1880,6 @@ private fun OledSourceRow(
                             fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold
                         ),
                         color = TextPrimary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
                     if (isSelected) {
@@ -1828,12 +1908,10 @@ private fun OledSourceRow(
                         fontWeight = FontWeight.Medium
                     ),
                     color = OledMutedText,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(modifier = Modifier.width(10.dp))
-            SourceBadgeTray(presentation = presentation, maxBadges = 4)
         }
     }
 }
@@ -1927,6 +2005,32 @@ private fun OledBadgeRow(
     ) {
         sourceBadges(presentation).take(maxBadges).forEach { badge ->
             SourceBadgeView(badge, inverted = inverted)
+        }
+    }
+}
+
+/**
+ * Bounded-width badge block that WRAPS into multiple rows. Size (and language) are the first
+ * items, so they land at the same top-start corner on every card regardless of how many quality
+ * chips follow — the "size in a consistent position" requirement — while the quality chips flow
+ * onto 2-3 rows instead of a single row that would starve the filename column.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OledBadgeFlow(
+    presentation: SourcePresentation,
+    maxBadges: Int,
+    modifier: Modifier = Modifier
+) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        SourceSizeBadge(size = presentation.stream.size)
+        SourceLanguageBadge(language = presentation.languageLabel)
+        sourceBadges(presentation).take(maxBadges).forEach { badge ->
+            SourceBadgeView(badge)
         }
     }
 }

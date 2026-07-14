@@ -199,6 +199,7 @@ data class SettingsUiState(
     val subtitleAiAutoSelect: Boolean = false,
     val subtitleAiFindBestMatch: Boolean = false,
     val subtitlePreloadEnabled: Boolean = true,
+    val dolbyVisionCompatEnabled: Boolean = true,
     val subtitleAiApiKey: String = "",
     val subtitleAiModel: SubtitleAiModel = SubtitleAiModel.GROQ_LLAMA_70B,
     val subtitleRemoveHearingImpaired: Boolean = true,
@@ -290,6 +291,7 @@ class SettingsViewModel @Inject constructor(
     private val subtitleAiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
     private val subtitleAiFindBestMatchKey = booleanPreferencesKey("subtitle_ai_find_best_match")
     private val subtitlePreloadEnabledKey = booleanPreferencesKey("subtitle_preload_enabled")
+    private val dolbyVisionCompatKey = booleanPreferencesKey("dolby_vision_compat")
     private val subtitleAiApiKeyKey = stringPreferencesKey("subtitle_ai_api_key")
     private val subtitleAiModelKey = stringPreferencesKey("subtitle_ai_model")
     private val subtitleRemoveHearingImpairedKey = booleanPreferencesKey("subtitle_remove_hearing_impaired")
@@ -495,6 +497,7 @@ class SettingsViewModel @Inject constructor(
             val subtitleAiAutoSelect = prefs[subtitleAiAutoSelectKey] ?: false
             val subtitleAiFindBestMatch = prefs[subtitleAiFindBestMatchKey] ?: false
             val subtitlePreloadEnabled = prefs[subtitlePreloadEnabledKey] ?: true
+            val dolbyVisionCompatEnabled = prefs[dolbyVisionCompatKey] ?: true
             val subtitleAiApiKey = prefs[subtitleAiApiKeyKey] ?: ""
             val subtitleAiModel = runCatching {
                 SubtitleAiModel.valueOf(prefs[subtitleAiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)
@@ -566,6 +569,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleAiAutoSelect = subtitleAiAutoSelect,
                 subtitleAiFindBestMatch = subtitleAiFindBestMatch,
                 subtitlePreloadEnabled = subtitlePreloadEnabled,
+                dolbyVisionCompatEnabled = dolbyVisionCompatEnabled,
                 subtitleAiApiKey = subtitleAiApiKey,
                 subtitleAiModel = subtitleAiModel,
                 subtitleRemoveHearingImpaired = subtitleRemoveHearingImpaired,
@@ -1318,6 +1322,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[subtitlePreloadEnabledKey] = enabled }
             _uiState.value = _uiState.value.copy(subtitlePreloadEnabled = enabled)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun setDolbyVisionCompatEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[dolbyVisionCompatKey] = enabled }
+            _uiState.value = _uiState.value.copy(dolbyVisionCompatEnabled = enabled)
             syncLocalStateToCloud(silent = true)
         }
     }

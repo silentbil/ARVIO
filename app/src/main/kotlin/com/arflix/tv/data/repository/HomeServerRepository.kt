@@ -1906,7 +1906,7 @@ class HomeServerRepository @Inject constructor(
                 // on the raw MKV while time still advances.
                 listOf(compatibleSource, directSource)
             }
-            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+            .distinctBy { "${it.addonId}|${it.url?.trim().orEmpty()}|${it.source}" }
             .sortedWith(compareByDescending<StreamSource> { qualityRank(it.quality) }
                 .thenByDescending { it.sizeBytes ?: 0L })
     }

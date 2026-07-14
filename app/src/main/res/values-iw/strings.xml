@@ -212,6 +212,8 @@
     <string name="ai_find_best_match_desc">בחירה אוטומטית של הכתובית המסונכרנת ביותר מההרחבות שלך</string>
     <string name="subtitle_preload_title">טעינת כתוביות מראש</string>
     <string name="subtitle_preload_desc">המתן לכתוביות לפני תחילת הווידאו כך שהחלפה ביניהן תהיה מיידית</string>
+    <string name="dv_compat_title">תאימות Dolby Vision</string>
+    <string name="dv_compat_desc">נגן תוכן Dolby Vision כ-HDR10 כשהמכשיר לא תומך בפענוח</string>
     <string name="ai_remove_hi_title">הסר טקסט למוגבלי שמיעה</string>
     <string name="ai_remove_hi_desc">הסר סימוני [סוגריים] למוגבלי שמיעה לפני תרגום</string>
     <string name="ai_api_key_title">מפתח API</string>
