@@ -148,6 +148,53 @@ Calibration (user-verified, July 2026): synced subs score 0.71–0.98; a confirm
 scored 0.65. Accept threshold **0.70** (timing) / **0.30** (hearing). The good/bad boundary is
 narrow — do not nudge thresholds or the metric without fresh A/B evidence.
 
+**Two robustness adjustments to the accept score (July 15 2026, branch `find_best_match_offset`)** —
+both apply to accept/reject scoring ONLY, never to the offset search (§ below), which stays strict:
+- **Overlap tolerance** (`scoreByTiming(cues, refs, toleranceMs)`, `MATCH_OVERLAP_TOLERANCE_MS` =
+  400): each candidate cue is widened ±400ms before measuring overlap, absorbing sub-second caption
+  pre-roll and cue-boundary differences (a finely-split SDH reference vs a sub that merges lines).
+  Without it a genuinely-perfect sub scored 0.61 on an SDH reference. Kept modest so a sub ≥~1s off
+  still fails here and is caught by the offset search instead.
+- **Orphan-drop** (`scoreCandidatesWithOffsets`): reference windows covered by NO candidate are
+  dropped before scoring — almost always SDH/non-dialogue reference cues the dialogue subs lack.
+  Each would score a hard 0 for everyone and crater a perfect sub, worst on sparse refs.
+
+### Constant-offset rescue (`estimateOffsetMatch` + `scoreCandidatesWithOffsets`)
+
+A candidate that scores badly at offset 0 but is a **perfectly-cut sub with a UNIFORM delay** (a
+common addon defect — right words, globally-shifted timing) is rescued instead of rejected. During
+the *same* scan every candidate is tested for a single constant delay that lines it up.
+
+- **Detection is an offset SEARCH, not cue-start clustering.** `estimateOffsetMatch` sweeps the
+  offset directly, maximizing the strict `scoreByTiming`: coarse ±10s @250ms, then fine ±250ms
+  @25ms. A cluster-of-`refStart−cueStart`-deltas approach was tried FIRST and failed on real data —
+  the reference is a finely-split English CC track while addon subs merge dialogue into fewer/longer
+  cues, so cue *starts* never line up 1:1 even at the correct offset (Dutton Ranch S01E01: a flat
+  +1000ms was visually perfect yet start-deltas scattered +583/−617/−2208). Overlap-max is
+  segmentation-agnostic. Offsets `< MATCH_OFFSET_MIN_MS` (300) are "already aligned" — ignored.
+- **Cross-candidate corroboration is the acceptance signal.** The candidates are the same episode
+  from different addons, so a real global offset appears in ≥2 of them; a search-noise outlier does
+  not. Each candidate votes its best offset (if it beats its strict base and clears `FLOOR` 0.62);
+  votes within `CORROBORATE_MS` (400) are clustered; if ≥`CORROBORATE_MIN` (2) agree, the median is
+  the trusted offset. Every candidate is then re-scored (tolerant) at that shared shift and accepts
+  at `CORROBORATED_ACCEPT` (0.68) — **decoupled from the 0.70 timing bar** because segmentation caps
+  a perfect-but-differently-cut sub around 0.71. `findBestSubtitleMatch`'s accept test is therefore
+  `score ≥ successThreshold OR (offsetMs ≠ 0 && score ≥ 0.68)`. Real example that both rescued the
+  true offset and rejected the outlier: `votes=[−4400, 1000, 1000, 1000] → 1000ms (support=3)`.
+- A **lone** candidate (no corroboration possible) still rescues at the stricter `MATCH_OFFSET_ACCEPT`
+  (0.80). Mid-scan, once a corroborated offset already yields an acceptable winner, collection ends
+  early (`refs ≥ MATCH_OFFSET_EARLY_REFS`, buffered quorum).
+- The offset is **baked into the served local file** (`shiftTimestamps` in `localizeSubtitle`),
+  never the player's delay knob — so it can't leak across track/source switches. The served copy's
+  id gets a `#ofs<ms>` marker (`MATCH_OFFSET_ID_MARKER`): a distinct track id that forces the
+  preload path to rebuild onto the shifted file rather than override to the un-shifted preloaded
+  copy sharing the base id. The menu matches rows by **base id** (`subtitleBaseId` /
+  `isSameSubtitleTrack` in PlayerScreen) and shows `· +1.0s` on the selected row. The per-stream
+  cache stores `offsetMs` and re-bakes it on remembered hits. Toast: `… (auto-offset +1.0s)`.
+- Log lines (tag `SubMatch`): `[offset] <label> base=… bestOffset=…ms corrected=…`,
+  `[offset] corroboration votes=[…] -> …`, `orphan-drop: kept N/M …`, and per-candidate
+  `[builtin] … final score=… offset=…ms`.
+
 ---
 
 ## 3. Selection & the local-file trick
@@ -262,9 +309,19 @@ default is SRT for extensionless URLs.
 - Batch translation pre-fetch (`triggerPreTranslation`/`preTranslateWindow`) is gated on
   `translationManager.isEnabled` — without this it spends API requests whenever any track renders
   (the 401-toast-with-AI-off bug).
+- **AI translation source is a built-in (embedded) ENGLISH track ONLY** (`findAiSourceSubtitle`,
+  July 15 2026). Never an external addon sub, never a non-English embedded track. So "no embedded
+  English ⇒ no AI translation": on such a source the AI interim doesn't activate, which (a) matches
+  the intended feature scope and (b) frees the single Gemini pipeline so the **hearing** scan can
+  run — previously the AI interim activated off an *external* English sub, grabbed Gemini, and the
+  `isAiTranslating -> null` dispatch branch silently skipped hearing so "Find Best Match" never ran.
+  Ladder on a no-built-in source: hearing (needs AI on + Gemini key + model) → else the top
+  release-name-scored addon sub (`selectLastResort`). The timing-scan reference (`builtInReference`)
+  is separate and may still use a non-English embedded track. Tradeoff: a source with only an
+  external English sub (no embedded English, no target-language addon) no longer gets AI Hebrew.
 - AI interim during scans: only when `aiSubtitleEnabled && aiSubtitleAutoSelect`. Source is
-  re-resolved on every activation (embedded preferred; external only if English) — a stale
-  external source caused mistimed translations.
+  re-resolved on every activation (embedded English only, per above) — a stale source caused
+  mistimed translations.
 - Hearing fallback: Gemini model + key + AI on; aborts on WS ERROR; same progress-anchored
   timers as the timing scan.
 - Gemini Live target language comes from the preference (`targetLanguageCode`), default `he`.

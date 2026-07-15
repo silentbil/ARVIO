@@ -1588,13 +1588,14 @@ class PlayerViewModel @Inject constructor(
                 ?: embedded.firstOrNull { it.isUsableSource() }
         }
 
-        // Prefer English embedded > any embedded with lang > any embedded > external English.
-        // External subs in other languages are never a sane source: their timing is unverified
-        // and a target-language addon sub as "source" means translating a language to itself.
+        // AI translation only ever translates a BUILT-IN (embedded) ENGLISH track. It must never
+        // use an EXTERNAL addon sub as source (its timing is unverified, and when the user already
+        // has target-language addon subs the app should pick/verify one of those or use the hearing
+        // scan — not AI-translate an English addon). And "no built-in English ⇒ no AI translation":
+        // the match scan then falls to hearing (if a Gemini key + AI feature are on), then to the
+        // top release-name-scored addon sub. (The timing-scan reference — `builtInReference` in
+        // findBestSubtitleMatch — is separate and may still use a non-English embedded track.)
         return subtitles.filter { normalizeLanguage(it.lang) == "en" }.bestEmbedded()
-            ?: subtitles.filter { it.lang.isNotBlank() }.bestEmbedded()
-            ?: subtitles.bestEmbedded()
-            ?: subtitles.firstOrNull { it.isUsableSource() && normalizeLanguage(it.lang) == "en" }
     }
 
     private fun languageCodeToName(code: String): String {
@@ -2890,17 +2891,21 @@ class PlayerViewModel @Inject constructor(
             // still offered by the addons wins immediately — no need to rescan. Skipped for
             // user-triggered rescans, which mean the remembered pick is unwanted.
             if (useCache) {
-                val remembered = readCachedMatch()?.let { cached ->
-                    candidates.firstOrNull { it.id == cached.id && it.provider == cached.provider }
+                val cached = readCachedMatch()
+                val remembered = cached?.let { c ->
+                    candidates.firstOrNull { it.id == c.id && it.provider == c.provider }
                 }
                 if (remembered != null) {
                     // Serve from a local cache file so the MediaItem rebuild doesn't stall on a
                     // slow addon server (download bounded by the matcher's client timeouts).
+                    // Re-bake the remembered rescue offset, if any.
+                    val offsetMs = cached.offsetMs
                     val local = SubtitleSyncMatcher.loadRaw(remembered.url)
-                        ?.let { localizeSubtitle(remembered, it) } ?: remembered
+                        ?.let { localizeSubtitle(remembered, it, offsetMs) } ?: remembered
                     endMatch()
                     selectSubtitle(local, isUserAction = false)
-                    showMatchToast("Matched: ${remembered.label} (remembered)")
+                    val offsetNote = if (offsetMs != 0L) " (auto-offset ${formatMatchOffset(offsetMs)})" else ""
+                    showMatchToast("Matched: ${remembered.label} (remembered)$offsetNote")
                     return@launch
                 }
             }
@@ -2936,10 +2941,13 @@ class PlayerViewModel @Inject constructor(
                 if (cues.isEmpty()) null else sub to cues
             }
 
-            /** Select [sub], serving it from a local file when its text was downloaded. */
-            fun selectServedLocally(sub: Subtitle) {
+            /**
+             * Select [sub], serving it from a local file when its text was downloaded. A non-zero
+             * [offsetMs] is baked into that local copy (constant-offset rescue).
+             */
+            fun selectServedLocally(sub: Subtitle, offsetMs: Long = 0L) {
                 val localized = rawBySubKey["${sub.provider}|${sub.id}"]
-                    ?.let { localizeSubtitle(sub, it) } ?: sub
+                    ?.let { localizeSubtitle(sub, it, offsetMs) } ?: sub
                 selectSubtitle(localized, isUserAction = false)
             }
 
@@ -2989,16 +2997,27 @@ class PlayerViewModel @Inject constructor(
             } else {
                 MATCH_SUCCESS_THRESHOLD_HEARING
             }
-            val best = scored?.maxByOrNull { it.second }
-            if (best != null && best.second >= successThreshold) {
-                selectServedLocally(best.first)
-                // Cache the original (addon) identity — the local file is per-session transient.
-                writeCachedMatch(best.first)
-                showMatchToast("Matched: ${best.first.label} · ${(best.second * 100).toInt()}% ($sourceLabel)")
+            val best = scored?.maxByOrNull { it.score }
+            // A corroborated constant-offset rescue (offsetMs != 0, set only when ≥2 candidates
+            // agreed) accepts at its own lower bar — segmentation caps its timing score below the
+            // normal 0.70. The lone-strong offset path already required ≥0.80, so it clears this too.
+            val accepted = best != null && (
+                best.score >= successThreshold ||
+                    (best.offsetMs != 0L && best.score >= MATCH_OFFSET_CORROBORATED_ACCEPT)
+                )
+            if (accepted && best != null) {
+                selectServedLocally(best.sub, best.offsetMs)
+                // Cache the original (addon) identity + any rescue offset — the local file is
+                // per-session transient, but the offset must be re-applied on the next playback.
+                writeCachedMatch(best.sub, best.offsetMs)
+                val offsetNote = if (best.offsetMs != 0L) " (auto-offset ${formatMatchOffset(best.offsetMs)})" else ""
+                showMatchToast(
+                    "Matched: ${best.sub.label} · ${(best.score * 100).toInt()}% ($sourceLabel)$offsetNote"
+                )
             } else {
                 // Nothing synced found (or too little dialogue) → let the caller fall back (AI translate).
                 restoreSubtitle(previousSubtitle)
-                noMatch(best?.second)
+                noMatch(best?.score)
                 selectLastResort()
             }
         }
@@ -3008,13 +3027,109 @@ class PlayerViewModel @Inject constructor(
     private fun normalizeCueTextForCompare(text: String): String =
         text.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
 
+    /**
+     * A scored candidate. [offsetMs] is 0 for a normal (as-authored) match, or the uniform delay
+     * that had to be baked in for a constant-offset rescue — in which case [score] is the
+     * *corrected* (post-shift) timing score.
+     */
+    private data class ScoredCandidate(val sub: Subtitle, val score: Double, val offsetMs: Long)
+
+    /** "+2.0s" / "-1.5s" for toasts and menu rows. */
+    private fun formatMatchOffset(ms: Long): String =
+        (if (ms >= 0) "+" else "-") + String.format(java.util.Locale.US, "%.1f", kotlin.math.abs(ms) / 1000.0) + "s"
+
+    /**
+     * Score every candidate against the reference [refs], with constant-offset rescue. Each
+     * candidate gets: (a) its as-authored score; (b) a lone strong offset (search corrected ≥
+     * [MATCH_OFFSET_ACCEPT]); and (c) a *corroborated* offset — when ≥[MATCH_OFFSET_CORROBORATE_MIN]
+     * candidates independently agree on an offset (within [MATCH_OFFSET_CORROBORATE_MS]), that
+     * shared shift is trusted and applied to every candidate at the lower [MATCH_OFFSET_CORROBORATED_ACCEPT]
+     * bar. The candidates are the same episode from different addons, so agreement is strong evidence
+     * the offset is real (and it discards search-noise outliers that no one else voted for).
+     */
+    private fun scoreCandidatesWithOffsets(
+        loaded: List<Pair<Subtitle, List<SubtitleSyncMatcher.TimedCue>>>,
+        rawRefs: List<Pair<Long, Long>>,
+        debug: Boolean
+    ): List<ScoredCandidate> {
+        val tol = MATCH_OVERLAP_TOLERANCE_MS
+        // Orphan-drop: discard reference windows that NO candidate covers at all — almost always
+        // SDH/non-dialogue reference cues (sound effects, on-screen text) the dialogue subs lack.
+        // Left in, each one scores a hard 0 for every candidate and craters an otherwise-perfect
+        // sub (worse the fewer windows there are). Guarded so we never drop down to too little.
+        val covered = rawRefs.filter { (rs, re) ->
+            loaded.any { (_, cues) -> cues.any { it.startMs < re && rs < it.endMs } }
+        }
+        val refs = if (covered.size >= MATCH_MIN_REF_INTERVALS) covered else rawRefs
+        data class Est(
+            val sub: Subtitle,
+            val cues: List<SubtitleSyncMatcher.TimedCue>,
+            val normal: Double,
+            val offset: SubtitleSyncMatcher.OffsetMatch?
+        )
+        val ests = loaded.map { (sub, cues) ->
+            Est(
+                sub, cues,
+                SubtitleSyncMatcher.scoreByTiming(cues, refs, tol),
+                // Offset search stays strict (no tolerance) so its peaks stay sharp for corroboration.
+                SubtitleSyncMatcher.estimateOffsetMatch(cues, refs, MATCH_OFFSET_MIN_MS, MATCH_OFFSET_MAX_MS)
+            )
+        }
+        // Each candidate votes its best offset if it meaningfully improves that candidate. Compare
+        // against the strict base (both from the offset search) — not the tolerant accept score.
+        val votes = ests.mapNotNull { e ->
+            e.offset?.takeIf { it.correctedScore >= MATCH_OFFSET_CORROBORATE_FLOOR && it.correctedScore > it.baseScore }
+                ?.offsetMs
+        }.sorted()
+        // Largest cluster of votes within the agreement window; median of it is the trusted offset.
+        var corroboratedOffset: Long? = null
+        var corroboratedSupport = 0
+        for (anchor in votes) {
+            val members = votes.filter { kotlin.math.abs(it - anchor) <= MATCH_OFFSET_CORROBORATE_MS }
+            if (members.size > corroboratedSupport) {
+                corroboratedSupport = members.size
+                corroboratedOffset = members[members.size / 2]
+            }
+        }
+        val corrob = corroboratedOffset?.takeIf { corroboratedSupport >= MATCH_OFFSET_CORROBORATE_MIN }
+        return ests.map { e ->
+            var score = e.normal // tolerant, offset 0
+            var off = 0L
+            // (b) lone strong offset — qualify via the strict search (≥ 0.80), then take the
+            // tolerant score at that shift so the accept bar is measured consistently.
+            e.offset?.let {
+                if (it.correctedScore >= MATCH_OFFSET_ACCEPT) {
+                    val sc = SubtitleSyncMatcher.scoreByTiming(SubtitleSyncMatcher.shiftCues(e.cues, it.offsetMs), refs, tol)
+                    if (sc > score) { score = sc; off = it.offsetMs }
+                }
+            }
+            // (c) corroborated offset — tolerant re-score at the shared shift (a candidate's own
+            // argmax may have landed elsewhere on search noise; the corroborated value is trusted).
+            if (corrob != null) {
+                val sc = SubtitleSyncMatcher.scoreByTiming(SubtitleSyncMatcher.shiftCues(e.cues, corrob), refs, tol)
+                if (sc >= MATCH_OFFSET_CORROBORATED_ACCEPT && sc > score) {
+                    score = sc; off = corrob
+                }
+            }
+            if (debug) {
+                android.util.Log.i(
+                    "SubMatch",
+                    "[builtin] candidate label=\"${e.sub.label}\" provider=${e.sub.provider} cues=${e.cues.size} " +
+                        "refIntervals=${refs.size} score=${"%.2f".format(score)}" +
+                        (if (off != 0L) " offset=${off}ms" else "")
+                )
+            }
+            ScoredCandidate(e.sub, score, off)
+        }
+    }
+
     /** Reference = a built-in track's cue timing (any language). Returns null if too little dialogue. */
     private suspend fun scoreAgainstBuiltIn(
         loaded: List<Pair<Subtitle, List<SubtitleSyncMatcher.TimedCue>>>,
         referenceSub: Subtitle,
         sourceLabel: String,
         previousSubtitle: Subtitle?
-    ): List<Pair<Subtitle, Double>>? {
+    ): List<ScoredCandidate>? {
         synchronized(referenceIntervals) { referenceIntervals.clear() }
         refIntervalStart = -1L
         // If AI translation is already showing (it has the source/English track selected under the
@@ -3150,6 +3265,18 @@ class PlayerViewModel @Inject constructor(
             if (span >= MATCH_FAST_ACCEPT_SPAN_MS && refs.size >= MATCH_FAST_ACCEPT_REFS &&
                 bestNow >= MATCH_FAST_ACCEPT_SCORE
             ) break
+            // Constant-offset early accept: none of the candidates may be synced as-authored, yet a
+            // single uniform delay can make one work. Once there's solid buffered evidence (the
+            // offset search needs trustworthy authored timing), if a corroborated offset already
+            // produces an acceptable winner, end collection now instead of waiting out the scan.
+            if (spanOk && refs.size >= MATCH_OFFSET_EARLY_REFS &&
+                bufferedCount >= MATCH_MIN_BUFFERED_FOR_REJECT
+            ) {
+                val early = scoreCandidatesWithOffsets(loaded, refs, debug = false)
+                    .filter { it.offsetMs != 0L }
+                    .maxByOrNull { it.score }
+                if (early != null && early.score >= MATCH_OFFSET_CORROBORATED_ACCEPT) break
+            }
             // Give-up timers: a long one while waiting for speech to exist at all (openings can
             // run minutes without dialogue), and a progress-anchored one afterwards — a silent
             // scene mid-scan pauses the clock instead of draining it. Absolute ceiling on top.
@@ -3193,19 +3320,11 @@ class PlayerViewModel @Inject constructor(
             )
         }
 
-        val results = loaded.map { (sub, cues) ->
-            val s = SubtitleSyncMatcher.scoreByTiming(cues, refs)
-            android.util.Log.i(
-                "SubMatch",
-                "[builtin] candidate label=\"${sub.label}\" provider=${sub.provider} cues=${cues.size} " +
-                    "refIntervals=${refs.size} src=$srcLabel score=${"%.2f".format(s)}"
-            )
-            sub to s
-        }
+        val results = scoreCandidatesWithOffsets(loaded, refs, debug = true)
         // A LOW score from a realtime-dominated reference (give-up exit without buffered quorum)
         // is not evidence of a bad sub — report inconclusive instead of a confident
         // "no well-synced subtitle (best N%)" reject. Accepts pass through unchanged.
-        val best = results.maxOfOrNull { it.second } ?: 0.0
+        val best = results.maxOfOrNull { it.score } ?: 0.0
         if (best < MATCH_SUCCESS_THRESHOLD_TIMING && bufferedCount < MATCH_MIN_BUFFERED_FOR_REJECT) {
             android.util.Log.i(
                 "SubMatch",
@@ -3220,7 +3339,7 @@ class PlayerViewModel @Inject constructor(
     private suspend fun scoreAgainstHearing(
         loaded: List<Pair<Subtitle, List<SubtitleSyncMatcher.TimedCue>>>,
         sourceLabel: String
-    ): List<Pair<Subtitle, Double>>? {
+    ): List<ScoredCandidate>? {
         startMatchListening()
         val samples = mutableListOf<SubtitleSyncMatcher.SpokenSample>()
         val collector = viewModelScope.launch {
@@ -3275,7 +3394,7 @@ class PlayerViewModel @Inject constructor(
                 "[hearing] candidate label=\"${sub.label}\" provider=${sub.provider} cues=${cues.size} " +
                     "samples=${samples.size} score=${"%.2f".format(s)}"
             )
-            sub to s
+            ScoredCandidate(sub, s, 0L)
         }
     }
 
@@ -3321,7 +3440,12 @@ class PlayerViewModel @Inject constructor(
 
     // ── Per-stream match cache ──────────────────────────────────────────────────
 
-    private data class CachedSubMatch(val key: String, val provider: String, val id: String)
+    private data class CachedSubMatch(
+        val key: String,
+        val provider: String,
+        val id: String,
+        val offsetMs: Long = 0L // constant-offset rescue delay to re-apply (0 = as authored)
+    )
 
     /**
      * Identity of the currently playing file, stable across sessions. Torrent infoHash+fileIdx is
@@ -3359,14 +3483,14 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** Remember [subtitle] as the match for the current stream (null = forget the entry). */
-    private fun writeCachedMatch(subtitle: Subtitle?) {
+    private fun writeCachedMatch(subtitle: Subtitle?, offsetMs: Long = 0L) {
         val key = currentStreamCacheKey() ?: return
         viewModelScope.launch {
             runCatching {
                 val cache = loadMatchCache()
                 val removed = cache.removeAll { it.key == key }
                 if (subtitle == null && !removed) return@runCatching
-                if (subtitle != null) cache.add(CachedSubMatch(key, subtitle.provider, subtitle.id))
+                if (subtitle != null) cache.add(CachedSubMatch(key, subtitle.provider, subtitle.id, offsetMs))
                 while (cache.size > MATCH_CACHE_MAX_ENTRIES) cache.removeAt(0)
                 context.settingsDataStore.edit { it[subtitleMatchCacheKey] = gson.toJson(cache) }
             }.onFailure { Log.w("SubMatch", "match cache write failed: ${it.message}") }
@@ -3392,15 +3516,24 @@ class PlayerViewModel @Inject constructor(
      * server — which is what used to leave the player stuck buffering after a match. Also
      * normalizes the content (UTF-8, gunzipped) as a side effect.
      */
-    private fun localizeSubtitle(sub: Subtitle, raw: String): Subtitle {
+    private fun localizeSubtitle(sub: Subtitle, raw: String, offsetMs: Long = 0L): Subtitle {
         return runCatching {
+            // Constant-offset rescue: bake the delay into the served text so the correction lives
+            // in the file, independent of the player's delay knob (no state leaks across track/
+            // source switches). The id gets an "…#ofs<ms>" marker so this shifted copy is a
+            // DISTINCT track — otherwise preload mode would override to the un-shifted preloaded
+            // copy that shares the base id.
+            val text = if (offsetMs != 0L) SubtitleSyncMatcher.shiftTimestamps(raw, offsetMs) else raw
             val dir = java.io.File(context.cacheDir, "matched_subs").apply { mkdirs() }
             // Keep the directory bounded; files are ~100KB and keyed stably per subtitle.
             dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(39)?.forEach { it.delete() }
-            val ext = if (raw.trimStart().startsWith("WEBVTT")) "vtt" else "srt"
-            val file = java.io.File(dir, "${("${sub.provider}|${sub.id}").hashCode().toUInt()}.$ext")
-            file.writeText(raw)
-            sub.copy(url = file.toURI().toString())
+            val ext = if (text.trimStart().startsWith("WEBVTT")) "vtt" else "srt"
+            val idBase = "${sub.provider}|${sub.id}"
+            val fileKey = if (offsetMs != 0L) "$idBase$MATCH_OFFSET_ID_MARKER$offsetMs" else idBase
+            val file = java.io.File(dir, "${fileKey.hashCode().toUInt()}.$ext")
+            file.writeText(text)
+            val newId = if (offsetMs != 0L) "${sub.id}$MATCH_OFFSET_ID_MARKER$offsetMs" else sub.id
+            sub.copy(id = newId, url = file.toURI().toString())
         }.getOrDefault(sub)
     }
 
@@ -4290,6 +4423,37 @@ class PlayerViewModel @Inject constructor(
         private const val MATCH_SUCCESS_THRESHOLD_HEARING = 0.30
         private const val MATCH_MAX_CANDIDATES = 10      // cap downloaded candidates (best release-name matches first)
         private const val MATCH_CACHE_MAX_ENTRIES = 50   // per-stream remembered matches (oldest evicted)
+
+        // Constant-offset rescue: a candidate that fails at offset 0 but is a perfectly-cut sub
+        // with a UNIFORM delay gets shifted into sync instead of rejected (common addon defect).
+        // Accept/reject scoring widens each candidate cue by this before measuring overlap, so a
+        // genuinely-synced sub isn't docked for sub-second caption pre-roll or different cue
+        // boundaries (SDH reference vs merged dialogue sub). The offset SEARCH stays strict (0) to
+        // keep its peaks sharp. Kept modest so a truly mis-synced sub (≥~1s off) still fails here
+        // and is instead caught by the offset search.
+        private const val MATCH_OVERLAP_TOLERANCE_MS = 400L
+        private const val MATCH_OFFSET_MIN_MS = 300L      // below this the sub is "already aligned" — normal path owns it
+        private const val MATCH_OFFSET_MAX_MS = 10_000L   // above this a "constant offset" is implausible
+        private const val MATCH_OFFSET_ACCEPT = 0.80      // single candidate: strict bar (no corroboration available)
+        private const val MATCH_OFFSET_EARLY_REFS = 6     // min refs before the mid-scan offset check runs
+        // Cross-candidate corroboration: the candidates are the same episode from different addons, so
+        // a REAL global offset shows up in several of them; a spurious one (search noise) does not.
+        // When ≥N agree on an offset within a tolerance, we trust it and accept at a lower bar than a
+        // lone candidate — interval-overlap scoring caps well below 1.0 when the reference (finely
+        // split CC) and candidate (merged lines) are segmented differently, even at the true offset.
+        private const val MATCH_OFFSET_CORROBORATE_MS = 400L   // agreement window between candidate offsets
+        private const val MATCH_OFFSET_CORROBORATE_MIN = 2     // min candidates that must agree
+        private const val MATCH_OFFSET_CORROBORATE_FLOOR = 0.62 // min corrected score to be an eligible voter
+        // Accept bar once an offset is corroborated. Lower than the normal 0.70 timing bar on purpose:
+        // the agreement of ≥2 independent addon files IS the evidence, and interval-overlap scoring is
+        // structurally capped (~0.71 here) when the reference (finely-split CC) and candidate (merged
+        // lines) are segmented differently even at the perfect offset. A corroborated match may accept
+        // below 0.70 — see the offset clause in findBestSubtitleMatch's accept test.
+        private const val MATCH_OFFSET_CORROBORATED_ACCEPT = 0.68
+        // Marker appended to a served copy's id when an offset was baked in (e.g. "…#ofs2000").
+        // Forces a distinct track id (so preload mode rebuilds onto the shifted file rather than
+        // overriding to the un-shifted preloaded copy); the menu strips it to match rows by base id.
+        const val MATCH_OFFSET_ID_MARKER = "#ofs"
 
         /** Known debrid service CDN domains. Reachability checks are skipped for these. */
         private val DEBRID_CDN_DOMAINS = setOf(

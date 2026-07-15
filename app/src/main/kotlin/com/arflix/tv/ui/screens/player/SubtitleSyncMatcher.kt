@@ -92,24 +92,56 @@ object SubtitleSyncMatcher {
      *
      * Language-agnostic (no translation needed).
      */
-    fun scoreByTiming(cues: List<TimedCue>, referenceIntervals: List<Pair<Long, Long>>): Double {
+    /**
+     * @param toleranceMs each candidate cue is widened by this on both edges before measuring
+     * overlap — absorbs sub-second caption pre-roll / display lag and cue-boundary differences so a
+     * genuinely-synced but differently-segmented sub isn't docked. **0 (strict) for the offset
+     * search** (keeps its peaks sharp); a small positive value for accept/reject scoring.
+     */
+    fun scoreByTiming(
+        cues: List<TimedCue>,
+        referenceIntervals: List<Pair<Long, Long>>,
+        toleranceMs: Long = 0L
+    ): Double {
         if (cues.isEmpty() || referenceIntervals.isEmpty()) return 0.0
-        val sorted = cues.sortedBy { it.startMs }
+        return scoreSortedShifted(cues.sortedBy { it.startMs }, referenceIntervals, 0L, toleranceMs)
+    }
+
+    /**
+     * [scoreByTiming]'s core, over cues **pre-sorted by start** and with a uniform [offsetMs] added
+     * to every cue inline (no list copy). Adding a constant offset preserves start order, so the
+     * sort stays valid — this lets the offset search sweep many offsets cheaply.
+     */
+    private fun scoreSortedShifted(
+        sorted: List<TimedCue>,
+        referenceIntervals: List<Pair<Long, Long>>,
+        offsetMs: Long,
+        toleranceMs: Long = 0L
+    ): Double {
         var sum = 0.0
         for ((rs, re) in referenceIntervals) {
             val refDur = (re - rs).coerceAtLeast(1L)
             val fraction = if (refDur <= SINGLE_CUE_MAX_MS) {
-                sorted.maxOfOrNull { c ->
-                    (minOf(re, c.endMs) - maxOf(rs, c.startMs)).toDouble() / refDur
-                } ?: 0.0
+                var best = 0.0
+                for (c in sorted) {
+                    val cs = c.startMs + offsetMs - toleranceMs
+                    if (cs >= re) break // sorted by start → nothing later can overlap
+                    val ce = c.endMs + offsetMs + toleranceMs
+                    if (ce <= rs) continue
+                    val ov = (minOf(re, ce) - maxOf(rs, cs)).toDouble() / refDur
+                    if (ov > best) best = ov
+                }
+                best
             } else {
                 var covered = 0L
                 var cursor = rs
                 for (c in sorted) {
-                    if (c.endMs <= cursor) continue
-                    if (c.startMs >= re) break
-                    val s = maxOf(c.startMs, cursor)
-                    val e = minOf(c.endMs, re)
+                    val cs = c.startMs + offsetMs - toleranceMs
+                    if (cs >= re) break
+                    val ce = c.endMs + offsetMs + toleranceMs
+                    if (ce <= cursor) continue
+                    val s = maxOf(cs, cursor)
+                    val e = minOf(ce, re)
                     if (e > s) {
                         covered += e - s
                         cursor = e
@@ -120,6 +152,93 @@ object SubtitleSyncMatcher {
             sum += fraction.coerceIn(0.0, 1.0)
         }
         return sum / referenceIntervals.size
+    }
+
+    // ── Constant-offset rescue ──────────────────────────────────────────────────
+
+    /**
+     * A candidate that fails at offset 0 but becomes well-synced once shifted by a single uniform
+     * delay. [offsetMs] is added to every cue (positive = the sub must be pushed *later*);
+     * [correctedScore] is [scoreByTiming] of the shifted cues against the reference; [baseScore] is
+     * the offset-0 score (so the caller can require a real improvement).
+     */
+    data class OffsetMatch(val offsetMs: Long, val correctedScore: Double, val baseScore: Double)
+
+    fun shiftCues(cues: List<TimedCue>, offsetMs: Long): List<TimedCue> =
+        if (offsetMs == 0L) cues
+        else cues.map { TimedCue(it.startMs + offsetMs, it.endMs + offsetMs, it.text) }
+
+    /**
+     * Detect whether [cues] are a perfectly-cut subtitle carrying a UNIFORM delay against the
+     * reference (a common addon defect: right words, globally-shifted timing — the base metric
+     * punishes it). Returns the delay that maximizes the timing score + that corrected score, or
+     * null when the best offset is negligible (< [minOffsetMs]).
+     *
+     * We **search the offset directly**, maximizing [scoreByTiming] (the same overlap metric that
+     * decides acceptance), NOT cue-start clustering. Start-clustering was tried first and FAILED on
+     * real data: the reference is usually a finely-split CC track while the candidate merges
+     * dialogue into fewer/longer cues, so cue *starts* never line up 1:1 even at the correct global
+     * offset (Dutton Ranch S01E01: a flat +1000ms is visually perfect, yet start-deltas scattered
+     * +583/−617/−2208 and the cluster never formed). Overlap is segmentation-agnostic. A coarse
+     * sweep over ±[maxOffsetMs] locates the peak; a fine sweep around it pins the exact value.
+     * Wrong-show/drift subs never reach a high corrected score at any offset, so the caller's score
+     * bar is what rejects them — no separate spread test needed.
+     */
+    fun estimateOffsetMatch(
+        cues: List<TimedCue>,
+        referenceIntervals: List<Pair<Long, Long>>,
+        minOffsetMs: Long,
+        maxOffsetMs: Long
+    ): OffsetMatch? {
+        if (cues.size < 3 || referenceIntervals.size < 4) return null
+        val sorted = cues.sortedBy { it.startMs }
+        val baseScore = scoreSortedShifted(sorted, referenceIntervals, 0L)
+
+        var bestOff = 0L
+        var bestScore = baseScore
+        fun consider(off: Long) {
+            val s = scoreSortedShifted(sorted, referenceIntervals, off)
+            if (s > bestScore) {
+                bestScore = s
+                bestOff = off
+            }
+        }
+        // Coarse sweep (250ms): the score-vs-offset curve is smooth with a peak ~cue-duration wide,
+        // so this can't step over it. Then refine ±250ms at 25ms for exact placement.
+        var off = -maxOffsetMs
+        while (off <= maxOffsetMs) { consider(off); off += 250L }
+        val lo = bestOff - 250L
+        val hi = bestOff + 250L
+        off = lo
+        while (off <= hi) { consider(off); off += 25L }
+
+        if (Math.abs(bestOff) < minOffsetMs) return null
+        return OffsetMatch(bestOff, bestScore, baseScore)
+    }
+
+    /**
+     * Add [offsetMs] to every timestamp in raw SRT/WEBVTT text, preserving format (comma vs dot)
+     * and any trailing cue settings. Used to bake a detected offset into the served local file so
+     * the correction survives independently of the player's delay knob.
+     */
+    fun shiftTimestamps(raw: String, offsetMs: Long): String {
+        if (offsetMs == 0L) return raw
+        return TIME_LINE.replace(raw) { m ->
+            val start = parseTimestamp(m.groupValues[1]) ?: return@replace m.value
+            val end = parseTimestamp(m.groupValues[2]) ?: return@replace m.value
+            val useComma = m.groupValues[1].contains(',')
+            "${formatTimestamp(start + offsetMs, useComma)} --> ${formatTimestamp(end + offsetMs, useComma)}"
+        }
+    }
+
+    private fun formatTimestamp(ms: Long, useComma: Boolean): String {
+        val v = ms.coerceAtLeast(0L)
+        val h = v / 3_600_000
+        val m = (v % 3_600_000) / 60_000
+        val s = (v % 60_000) / 1_000
+        val millis = v % 1_000
+        val sep = if (useComma) ',' else '.'
+        return String.format(java.util.Locale.US, "%02d:%02d:%02d%c%03d", h, m, s, sep, millis)
     }
 
     // ── Similarity ────────────────────────────────────────────────────────────

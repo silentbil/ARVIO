@@ -3443,7 +3443,7 @@ fun PlayerScreen(
                                     val idx = subtitleGroups.indexOfFirst { (name, _) -> name.equals(langName, ignoreCase = true) }
                                     subtitleLangIndex = if (idx >= 0) idx + 1 else 0
                                     subtitleTrackIndex = subtitleGroups.getOrNull(subtitleLangIndex - 1)?.second
-                                        ?.indexOfFirst { (_, sub) -> sub.id == selected.id }?.coerceAtLeast(0) ?: 0
+                                        ?.indexOfFirst { (_, sub) -> isSameSubtitleTrack(selected, sub.id) }?.coerceAtLeast(0) ?: 0
                                 }
                                 showSubtitleMenu = true
                                 // Move focus to container so all D-pad keys go to the menu handler
@@ -4693,7 +4693,7 @@ private fun SubtitleMenu(
                                             (isAiTranslating || isFindingBestMatch) && aiTargetLanguageName.isNotBlank() &&
                                                 langName.equals(aiTargetLanguageName, ignoreCase = true) -> true
                                             else -> selectedSubtitle != null &&
-                                                items.any { (_, sub) -> sub.id == selectedSubtitle.id }
+                                                items.any { (_, sub) -> isSameSubtitleTrack(selectedSubtitle, sub.id) }
                                         }
                                     )
                                 }
@@ -4768,7 +4768,9 @@ private fun SubtitleMenu(
                                     itemsIndexed(selectedGroup.second) { idx, (_, subtitle) ->
                                         val score = subtitleMatchScore(streamSource, subtitle)
                                         val langName = getFullLanguageName(subtitle.lang)
-                                        val mainLabel = if (score > 0) "$langName ($score%)" else langName
+                                        val offsetNote = matchedOffsetMsFor(selectedSubtitle, subtitle.id)
+                                            ?.let { " · ${formatMatchOffset(it)}" } ?: ""
+                                        val mainLabel = (if (score > 0) "$langName ($score%)" else langName) + offsetNote
                                         val badge: String?
                                         val detail: String?
                                         if (subtitle.isEmbedded && subtitle.url.isBlank()) {
@@ -4789,7 +4791,7 @@ private fun SubtitleMenu(
                                             label = mainLabel,
                                             subtitle = badge,
                                             subtitleDetail = detail,
-                                            isSelected = !isAiTranslating && !isLiveAudioTranslating && selectedSubtitle?.id == subtitle.id,
+                                            isSelected = !isAiTranslating && !isLiveAudioTranslating && isSameSubtitleTrack(selectedSubtitle, subtitle.id),
                                             isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == itemIdx,
                                             onClick = { /* D-pad only */ }
                                         )
@@ -5067,7 +5069,9 @@ private fun SubtitleMenu(
                                 item(key = "mobile_${sub.id}") {
                                     val score = subtitleMatchScore(streamSource, sub)
                                     val langFullName = getFullLanguageName(sub.lang)
-                                    val displayName = if (score > 0) "$langFullName ($score%)" else langFullName
+                                    val offsetNote = matchedOffsetMsFor(selectedSubtitle, sub.id)
+                                        ?.let { " · ${formatMatchOffset(it)}" } ?: ""
+                                    val displayName = (if (score > 0) "$langFullName ($score%)" else langFullName) + offsetNote
                                     val description = when {
                                         sub.isEmbedded && sub.url.isBlank() -> {
                                             val trackLabel = sub.label.takeIf { it.isNotBlank() &&
@@ -5080,7 +5084,7 @@ private fun SubtitleMenu(
                                     MobileTrackItem(
                                         name = displayName,
                                         description = description,
-                                        isSelected = !isAiTranslating && !isLiveAudioTranslating && selectedSubtitle?.id == sub.id,
+                                        isSelected = !isAiTranslating && !isLiveAudioTranslating && isSameSubtitleTrack(selectedSubtitle, sub.id),
                                         onClick = { onSelectSubtitle(originalIndex + 1) }
                                     )
                                     Box(
@@ -5418,6 +5422,27 @@ private fun detectAudioCodecLabel(codec: String?, trackLabel: String?): String? 
 // subs at once and bare numeric ids can collide across providers. '|' separator, never ':' —
 // ExoPlayer prefixes side-loaded format ids with "periodIndex:" and matching strips at the
 // last ':'.
+// Marker appended to a served subtitle's id when a constant-offset rescue was baked in
+// ("…#ofs2000"). Kept in sync with PlayerViewModel.MATCH_OFFSET_ID_MARKER.
+private const val MATCH_OFFSET_ID_MARKER = "#ofs"
+
+/** A subtitle id with any offset-rescue marker stripped. */
+private fun subtitleBaseId(id: String): String = id.substringBefore(MATCH_OFFSET_ID_MARKER)
+
+/** True when [selected] is [rowId]'s track, ignoring an offset marker on either side. */
+private fun isSameSubtitleTrack(selected: Subtitle?, rowId: String): Boolean =
+    selected != null && subtitleBaseId(selected.id) == subtitleBaseId(rowId)
+
+/** The baked-in rescue offset (ms) when [selected] is [rowId]'s shifted copy, else null. */
+private fun matchedOffsetMsFor(selected: Subtitle?, rowId: String): Long? {
+    if (!isSameSubtitleTrack(selected, rowId)) return null
+    return selected!!.id.substringAfter(MATCH_OFFSET_ID_MARKER, "").toLongOrNull()?.takeIf { it != 0L }
+}
+
+/** "+2.0s" / "-1.5s". */
+private fun formatMatchOffset(ms: Long): String =
+    (if (ms >= 0) "+" else "-") + String.format(java.util.Locale.US, "%.1f", kotlin.math.abs(ms) / 1000.0) + "s"
+
 private fun subtitleTrackId(subtitle: Subtitle): String {
     val explicit = subtitle.id.trim()
     if (explicit.isNotBlank()) {
