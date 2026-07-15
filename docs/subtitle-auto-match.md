@@ -191,9 +191,8 @@ the *same* scan every candidate is tested for a single constant delay that lines
   copy sharing the base id. The menu matches rows by **base id** (`subtitleBaseId` /
   `isSameSubtitleTrack` in PlayerScreen) and shows `· +1.0s` on the selected row. The per-stream
   cache stores `offsetMs` and re-bakes it on remembered hits. Toast: `… (auto-offset +1.0s)`.
-- Log lines (tag `SubMatch`): `[offset] <label> base=… bestOffset=…ms corrected=…`,
-  `[offset] corroboration votes=[…] -> …`, `orphan-drop: kept N/M …`, and per-candidate
-  `[builtin] … final score=… offset=…ms`.
+- Log (tag `SubMatch`): the per-candidate verdict line carries the outcome —
+  `[builtin] candidate … score=<final> offset=<ms>` (offset shown only when one was applied).
 
 ---
 

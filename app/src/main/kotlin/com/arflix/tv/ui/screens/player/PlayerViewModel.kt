@@ -3001,11 +3001,11 @@ class PlayerViewModel @Inject constructor(
             // A corroborated constant-offset rescue (offsetMs != 0, set only when ≥2 candidates
             // agreed) accepts at its own lower bar — segmentation caps its timing score below the
             // normal 0.70. The lone-strong offset path already required ≥0.80, so it clears this too.
-            val accepted = best != null && (
-                best.score >= successThreshold ||
-                    (best.offsetMs != 0L && best.score >= MATCH_OFFSET_CORROBORATED_ACCEPT)
-                )
-            if (accepted && best != null) {
+            if (best != null && (
+                    best.score >= successThreshold ||
+                        (best.offsetMs != 0L && best.score >= MATCH_OFFSET_CORROBORATED_ACCEPT)
+                    )
+            ) {
                 selectServedLocally(best.sub, best.offsetMs)
                 // Cache the original (addon) identity + any rescue offset — the local file is
                 // per-session transient, but the offset must be re-applied on the next playback.
