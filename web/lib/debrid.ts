@@ -1,4 +1,4 @@
-import { jsonRequest, proxiedUrl } from "./http";
+import { apiProxiedUrl, jsonRequest } from "./http";
 
 // Debrid-side transcoding (Tier 2): when a source can't direct-play (MKV
 // container, TrueHD/DTS audio, missing HEVC hardware), ask the user's own
@@ -137,7 +137,7 @@ const VIDEO_FILE = /\.(mkv|mp4|m4v|mov|avi|ts|webm|wmv)$/i;
 
 async function torboxApi<T>(path: string, apiKey: string, form?: Record<string, string>): Promise<TorboxEnvelope<T>> {
   return jsonRequest<TorboxEnvelope<T>>(
-    proxiedUrl(`https://api.torbox.app/v1/api${path}`, {
+    apiProxiedUrl(`https://api.torbox.app/v1/api${path}`, {
       Authorization: `Bearer ${apiKey}`,
       ...(form ? { "content-type": "application/x-www-form-urlencoded" } : {})
     }),
@@ -259,11 +259,11 @@ type RdUnrestrict = { id?: string; download?: string; streamable?: number };
 const RD_BASE = "https://api.real-debrid.com/rest/1.0";
 
 async function rdGet<T>(path: string, apiKey: string): Promise<T> {
-  return jsonRequest<T>(proxiedUrl(`${RD_BASE}${path}`, { Authorization: `Bearer ${apiKey}` }), { cache: "no-store" });
+  return jsonRequest<T>(apiProxiedUrl(`${RD_BASE}${path}`, { Authorization: `Bearer ${apiKey}` }), { cache: "no-store" });
 }
 
 async function rdPost<T>(path: string, apiKey: string, form: Record<string, string>): Promise<T> {
-  return jsonRequest<T>(proxiedUrl(`${RD_BASE}${path}`, {
+  return jsonRequest<T>(apiProxiedUrl(`${RD_BASE}${path}`, {
     Authorization: `Bearer ${apiKey}`,
     "content-type": "application/x-www-form-urlencoded"
   }), {
@@ -329,7 +329,7 @@ type PmDirectDl = { status?: string; message?: string; content?: PmContentItem[]
 async function premiumizeDirectUrl(info: DebridStreamInfo): Promise<TranscodeResult> {
   const magnet = `magnet:?xt=urn:btih:${info.infoHash}`;
   const payload = await jsonRequest<PmDirectDl>(
-    proxiedUrl("https://www.premiumize.me/api/transfer/directdl", {
+    apiProxiedUrl("https://www.premiumize.me/api/transfer/directdl", {
       Authorization: `Bearer ${info.apiKey}`,
       "content-type": "application/x-www-form-urlencoded"
     }),
@@ -356,7 +356,7 @@ type AdStatus = { id?: number; status?: string; statusCode?: number; links?: Arr
 
 async function adPost<T>(path: string, apiKey: string, form: Record<string, string>) {
   return jsonRequest<AdEnvelope<T>>(
-    proxiedUrl(`https://api.alldebrid.com/v4${path}`, {
+    apiProxiedUrl(`https://api.alldebrid.com/v4${path}`, {
       Authorization: `Bearer ${apiKey}`,
       "content-type": "application/x-www-form-urlencoded"
     }),

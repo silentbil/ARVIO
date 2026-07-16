@@ -1,5 +1,5 @@
 import { config } from "./config";
-import { jsonRequest, proxiedUrl } from "./http";
+import { apiProxiedUrl, jsonRequest, proxiedUrl } from "./http";
 import { tmdbImageUrl } from "./mediaImages";
 import { loadStored, saveStored } from "./storage";
 import type { CatalogConfig, Category, CollectionSourceConfig, EpisodeInfo, InstalledAddon, MediaItem, MediaType, PersonDetails, ReviewInfo } from "./types";
@@ -448,7 +448,7 @@ async function hydrateRefs(refs: Array<{ type: MediaType; id: number }>, languag
 
 async function loadMdblist(catalog: CatalogConfig, language: string) {
   const url = `${catalog.sourceUrl!.replace(/\/+$/, "")}/json`;
-  const payload = await jsonRequest<unknown>(proxiedUrl(url));
+  const payload = await jsonRequest<unknown>(apiProxiedUrl(url));
   const rawItems = Array.isArray(payload)
     ? payload
     : Array.isArray((payload as { items?: unknown[] }).items)
@@ -922,7 +922,7 @@ async function getSeriesEpisodeRatings(imdbId: string) {
   const normalized = imdbId.trim();
   if (!normalized.startsWith("tt")) return new Map<string, string>();
   if (seriesEpisodeRatingsCache.has(normalized)) return seriesEpisodeRatingsCache.get(normalized)!;
-  const payload = await jsonRequest<CinemetaSeries>(proxiedUrl(`https://v3-cinemeta.strem.io/meta/series/${encodeURIComponent(normalized)}.json`));
+  const payload = await jsonRequest<CinemetaSeries>(apiProxiedUrl(`https://v3-cinemeta.strem.io/meta/series/${encodeURIComponent(normalized)}.json`));
   const ratings = new Map<string, string>();
   (payload.meta?.videos ?? []).forEach((video) => {
     const season = Number(video.season);

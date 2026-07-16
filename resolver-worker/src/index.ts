@@ -6,6 +6,7 @@ type Env = {
   ADDON_EXTENDED_TIMEOUT_MS?: string;
   TRAKT_CLIENT_ID?: string;
   TRAKT_CLIENT_SECRET?: string;
+  TMDB_API_KEY?: string;
 };
 
 // Trakt device-token exchange from the Worker. The Netlify backend's egress IP
@@ -146,7 +147,14 @@ export default {
       // episodes found"). Misses go to the stable netlify.app hostname from
       // Cloudflare egress, so client IPs never hit Netlify's counters for TMDB.
       if (url.pathname.startsWith("/api/tmdb/") && request.method === "GET") {
-        return tmdbEdgeCache(request);
+        return tmdbEdgeCache(request, env);
+      }
+      // Generic JSON API relay for allowlisted hosts (debrid APIs, cinemeta,
+      // mdblist): these lack CORS so the browser needs a relay, and running it
+      // here instead of Netlify's /api/proxy keeps those function invocations
+      // and their (large) response bandwidth off the Netlify bill.
+      if (url.pathname === "/proxy" && (request.method === "GET" || request.method === "POST")) {
+        return apiProxy(request, env);
       }
       if (url.pathname === "/health") {
         return json({ ok: true, service: "arvio-resolver" }, request, env);
@@ -174,12 +182,15 @@ export default {
 };
 
 // Cache-first proxy for /api/tmdb/* on web.arvio.tv. Hits are served from the
-// Cloudflare edge cache; misses fetch the same path from the site's stable
-// netlify.app hostname (NOT web.arvio.tv — that would loop back into this
-// worker) and are cached for 6h, matching the route's own s-maxage.
-const TMDB_ORIGIN = "https://arvio-web.netlify.app";
+// Cloudflare edge cache; misses go STRAIGHT to api.themoviedb.org (with the
+// worker's TMDB_API_KEY secret) so TMDB traffic never touches Netlify at all —
+// previously every miss cost TWO Netlify function invocations (the site's
+// /api/tmdb route plus the auth site's tmdb-proxy behind it), the single
+// biggest credits burner. The netlify.app hostname stays as a fallback origin
+// for when TMDB itself is unreachable or no key is configured.
+const TMDB_FALLBACK_ORIGIN = "https://arvio-web.netlify.app";
 
-async function tmdbEdgeCache(request: Request): Promise<Response> {
+async function tmdbEdgeCache(request: Request, env: Env): Promise<Response> {
   const input = new URL(request.url);
   const cache = caches.default;
   const cacheKey = new Request(`https://web.arvio.tv${input.pathname}${input.search}`, { method: "GET" });
@@ -189,23 +200,116 @@ async function tmdbEdgeCache(request: Request): Promise<Response> {
     response.headers.set("x-arvio-edge", "hit");
     return response;
   }
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${TMDB_ORIGIN}${input.pathname}${input.search}`, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(15_000)
+
+  let upstream: Response | null = null;
+  if (env.TMDB_API_KEY) {
+    const direct = new URL(`https://api.themoviedb.org/3/${input.pathname.replace(/^\/api\/tmdb\//, "")}`);
+    input.searchParams.forEach((value, key) => {
+      if (key !== "cv") direct.searchParams.set(key, value);
     });
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "TMDB origin unreachable" }), {
-      status: 502,
-      headers: JSON_HEADERS
-    });
+    direct.searchParams.set("api_key", env.TMDB_API_KEY);
+    try {
+      upstream = await fetch(direct.toString(), {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(12_000)
+      });
+      if (!upstream.ok && upstream.status !== 404) upstream = null;
+    } catch {
+      upstream = null;
+    }
+  }
+  if (!upstream) {
+    try {
+      upstream = await fetch(`${TMDB_FALLBACK_ORIGIN}${input.pathname}${input.search}`, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(15_000)
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "TMDB origin unreachable" }), {
+        status: 502,
+        headers: JSON_HEADERS
+      });
+    }
   }
   const response = new Response(upstream.body, upstream);
   response.headers.set("x-arvio-edge", "miss");
+  response.headers.set("access-control-allow-origin", "*");
   if (upstream.ok) {
     response.headers.set("cache-control", "public, max-age=300, s-maxage=21600");
     await cache.put(cacheKey, response.clone());
+  }
+  return response;
+}
+
+// Hosts /proxy may relay to. Keep this tight — an open relay invites abuse.
+// Debrid APIs carry the user's own bearer token; cinemeta/mdblist are public
+// catalog data (their GETs are edge-cached below since they rarely change).
+const PROXY_ALLOWED_HOSTS = new Set([
+  "api.torbox.app",
+  "api.real-debrid.com",
+  "api.alldebrid.com",
+  "www.premiumize.me",
+  "v3-cinemeta.strem.io",
+  "mdblist.com"
+]);
+const PROXY_CACHEABLE_HOSTS = new Set(["v3-cinemeta.strem.io", "mdblist.com"]);
+
+async function apiProxy(request: Request, env: Env) {
+  const input = new URL(request.url);
+  const raw = input.searchParams.get("url");
+  if (!raw) return json({ error: "Missing url" }, request, env, 400);
+  let target: URL;
+  try {
+    target = new URL(raw);
+  } catch {
+    return json({ error: "Invalid url" }, request, env, 400);
+  }
+  if (target.protocol !== "https:" || !PROXY_ALLOWED_HOSTS.has(target.hostname)) {
+    return json({ error: "Host not allowed" }, request, env, 400);
+  }
+  const origin = request.headers.get("origin");
+  if (origin) {
+    const allowed = (env.ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+    if (allowed.length && !allowed.includes(origin)) {
+      return json({ error: "Origin not allowed" }, request, env, 403);
+    }
+  }
+
+  const cacheable = request.method === "GET" && PROXY_CACHEABLE_HOSTS.has(target.hostname);
+  const cache = caches.default;
+  const cacheKey = new Request(`https://resolve.arvio.tv/proxy?url=${encodeURIComponent(target.toString())}`, { method: "GET" });
+  if (cacheable) {
+    const hit = await cache.match(cacheKey);
+    if (hit) {
+      const response = new Response(hit.body, hit);
+      response.headers.set("x-arvio-edge", "hit");
+      return response;
+    }
+  }
+
+  const forwarded = new Headers({ accept: "application/json" });
+  for (const [key, value] of Object.entries(decodeMediaHeaders(input.searchParams.get("h")))) {
+    if (/^(authorization|content-type|user-agent|x-api-key)$/i.test(key)) forwarded.set(key, value);
+  }
+  let upstream: Response;
+  try {
+    upstream = await fetch(target.toString(), {
+      method: request.method,
+      headers: forwarded,
+      body: request.method === "POST" ? await request.text() : undefined,
+      signal: AbortSignal.timeout(25_000)
+    });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Upstream fetch failed" }, request, env, 502);
+  }
+  const headers = new Headers(corsHeaders(request, env));
+  headers.set("content-type", upstream.headers.get("content-type") ?? "application/json");
+  headers.set("cache-control", "no-store");
+  const response = new Response(upstream.body, { status: upstream.status, headers });
+  if (cacheable && upstream.ok) {
+    response.headers.set("cache-control", "public, max-age=300, s-maxage=21600");
+    await cache.put(cacheKey, response.clone());
+    response.headers.set("x-arvio-edge", "miss");
   }
   return response;
 }

@@ -261,6 +261,19 @@ export class TraktClient {
         ...(init.headers ?? {})
       }
     } satisfies RequestInit;
+    // Direct-first: api.trakt.tv serves CORS to browsers, so most calls never
+    // need the Netlify proxy — each proxied call was a paid function
+    // invocation (~8 per boot per user, up to ~120 on cold progress caches),
+    // and Trakt intermittently blocks Netlify egress anyway. The proxy remains
+    // the fallback for networks where Trakt challenges browser preflights, and
+    // the primary path for oauth flows that need the backend secret.
+    if (this.canUseDirectFallback(path, init)) {
+      try {
+        return await this.directTrakt<T>(path, request);
+      } catch {
+        return jsonRequest<T>(url.toString(), request);
+      }
+    }
     try {
       return await jsonRequest<T>(url.toString(), request);
     } catch (error) {

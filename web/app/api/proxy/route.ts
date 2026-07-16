@@ -65,7 +65,37 @@ export async function GET(request: NextRequest) {
   if (contentLength) headers.set("content-length", contentLength);
   if (contentRange) headers.set("content-range", contentRange);
 
+  // Cache big, rarely-changing IPTV catalog responses (multi-MB channel/VOD
+  // lists, M3U playlists) on the CDN so repeat loads don't re-invoke this
+  // function and re-stream megabytes — a major credits burner for TV users.
+  // The cache key varies by the FULL query string (Netlify-Vary: query is
+  // mandatory here — without it every variant collapses into one entry), which
+  // includes the user's credentials, so entries are effectively per-account.
+  // Live "what's on now" data (get_short_epg etc.) is deliberately excluded.
+  if (request.method === "GET" && response.ok && isCacheableIptvCatalog(target)) {
+    headers.set("netlify-cdn-cache-control", "public, durable, max-age=3600, stale-while-revalidate=86400");
+    headers.set("netlify-vary", "query");
+  }
+
   return new NextResponse(response.body, { status: response.status, headers });
+}
+
+const CACHEABLE_XTREAM_ACTIONS = new Set([
+  "get_live_streams",
+  "get_live_categories",
+  "get_vod_streams",
+  "get_vod_categories",
+  "get_series",
+  "get_series_categories"
+]);
+
+function isCacheableIptvCatalog(target: URL) {
+  const lowerPath = target.pathname.toLowerCase();
+  if (lowerPath.endsWith("/player_api.php")) {
+    const action = target.searchParams.get("action")?.toLowerCase() ?? "";
+    return CACHEABLE_XTREAM_ACTIONS.has(action);
+  }
+  return isLikelyPlaylistTarget(target);
 }
 
 export async function POST(request: NextRequest) {

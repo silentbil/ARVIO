@@ -1,3 +1,5 @@
+import { config } from "./config";
+
 function cleanErrorMessage(status: number, raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return `Request failed with ${status}`;
@@ -60,6 +62,21 @@ export function proxiedUrl(url: string, headers?: Record<string, string>) {
   target.searchParams.set("url", url);
   if (headers && Object.keys(headers).length > 0) {
     target.searchParams.set("headers", btoa(JSON.stringify(headers)));
+  }
+  return target.toString();
+}
+
+// JSON-API relay via the Cloudflare resolver worker (free requests, and
+// cinemeta/mdblist GETs are edge-cached there) instead of the Netlify
+// /api/proxy function — debrid/catalog traffic was a large share of the
+// Netlify credits burn. The worker only accepts an allowlist of API hosts;
+// for anything else (or when no resolver is configured) use proxiedUrl.
+export function apiProxiedUrl(url: string, headers?: Record<string, string>) {
+  if (!config.resolverUrl) return proxiedUrl(url, headers);
+  const target = new URL(`${config.resolverUrl.replace(/\/+$/, "")}/proxy`);
+  target.searchParams.set("url", url);
+  if (headers && Object.keys(headers).length > 0) {
+    target.searchParams.set("h", btoa(JSON.stringify(headers)));
   }
   return target.toString();
 }
