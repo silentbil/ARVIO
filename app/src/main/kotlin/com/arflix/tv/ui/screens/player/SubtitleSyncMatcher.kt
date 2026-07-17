@@ -198,8 +198,13 @@ object SubtitleSyncMatcher {
         var bestScore = baseScore
         fun consider(off: Long) {
             val s = scoreSortedShifted(sorted, referenceIntervals, off)
-            if (s > bestScore) {
+            // Strictly better wins; on a tie prefer the offset CLOSEST to zero — real sync errors
+            // are small, and a far offset that merely ties a near one is spurious (the sweep starts
+            // at −max, so without this the far offset would win every tie).
+            if (s > bestScore + 1e-9) {
                 bestScore = s
+                bestOff = off
+            } else if (s > bestScore - 1e-9 && Math.abs(off) < Math.abs(bestOff)) {
                 bestOff = off
             }
         }

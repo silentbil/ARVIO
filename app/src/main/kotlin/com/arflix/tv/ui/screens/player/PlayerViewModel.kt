@@ -43,6 +43,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -1588,14 +1589,15 @@ class PlayerViewModel @Inject constructor(
                 ?: embedded.firstOrNull { it.isUsableSource() }
         }
 
-        // AI translation only ever translates a BUILT-IN (embedded) ENGLISH track. It must never
-        // use an EXTERNAL addon sub as source (its timing is unverified, and when the user already
-        // has target-language addon subs the app should pick/verify one of those or use the hearing
-        // scan — not AI-translate an English addon). And "no built-in English ⇒ no AI translation":
-        // the match scan then falls to hearing (if a Gemini key + AI feature are on), then to the
-        // top release-name-scored addon sub. (The timing-scan reference — `builtInReference` in
-        // findBestSubtitleMatch — is separate and may still use a non-English embedded track.)
+        // AI translation only ever translates a BUILT-IN (embedded) track — English first, else any
+        // other embedded foreign-language track. It must NEVER use an EXTERNAL addon sub as source
+        // (unverified timing, and when the user has target-language addon subs the app should
+        // pick/verify one of those or use the hearing scan — not AI-translate an English addon).
+        // So "no embedded source ⇒ no AI translation": the scan then falls to hearing (if a Gemini
+        // key + AI feature are on), then to the top release-name-scored addon sub.
         return subtitles.filter { normalizeLanguage(it.lang) == "en" }.bestEmbedded()
+            ?: subtitles.filter { it.lang.isNotBlank() }.bestEmbedded()
+            ?: subtitles.bestEmbedded()
     }
 
     private fun languageCodeToName(code: String): String {
@@ -2856,6 +2858,14 @@ class PlayerViewModel @Inject constructor(
                 delay(200)
             }
             val subs = _uiState.value.subtitles
+            // TEMP diagnostic (PR #456 follow-up: built-in Hebrew not selected on some sources) —
+            // dump embedded tracks with the exact fields the target-language filter checks.
+            android.util.Log.i(
+                "SubMatch",
+                "embedded tracks (target='$targetLang'): " + subs.filter { it.isEmbedded }.joinToString(" | ") {
+                    "lang=${it.lang}->${normalizeLanguage(it.lang)} bmp=${it.isBitmap} forced=${it.isForced} label='${it.label}'"
+                }.ifBlank { "<none>" }
+            )
 
             // An embedded target-language track is muxed into the media → guaranteed in sync.
             val embedded = subs.firstOrNull {
@@ -2900,13 +2910,21 @@ class PlayerViewModel @Inject constructor(
                     // slow addon server (download bounded by the matcher's client timeouts).
                     // Re-bake the remembered rescue offset, if any.
                     val offsetMs = cached.offsetMs
-                    val local = SubtitleSyncMatcher.loadRaw(remembered.url)
-                        ?.let { localizeSubtitle(remembered, it, offsetMs) } ?: remembered
-                    endMatch()
-                    selectSubtitle(local, isUserAction = false)
-                    val offsetNote = if (offsetMs != 0L) " (auto-offset ${formatMatchOffset(offsetMs)})" else ""
-                    showMatchToast("Matched: ${remembered.label} (remembered)$offsetNote")
-                    return@launch
+                    val raw = SubtitleSyncMatcher.loadRaw(remembered.url)
+                    // A remembered OFFSET can only be honoured if we can download the text to bake
+                    // the shift in. If that download fails, DON'T serve the un-shifted remote copy
+                    // under an "auto-offset" label (the sub would be mistimed while the UI claims it
+                    // was corrected) — fall through to a fresh scan instead.
+                    if (raw == null && offsetMs != 0L) {
+                        Log.w("SubMatch", "remembered offset download failed — rescanning instead of serving unshifted")
+                    } else {
+                        val local = raw?.let { localizeSubtitle(remembered, it, offsetMs) } ?: remembered
+                        endMatch()
+                        selectSubtitle(local, isUserAction = false)
+                        val offsetNote = if (offsetMs != 0L) " (auto-offset ${formatMatchOffset(offsetMs)})" else ""
+                        showMatchToast("Matched: ${remembered.label} (remembered)$offsetNote")
+                        return@launch
+                    }
                 }
             }
 
@@ -3055,12 +3073,19 @@ class PlayerViewModel @Inject constructor(
         val tol = MATCH_OVERLAP_TOLERANCE_MS
         // Orphan-drop: discard reference windows that NO candidate covers at all — almost always
         // SDH/non-dialogue reference cues (sound effects, on-screen text) the dialogue subs lack.
-        // Left in, each one scores a hard 0 for every candidate and craters an otherwise-perfect
-        // sub (worse the fewer windows there are). Guarded so we never drop down to too little.
+        // Left in, each scores a hard 0 for everyone and craters an otherwise-perfect sub. But only
+        // drop when the uncovered windows are a small MINORITY: if a large fraction is uncovered
+        // that's bad sync across the board (not SDH), and dropping it would shrink the denominator
+        // enough to inflate a sub that matches only a couple of windows into a false ~100%.
         val covered = rawRefs.filter { (rs, re) ->
             loaded.any { (_, cues) -> cues.any { it.startMs < re && rs < it.endMs } }
         }
-        val refs = if (covered.size >= MATCH_MIN_REF_INTERVALS) covered else rawRefs
+        val keepFloor = Math.ceil(rawRefs.size * MATCH_ORPHAN_KEEP_MIN_FRACTION).toInt()
+        val refs = if (covered.size >= MATCH_MIN_REF_INTERVALS && covered.size >= keepFloor) {
+            covered
+        } else {
+            rawRefs
+        }
         data class Est(
             val sub: Subtitle,
             val cues: List<SubtitleSyncMatcher.TimedCue>,
@@ -3253,8 +3278,13 @@ class PlayerViewModel @Inject constructor(
             ) break
             // Early accept: scoring is free, so score incrementally — once some candidate is
             // already clearly in sync there's no need to keep collecting up to the target.
+            // Scoring is CPU-heavy (esp. the offset sweep below, ×N candidates) — run it off the
+            // Main dispatcher so it can't stutter playback/UI on slower TV boxes. The buffered-cue
+            // reflection reads at the top of the loop stay on Main (withContext returns here after).
             val bestNow = if (refs.size >= MATCH_EARLY_ACCEPT_REFS) {
-                loaded.maxOf { (_, cues) -> SubtitleSyncMatcher.scoreByTiming(cues, refs) }
+                withContext(Dispatchers.Default) {
+                    loaded.maxOf { (_, cues) -> SubtitleSyncMatcher.scoreByTiming(cues, refs) }
+                }
             } else {
                 0.0
             }
@@ -3272,7 +3302,9 @@ class PlayerViewModel @Inject constructor(
             if (spanOk && refs.size >= MATCH_OFFSET_EARLY_REFS &&
                 bufferedCount >= MATCH_MIN_BUFFERED_FOR_REJECT
             ) {
-                val early = scoreCandidatesWithOffsets(loaded, refs, debug = false)
+                val early = withContext(Dispatchers.Default) {
+                    scoreCandidatesWithOffsets(loaded, refs, debug = false)
+                }
                     .filter { it.offsetMs != 0L }
                     .maxByOrNull { it.score }
                 if (early != null && early.score >= MATCH_OFFSET_CORROBORATED_ACCEPT) break
@@ -3320,7 +3352,7 @@ class PlayerViewModel @Inject constructor(
             )
         }
 
-        val results = scoreCandidatesWithOffsets(loaded, refs, debug = true)
+        val results = withContext(Dispatchers.Default) { scoreCandidatesWithOffsets(loaded, refs, debug = true) }
         // A LOW score from a realtime-dominated reference (give-up exit without buffered quorum)
         // is not evidence of a bad sub — report inconclusive instead of a confident
         // "no well-synced subtitle (best N%)" reject. Accepts pass through unchanged.
@@ -4432,6 +4464,9 @@ class PlayerViewModel @Inject constructor(
         // keep its peaks sharp. Kept modest so a truly mis-synced sub (≥~1s off) still fails here
         // and is instead caught by the offset search.
         private const val MATCH_OVERLAP_TOLERANCE_MS = 400L
+        // Orphan-drop only fires when at least this fraction of reference windows stay covered by
+        // some candidate; below it, keep all windows (widespread non-coverage = bad sync, not SDH).
+        private const val MATCH_ORPHAN_KEEP_MIN_FRACTION = 0.7
         private const val MATCH_OFFSET_MIN_MS = 300L      // below this the sub is "already aligned" — normal path owns it
         private const val MATCH_OFFSET_MAX_MS = 10_000L   // above this a "constant offset" is implausible
         private const val MATCH_OFFSET_ACCEPT = 0.80      // single candidate: strict bar (no corroboration available)
