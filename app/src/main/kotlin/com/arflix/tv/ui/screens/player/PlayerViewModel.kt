@@ -2858,14 +2858,6 @@ class PlayerViewModel @Inject constructor(
                 delay(200)
             }
             val subs = _uiState.value.subtitles
-            // TEMP diagnostic (PR #456 follow-up: built-in Hebrew not selected on some sources) —
-            // dump embedded tracks with the exact fields the target-language filter checks.
-            android.util.Log.i(
-                "SubMatch",
-                "embedded tracks (target='$targetLang'): " + subs.filter { it.isEmbedded }.joinToString(" | ") {
-                    "lang=${it.lang}->${normalizeLanguage(it.lang)} bmp=${it.isBitmap} forced=${it.isForced} label='${it.label}'"
-                }.ifBlank { "<none>" }
-            )
 
             // An embedded target-language track is muxed into the media → guaranteed in sync.
             val embedded = subs.firstOrNull {
