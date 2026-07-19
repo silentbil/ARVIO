@@ -154,6 +154,9 @@ import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogDiscoveryResult
 import com.arflix.tv.data.model.CatalogKind
 import com.arflix.tv.data.model.CatalogPackManifest
+import com.arflix.tv.data.model.effectivePackId
+import com.arflix.tv.data.model.effectivePackName
+import com.arflix.tv.data.model.isBulkDeletablePack
 import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.QualityFilterConfig
 import com.arflix.tv.data.model.RuntimeKind
@@ -1060,9 +1063,9 @@ fun SettingsScreen(
                                                             }
                                                         }
                                                         else -> {
-                                                            if (catalog.packId != null) {
-                                                                deletePackId = catalog.packId
-                                                                deletePackName = catalog.packName ?: ""
+                                                            if (catalog.isBulkDeletablePack) {
+                                                                deletePackId = catalog.effectivePackId
+                                                                deletePackName = catalog.effectivePackName
                                                                 showDeletePackConfirm = true
                                                             } else {
                                                                 viewModel.removeCatalog(catalog.id)
@@ -1165,9 +1168,9 @@ fun SettingsScreen(
                     showCatalogRename = true
                 },
                 onDeleteCatalogClick = { catalog ->
-                    if (catalog.packId != null) {
-                        deletePackId = catalog.packId
-                        deletePackName = catalog.packName ?: ""
+                    if (catalog.isBulkDeletablePack) {
+                        deletePackId = catalog.effectivePackId
+                        deletePackName = catalog.effectivePackName
                         showDeletePackConfirm = true
                     } else {
                         viewModel.removeCatalog(catalog.id)
@@ -1581,9 +1584,9 @@ fun SettingsScreen(
                             onMoveCatalogUp = { catalog -> viewModel.moveCatalogUp(catalog.id) },
                             onMoveCatalogDown = { catalog -> viewModel.moveCatalogDown(catalog.id) },
                             onDeleteCatalog = { catalog ->
-                                if (catalog.packId != null) {
-                                    deletePackId = catalog.packId
-                                    deletePackName = catalog.packName ?: ""
+                                if (catalog.isBulkDeletablePack) {
+                                    deletePackId = catalog.effectivePackId
+                                    deletePackName = catalog.effectivePackName
                                     showDeletePackConfirm = true
                                 } else {
                                     viewModel.removeCatalog(catalog.id)
@@ -7155,31 +7158,25 @@ private fun CatalogsSettings(
                         val title = if (catalog.isPreinstalled) { when (catalog.kind) { CatalogKind.COLLECTION -> stringResource(R.string.settings_title_builtin_collection, catalog.title); CatalogKind.COLLECTION_RAIL -> stringResource(R.string.settings_title_builtin_rail, catalog.title); else -> stringResource(R.string.settings_title_builtin, catalog.title) } } else catalog.title
                         val collectionFallback = stringResource(R.string.settings_collection_fallback)
                         val addonFallback = stringResource(R.string.settings_source_addon)
-                        val subtitle = when {
-                            catalog.kind == CatalogKind.COLLECTION_RAIL -> {
-                                val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
-                                stringResource(R.string.settings_group_rail, group)
-                            }
-                            catalog.kind == CatalogKind.COLLECTION -> {
-                                val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
-                                stringResource(R.string.settings_group_collection, group)
-                            }
-                            catalog.sourceType == CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_preinstalled_catalog)
-                            else -> when (catalog.sourceType) {
-                                CatalogSourceType.ADDON -> {
+                        val subtitle = run {
+                            val baseSubtitle = when {
+                                catalog.kind == CatalogKind.COLLECTION_RAIL -> {
+                                    val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
+                                    stringResource(R.string.settings_group_rail, group)
+                                }
+                                catalog.kind == CatalogKind.COLLECTION -> {
+                                    val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
+                                    stringResource(R.string.settings_group_collection, group)
+                                }
+                                catalog.sourceType == CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_preinstalled_catalog)
+                                catalog.sourceType == CatalogSourceType.ADDON -> {
                                     val addonLabel = catalog.addonName?.takeIf { it.isNotBlank() } ?: addonFallback
                                     stringResource(R.string.settings_from_source, addonLabel)
                                 }
-                                CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
-                                else -> {
-                                    val base = catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
-                                    if (catalog.packName != null) {
-                                        "Pack: ${catalog.packName} • $base"
-                                    } else {
-                                        base
-                                    }
-                                }
+                                catalog.sourceType == CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
+                                else -> catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
                             }
+                            "Pack: ${catalog.effectivePackName} • $baseSubtitle"
                         }
                         val isSelected = selectedIds.contains(catalog.id)
                         val layoutToggleEnabled = catalog.kind != CatalogKind.COLLECTION_RAIL
@@ -7246,31 +7243,25 @@ private fun CatalogsSettings(
                 val title = if (catalog.isPreinstalled) { when (catalog.kind) { CatalogKind.COLLECTION -> stringResource(R.string.settings_title_builtin_collection, catalog.title); CatalogKind.COLLECTION_RAIL -> stringResource(R.string.settings_title_builtin_rail, catalog.title); else -> stringResource(R.string.settings_title_builtin, catalog.title) } } else catalog.title
                 val collectionFallback = stringResource(R.string.settings_collection_fallback)
                 val addonFallback = stringResource(R.string.settings_source_addon)
-                val subtitle = when {
-                    catalog.kind == CatalogKind.COLLECTION_RAIL -> {
-                        val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
-                        stringResource(R.string.settings_group_rail, group)
-                    }
-                    catalog.kind == CatalogKind.COLLECTION -> {
-                        val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
-                        stringResource(R.string.settings_group_collection, group)
-                    }
-                    catalog.sourceType == CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_preinstalled_catalog)
-                    else -> when (catalog.sourceType) {
-                        CatalogSourceType.ADDON -> {
+                val subtitle = run {
+                    val baseSubtitle = when {
+                        catalog.kind == CatalogKind.COLLECTION_RAIL -> {
+                            val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
+                            stringResource(R.string.settings_group_rail, group)
+                        }
+                        catalog.kind == CatalogKind.COLLECTION -> {
+                            val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: collectionFallback
+                            stringResource(R.string.settings_group_collection, group)
+                        }
+                        catalog.sourceType == CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_preinstalled_catalog)
+                        catalog.sourceType == CatalogSourceType.ADDON -> {
                             val addonLabel = catalog.addonName?.takeIf { it.isNotBlank() } ?: addonFallback
                             stringResource(R.string.settings_from_source, addonLabel)
                         }
-                        CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
-                        else -> {
-                            val base = catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
-                            if (catalog.packName != null) {
-                                "Pack: ${catalog.packName} • $base"
-                            } else {
-                                base
-                            }
-                        }
+                        catalog.sourceType == CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
+                        else -> catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
                     }
+                    "Pack: ${catalog.effectivePackName} • $baseSubtitle"
                 }
                 val isSelected = selectedIds.contains(catalog.id)
                 val layoutToggleEnabled = catalog.kind != CatalogKind.COLLECTION_RAIL

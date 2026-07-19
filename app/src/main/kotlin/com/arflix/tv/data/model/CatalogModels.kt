@@ -105,6 +105,33 @@ data class CatalogConfig(
     val packName: String? = null
 ) : Serializable
 
+val CatalogConfig.effectivePackId: String
+    get() = packId ?: when (sourceType) {
+        CatalogSourceType.PREINSTALLED -> "system"
+        CatalogSourceType.ADDON -> "addon"
+        CatalogSourceType.TRAKT -> "trakt"
+        CatalogSourceType.MDBLIST -> "mdblist"
+        CatalogSourceType.HOME_SERVER -> "home_server"
+    }
+
+val CatalogConfig.effectivePackName: String
+    get() = packName ?: when (sourceType) {
+        CatalogSourceType.PREINSTALLED -> "System Catalogs"
+        CatalogSourceType.ADDON -> "Addon Catalogs"
+        CatalogSourceType.TRAKT -> "Trakt Catalogs"
+        CatalogSourceType.MDBLIST -> "MDBlist Catalogs"
+        CatalogSourceType.HOME_SERVER -> "Home Server Catalogs"
+    }
+
+val CatalogConfig.isBulkDeletablePack: Boolean
+    get() = packId != null &&
+            packId != "system" &&
+            packId != "addon" &&
+            packId != "trakt" &&
+            packId != "mdblist" &&
+            packId != "home_server" &&
+            packId != "individual"
+
 data class CatalogDiscoveryResult(
     val id: String,
     val title: String,

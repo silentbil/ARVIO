@@ -1,0 +1,44 @@
+[
+  {
+    "id": "cinema-essentials",
+    "name": "Cinema Essentials",
+    "author": "ARVIO Team",
+    "version": "1.0.0",
+    "description": "All the trending movies, popular lists, and upcoming releases you need for a perfect movie night.",
+    "url": "https://arvio.app/packs/cinema-essentials.json",
+    "catalogs": ["Trending in Movies", "Top 10 Movies Today", "Top Movies This Week", "Coming Soon"]
+  },
+  {
+    "id": "tv-binge",
+    "name": "TV Show Binge Pack",
+    "author": "ARVIO Team",
+    "version": "1.0.0",
+    "description": "Never miss an episode. Popular, trending, and latest airing series in one convenient bundle.",
+    "url": "https://arvio.app/packs/tv-binge.json",
+    "catalogs": ["Trending in Shows", "Top 10 Shows Today", "Latest Airing"]
+  },
+  {
+    "id": "anime-kdrama",
+    "name": "Otaku & K-Drama Hub",
+    "author": "Community",
+    "version": "1.1.2",
+    "description": "The ultimate pack for anime lovers and K-Drama fans. Auto-updated lists of trending episodes and releases.",
+    "url": "https://arvio.app/packs/anime-kdrama.json",
+    "catalogs": ["Trending in Anime", "New in K-Dramas"]
+  },
+  {
+    "id": "classics-franchises",
+    "name": "Action & Franchise Classics",
+    "author": "Cinephile",
+    "version": "1.0.5",
+    "description": "Full box-sets and classic franchise collections, including James Bond, Harry Potter, Lord of the Rings, and Jurassic Park.",
+    "url": "https://arvio.app/packs/classics-franchises.json",
+    "catalogs": [
+      "James Bond Collection",
+      "Harry Potter Collection",
+      "The Matrix Collection",
+      "Lord of the Rings and Hobbit Collection",
+      "Jurassic Park Collection"
+    ]
+  }
+]
