@@ -63,7 +63,7 @@ private fun isSupplementalStream(stream: StreamSource): Boolean =
 private fun Addon.isVodStreamingAddon(): Boolean =
     isEnabled &&
         type != AddonType.SUBTITLE &&
-        !SportsAddonCapabilities.isSportsLiveTvAddon(this)
+        !SportsAddonCapabilities.isSportsOnlyLiveTvAddon(this)
 
 private const val PLAYBACK_DIAGNOSTICS = true
 

@@ -32,6 +32,8 @@ object SportsAddonCapabilities {
 
     private val liveTerms = setOf("live", "event", "events", "match", "matches", "game", "games")
 
+    private val explicitVodTypes = setOf("movie", "film", "series", "show", "anime")
+
     fun isSportsHomeStatus(status: String?): Boolean {
         val value = status ?: return false
         return value.startsWith(SPORTS_STATUS_PREFIX) ||
@@ -58,6 +60,12 @@ object SportsAddonCapabilities {
 
     fun isSportsLiveTvAddon(addon: Addon): Boolean =
         addon.manifest?.let(::isSportsLiveTvManifest) == true
+
+    fun isSportsOnlyLiveTvAddon(addon: Addon): Boolean =
+        addon.manifest?.let(::isSportsOnlyLiveTvManifest) == true
+
+    fun isSportsOnlyLiveTvManifest(manifest: AddonManifest): Boolean =
+        isSportsLiveTvManifest(manifest) && !manifestDeclaresVodStreams(manifest)
 
     fun isSportsLiveTvManifest(manifest: AddonManifest): Boolean {
         val resources = manifest.safeResources()
@@ -102,6 +110,20 @@ object SportsAddonCapabilities {
 
     fun sportsSyntheticId(raw: String): Int =
         (raw.hashCode() and Int.MAX_VALUE).takeIf { it > 0 } ?: 1
+
+    private fun manifestDeclaresVodStreams(manifest: AddonManifest): Boolean {
+        if (manifest.safeTypes().any(::isExplicitVodType)) return true
+        if (manifest.safeCatalogs().any { catalog -> isExplicitVodType(catalog.type) }) return true
+
+        return manifest.safeResources().any { resource ->
+            val isStreamResource = resource.safeName().equals("stream", ignoreCase = true) ||
+                resource.safeName().equals("streams", ignoreCase = true)
+            isStreamResource && resource.safeTypes().any(::isExplicitVodType)
+        }
+    }
+
+    private fun isExplicitVodType(value: String): Boolean =
+        value.trim().lowercase(Locale.US) in explicitVodTypes
 
     private fun normalizedText(vararg parts: String?): String =
         parts.filterNotNull().joinToString(" ").lowercase(Locale.US)

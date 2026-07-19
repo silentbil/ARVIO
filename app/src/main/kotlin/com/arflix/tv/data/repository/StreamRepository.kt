@@ -175,6 +175,22 @@ internal fun streamAddonConfigurationRevision(addons: List<Addon>): String {
         .joinToString("") { byte -> "%02x".format(byte) }
 }
 
+internal fun usesSlowAggregatorTimeout(addon: Addon): Boolean {
+    val haystack = listOf(
+        addon.id,
+        addon.name,
+        addon.url.orEmpty(),
+        addon.transportUrl.orEmpty(),
+        addon.manifest?.id.orEmpty(),
+        addon.manifest?.name.orEmpty()
+    ).joinToString(" ").lowercase(Locale.US)
+    return haystack.contains("aiostreams") ||
+        haystack.contains("aio-streams") ||
+        haystack.contains("comet") ||
+        haystack.contains("mediafusion") ||
+        haystack.contains("hdhub")
+}
+
 /**
  * Repository for stream resolution from Stremio addons
  * Enhanced with addon management
@@ -1259,10 +1275,9 @@ class StreamRepository @Inject constructor(
                     // Skip subtitle addons
                     if (addon.type == AddonType.SUBTITLE) return@filter false
 
-                    // Sports live TV addons are queried only by the sports home rows.
-                    // Keeping them out of normal VOD source discovery avoids slowing
-                    // movie/series source lookup and autoplay.
-                    if (SportsAddonCapabilities.isSportsLiveTvAddon(addon)) return@filter false
+                    // Sports-only addons are queried by the sports home rows. Hybrid addons
+                    // can expose sports catalogs and regular movie/series streams together.
+                    if (SportsAddonCapabilities.isSportsOnlyLiveTvAddon(addon)) return@filter false
 
                     // Must have a URL to fetch from
                     if (addon.url.isNullOrBlank()) return@filter false
@@ -1300,7 +1315,7 @@ class StreamRepository @Inject constructor(
 
         // Apply id-prefix filtering per-call (varies by id, cheap string ops).
         return baseCandidates.filter { addon ->
-            if (SportsAddonCapabilities.isSportsLiveTvAddon(addon)) return@filter false
+            if (SportsAddonCapabilities.isSportsOnlyLiveTvAddon(addon)) return@filter false
             if (addon.type == AddonType.CUSTOM) return@filter true
             val manifest = addon.manifest
             if (manifest != null && manifest.resources.isNotEmpty()) {
@@ -1432,10 +1447,11 @@ class StreamRepository @Inject constructor(
     private val ADDON_EXTENDED_TIMEOUT_MS = 30_000L
     private val ADDON_EXTENDED_EPISODE_TIMEOUT_MS = 45_000L
     private val ADDON_EXTENDED_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 35_000L
-    // Aggregators (AIOStreams/Comet/MediaFusion): cover the ~10-15s cold case without the full
-    // 30s. Progressive fetch means these seconds never block the fast addons' results.
-    private val ADDON_AGGREGATOR_TIMEOUT_MS = 12_000L
-    private val ADDON_AGGREGATOR_EPISODE_TIMEOUT_MS = 15_000L
+    // Aggregators (AIOStreams/Comet/MediaFusion/HdHub) can take well over the default timeout
+    // on a cold request. Progressive fetch keeps them from blocking faster addon results.
+    private val ADDON_AGGREGATOR_TIMEOUT_MS = 20_000L
+    private val ADDON_AGGREGATOR_EPISODE_TIMEOUT_MS = 25_000L
+    private val ADDON_AGGREGATOR_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 18_000L
     // Subtitles should not block playback but need enough time on slow connections.
     // Generous because aggregator addons (AIOStreams) fan out to upstreams server-side and can
     // take 10s+ cold (or 502 outright, then succeed warm — hence the retry). Fetches run in
@@ -1446,6 +1462,7 @@ class StreamRepository @Inject constructor(
     // If addons already returned streams, keep VOD lookup shorter to avoid UI delay.
     private val VOD_APPEND_TIMEOUT_MS = 3_000L
     private val STREAM_RESULT_CACHE_TTL_MS = 10 * 60_000L
+    private val STREAM_RESULT_EMPTY_CACHE_TTL_MS = 15_000L
     private val STREAM_RESULT_CACHE_HTTP_TTL_MS = 90_000L
     private val STREAM_RESULT_CACHE_HTTP_EPHEMERAL_TTL_MS = 30_000L
     private val EPISODE_STREAM_CACHE_TYPE = "series_v3"
@@ -1463,7 +1480,7 @@ class StreamRepository @Inject constructor(
 
     private fun cacheTtlMsFor(result: StreamResult): Long {
         val streams = result.streams
-        if (streams.isEmpty()) return STREAM_RESULT_CACHE_TTL_MS
+        if (streams.isEmpty()) return STREAM_RESULT_EMPTY_CACHE_TTL_MS
 
         val hasHttp = streams.any { stream ->
             val url = stream.url?.trim().orEmpty()
@@ -1554,17 +1571,6 @@ class StreamRepository @Inject constructor(
      * telegram/flix). Safe because the movie/episode fetch is progressive: fast addons already
      * showed; the aggregator just appends when it lands.
      */
-    private fun addonIsSlowAggregator(addon: Addon): Boolean {
-        val haystack = listOf(
-            addon.id, addon.name, addon.url.orEmpty(), addon.transportUrl.orEmpty(),
-            addon.manifest?.id.orEmpty(), addon.manifest?.name.orEmpty()
-        ).joinToString(" ").lowercase(Locale.US)
-        return haystack.contains("aiostreams") ||
-            haystack.contains("aio-streams") ||
-            haystack.contains("comet") ||
-            haystack.contains("mediafusion")
-    }
-
     private fun latencyBucket(ms: Long): String = when {
         ms < 500L -> "lt_500ms"
         ms < 2_000L -> "lt_2s"
@@ -1594,7 +1600,7 @@ class StreamRepository @Inject constructor(
         val startedAt = System.currentTimeMillis()
         val addonTimeoutMs = when {
             addonNeedsExtendedStreamTimeout(addon) -> ADDON_EXTENDED_TIMEOUT_MS
-            addonIsSlowAggregator(addon) -> ADDON_AGGREGATOR_TIMEOUT_MS
+            usesSlowAggregatorTimeout(addon) -> ADDON_AGGREGATOR_TIMEOUT_MS
             else -> ADDON_TIMEOUT_MS
         }
         return try {
@@ -1689,7 +1695,7 @@ class StreamRepository @Inject constructor(
         val addonTimeoutMs = when {
             extendedTimeout -> ADDON_EXTENDED_EPISODE_TIMEOUT_MS
             nativeAnimeAddonHint -> ADDON_NATIVE_ANIME_EPISODE_TIMEOUT_MS
-            addonIsSlowAggregator(addon) -> ADDON_AGGREGATOR_EPISODE_TIMEOUT_MS
+            usesSlowAggregatorTimeout(addon) -> ADDON_AGGREGATOR_EPISODE_TIMEOUT_MS
             else -> ADDON_EPISODE_TIMEOUT_MS
         }
         return try {
@@ -1785,6 +1791,7 @@ class StreamRepository @Inject constructor(
                     val singleRequestTimeoutMs = when {
                         extendedTimeout -> ADDON_EXTENDED_SINGLE_STREAM_REQUEST_TIMEOUT_MS
                         nativeAnimeAddon -> ADDON_NATIVE_ANIME_SINGLE_STREAM_REQUEST_TIMEOUT_MS
+                        usesSlowAggregatorTimeout(addon) -> ADDON_AGGREGATOR_SINGLE_STREAM_REQUEST_TIMEOUT_MS
                         else -> ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS
                     }
                     for (requestType in streamRequestTypes(contentId, preferAnimePath)) {

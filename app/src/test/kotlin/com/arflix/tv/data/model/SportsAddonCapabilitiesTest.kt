@@ -24,6 +24,7 @@ class SportsAddonCapabilitiesTest {
         )
 
         assertTrue(SportsAddonCapabilities.isSportsLiveTvManifest(manifest))
+        assertTrue(SportsAddonCapabilities.isSportsOnlyLiveTvManifest(manifest))
     }
 
     @Test
@@ -44,6 +45,29 @@ class SportsAddonCapabilitiesTest {
         )
 
         assertFalse(SportsAddonCapabilities.isSportsLiveTvManifest(manifest))
+        assertFalse(SportsAddonCapabilities.isSportsOnlyLiveTvManifest(manifest))
+    }
+
+    @Test
+    fun `hybrid vod addon with sports catalogs is not sports only`() {
+        val manifest = AddonManifest(
+            id = "org.flickystream.addon",
+            name = "Flix Streams",
+            version = "1.1.20",
+            description = "Movies, series, anime, and live sports",
+            types = listOf("movie", "series", "anime", "tv"),
+            resources = listOf(
+                AddonResource(name = "stream"),
+                AddonResource(name = "catalog"),
+                AddonResource(name = "meta")
+            ),
+            catalogs = listOf(
+                AddonCatalog(type = "tv", id = "live-tv-sports-top", name = "Live Sports")
+            )
+        )
+
+        assertTrue(SportsAddonCapabilities.isSportsLiveTvManifest(manifest))
+        assertFalse(SportsAddonCapabilities.isSportsOnlyLiveTvManifest(manifest))
     }
 
     @Test
@@ -67,6 +91,7 @@ class SportsAddonCapabilitiesTest {
         )
 
         assertTrue(SportsAddonCapabilities.isSportsLiveTvManifest(manifest))
+        assertTrue(SportsAddonCapabilities.isSportsOnlyLiveTvManifest(manifest))
     }
 
     @Test
