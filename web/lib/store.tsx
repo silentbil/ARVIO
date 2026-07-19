@@ -842,8 +842,20 @@ export function AppProvider({
       return;
     }
     const handle = setTimeout(() => {
+      // The settings we last synced for THIS profile — lets saveCloudSettings detect exactly which
+      // fields this session changed so it only asserts (and timestamps) those, never reverting a
+      // field another device changed. Ignore the baseline if the active profile has since changed.
+      let baseline: AppSettings | null = null;
+      try {
+        if (lastSyncedSettingsRef.current) {
+          const parsed = JSON.parse(lastSyncedSettingsRef.current) as { settings?: AppSettings; activeProfileId?: string | null };
+          if (parsed.activeProfileId === activeProfileId && parsed.settings) baseline = parsed.settings;
+        }
+      } catch {
+        baseline = null;
+      }
       lastSyncedSettingsRef.current = JSON.stringify({ settings: settingsRef.current, activeProfileId });
-      void saveCloudSettings(authClient, settingsRef.current, addonsRef.current, activeProfileId, profiles).catch(() => undefined);
+      void saveCloudSettings(authClient, settingsRef.current, addonsRef.current, activeProfileId, profiles, baseline).catch(() => undefined);
     }, 1200);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps

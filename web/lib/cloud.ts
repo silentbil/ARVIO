@@ -122,6 +122,29 @@ function setScopedValue<T>(root: RawPayload, key: string, profileId: string, val
   root[key] = byProfile;
 }
 
+// ── Per-field last-writer-wins support (multi-device conflict resolution) ──
+// Mirrors the Android CloudSyncRepository scheme: a scalar setting carries a per-field timestamp
+// under `fieldUpdatedAt` ("g:accentColor", "p:<profileId>:autoPlayNext"). Only the fields this web
+// session actually changed get their timestamp bumped, so the web can't revert a phone's newer
+// change and its own changes are respected by the Android merge.
+function bumpFieldTs(root: RawPayload, key: string) {
+  const map = (root.fieldUpdatedAt && typeof root.fieldUpdatedAt === "object"
+    ? root.fieldUpdatedAt
+    : {}) as Record<string, number>;
+  map[key] = Date.now();
+  root.fieldUpdatedAt = map;
+}
+
+/** Value equality tolerant of object/array fields (avoids reference-inequality false positives). */
+function sameFieldValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 function stringArray(value: unknown): string[] {
   return arrayValue(value).map((item) => String(item ?? "").trim()).filter(Boolean);
 }
@@ -691,7 +714,11 @@ export async function saveCloudSettings(
   settings: AppSettings,
   addons: InstalledAddon[],
   profileId?: string | null,
-  profiles: Profile[] = []
+  profiles: Profile[] = [],
+  // The web session's last-synced settings (same profile). Used to detect which fields THIS session
+  // actually changed, so we only assert (and timestamp) those — never reverting a field a phone
+  // changed. Null → treat every field as changed (bootstrap / after a profile switch).
+  baseline?: AppSettings | null
 ) {
   await mutateCloudPayload(auth, (root) => {
     root.version = 2;
@@ -701,6 +728,32 @@ export async function saveCloudSettings(
     // partial in-memory addon list must never leak into the shared payload.
     void addons;
     root.settings = settings;
+
+    // ── Genuine global settings that Android merges by per-field timestamp. Only write + bump the
+    //    timestamp when the web actually changed the field vs its baseline; otherwise leave the
+    //    (freshly read-modify-written) cloud value so a phone's newer change survives.
+    const globalFields: Array<[string, unknown, unknown]> = [
+      ["accentColor", settings.accentColor, baseline?.accentColor],
+      ["oledBlackBackground", settings.oledBlack, baseline?.oledBlack],
+      ["skipProfileSelection", settings.skipProfileSelection, baseline?.skipProfileSelection],
+      ["customUserAgent", settings.customUserAgent, baseline?.customUserAgent],
+      ["dnsProvider", settings.dnsProvider, baseline?.dnsProvider],
+      ["subtitleAiEnabled", settings.aiSubtitlesEnabled, baseline?.aiSubtitlesEnabled],
+      ["subtitleAiAutoSelect", settings.aiAutoSelect, baseline?.aiAutoSelect],
+      ["subtitleAiApiKey", settings.aiApiKey, baseline?.aiApiKey],
+      ["subtitleAiModel", settings.aiSubtitleModel, baseline?.aiSubtitleModel],
+      ["subtitleRemoveHearingImpaired", settings.removeHearingImpaired, baseline?.removeHearingImpaired]
+    ];
+    for (const [rootKey, newVal, baseVal] of globalFields) {
+      if (!baseline || !sameFieldValue(newVal, baseVal)) {
+        root[rootKey] = newVal;
+        bumpFieldTs(root, `g:${rootKey}`);
+      }
+    }
+    root.focusBorderColor = settings.accentColor; // mirror of accentColor (not a merge key)
+
+    // ── Root legacy flat mirrors: only OLD Android clients read these (current clients read
+    //    profileSettingsById below). Kept for backward compat; not timestamp-managed.
     root.defaultSubtitle = settings.defaultSubtitle || "Off";
     root.defaultAudioLanguage = settings.audioLanguage || "Auto (Original)";
     root.cardLayoutMode = settings.cardLayoutMode;
@@ -709,19 +762,8 @@ export async function saveCloudSettings(
     root.autoPlaySingleSource = settings.autoPlaySingleSource;
     root.autoPlayMinQuality = androidQuality(settings.autoPlayMinQuality);
     root.includeSpecials = settings.includeSpecials;
-    root.dnsProvider = settings.dnsProvider;
-    root.customUserAgent = settings.customUserAgent;
     root.torrServerBaseUrl = settings.torrServerBaseUrl;
     root.qualityFilters = settings.qualityFilters;
-    root.oledBlackBackground = settings.oledBlack;
-    root.accentColor = settings.accentColor;
-    root.focusBorderColor = settings.accentColor;
-    root.skipProfileSelection = settings.skipProfileSelection;
-    root.subtitleAiEnabled = settings.aiSubtitlesEnabled;
-    root.subtitleAiAutoSelect = settings.aiAutoSelect;
-    root.subtitleAiApiKey = settings.aiApiKey;
-    root.subtitleAiModel = settings.aiSubtitleModel;
-    root.subtitleRemoveHearingImpaired = settings.removeHearingImpaired;
     root.catalogs = settings.catalogs;
     root.hiddenPreinstalledCatalogs = settings.hiddenCatalogIds;
     root.iptvFavoriteChannels = settings.favoriteChannelIds;
@@ -735,7 +777,29 @@ export async function saveCloudSettings(
 
     if (profiles.length) root.profiles = profiles;
     if (profileId) {
-      setScopedValue(root, "profileSettingsById", profileId, androidProfileSettings(settings));
+      // ── Per-profile settings: merge field-by-field over the freshly-read cloud object. Only
+      //    web-changed fields are overwritten + timestamped; everything else keeps the cloud value.
+      const newProfile = androidProfileSettings(settings) as Record<string, unknown>;
+      const baseProfile = baseline ? (androidProfileSettings(baseline) as Record<string, unknown>) : null;
+      const existing = (scopedValue<Record<string, unknown>>(root, "profileSettingsById", profileId) ?? {}) as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...existing };
+      // Fields the web doesn't genuinely own (always sends empty) — never write them, so they can't
+      // wipe a phone's value. defaultSubtitle keeps its own timestamp logic (handled below).
+      const skip = new Set(["catalogueRowLayoutModes", "subtitleUsageJson", "defaultSubtitle", "subtitleSettingsUpdatedAt"]);
+      for (const field of Object.keys(newProfile)) {
+        if (skip.has(field)) continue;
+        if (!baseProfile || !sameFieldValue(newProfile[field], baseProfile[field])) {
+          merged[field] = newProfile[field];
+          bumpFieldTs(root, `p:${profileId}:${field}`);
+        }
+      }
+      // defaultSubtitle uses Android's own subtitleSettingsUpdatedAt LWW — assert it only when the
+      // web actually changed it, bumping that timestamp so Android adopts it.
+      if (!baseline || !sameFieldValue(settings.defaultSubtitle, baseline.defaultSubtitle)) {
+        merged.defaultSubtitle = settings.defaultSubtitle || "Off";
+        merged.subtitleSettingsUpdatedAt = Date.now();
+      }
+      setScopedValue(root, "profileSettingsById", profileId, merged);
       setScopedValue(root, "addonsByProfile", profileId, addons);
       setScopedValue(root, "catalogsByProfile", profileId, settings.catalogs);
       setScopedValue(root, "hiddenPreinstalledByProfile", profileId, settings.hiddenCatalogIds);
