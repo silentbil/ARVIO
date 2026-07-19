@@ -1,5 +1,6 @@
 package com.arflix.tv.data.api
 
+import com.google.gson.JsonElement
 import com.google.gson.annotations.SerializedName
 import retrofit2.http.GET
 import retrofit2.http.Url
@@ -345,8 +346,36 @@ data class StreamBehaviorHints(
     @SerializedName("headers") val headers: Map<String, String>? = null,
     val videoHash: String? = null,
     val videoSize: Long? = null,
-    val filename: String? = null
+    val filename: String? = null,
+    // Non-standard but widely used Stremio extensions. JsonElement keeps
+    // deserialization tolerant when an addon returns a string, number, or list.
+    val provider: JsonElement? = null,
+    val providerCode: JsonElement? = null,
+    val source: JsonElement? = null,
+    val indexer: JsonElement? = null,
+    val indexerCode: JsonElement? = null,
+    val language: JsonElement? = null
 )
+
+internal fun JsonElement?.asAddonMetadataText(): String? {
+    val value = this ?: return null
+    val text = when {
+        value.isJsonPrimitive -> value.asJsonPrimitive.run {
+            when {
+                isString -> asString
+                isNumber -> asNumber.toString()
+                isBoolean -> asBoolean.toString()
+                else -> null
+            }
+        }
+        value.isJsonArray -> value.asJsonArray
+            .mapNotNull { it.asAddonMetadataText() }
+            .distinct()
+            .joinToString(", ")
+        else -> null
+    }
+    return text?.trim()?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+}
 
 data class StremioProxyHeaders(
     val request: Map<String, String>? = null,

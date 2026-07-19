@@ -2361,7 +2361,13 @@ class StreamRepository @Inject constructor(
                             } else null,
                             videoHash = it.videoHash,
                             videoSize = it.videoSize,
-                            filename = it.filename
+                            filename = it.filename,
+                            provider = it.provider.asAddonMetadataText(),
+                            providerCode = it.providerCode.asAddonMetadataText(),
+                            sourceLabel = it.source.asAddonMetadataText(),
+                            indexer = it.indexer.asAddonMetadataText(),
+                            indexerCode = it.indexerCode.asAddonMetadataText(),
+                            language = it.language.asAddonMetadataText()
                         )
                     } ?: stream.headers?.let { rawHeaders ->
                         val requestHeaders = sanitizeRequestHeaders(rawHeaders)
@@ -2375,7 +2381,8 @@ class StreamRepository @Inject constructor(
                     subtitles = embeddedSubs,
                     sources = stream.sources ?: emptyList(),
                     description = stream.description?.trim()?.takeIf { it.isNotBlank() },
-                    rawLabel = stream.name?.trim()?.takeIf { it.isNotBlank() }
+                    rawLabel = stream.name?.trim()?.takeIf { it.isNotBlank() },
+                    addonTitle = stream.title?.trim()?.takeIf { it.isNotBlank() }
                 )
             }
     }

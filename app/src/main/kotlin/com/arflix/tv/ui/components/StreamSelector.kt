@@ -904,6 +904,7 @@ private data class SourcePresentation(
     val title: String,
     val rawTitle: String,
     val addonLabel: String,
+    val attributionLabels: List<String>,
     val resolutionLabel: String,
     val resolutionScore: Int,
     val releaseLabel: String?,
@@ -1040,7 +1041,9 @@ private fun isSelectedSource(candidate: StreamSource, selected: StreamSource?): 
 
 private fun isDebridLikeSource(stream: StreamSource, blob: String? = null): Boolean {
     val addonName = stream.addonName
-    val text = blob ?: buildString {
+    val text = buildString {
+        append(blob.orEmpty())
+        append(' ')
         append(stream.source)
         append(' ')
         append(stream.quality)
@@ -1048,6 +1051,16 @@ private fun isDebridLikeSource(stream: StreamSource, blob: String? = null): Bool
         append(stream.addonName)
         append(' ')
         append(stream.behaviorHints?.filename.orEmpty())
+        append(' ')
+        append(stream.rawLabel.orEmpty())
+        append(' ')
+        append(stream.description.orEmpty())
+        append(' ')
+        append(stream.addonTitle.orEmpty())
+        append(' ')
+        append(stream.behaviorHints?.provider.orEmpty())
+        append(' ')
+        append(stream.behaviorHints?.sourceLabel.orEmpty())
         append(' ')
         append(stream.url.orEmpty())
     }
@@ -1136,6 +1149,7 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
     val rawTitle = stream.behaviorHints?.filename?.takeIf { it.isNotBlank() } ?: stream.source
     val title = cleanSourceDisplayTitle(rawTitle)
     val addonLabel = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
+    val attributionLabels = sourceAttributionLabels(stream, addonLabel)
     val searchBlob = buildString {
         append(stream.quality)
         append(' ')
@@ -1152,6 +1166,16 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         append(stream.description.orEmpty())
         append(' ')
         append(stream.rawLabel.orEmpty())
+        append(' ')
+        append(stream.addonTitle.orEmpty())
+        append(' ')
+        append(stream.behaviorHints?.provider.orEmpty())
+        append(' ')
+        append(stream.behaviorHints?.sourceLabel.orEmpty())
+        append(' ')
+        append(stream.behaviorHints?.indexer.orEmpty())
+        append(' ')
+        append(stream.behaviorHints?.language.orEmpty())
     }
 
     val resolutionLabel = when {
@@ -1241,7 +1265,11 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
     val subtitleLangs = stream.subtitles.mapNotNull { sub ->
         sub.lang.takeIf { it.isNotBlank() }
     }.distinct()
+    val hintedLanguage = stream.behaviorHints?.language?.trim()
     val languageLabel = when {
+        hintedLanguage?.contains("dual", ignoreCase = true) == true ||
+            hintedLanguage?.contains("multi", ignoreCase = true) == true -> "Multi-audio"
+        !hintedLanguage.isNullOrBlank() -> hintedLanguage
         StreamRegexes.MULTI_AUDIO.containsMatchIn(searchBlob) -> "Multi-audio"
         subtitleLangs.size > 1 -> "${subtitleLangs.size} langs"
         subtitleLangs.size == 1 -> subtitleLangs.first().uppercase()
@@ -1267,6 +1295,7 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         title = title,
         rawTitle = rawTitle,
         addonLabel = addonLabel,
+        attributionLabels = attributionLabels,
         resolutionLabel = resolutionLabel,
         resolutionScore = resolutionScore,
         releaseLabel = releaseLabel,
@@ -1333,6 +1362,8 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
         append(presentation.stream.description.orEmpty())
         append(' ')
         append(presentation.stream.rawLabel.orEmpty())
+        append(' ')
+        append(presentation.stream.addonTitle.orEmpty())
     }
 
     when (presentation.resolutionLabel) {
@@ -1388,15 +1419,18 @@ private fun sourceBadges(presentation: SourcePresentation): List<SourceBadge> = 
 }.distinctBy { it.text }
 
 private fun rowSubtitle(presentation: SourcePresentation): String {
-    // Addon (with the aggregator's upstream provider when known), then edition and bitrate
+    // Keep add-on ownership first, followed by add-on supplied provider/indexer details.
     val addonPart = presentation.upstreamLabel
         ?.let { "${presentation.addonLabel} — $it" }
         ?: presentation.addonLabel
-    return listOfNotNull(
-        addonPart,
-        presentation.editionLabel,
-        presentation.bitrateLabel
-    ).joinToString("  ·  ")
+    return buildList {
+        add(addonPart)
+        addAll(presentation.attributionLabels)
+        presentation.editionLabel?.let(::add)
+        presentation.bitrateLabel?.let(::add)
+    }
+        .distinctBy { it.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), "") }
+        .joinToString(" · ")
 }
 
 private fun languageBadgeText(language: String?): String? {

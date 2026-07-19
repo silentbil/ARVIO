@@ -177,7 +177,10 @@ data class StreamSource(
     // Raw Stremio "name" field (e.g. AIOStreams' "2160p (4k) [TB]\nRemux\nExtended"). Carries
     // clean, delimited quality tags that garbage filenames run together ("4Kremux") — used for
     // chip/label detection in the source menu.
-    val rawLabel: String? = null
+    val rawLabel: String? = null,
+    // Original Stremio title. Some addons use it for source/indexer details
+    // that are intentionally separate from behaviorHints.filename.
+    val addonTitle: String? = null
 ) : Serializable
 
 /**
@@ -193,7 +196,13 @@ data class StreamBehaviorHints(
     val proxyHeaders: ProxyHeaders? = null,
     val videoHash: String? = null,
     val videoSize: Long? = null,
-    val filename: String? = null
+    val filename: String? = null,
+    val provider: String? = null,
+    val providerCode: String? = null,
+    val sourceLabel: String? = null,
+    val indexer: String? = null,
+    val indexerCode: String? = null,
+    val language: String? = null
 ) : Serializable
 
 data class ProxyHeaders(
