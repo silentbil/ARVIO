@@ -73,17 +73,22 @@ button {
   color: #fff;
 }
 
-.app-boot img {
+.app-boot-logo {
   width: 76px;
   height: 76px;
   object-fit: contain;
   filter: drop-shadow(0 0 28px rgba(0, 213, 136, 0.26));
 }
 
-.app-boot span {
-  font-size: 18px;
-  font-weight: 760;
-  letter-spacing: 0.18em;
+.app-boot-wordmark {
+  height: 18px;
+  width: auto;
+  filter: drop-shadow(0 0 28px rgba(0, 213, 136, 0.26));
+}
+
+.mobile-header,
+.mobile-bottom-nav {
+  display: none !important;
 }
 
 .sidebar {
@@ -1621,22 +1626,16 @@ input:focus {
   gap: clamp(16px, 2vw, 28px);
   margin-bottom: clamp(24px, 4vh, 42px);
 }
-.login-brand-lockup img {
-  width: clamp(68px, 7vw, 112px);
-  height: clamp(68px, 7vw, 112px);
+.login-brand-logo {
+  width: clamp(68px, 7vw, 112px) !important;
+  height: clamp(68px, 7vw, 112px) !important;
   object-fit: contain;
   filter: drop-shadow(0 0 28px rgba(0, 213, 136, 0.24));
 }
-.login-logo {
-  margin: 0;
-  font-size: clamp(54px, 6.8vw, 106px);
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  background: linear-gradient(90deg, #ffffff 0%, #bdefff 48%, #00d588 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow: 0 22px 58px rgba(0, 0, 0, 0.5);
+.login-wordmark {
+  height: clamp(34px, 4.4vw, 68px) !important;
+  width: auto !important;
+  filter: drop-shadow(0 0 28px rgba(0, 213, 136, 0.24));
 }
 .login-tag {
   font-size: clamp(26px, 2.8vw, 46px);
@@ -2142,6 +2141,10 @@ input:focus {
   min-height: 100vh;
   padding: clamp(96px, 12vh, 130px) 3.35vw 80px;
   align-items: start;
+  transition: grid-template-columns 0.22s ease-in-out;
+}
+.settings-shell.sidebar-collapsed {
+  grid-template-columns: 56px 1fr;
 }
 .settings-sidebar {
   position: sticky;
@@ -2150,9 +2153,53 @@ input:focus {
   flex-direction: column;
   gap: 4px;
 }
-.settings-sidebar h2 {
-  margin: 0 0 14px;
-  font-size: clamp(26px, 2.2vw, 38px);
+.settings-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  min-height: 38px;
+}
+.settings-sidebar-header h2 {
+  margin: 0;
+  font-size: clamp(20px, 1.8vw, 26px);
+  font-weight: 700;
+}
+.settings-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+.settings-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sidebar-collapsed .settings-section-btn {
+  justify-content: center;
+  padding: 12px 0;
+}
+.settings-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-btn-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .settings-section-btn {
   display: flex;
@@ -2765,7 +2812,7 @@ input:focus {
 
 /* Section content fades/rises in when switching tabs */
 .content > .screen,
-.settings-shell {
+.settings-content {
   animation: arvio-rise-in 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 .profile-shell,
@@ -3349,19 +3396,49 @@ select:focus {
   }
 
   .settings-shell {
-    grid-template-columns: 1fr;
-    padding-top: 104px;
+    display: block !important;
+    padding-top: 86px !important;
+    padding-left: 0 !important;
+    padding-right: clamp(16px, 2.6vw, 40px) !important;
   }
 
   .settings-sidebar {
-    position: relative;
-    top: auto;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    position: fixed !important;
+    top: calc(50% + 43px) !important;
+    transform: translateY(-50%) !important;
+    bottom: auto !important;
+    left: 0 !important;
+    width: 64px !important;
+    height: fit-content !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    background: rgba(10, 11, 13, 0.94) !important;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-left: 0 !important;
+    border-radius: 0 18px 18px 0 !important;
+    z-index: 55 !important;
+    padding: 12px 6px !important;
+    transition: width 0.22s ease-in-out, transform 0.22s ease-in-out !important;
+  }
+
+  .settings-shell.sidebar-expanded .settings-sidebar {
+    width: 200px !important;
   }
 
   .settings-sidebar h2 {
-    grid-column: 1 / -1;
+    display: none !important;
+  }
+
+  .settings-content {
+    margin-left: 80px !important;
+    transition: margin-left 0.22s ease-in-out !important;
+  }
+
+  .settings-shell.sidebar-expanded .settings-content {
+    margin-left: 216px !important;
   }
 }
 
@@ -4982,80 +5059,148 @@ button,
 
   .app-shell {
     min-height: 100dvh;
-    /* Top nav on mobile (owner preference) — leave room at the top, not bottom. */
-    padding-top: calc(66px + env(safe-area-inset-top));
+    padding-top: calc(56px + env(safe-area-inset-top)) !important;
+    padding-bottom: calc(62px + env(safe-area-inset-bottom)) !important;
   }
 
   .content {
-    min-height: 100dvh;
+    min-height: calc(100dvh - 56px - 62px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
     overflow-x: hidden;
   }
 
-  .sidebar {
-    /* Top bar on mobile: pinned to the top edge, full width, respecting the
-       iOS status-bar inset. */
-    inset: 0 0 auto;
-    top: 0;
-    width: 100%;
-    height: calc(58px + env(safe-area-inset-top));
-    padding: env(safe-area-inset-top) 10px 0;
-    grid-template-columns: 42px minmax(0, 1fr) 42px;
-    gap: 7px;
-    border: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0;
-    background:
-      linear-gradient(180deg, rgba(10, 11, 13, 0.96), rgba(7, 8, 10, 0.9));
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(22px);
+  .livetv-shell,
+  .settings-shell,
+  .screen:has(.search-hero) {
+    min-height: auto !important;
   }
 
-  .sidebar::after,
-  .profile-name-text,
-  .nav-item span {
+  .sidebar {
     display: none !important;
   }
 
-  .brand,
-  .settings-gear {
-    width: 42px;
-    height: 42px;
-    min-width: 42px;
+  .mobile-header {
+    display: flex !important;
+    position: fixed;
+    inset: 0 0 auto;
+    top: 0;
+    width: 100%;
+    height: calc(56px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) 16px 0;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 60;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: linear-gradient(180deg, rgba(10, 11, 13, 0.96), rgba(7, 8, 10, 0.9));
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+    transition: background-color 0.25s ease;
   }
 
-  .settings-gear {
-    border-radius: 16px;
+  .mobile-header.is-scrolled {
+    background: rgba(7, 9, 11, 0.95) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
   }
 
-  .sidebar nav {
+  .mobile-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mobile-brand-logo {
+    width: 28px !important;
+    height: 28px !important;
+  }
+
+  .mobile-wordmark {
+    height: 14px !important;
+    width: auto !important;
+  }
+
+  .mobile-profile-btn {
+    width: 38px;
+    height: 38px;
+    border: 0;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .mobile-bottom-nav {
+    display: flex !important;
+    position: fixed;
+    inset: auto 0 0;
+    bottom: 0;
+    width: 100%;
+    height: calc(62px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: rgba(10, 11, 13, 0.94);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    z-index: 60;
+    justify-content: space-around;
+    align-items: center;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .mobile-nav-item {
+    flex: 1;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.55);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 500;
+    transition: color 0.18s ease;
     min-width: 0;
-    justify-content: center;
-    gap: 4px;
-  }
-
-  .nav-item {
-    width: 42px;
-    min-width: 42px;
-    min-height: 42px;
-    justify-content: center;
     padding: 0;
-    border-radius: 16px;
   }
 
-  .nav-item svg,
-  .settings-gear svg {
+  .mobile-nav-item svg {
     width: 21px;
     height: 21px;
+    transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
-  .nav-item:hover,
-  .nav-item:focus-visible,
-  .nav-item.is-active,
-  .settings-gear:hover,
-  .settings-gear:focus-visible,
-  .settings-gear.is-active {
-    transform: none;
-    background: color-mix(in srgb, var(--accent, #ededed) 20%, transparent);
+  .mobile-nav-item span {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .mobile-nav-item:active svg {
+    transform: scale(0.9);
+  }
+
+  .mobile-nav-item.is-active {
+    color: var(--accent, #8b5cf6);
+  }
+
+  .mobile-avatar-container {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 1.5px solid transparent;
+    background: rgba(255, 255, 255, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.18s ease, transform 0.18s ease;
+  }
+
+  .mobile-profile-btn.is-active .mobile-avatar-container {
+    border-color: var(--accent, #8b5cf6);
   }
 
   .sync-strip {
@@ -5183,7 +5328,7 @@ button,
   }
 
   .search-hero {
-    padding: 86px var(--phone-gutter) 18px;
+    padding: 16px var(--phone-gutter) 14px;
     gap: 10px;
   }
 
@@ -5196,7 +5341,7 @@ button,
   .grid-results {
     grid-template-columns: 1fr;
     gap: 20px;
-    padding: 0 var(--phone-gutter) 96px;
+    padding: 0 var(--phone-gutter) 24px !important;
   }
 
   .grid-results .media-card {
@@ -5213,39 +5358,83 @@ button,
   }
 
   .section-heading {
-    padding: 92px var(--phone-gutter) 20px;
+    padding: 16px var(--phone-gutter) 16px;
+  }
+
+  .section-heading .eyebrow {
+    font-size: 13px;
+    margin-bottom: 4px;
+    letter-spacing: 0.02em;
   }
 
   .settings-shell {
-    display: block;
-    padding: 86px var(--phone-gutter) 96px;
+    display: block !important;
+    padding-top: 16px !important;
+    padding-left: 0 !important;
+    padding-right: var(--phone-gutter) !important;
+    padding-bottom: 96px !important;
+  }
+
+  .livetv-shell {
+    padding-top: 16px !important;
   }
 
   .settings-sidebar {
-    position: relative;
-    top: auto;
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    margin-bottom: 16px;
-    padding-bottom: 8px;
-    scrollbar-width: none;
+    position: fixed !important;
+    top: calc(50% + (env(safe-area-inset-top) - env(safe-area-inset-bottom) - 6px) / 2) !important;
+    transform: translateY(-50%) !important;
+    bottom: auto !important;
+    left: 0 !important;
+    width: 56px !important;
+    height: fit-content !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    background: rgba(10, 11, 13, 0.94) !important;
+    backdrop-filter: blur(24px) !important;
+    -webkit-backdrop-filter: blur(24px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-left: 0 !important;
+    border-radius: 0 18px 18px 0 !important;
+    z-index: 55 !important;
+    padding: 12px 6px !important;
+    transition: width 0.22s ease-in-out, transform 0.22s ease-in-out !important;
   }
 
-  .settings-sidebar::-webkit-scrollbar {
-    display: none;
+  .settings-shell.sidebar-expanded .settings-sidebar {
+    width: 180px !important;
   }
 
   .settings-sidebar h2 {
-    display: none;
+    display: none !important;
+  }
+
+  .settings-content {
+    margin-left: 68px !important;
+    transition: margin-left 0.22s ease-in-out !important;
+  }
+
+  .settings-shell.sidebar-expanded .settings-content {
+    margin-left: 192px !important;
   }
 
   .settings-section-btn {
-    flex: 0 0 auto;
-    min-height: 40px;
-    border-radius: 999px;
-    padding: 0 14px;
-    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+  .sidebar-collapsed .settings-section-btn {
+    justify-content: center;
+    padding: 10px 0;
   }
 
   .settings-content,
@@ -5525,9 +5714,13 @@ button,
     min-height: auto;
   }
 
-  .login-brand-lockup img {
-    width: 62px;
-    height: 62px;
+  .login-brand-lockup .login-brand-logo {
+    width: 62px !important;
+    height: 62px !important;
+  }
+  .login-brand-lockup .login-wordmark {
+    height: 28px !important;
+    width: auto !important;
   }
 
   .login-logo {
@@ -8100,6 +8293,8 @@ button,
   padding: 18px;
   background: rgba(0, 0, 0, 0.62);
   backdrop-filter: blur(16px);
+  overscroll-behavior: contain;
+  touch-action: none;
 }
 
 .option-sheet {
@@ -8115,6 +8310,7 @@ button,
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
+  touch-action: auto;
 }
 
 .option-sheet-head {
@@ -8756,7 +8952,7 @@ button,
 @media (max-width: 560px) {
   .search-hero {
     grid-template-columns: 42px minmax(0, 1fr);
-    padding: 92px var(--phone-gutter) 20px !important;
+    padding: 16px var(--phone-gutter) 14px !important;
     gap: 10px;
   }
 
@@ -8774,7 +8970,7 @@ button,
   .screen:has(.search-hero) .grid-results,
   .screen:has(.search-hero).poster-results .grid-results {
     grid-template-columns: 1fr;
-    padding: 0 var(--phone-gutter) 96px;
+    padding: 0 var(--phone-gutter) 24px !important;
   }
 }
 
@@ -9385,7 +9581,7 @@ button,
   }
 
   .screen {
-    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+    padding-bottom: 24px !important;
   }
 
   .rail {
@@ -9741,11 +9937,9 @@ button,
   box-shadow: 0 8px 30px rgba(9, 240, 199, 0.18);
 }
 
-.profile-brand-word {
-  font-size: clamp(26px, 2.6vw, 40px);
-  font-weight: 800;
-  letter-spacing: 0.3em;
-  color: #fff;
+.profile-wordmark {
+  height: clamp(28px, 3.2vw, 42px) !important;
+  width: auto !important;
 }
 
 .avatar-tile {

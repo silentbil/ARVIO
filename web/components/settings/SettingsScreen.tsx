@@ -13,6 +13,7 @@ import {
   LayoutGrid,
   ListVideo,
   LogOut,
+  Menu,
   Network,
   Play,
   Plus,
@@ -26,7 +27,8 @@ import {
   User,
   UserCircle,
 } from "lucide-react";
-import { Component, useState, type ReactNode } from "react";
+import { Component, useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { defaultCatalogs, mergeCatalogs } from "@/lib/catalogs";
 import {
   hasNetlifyBackendConfig,
@@ -175,29 +177,45 @@ function qualityPresetFilters(
 
 export function SettingsScreen() {
   const [section, setSection] = useState<SectionId>("accounts");
+  const [collapsed, setCollapsed] = useState(true);
+
   return (
-    <div className="settings-shell">
+    <div className={`settings-shell ${collapsed ? "sidebar-collapsed" : "sidebar-expanded"}`}>
       <aside className="settings-sidebar">
-        <h2>Settings</h2>
-        {SECTIONS.map((s) => {
-          const Icon = s.icon;
-          return (
-            <button
-              type="button"
-              key={s.id}
-              className={`settings-section-btn ${section === s.id ? "is-active" : ""}`}
-              onClick={() => {
-                setSection(s.id);
-                // Switching from a long, scrolled section (e.g. Catalogs) to a
-                // short one would otherwise leave the viewport mid-page and the
-                // panel frame visibly leaping around.
-                window.scrollTo({ top: 0 });
-              }}
-            >
-              <Icon size={18} /> <span>{s.label}</span>
-            </button>
-          );
-        })}
+        <div className="settings-sidebar-header">
+          <button
+            type="button"
+            className="settings-collapse-btn"
+            onClick={() => setCollapsed(!collapsed)}
+            aria-label={collapsed ? "Expand settings menu" : "Collapse settings menu"}
+          >
+            <Menu size={20} />
+          </button>
+          {!collapsed && <h2>Settings</h2>}
+        </div>
+        <nav className="settings-nav">
+          {SECTIONS.map((s) => {
+            const Icon = s.icon;
+            return (
+              <button
+                type="button"
+                key={s.id}
+                className={`settings-section-btn ${section === s.id ? "is-active" : ""}`}
+                onClick={() => {
+                  setSection(s.id);
+                  // Switching from a long, scrolled section (e.g. Catalogs) to a
+                  // short one would otherwise leave the viewport mid-page and the
+                  // panel frame visibly leaping around.
+                  window.scrollTo({ top: 0 });
+                }}
+                title={s.label}
+              >
+                <span className="settings-btn-icon"><Icon size={18} /></span>
+                {!collapsed && <span className="settings-btn-label">{s.label}</span>}
+              </button>
+            );
+          })}
+        </nav>
       </aside>
       <div className="settings-content">
         <SettingsSectionBoundary section={section}>
@@ -314,6 +332,35 @@ function Select<T extends string>({
     onChange(next);
     setOpen(false);
   };
+
+  // Lock body scroll while the option sheet is open — the position:fixed
+  // technique is the only reliable way to prevent scroll-through on mobile.
+  useEffect(() => {
+    if (!open) return;
+    const scrollY = window.scrollY;
+    const { style } = document.body;
+    const prev = {
+      position: style.position,
+      top: style.top,
+      left: style.left,
+      right: style.right,
+      overflow: style.overflow,
+    };
+    style.position = "fixed";
+    style.top = `-${scrollY}px`;
+    style.left = "0";
+    style.right = "0";
+    style.overflow = "hidden";
+    return () => {
+      style.position = prev.position;
+      style.top = prev.top;
+      style.left = prev.left;
+      style.right = prev.right;
+      style.overflow = prev.overflow;
+      window.scrollTo(0, scrollY);
+    };
+  }, [open]);
+
   return (
     <>
       <button
@@ -328,7 +375,7 @@ function Select<T extends string>({
         <span>{selected}</span>
         <ChevronDown size={17} />
       </button>
-      {open && (
+      {open && typeof document !== "undefined" && createPortal(
         <div
           className="option-sheet-backdrop"
           role="presentation"
@@ -365,7 +412,8 @@ function Select<T extends string>({
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
