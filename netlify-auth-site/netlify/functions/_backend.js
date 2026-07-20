@@ -419,7 +419,8 @@ async function issueArvioSession(event, account) {
 
 async function refreshArvioSession(event, refreshToken) {
   const store = authStores(event);
-  const session = await getJSONOrNull(store, refreshKeyForToken(refreshToken));
+  const refreshKey = refreshKeyForToken(refreshToken);
+  const session = await getJSONOrNull(store, refreshKey);
   if (!session || !session.accountId || !session.email) {
     const error = new Error("Invalid refresh token");
     error.statusCode = 401;
@@ -430,10 +431,13 @@ async function refreshArvioSession(event, refreshToken) {
     error.statusCode = 401;
     throw error;
   }
-  const account = await loadAuthAccount(event, session.email) || {
-    accountId: session.accountId,
-    email: session.email
-  };
+  const account = await loadAuthAccount(event, session.email);
+  if (!account || String(account.accountId) !== String(session.accountId)) {
+    await store.delete(refreshKey).catch(() => {});
+    const error = new Error("Invalid refresh token");
+    error.statusCode = 401;
+    throw error;
+  }
   return issueArvioSession(event, account);
 }
 
@@ -572,9 +576,17 @@ async function completePasswordSetup(event, token, password) {
     throw error;
   }
   const existing = await loadAuthAccount(event, pending.email);
+  const legacy = existing ? null : await loadLegacyAccountReference(event, pending.email);
+  const currentAccountId = existing?.accountId || legacy?.accountId || "";
+  if (!currentAccountId || String(currentAccountId) !== String(pending.accountId)) {
+    await store.delete(passwordSetupKeyForToken(token)).catch(() => {});
+    const error = new Error("Password setup link is invalid or expired");
+    error.statusCode = 400;
+    throw error;
+  }
   const account = await saveAuthAccount(event, {
     ...(existing || {}),
-    accountId: existing?.accountId || pending.accountId,
+    accountId: currentAccountId,
     email: pending.email,
     passwordHash: await hashPassword(password),
     passwordSetupCompletedAt: new Date().toISOString(),
