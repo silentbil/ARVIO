@@ -101,6 +101,7 @@ class PluginViewModel @Inject constructor(
             PluginUiEvent.RejectPendingRepoChange -> rejectPendingRepoChange()
             PluginUiEvent.ConfirmPendingScraperEnable -> confirmPendingScraperEnable()
             PluginUiEvent.DismissPendingScraperEnable -> dismissPendingScraperEnable()
+            PluginUiEvent.ResetAllPlugins -> resetAllPlugins()
         }
     }
 
@@ -267,6 +268,20 @@ class PluginViewModel @Inject constructor(
             )
         }
     }
+
+    private fun resetAllPlugins() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
+            pluginManager.clearAllPlugins()
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    successMessage = "All plugins and extensions cleared successfully"
+                )
+            }
+        }
+    }
+
 
     private fun normalizeUrlForComparison(url: String): String {
         return url.trim().trimEnd('/').lowercase()

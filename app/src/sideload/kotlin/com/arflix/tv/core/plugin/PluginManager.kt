@@ -1103,6 +1103,16 @@ class PluginManager @Inject constructor(
         Log.d(TAG, "Downloaded ${newScrapers.size}/${plugins.size} extensions for repo $repoId")
     }
 
+    suspend fun clearAllPlugins() {
+        dataStore.saveRepositories(emptyList())
+        dataStore.saveScrapers(emptyList())
+        dataStore.clearAllScraperCode()
+        try {
+            externalExtensionLoader.clearAllExtensions()
+        } catch (_: Exception) {}
+        triggerRemoteSync("all plugins cleared")
+    }
+
     companion object {
         private const val MAX_PARALLEL_DOWNLOADS = 10
     }

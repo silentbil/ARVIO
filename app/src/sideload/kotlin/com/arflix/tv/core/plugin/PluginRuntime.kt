@@ -3,8 +3,10 @@ package com.arflix.tv.core.plugin
 import android.util.Log
 import com.dokar.quickjs.binding.define
 import com.dokar.quickjs.binding.function
-import com.dokar.quickjs.binding.asyncFunction
 import com.dokar.quickjs.quickJs
+import java.net.Inet4Address
+import java.net.InetAddress
+import okhttp3.Dns
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.arflix.tv.BuildConfig
@@ -39,8 +41,8 @@ import javax.inject.Singleton
 
 private const val TAG = "PluginRuntime"
 private const val PLUGIN_TIMEOUT_MS = 60_000L
-private const val MAX_FETCH_RESPONSE_BYTES = 256 * 1024
-private const val MAX_FETCH_BODY_CHARS = 256 * 1024
+private const val MAX_FETCH_RESPONSE_BYTES = 1024 * 1024
+private const val MAX_FETCH_BODY_CHARS = 1024 * 1024
 private const val MAX_FETCH_HEADER_VALUE_CHARS = 8 * 1024
 private const val FETCH_TRUNCATION_SUFFIX = "\n...[truncated]"
 
@@ -56,6 +58,15 @@ class PluginRuntime @Inject constructor() {
         .followRedirects(true)
         .followSslRedirects(true)
         .proxy(java.net.Proxy.NO_PROXY)
+        .dns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                val resolved = Dns.SYSTEM.lookup(hostname)
+                val ipv4 = resolved.filterIsInstance<Inet4Address>()
+                if (ipv4.isEmpty()) return resolved
+                val ipv6 = resolved.filterNot { it is Inet4Address }
+                return ipv4 + ipv6
+            }
+        })
         .build()
 
     // Pre-compiled regex for :contains() selector conversion
@@ -188,15 +199,15 @@ class PluginRuntime @Inject constructor() {
                         }
                     }
 
-                    asyncFunction("__native_fetch") { args ->
+                    function("__native_fetch") { args ->
                         val url = args.getOrNull(0)?.toString() ?: ""
                         val method = args.getOrNull(1)?.toString() ?: "GET"
                         val headersJson = args.getOrNull(2)?.toString() ?: "{}"
                         val body = args.getOrNull(3)?.toString() ?: ""
                         try {
-                            performNativeFetch(url, method, headersJson, body, inFlightCalls)
+                            performNativeFetchSync(url, method, headersJson, body, inFlightCalls)
                         } catch (t: Throwable) {
-                            Log.e(TAG, "Async fetch bridge error for $method $url: ${t.message}")
+                            Log.e(TAG, "Sync fetch bridge error for $method $url: ${t.message}")
                             gson.toJson(
                                 mapOf(
                                     "ok" to false,
@@ -406,152 +417,105 @@ class PluginRuntime @Inject constructor() {
         }
     }
 
-    private suspend fun performNativeFetch(
+    private fun performNativeFetchSync(
         url: String,
         method: String,
         headersJson: String,
         body: String,
         inFlightCalls: MutableSet<Call>
-    ): String = kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
-        Log.d(TAG, "Fetch: $method $url body=${body.take(200)}")
+    ): String {
+        Log.d(TAG, "Fetch Sync: $method $url body=${body.take(200)}")
+        val headers = mutableMapOf<String, String>()
         try {
-            val headers = mutableMapOf<String, String>()
-            try {
-                val headersMap = gson.fromJson(headersJson, Map::class.java)
-                headersMap?.forEach { (k, v) ->
-                    if (k != null && v != null) {
-                        val key = k.toString()
-                        if (!key.equals("Accept-Encoding", ignoreCase = true)) {
-                            headers[key] = v.toString()
-                        }
+            val headersMap = gson.fromJson(headersJson, Map::class.java)
+            headersMap?.forEach { (k, v) ->
+                if (k != null && v != null) {
+                    val key = k.toString()
+                    if (!key.equals("Accept-Encoding", ignoreCase = true)) {
+                        headers[key] = v.toString()
                     }
                 }
-            } catch (e: Exception) {
-                // Ignore header parsing errors
             }
-
-            if (!headers.containsKey("User-Agent")) {
-                headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-
-            val requestBuilder = Request.Builder()
-                .url(url)
-                .headers(Headers.headersOf(*headers.flatMap { listOf(it.key, it.value) }.toTypedArray()))
-
-            when (method.uppercase()) {
-                "POST" -> {
-                    val contentType = headers["Content-Type"] ?: "application/x-www-form-urlencoded"
-                    requestBuilder.post(body.toByteArray(Charsets.UTF_8).toRequestBody(contentType.toMediaType()))
-                }
-                "PUT" -> {
-                    val contentType = headers["Content-Type"] ?: "application/json"
-                    requestBuilder.put(body.toByteArray(Charsets.UTF_8).toRequestBody(contentType.toMediaType()))
-                }
-                "DELETE" -> requestBuilder.delete()
-                else -> requestBuilder.get()
-            }
-
-            val request = requestBuilder.build()
-            val call = httpClient.newCall(request)
-            inFlightCalls.add(call)
-
-            continuation.invokeOnCancellation {
-                call.cancel()
-                inFlightCalls.remove(call)
-            }
-
-            call.enqueue(object : okhttp3.Callback {
-                override fun onFailure(call: Call, e: java.io.IOException) {
-                    inFlightCalls.remove(call)
-                    if (continuation.isActive) {
-                        val result = gson.toJson(mapOf(
-                            "ok" to false,
-                            "status" to 0,
-                            "statusText" to (e.message ?: "Fetch failed"),
-                            "url" to url,
-                            "body" to "",
-                            "headers" to emptyMap<String, String>()
-                        ))
-                        continuation.resumeWith(Result.success(result))
-                    }
-                }
-
-                override fun onResponse(call: Call, httpResponse: okhttp3.Response) {
-                    inFlightCalls.remove(call)
-                    if (!continuation.isActive) {
-                        httpResponse.close()
-                        return
-                    }
-
-                    try {
-                        httpResponse.use {
-                            val bodyContentType = it.body?.contentType()
-                            val contentEncoding = it.header("Content-Encoding")?.lowercase()?.trim()
-                            val decodedRead = try {
-                                val stream = it.body?.byteStream()
-                                if (stream == null) {
-                                    BoundedReadResult(ByteArray(0), false)
-                                } else {
-                                    val decodeStream: InputStream = when (contentEncoding) {
-                                        "gzip" -> java.util.zip.GZIPInputStream(stream)
-                                        "deflate" -> java.util.zip.InflaterInputStream(stream)
-                                        else -> stream
-                                    }
-                                    decodeStream.use { decoded ->
-                                        readAtMostBytes(decoded, MAX_FETCH_RESPONSE_BYTES)
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Failed to read/decode response body for $url: ${e.message}")
-                                BoundedReadResult(ByteArray(0), false)
-                            }
-
-                            val charset = bodyContentType?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
-                            val responseBody = decodeBodyToSafeString(decodedRead.bytes, charset)
-                            val responseHeaders = mutableMapOf<String, String>()
-                            it.headers.forEach { (name, value) ->
-                                responseHeaders[name.lowercase()] = truncateString(value, MAX_FETCH_HEADER_VALUE_CHARS)
-                            }
-
-                            val result = mapOf(
-                                "ok" to it.isSuccessful,
-                                "status" to it.code,
-                                "statusText" to it.message,
-                                "url" to it.request.url.toString(),
-                                "body" to responseBody,
-                                "headers" to responseHeaders,
-                                "truncated" to decodedRead.truncated
-                            )
-
-                            Log.d(TAG, "Fetch result: ${it.code} ${it.message} url=$url bodyLen=${responseBody.length} bodyPreview=${responseBody.take(300)}")
-                            continuation.resumeWith(Result.success(gson.toJson(result)))
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Fetch parsing error: ${e.message}")
-                        val result = gson.toJson(mapOf(
-                            "ok" to false,
-                            "status" to 0,
-                            "statusText" to (e.message ?: "Fetch failed"),
-                            "url" to url,
-                            "body" to "",
-                            "headers" to emptyMap<String, String>()
-                        ))
-                        continuation.resumeWith(Result.success(result))
-                    }
-                }
-            })
         } catch (e: Exception) {
-            Log.e(TAG, "Fetch preparation error: ${e.message}")
-            if (continuation.isActive) {
-                continuation.resumeWith(Result.success(gson.toJson(mapOf(
-                    "ok" to false,
-                    "status" to 0,
-                    "statusText" to (e.message ?: "Fetch failed"),
-                    "url" to url,
-                    "body" to "",
-                    "headers" to emptyMap<String, String>()
-                ))))
+            // Ignore header parsing errors
+        }
+
+        if (!headers.containsKey("User-Agent")) {
+            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .headers(Headers.headersOf(*headers.flatMap { listOf(it.key, it.value) }.toTypedArray()))
+
+        when (method.uppercase()) {
+            "POST" -> {
+                val contentType = headers["Content-Type"] ?: "application/x-www-form-urlencoded"
+                requestBuilder.post(body.toByteArray(Charsets.UTF_8).toRequestBody(contentType.toMediaType()))
             }
+            "PUT" -> {
+                val contentType = headers["Content-Type"] ?: "application/json"
+                requestBuilder.put(body.toByteArray(Charsets.UTF_8).toRequestBody(contentType.toMediaType()))
+            }
+            "DELETE" -> requestBuilder.delete()
+            else -> requestBuilder.get()
+        }
+
+        val request = requestBuilder.build()
+        val call = httpClient.newCall(request)
+        inFlightCalls.add(call)
+
+        try {
+            call.execute().use { httpResponse ->
+                inFlightCalls.remove(call)
+                val bodyContentType = httpResponse.body.contentType()
+                val contentEncoding = httpResponse.header("Content-Encoding")?.lowercase()?.trim()
+                val decodedRead = try {
+                    val stream = httpResponse.body.byteStream()
+                    val decodeStream: InputStream = when (contentEncoding) {
+                        "gzip" -> java.util.zip.GZIPInputStream(stream)
+                        "deflate" -> java.util.zip.InflaterInputStream(stream)
+                        else -> stream
+                    }
+                    decodeStream.use { decoded ->
+                        readAtMostBytes(decoded, MAX_FETCH_RESPONSE_BYTES)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to read/decode response body for $url: ${e.message}")
+                    BoundedReadResult(ByteArray(0), false)
+                }
+
+                val charset = bodyContentType?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
+                val responseBody = decodeBodyToSafeString(decodedRead.bytes, charset)
+                val responseHeaders = mutableMapOf<String, String>()
+                httpResponse.headers.forEach { (name, value) ->
+                    responseHeaders[name.lowercase()] = truncateString(value, MAX_FETCH_HEADER_VALUE_CHARS)
+                }
+
+                val result = mapOf(
+                    "ok" to httpResponse.isSuccessful,
+                    "status" to httpResponse.code,
+                    "statusText" to httpResponse.message,
+                    "url" to httpResponse.request.url.toString(),
+                    "body" to responseBody,
+                    "headers" to responseHeaders,
+                    "truncated" to decodedRead.truncated
+                )
+
+                Log.d(TAG, "Fetch Sync result: ${httpResponse.code} ${httpResponse.message} url=$url bodyLen=${responseBody.length} bodyPreview=${responseBody.take(300)}")
+                return gson.toJson(result)
+            }
+        } catch (e: Exception) {
+            inFlightCalls.remove(call)
+            Log.e(TAG, "Fetch Sync error: ${e.message}")
+            return gson.toJson(mapOf(
+                "ok" to false,
+                "status" to 0,
+                "statusText" to (e.message ?: "Fetch failed"),
+                "url" to url,
+                "body" to "",
+                "headers" to emptyMap<String, String>()
+            ))
         }
     }
 

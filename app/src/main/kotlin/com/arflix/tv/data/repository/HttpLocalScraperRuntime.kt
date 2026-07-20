@@ -63,7 +63,7 @@ class HttpLocalScraperRuntime @Inject constructor(
     ): HttpLocalScraperInstallCandidate? = withContext(Dispatchers.IO) {
         val manifestUrl = manifestUrlFor(url)
         val manifest = fetchManifest(manifestUrl) ?: return@withContext null
-        val httpScrapers = manifest.scrapers.filter { it.isHttpOnlyEnabled() }
+        val httpScrapers = manifest.scrapers.filter { it.isSupportedHttpLocalScraper() }
         if (httpScrapers.isEmpty()) return@withContext null
 
         val stableId = "http.local.${shortHash(manifestUrl)}"
@@ -151,7 +151,7 @@ class HttpLocalScraperRuntime @Inject constructor(
         fallbackYear: Int?
     ): List<StreamSource> = coroutineScope {
         val providers = manifest.scrapers
-            .filter { it.isHttpOnlyEnabled() }
+            .filter { it.isSupportedHttpLocalScraper() }
             .map { it.id.lowercase(Locale.US) }
             .toSet()
 
@@ -850,6 +850,11 @@ class HttpLocalScraperRuntime @Inject constructor(
         return normalizedFormats.isEmpty() || normalizedFormats.any { it in HTTP_FORMATS }
     }
 
+    private fun HttpScraperEntry.isSupportedHttpLocalScraper(): Boolean {
+        if (!isHttpOnlyEnabled()) return false
+        return id.lowercase(Locale.US) in IMPLEMENTED_HTTP_LOCAL_PROVIDERS
+    }
+
     private fun HttpResolvedStream.toStreamSource(addon: Addon): StreamSource {
         val cleanHeaders = headers
             .mapKeys { it.key.trim() }
@@ -980,6 +985,11 @@ class HttpLocalScraperRuntime @Inject constructor(
             "Accept" to "application/json,*/*",
             "Referer" to "https://vidlink.pro/",
             "Origin" to "https://vidlink.pro"
+        )
+        private val IMPLEMENTED_HTTP_LOCAL_PROVIDERS = setOf(
+            "multivid", "videasy", "vidlink", "vidsrc", "vixsrc",
+            "rgshows", "playimdb", "playimdb_series", "dooflix", "fmovies",
+            "brazucaplay", "netmirror"
         )
     }
 }

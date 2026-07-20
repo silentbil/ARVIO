@@ -658,6 +658,14 @@ class ExternalExtensionLoader @Inject constructor(
         Log.d(TAG, "Deleted extension $scraperId")
     }
 
+    fun clearAllExtensions() {
+        apiCache.clear()
+        classLoaderCache.clear()
+        extractorPreloadedIds.clear()
+        extensionsDir.listFiles()?.forEach { it.delete() }
+        Log.d(TAG, "Cleared all external extensions")
+    }
+
     fun evictCache(scraperId: String) {
         apiCache.keys.filter { it.startsWith(scraperId) }.forEach { apiCache.remove(it) }
         classLoaderCache.remove(scraperId)
