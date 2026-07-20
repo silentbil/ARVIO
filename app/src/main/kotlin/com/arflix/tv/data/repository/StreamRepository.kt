@@ -892,7 +892,7 @@ class StreamRepository @Inject constructor(
     }
 
     suspend fun replaceAddonsFromCloud(addons: List<Addon>) {
-        saveAddons(enforceOpenSubtitles(addons).filterNot(::isIncompleteExternalAddon))
+        saveAddons(enforceOpenSubtitles(addons).filterNot(::isIncompleteExternalAddon), stampChange = false)
     }
 
     suspend fun getAddonsForProfile(profileId: String): List<Addon> {
@@ -924,7 +924,19 @@ class StreamRepository @Inject constructor(
         invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "replace shared addons")
     }
 
-    private suspend fun saveAddons(addons: List<Addon>) {
+    // Bumped whenever the local addon SET is changed by the USER (add/remove/reorder). Lets cloud
+    // sync distinguish an intentional "removed everything" from a blank/partial pull, so an
+    // intentional empty state can propagate (see reconcileAddonsWithCloud). Not bumped when applying
+    // the cloud's addons, which would create false "local change" churn.
+    private val addonsUpdatedAtKey = androidx.datastore.preferences.core.longPreferencesKey("addons_updated_at")
+
+    suspend fun getAddonsUpdatedAt(): Long = context.streamDataStore.data.first()[addonsUpdatedAtKey] ?: 0L
+
+    suspend fun setAddonsUpdatedAt(value: Long) {
+        context.streamDataStore.edit { prefs -> prefs[addonsUpdatedAtKey] = value }
+    }
+
+    private suspend fun saveAddons(addons: List<Addon>, stampChange: Boolean = true) {
         val json = gson.toJson(addons.map { sanitizeAddonDisplayName(it) })
 
         // Save locally to the shared account-level addon list. Mirror to the
@@ -934,6 +946,7 @@ class StreamRepository @Inject constructor(
             prefs.remove(sharedPendingAddonsKey)
             prefs[addonsKey()] = json
             prefs.remove(pendingAddonsKey())
+            if (stampChange) prefs[addonsUpdatedAtKey] = System.currentTimeMillis()
         }
         synchronized(streamResultCache) { streamResultCache.clear() }
         invalidationBus.markDirty(CloudSyncScope.ADDONS, profileManager.getProfileIdSync(), "save addons")

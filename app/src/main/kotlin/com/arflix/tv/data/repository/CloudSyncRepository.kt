@@ -38,35 +38,43 @@ import kotlin.math.max
 import javax.inject.Inject
 import javax.inject.Singleton
 
-internal fun mergeCloudAddonsPreservingLocalDirectAddons(
+/**
+ * Reconcile local addons to the cloud list — the cloud is authoritative. A local addon that is
+ * ABSENT from the cloud was removed on another device, so it is dropped here; this is what makes
+ * addon REMOVALS propagate across devices. (The previous behavior UNIONED the two lists, re-adding
+ * anything the cloud had dropped, which is exactly why a removal never took effect on other
+ * devices.)
+ *
+ * The tricky case is an EMPTY cloud list, which could be either an intentional "removed everything"
+ * or a blank/partial pull. They are told apart by a set-level timestamp: [cloudAddonsUpdatedAt] is
+ * bumped on any user add/remove. An empty cloud is honored (all local addons dropped) only when it
+ * is genuinely NEWER than what we have ([cloudAddonsUpdatedAt] > [localAddonsUpdatedAt]); otherwise
+ * the empty is treated as a bad pull and local addons are preserved.
+ *
+ * The Boolean (kept for the call sites) is always false: we adopt the cloud, nothing to re-push.
+ */
+internal fun reconcileAddonsWithCloud(
     cloudAddons: List<Addon>,
-    localAddons: List<Addon>
+    localAddons: List<Addon>,
+    cloudAddonsUpdatedAt: Long = 0L,
+    localAddonsUpdatedAt: Long = 0L
 ): Pair<List<Addon>, Boolean> {
-    val merged = LinkedHashMap<String, Addon>()
-    cloudAddons.forEach { addon ->
-        val id = addon.id.trim()
-        if (id.isNotBlank()) {
-            merged[id] = addon
+    val cloud = cloudAddons.filter { it.id.trim().isNotBlank() }
+    if (cloud.isEmpty()) {
+        // Intentional removal of everything (STRICTLY newer set-timestamp) → honor it; otherwise
+        // this is a blank/partial pull (or a fresh install with default addons) → keep local.
+        return if (cloudAddonsUpdatedAt > localAddonsUpdatedAt) {
+            emptyList<Addon>() to false
+        } else {
+            localAddons to false
         }
     }
-
-    var preservedLocalAddon = false
-    localAddons.forEach { addon ->
-        val id = addon.id.trim()
-        val shouldPreserve = id.isNotBlank() &&
-            id !in merged &&
-            id != "opensubtitles" &&
-            addon.isInstalled &&
-            addon.type == AddonType.CUSTOM &&
-            !addon.url.isNullOrBlank()
-
-        if (shouldPreserve) {
-            merged[id] = addon
-            preservedLocalAddon = true
-        }
-    }
-
-    return merged.values.toList() to preservedLocalAddon
+    // A local set-change newer than the cloud's hasn't been pushed yet — keep it so a stale pull
+    // can't revert a just-made local add/remove.
+    if (localAddonsUpdatedAt > cloudAddonsUpdatedAt) return localAddons to false
+    val reconciled = LinkedHashMap<String, Addon>()
+    cloud.forEach { reconciled[it.id.trim()] = it }
+    return reconciled.values.toList() to false
 }
 
 /**
@@ -100,6 +108,12 @@ class CloudSyncRepository @Inject constructor(
     private val cloudSyncLocalDirtyAtKey = longPreferencesKey("cloud_sync_local_dirty_at")
     private val cloudSyncLastPushAtKey = longPreferencesKey("cloud_sync_last_push_at")
     private val cloudSyncLastAppliedAtKey = longPreferencesKey("cloud_sync_last_applied_at")
+    // Per-field last-writer-wins support (multi-device conflict resolution). `fieldTs` maps a
+    // canonical field key ("g:accentColor", "p:<profileId>:autoPlayNext") → epochMs of the last
+    // LOCAL change; `fieldBase` stores the value we last stamped, so we can detect local changes by
+    // diffing without hooking every write site.
+    private val cloudSyncFieldTsKey = stringPreferencesKey("cloud_sync_field_ts")
+    private val cloudSyncFieldBaseKey = stringPreferencesKey("cloud_sync_field_base")
     private val globalDnsProviderKey = stringPreferencesKey(OkHttpProvider.DNS_PROVIDER_PREF_KEY)
     private val customUserAgentKey = stringPreferencesKey(OkHttpProvider.USER_AGENT_PREF_KEY)
     @Volatile
@@ -406,6 +420,159 @@ class CloudSyncRepository @Inject constructor(
     }
 
     // ══════════════════════════════════════════════════════════
+    //  PER-FIELD TIMESTAMP LAST-WRITER-WINS (multi-device merge)
+    // ══════════════════════════════════════════════════════════
+    //
+    // The cloud payload is one whole-account blob written last-writer-wins with no clock, so an
+    // already-open device can revert a peer's setting by pushing its stale snapshot. To fix that
+    // without a backend change, every scalar setting carries a per-field `fieldUpdatedAt` timestamp
+    // and both PUSH and APPLY merge field-by-field: a field is only overwritten by a value with a
+    // NEWER timestamp. Scope = genuine globals + per-profile settings; list domains keep their
+    // existing merges; `defaultSubtitle` keeps its own `subtitleSettingsUpdatedAt` logic.
+
+    private val globalMergeKeys = listOf(
+        "accentColor", "oledBlackBackground", "skipProfileSelection", "customUserAgent",
+        "dnsProvider", "subtitleAiEnabled", "subtitleAiAutoSelect", "subtitleAiFindBestMatch",
+        "subtitlePreloadEnabled", "dolbyVisionCompatEnabled", "subtitleAiApiKey",
+        "subtitleAiModel", "subtitleRemoveHearingImpaired"
+    )
+    // Per-profile fields excluded from the generic merge (handled by their own logic / not values).
+    private val profileMergeExclude = setOf("defaultSubtitle", "subtitleSettingsUpdatedAt")
+
+    /** Canonical field keys present in [root]: "g:<globalKey>" and "p:<profileId>:<field>". */
+    private fun mergeKeysOf(root: JSONObject): List<String> {
+        val keys = ArrayList<String>()
+        for (g in globalMergeKeys) if (root.has(g)) keys.add("g:$g")
+        root.optJSONObject("profileSettingsById")?.let { ps ->
+            for (pid in ps.keys()) {
+                ps.optJSONObject(pid)?.let { p ->
+                    for (f in p.keys()) if (f !in profileMergeExclude) keys.add("p:$pid:$f")
+                }
+            }
+        }
+        return keys
+    }
+
+    private fun mergeFieldValue(root: JSONObject, key: String): Any? {
+        if (key.startsWith("g:")) {
+            val k = key.substring(2)
+            return if (root.has(k)) root.get(k) else null
+        }
+        val rest = key.substring(2)
+        val pid = rest.substringBefore(':')
+        val field = rest.substringAfter(':')
+        val p = root.optJSONObject("profileSettingsById")?.optJSONObject(pid) ?: return null
+        return if (p.has(field)) p.get(field) else null
+    }
+
+    private fun setMergeFieldValue(root: JSONObject, key: String, value: Any) {
+        if (key.startsWith("g:")) {
+            root.put(key.substring(2), value)
+            return
+        }
+        val rest = key.substring(2)
+        val pid = rest.substringBefore(':')
+        val field = rest.substringAfter(':')
+        val ps = root.optJSONObject("profileSettingsById") ?: JSONObject().also { root.put("profileSettingsById", it) }
+        val p = ps.optJSONObject(pid) ?: JSONObject().also { ps.put(pid, it) }
+        p.put(field, value)
+    }
+
+    private suspend fun loadJsonMap(key: androidx.datastore.preferences.core.Preferences.Key<String>): JSONObject {
+        val raw = context.settingsDataStore.data.first()[key]
+        return runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
+    }
+
+    /**
+     * Diff current local field values in [localRoot] against the stored baseline; stamp changed
+     * fields with now() and persist the timestamp + baseline maps. Returns the timestamp map so the
+     * caller can embed it as `fieldUpdatedAt`. Generic — no per-write hooks; a change is stamped on
+     * the next snapshot build, within the push debounce.
+     */
+    private suspend fun stampAndLoadFieldTs(localRoot: JSONObject): JSONObject {
+        val tsMap = loadJsonMap(cloudSyncFieldTsKey)
+        val baseMap = loadJsonMap(cloudSyncFieldBaseKey)
+        val now = System.currentTimeMillis()
+        var changed = false
+        for (key in mergeKeysOf(localRoot)) {
+            val current = mergeFieldValue(localRoot, key)?.toString() ?: continue
+            val base = if (baseMap.has(key)) baseMap.optString(key) else null
+            if (base == null) {
+                // First time we've seen this field (e.g. a fresh upgrade): record the baseline but
+                // do NOT stamp a timestamp. A field with no prior baseline is not evidence of a
+                // local change, so it must not out-timestamp a peer's newer cloud value and revert
+                // it — it stays untimestamped (loses to any real cloud timestamp) until the user
+                // actually changes it, which the next build detects via this baseline.
+                baseMap.put(key, current)
+                changed = true
+            } else if (base != current) {
+                baseMap.put(key, current)
+                tsMap.put(key, now)
+                changed = true
+            }
+        }
+        if (changed) {
+            context.settingsDataStore.edit {
+                it[cloudSyncFieldTsKey] = tsMap.toString()
+                it[cloudSyncFieldBaseKey] = baseMap.toString()
+            }
+        }
+        return tsMap
+    }
+
+    /**
+     * After applying a merged remote payload, reset the local baseline + timestamps to match it so
+     * the next snapshot build doesn't re-stamp remote-applied values as fresh local changes (which
+     * would ping-pong them back).
+     */
+    private suspend fun persistFieldStateFromApplied(appliedRoot: JSONObject) {
+        val ts = appliedRoot.optJSONObject("fieldUpdatedAt") ?: JSONObject()
+        val base = JSONObject()
+        for (key in mergeKeysOf(appliedRoot)) {
+            mergeFieldValue(appliedRoot, key)?.let { base.put(key, it.toString()) }
+        }
+        context.settingsDataStore.edit {
+            it[cloudSyncFieldTsKey] = ts.toString()
+            it[cloudSyncFieldBaseKey] = base.toString()
+        }
+    }
+
+    private data class SettingsMergeResult(val json: String, val otherWonKeys: Set<String>)
+
+    /**
+     * Field-level last-writer-wins: returns [baseStr] with each merge field replaced by [otherStr]'s
+     * value where [otherStr]'s per-field timestamp is strictly newer; `fieldUpdatedAt` becomes the
+     * per-key max. `otherWonKeys` = the fields where [otherStr] won. Used both ways: on PUSH
+     * base=local/other=remote (never write a field older than cloud's); on APPLY base=remote/
+     * other=local (never let an older remote value overwrite a newer-unpushed local one).
+     */
+    private fun mergeSettingsByTimestamp(baseStr: String, otherStr: String): SettingsMergeResult {
+        val base = runCatching { JSONObject(baseStr) }.getOrNull() ?: return SettingsMergeResult(baseStr, emptySet())
+        val other = runCatching { JSONObject(otherStr) }.getOrNull() ?: return SettingsMergeResult(baseStr, emptySet())
+        val baseTs = base.optJSONObject("fieldUpdatedAt") ?: JSONObject()
+        val otherTs = other.optJSONObject("fieldUpdatedAt") ?: JSONObject()
+        val mergedTs = runCatching { JSONObject(baseTs.toString()) }.getOrDefault(JSONObject())
+        val otherWon = HashSet<String>()
+        val allKeys = LinkedHashSet<String>().apply { addAll(mergeKeysOf(base)); addAll(mergeKeysOf(other)) }
+        for (key in allKeys) {
+            val bt = baseTs.optLong(key, 0L)
+            val ot = otherTs.optLong(key, 0L)
+            if (ot > bt) {
+                val v = mergeFieldValue(other, key)
+                if (v != null) {
+                    setMergeFieldValue(base, key, v)
+                    mergedTs.put(key, ot)
+                    otherWon.add(key)
+                }
+            } else if (bt > 0L) {
+                mergedTs.put(key, bt)
+            }
+        }
+        base.put("fieldUpdatedAt", mergedTs)
+        return SettingsMergeResult(base.toString(), otherWon)
+    }
+
+    // ══════════════════════════════════════════════════════════
     //  BUILD CLOUD SNAPSHOT JSON
     // ══════════════════════════════════════════════════════════
 
@@ -561,6 +728,9 @@ class CloudSyncRepository @Inject constructor(
             }
         }
         root.put("addonsByProfile", JSONObject(gson.toJson(addonsByProfile)))
+        // Set-level timestamp so an intentional "removed everything" can be told apart from a blank
+        // pull on apply (see reconcileAddonsWithCloud).
+        root.put("addonsUpdatedAt", streamRepository.getAddonsUpdatedAt())
 
         // Catalogs per profile
         val catalogsByProfile = buildMap<String, List<CatalogConfig>> {
@@ -637,6 +807,10 @@ class CloudSyncRepository @Inject constructor(
         val isTraktLinked = traktRepository.hasTrakt()
         root.put("traktLinked", isTraktLinked)
         root.put("traktExpiration", JSONObject.NULL)
+
+        // Per-field last-writer-wins timestamps (multi-device merge). Diff-stamps any locally
+        // changed scalar setting and embeds the map so push/apply can merge field-by-field.
+        root.put("fieldUpdatedAt", stampAndLoadFieldTs(root))
 
         return root.toString()
     }
@@ -745,10 +919,18 @@ class CloudSyncRepository @Inject constructor(
             )
         }
 
-        val effectivePayload = if (existingRemotePayload != null && !iptvRepository.isGroupOrderLocallyDirty()) {
+        val groupOrderMerged = if (existingRemotePayload != null && !iptvRepository.isGroupOrderLocallyDirty()) {
             mergeRemoteGroupOrder(payload, existingRemotePayload)
         } else {
             payload
+        }
+        // Field-level merge against the already-loaded remote: keep local fields we changed more
+        // recently, but never overwrite a cloud field with an older local value. This is what stops
+        // a stale device from reverting a peer's setting (even via the pull's pre-push).
+        val effectivePayload = if (existingRemotePayload != null) {
+            mergeSettingsByTimestamp(baseStr = groupOrderMerged, otherStr = existingRemotePayload).json
+        } else {
+            groupOrderMerged
         }
 
         val payloadHash = runCatching {
@@ -989,7 +1171,25 @@ class CloudSyncRepository @Inject constructor(
      * Applies a cloud JSON payload to all local repositories.
      */
     private suspend fun applyCloudPayload(payload: String) {
-        val root = JSONObject(payload)
+        // Field-level merge BEFORE applying: overlay any local scalar setting that is NEWER than the
+        // remote's onto the incoming payload, so a pull can't overwrite a not-yet-pushed local
+        // change. `defaultSubtitle` is excluded (kept by its own subtitleSettingsUpdatedAt logic
+        // below). Skipped when the remote predates this feature (no `fieldUpdatedAt`) so rollout
+        // behaves exactly like today until every device is on the new code. The rest of this
+        // function then writes the merged values exactly as before.
+        val incomingHasFieldTs = runCatching {
+            JSONObject(payload).optJSONObject("fieldUpdatedAt") != null
+        }.getOrDefault(false)
+        val localSnapshotForMerge = if (incomingHasFieldTs) {
+            runCatching { buildCloudSnapshotJson() }.getOrNull()
+        } else {
+            null
+        }
+        val settingsMerge = localSnapshotForMerge?.let {
+            mergeSettingsByTimestamp(baseStr = payload, otherStr = it)
+        }
+        val preservedLocalSettings = settingsMerge?.otherWonKeys?.isNotEmpty() == true
+        val root = JSONObject(settingsMerge?.json ?: payload)
 
         val fallbackDefaultSubtitle = root.optString("defaultSubtitle", "Off")
         val fallbackDefaultAudioLanguage = root.optString("defaultAudioLanguage", "Auto (Original)")
@@ -1271,32 +1471,35 @@ class CloudSyncRepository @Inject constructor(
 
         // ── Addons ──
         runCatching {
-            var preservedLocalAddon = false
+            val cloudAddonsTs = root.optLong("addonsUpdatedAt", 0L)
+            val localAddonsTs = streamRepository.getAddonsUpdatedAt()
+            var appliedCloudAddons = false
             root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Addon::class.java).type).type
                 val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
                 val sharedAddons = mergeAddonsForSharedRestore(map.values)
                 val localAddons = streamRepository.installedAddons.first()
-                val (resolvedAddons, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(sharedAddons, localAddons)
-                preservedLocalAddon = preservedLocalAddon || preserved
-                if (resolvedAddons.isNotEmpty()) {
-                    streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
-                }
+                val (resolvedAddons, _) = reconcileAddonsWithCloud(sharedAddons, localAddons, cloudAddonsTs, localAddonsTs)
+                // Apply the reconciled list even when it is empty — an intentional "removed all"
+                // must propagate (reconcile only returns empty when the cloud set is genuinely newer;
+                // opensubtitles is re-enforced downstream so playback isn't left with nothing).
+                streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
+                appliedCloudAddons = true
             }
             root.optJSONArray("addons")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 if (!root.has("addonsByProfile")) {
                     val type = TypeToken.getParameterized(List::class.java, Addon::class.java).type
                     val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
                     val localAddons = streamRepository.installedAddons.first()
-                    val (resolvedAddons, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(addons, localAddons)
-                    preservedLocalAddon = preservedLocalAddon || preserved
-                    if (resolvedAddons.isNotEmpty()) {
-                        streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
-                    }
+                    val (resolvedAddons, _) = reconcileAddonsWithCloud(addons, localAddons, cloudAddonsTs, localAddonsTs)
+                    streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
+                    appliedCloudAddons = true
                 }
             }
-            if (preservedLocalAddon) {
-                markLocalStateDirty()
+            // Keep the local set-timestamp in step with the cloud we just adopted, so we don't
+            // re-adopt/loop on the next pull.
+            if (appliedCloudAddons && cloudAddonsTs > localAddonsTs) {
+                streamRepository.setAddonsUpdatedAt(cloudAddonsTs)
             }
         }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_addons")) }
 
@@ -1505,6 +1708,15 @@ class CloudSyncRepository @Inject constructor(
             }
             if (root.has("pluginsEnabled")) pluginDataStore.setPluginsEnabled(root.optBoolean("pluginsEnabled", false))
         }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_plugins")) }
+
+        // Reset the per-field baseline/timestamps to the merged result so the next snapshot build
+        // does not see remote-applied values as fresh local changes (ping-pong guard). If we
+        // preserved a newer-local setting, mark dirty so it gets pushed up — safe now that push
+        // merges by timestamp and can't revert a peer.
+        if (incomingHasFieldTs) {
+            persistFieldStateFromApplied(root)
+            if (preservedLocalSettings) markLocalStateDirty()
+        }
 
         System.err.println("[CLOUD-SYNC] Full cloud restore applied successfully")
     }
