@@ -1,0 +1,25 @@
+{
+  "id": "cinema-essentials",
+  "name": "Cinema Essentials",
+  "author": "ARVIO Team",
+  "version": "1.0.0",
+  "description": "All the trending movies, popular lists, and upcoming releases you need for a perfect movie night.",
+  "catalogs": [
+    {
+      "name": "Trending in Movies",
+      "url": "https://mdblist.com/lists/snoak/trending-movies"
+    },
+    {
+      "name": "Top 10 Movies Today",
+      "url": "https://mdblist.com/lists/snoak/top-10-movies-of-the-day"
+    },
+    {
+      "name": "Top Movies This Week",
+      "url": "https://mdblist.com/lists/linaspurinis/top-watched-movies-of-the-week"
+    },
+    {
+      "name": "Coming Soon",
+      "url": "https://mdblist.com/lists/snoak/upcoming-movies"
+    }
+  ]
+}

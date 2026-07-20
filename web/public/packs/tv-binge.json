@@ -1,0 +1,21 @@
+{
+  "id": "tv-binge",
+  "name": "TV Show Binge Pack",
+  "author": "ARVIO Team",
+  "version": "1.0.0",
+  "description": "Never miss an episode. Popular, trending, and latest airing series in one convenient bundle.",
+  "catalogs": [
+    {
+      "name": "Trending in Shows",
+      "url": "https://mdblist.com/lists/snoak/trakt-s-trending-shows"
+    },
+    {
+      "name": "Top 10 Shows Today",
+      "url": "https://mdblist.com/lists/snoak/top-10-shows-of-the-day"
+    },
+    {
+      "name": "Latest Airing",
+      "url": "https://mdblist.com/lists/snoak/latest-movies-digital-release"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "anime-kdrama",
+  "name": "Otaku & K-Drama Hub",
+  "author": "Community",
+  "version": "1.1.2",
+  "description": "The ultimate pack for anime lovers and K-Drama fans. Auto-updated lists of trending episodes and releases.",
+  "catalogs": [
+    {
+      "name": "Trending in Anime",
+      "url": "https://mdblist.com/lists/snoak/trending-anime-shows"
+    },
+    {
+      "name": "New in K-Dramas",
+      "url": "https://mdblist.com/lists/snoak/latest-kdrama-shows"
+    }
+  ]
+}

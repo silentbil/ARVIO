@@ -24,7 +24,7 @@ const STATIC_FALLBACK_PACKS: CatalogPack[] = [
     author: "ARVIO Team",
     version: "1.0.0",
     description: "All the trending movies, popular lists, and upcoming releases you need for a perfect movie night.",
-    url: "https://arvio.app/packs/cinema-essentials.json",
+    url: "/packs/cinema-essentials.json",
     catalogs: ["Trending in Movies", "Top 10 Movies Today", "Top Movies This Week", "Coming Soon"]
   },
   {
@@ -33,7 +33,7 @@ const STATIC_FALLBACK_PACKS: CatalogPack[] = [
     author: "ARVIO Team",
     version: "1.0.0",
     description: "Never miss an episode. Popular, trending, and latest airing series in one convenient bundle.",
-    url: "https://arvio.app/packs/tv-binge.json",
+    url: "/packs/tv-binge.json",
     catalogs: ["Trending in Shows", "Top 10 Shows Today", "Latest Airing"]
   },
   {
@@ -42,7 +42,7 @@ const STATIC_FALLBACK_PACKS: CatalogPack[] = [
     author: "Community",
     version: "1.1.2",
     description: "The ultimate pack for anime lovers and K-Drama fans. Auto-updated lists of trending episodes and releases.",
-    url: "https://arvio.app/packs/anime-kdrama.json",
+    url: "/packs/anime-kdrama.json",
     catalogs: ["Trending in Anime", "New in K-Dramas"]
   },
   {
@@ -51,7 +51,7 @@ const STATIC_FALLBACK_PACKS: CatalogPack[] = [
     author: "Cinephile",
     version: "1.0.5",
     description: "Full box-sets and classic franchise collections, including James Bond, Harry Potter, Lord of the Rings, and Jurassic Park.",
-    url: "https://arvio.app/packs/classics-franchises.json",
+    url: "/packs/classics-franchises.json",
     catalogs: [
       "James Bond Collection",
       "Harry Potter Collection",
@@ -123,6 +123,17 @@ export default function DiscoverPage() {
     void loadPacks();
   }, []);
 
+  const getAbsoluteUrl = (url: string) => {
+    if (!url) return "";
+    if (url.startsWith("/")) {
+      if (typeof window !== "undefined") {
+        return `${window.location.origin}${url}`;
+      }
+      return `https://arvio.app${url}`;
+    }
+    return url;
+  };
+
   const copyToClipboard = (id: string, text: string) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedId(id);
@@ -131,7 +142,7 @@ export default function DiscoverPage() {
   };
 
   const getDeepLink = (packUrl: string) => {
-    return `arvio://install-pack?url=${encodeURIComponent(packUrl)}`;
+    return `arvio://install-pack?url=${encodeURIComponent(getAbsoluteUrl(packUrl))}`;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -156,6 +167,16 @@ export default function DiscoverPage() {
       .filter(Boolean);
 
     try {
+      // Verify manifest content format via proxy to bypass CORS
+      const verifyRes = await fetch(`/api/proxy?url=${encodeURIComponent(formUrl.trim())}`);
+      if (!verifyRes.ok) {
+        throw new Error(`Unable to fetch manifest JSON from "${formUrl}". Please verify the URL is correct and public.`);
+      }
+      const verifyJson = await verifyRes.json();
+      if (!verifyJson.id || !verifyJson.name || !Array.isArray(verifyJson.catalogs)) {
+        throw new Error("Invalid manifest format: JSON must contain 'id', 'name', and a 'catalogs' list.");
+      }
+
       if (!hasSupabaseConfig()) {
         throw new Error("Supabase is not configured on the website backend. Please submit packs via GitHub.");
       }
@@ -265,7 +286,7 @@ export default function DiscoverPage() {
                 </a>
                 <button 
                   type="button" 
-                  onClick={() => copyToClipboard(pack.id || pack.url, pack.url)}
+                  onClick={() => copyToClipboard(pack.id || pack.url, getAbsoluteUrl(pack.url))}
                   className="copy-button"
                   title="Copy manifest JSON URL to clipboard"
                 >

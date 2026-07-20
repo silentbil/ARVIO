@@ -154,16 +154,16 @@ data class CatalogValidationResult(
 )
 
 data class CatalogPackManifest(
-    val id: String,
-    val name: String,
+    val id: String?,
+    val name: String?,
     val author: String? = null,
     val version: String? = null,
     val description: String? = null,
-    val catalogs: List<CatalogPackItem>
+    val catalogs: List<CatalogPackItem>?
 ) : Serializable
 
 data class CatalogPackItem(
-    val name: String,
-    val url: String
+    val name: String?,
+    val url: String?
 ) : Serializable
 

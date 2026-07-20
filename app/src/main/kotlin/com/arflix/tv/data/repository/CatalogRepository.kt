@@ -709,7 +709,12 @@ class CatalogRepository @Inject constructor(
     }
 
     suspend fun fetchCatalogPackManifest(packUrl: String): Result<CatalogPackManifest> {
-        val json = fetchUrl(packUrl)
+        val trimmed = packUrl.trim()
+        if (!trimmed.startsWith("http://", ignoreCase = true) && !trimmed.startsWith("https://", ignoreCase = true)) {
+            return Result.failure(IllegalArgumentException("Invalid URL: must start with http:// or https://"))
+        }
+
+        val json = fetchUrl(trimmed)
             ?: return Result.failure(IllegalArgumentException("Failed to fetch catalog pack from URL"))
         val manifest = try {
             val type = object : com.google.gson.reflect.TypeToken<CatalogPackManifest>() {}.type
@@ -718,8 +723,17 @@ class CatalogRepository @Inject constructor(
             null
         } ?: return Result.failure(IllegalArgumentException("Failed to parse catalog pack manifest"))
 
-        if (manifest.id.isBlank() || manifest.name.isBlank()) {
+        if (manifest.id.isNullOrBlank() || manifest.name.isNullOrBlank()) {
             return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: missing ID or Name"))
+        }
+        val cats = manifest.catalogs
+        if (cats.isNullOrEmpty()) {
+            return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: catalogs list is empty or missing"))
+        }
+        for (item in cats) {
+            if (item.name.isNullOrBlank() || item.url.isNullOrBlank()) {
+                return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: catalog items must have a name and url"))
+            }
         }
         return Result.success(manifest)
     }
@@ -732,8 +746,13 @@ class CatalogRepository @Inject constructor(
         val current = getCatalogs().toMutableList()
         val addedConfigs = mutableListOf<CatalogConfig>()
 
-        for (item in manifest.catalogs) {
-            val validation = validateCatalogUrl(item.url)
+        val manifestId = manifest.id ?: return Result.failure(IllegalArgumentException("Manifest missing ID"))
+        val manifestName = manifest.name ?: return Result.failure(IllegalArgumentException("Manifest missing Name"))
+        val manifestCatalogs = manifest.catalogs ?: return Result.failure(IllegalArgumentException("Manifest missing catalogs"))
+
+        for (item in manifestCatalogs) {
+            val itemUrl = item.url ?: continue
+            val validation = validateCatalogUrl(itemUrl)
             if (!validation.isValid || validation.normalizedUrl == null || validation.sourceType == null) {
                 continue
             }
@@ -749,16 +768,16 @@ class CatalogRepository @Inject constructor(
                 ?: fallbackMetadata(normalizedUrl, sourceType)
                 ?: continue
 
-            val stableId = "custom_${sha256Short(manifest.id + "|" + normalizedUrl)}"
+            val stableId = "custom_${sha256Short(manifestId + "|" + normalizedUrl)}"
             val newCatalog = CatalogConfig(
                 id = stableId,
-                title = item.name.trim().ifBlank { resolved.title },
+                title = item.name?.trim()?.ifBlank { resolved.title } ?: resolved.title,
                 sourceType = sourceType,
                 sourceUrl = normalizedUrl,
                 sourceRef = resolved.sourceRef,
                 isPreinstalled = false,
-                packId = manifest.id,
-                packName = manifest.name
+                packId = manifestId,
+                packName = manifestName
             )
             addedConfigs.add(newCatalog)
         }
@@ -1096,11 +1115,11 @@ class CatalogRepository @Inject constructor(
 
     private suspend fun fetchUrl(url: String): String? {
         return withContext(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
-                .build()
             try {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
+                    .build()
                 okHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use null
                     response.body?.string()

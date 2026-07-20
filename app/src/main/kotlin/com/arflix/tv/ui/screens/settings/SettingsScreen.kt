@@ -9602,7 +9602,7 @@ private fun CatalogPackImportDialog(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = pendingPack.name,
+                            text = pendingPack.name ?: "",
                             style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
                             color = resolveAccentColor(fallback = Pink)
                         )
@@ -9623,7 +9623,7 @@ private fun CatalogPackImportDialog(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Catalogs included (${pendingPack.catalogs.size}):",
+                            text = "Catalogs included (${pendingPack.catalogs?.size ?: 0}):",
                             style = ArflixTypography.caption,
                             color = TextSecondary.copy(alpha = 0.6f)
                         )
@@ -9638,7 +9638,7 @@ private fun CatalogPackImportDialog(
                                 .background(Color.Black.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
                                 .padding(8.dp)
                         ) {
-                            pendingPack.catalogs.forEach { cat ->
+                            pendingPack.catalogs?.forEach { cat ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -9651,7 +9651,7 @@ private fun CatalogPackImportDialog(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = cat.name,
+                                        text = cat.name ?: "",
                                         style = ArflixTypography.body.copy(fontSize = 14.sp),
                                         color = TextPrimary,
                                         maxLines = 1,
