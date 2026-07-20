@@ -306,6 +306,17 @@
       font-weight: 500;
     }
 
+    .privacy-link {
+      display: block;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .privacy-link:hover, .privacy-link:focus-visible { color: var(--text); }
+
     @media (max-width: 480px) {
       .head { padding: 24px 22px 18px; }
       .body { padding: 18px 22px 22px; }
@@ -356,6 +367,7 @@
 
       <p class="small">If you opened this from a TV QR code, signing in will automatically pair that TV.</p>
       <div class="foot">ARVIO Cloud Auth</div>
+      <a class="privacy-link" href="/delete-account">Delete account</a>
     </section>
   </main>
 

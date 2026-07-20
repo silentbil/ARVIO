@@ -72,6 +72,10 @@ exports.handler = async (event) => {
     });
   } catch (error) {
     console.error("account-sync-push failed", error);
-    return json(500, { accepted: false, error: "sync_push_failed", message: error.message });
+    return json(error?.statusCode || 500, {
+      accepted: false,
+      error: "sync_push_failed",
+      message: error.message
+    });
   }
 };

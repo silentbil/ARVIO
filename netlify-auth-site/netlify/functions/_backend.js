@@ -55,6 +55,13 @@ function sha256(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest("hex");
 }
 
+function privacyHash(namespace, value) {
+  return crypto
+    .createHmac("sha256", authSecret())
+    .update(`${namespace}:${String(value || "")}`)
+    .digest("hex");
+}
+
 function parseBody(event) {
   if (!event.body) return {};
   const raw = event.isBase64Encoded
@@ -194,6 +201,10 @@ const AUTH_ISSUER = "arvio-netlify";
 const ACCESS_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 const REFRESH_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const PASSWORD_SETUP_TTL_MS = 60 * 60 * 1000;
+const ACCOUNT_PROPAGATION_GRACE_SECONDS = 60;
+const ACCOUNT_DELETE_REAUTH_SECONDS = 10 * 60;
+const ACCOUNT_DELETE_JOB_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const ACCOUNT_DELETE_PROPAGATION_WAIT_MS = 8_000;
 
 function authSecret() {
   const secret = process.env.ARVIO_AUTH_SECRET || "";
@@ -226,23 +237,60 @@ function refreshKeyForToken(token) {
   return `refresh/${sha256(token)}.json`;
 }
 
+function refreshAccountPrefix(accountId) {
+  return `refresh-account/${sha256(accountId)}/`;
+}
+
+function refreshAccountReferenceKey(accountId, token) {
+  return `${refreshAccountPrefix(accountId)}${sha256(token)}.json`;
+}
+
 function passwordSetupKeyForToken(token) {
+  const parts = String(token || "").split(".");
+  if (parts.length === 3 && parts[0] === "p2") {
+    try {
+      const accountId = Buffer.from(parts[1], "base64url").toString("utf8");
+      if (accountId) {
+        return `${passwordSetupPrefixForAccount(accountId)}${sha256(token)}.json`;
+      }
+    } catch {
+      // Fall through to the legacy key so already-issued links keep working.
+    }
+  }
   return `password-setup/${sha256(token)}.json`;
+}
+
+function passwordSetupPrefixForAccount(accountId) {
+  return `password-setup/account/${sha256(accountId)}/`;
+}
+
+function legacyPasswordSetupReferencePrefix(accountId) {
+  return `password-setup-account/${sha256(accountId)}/`;
+}
+
+function legacyPasswordSetupReferenceKey(accountId, token) {
+  return `${legacyPasswordSetupReferencePrefix(accountId)}${sha256(token)}.json`;
+}
+
+function passwordSetupExpiryKey(expiresAt, token) {
+  const hour = new Date(expiresAt).toISOString().slice(0, 13).replace(/[-T:]/g, "");
+  return `password-setup-expiry/${hour}/${sha256(token)}.json`;
 }
 
 function legacyAccountIdForEmail(email) {
   return `legacy_${sha256(normalizeEmail(email))}`;
 }
 
-function signArvioAccessToken(account) {
+function signArvioToken(account, tokenType, ttlSeconds) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "HS256", typ: "JWT" };
   const payload = {
     iss: AUTH_ISSUER,
     sub: account.accountId,
     email: normalizeEmail(account.email),
+    token_type: tokenType,
     iat: now,
-    exp: now + ACCESS_TOKEN_TTL_SECONDS
+    exp: now + ttlSeconds
   };
   const signingInput = `${base64urlJson(header)}.${base64urlJson(payload)}`;
   const signature = crypto
@@ -252,8 +300,16 @@ function signArvioAccessToken(account) {
   return `${signingInput}.${signature}`;
 }
 
-function verifyArvioAccessToken(accessToken) {
-  const parts = String(accessToken || "").split(".");
+function signArvioAccessToken(account) {
+  return signArvioToken(account, "access", ACCESS_TOKEN_TTL_SECONDS);
+}
+
+function signArvioRefreshToken(account) {
+  return signArvioToken(account, "refresh", Math.floor(REFRESH_TOKEN_TTL_MS / 1000));
+}
+
+function verifyArvioToken(token, expectedType) {
+  const parts = String(token || "").split(".");
   if (parts.length !== 3) {
     throw new Error("Invalid ARVIO token");
   }
@@ -281,14 +337,26 @@ function verifyArvioAccessToken(accessToken) {
   if (payload.iss !== AUTH_ISSUER || !payload.sub || !payload.email) {
     throw new Error("Invalid ARVIO token claims");
   }
+  const tokenType = payload.token_type || "access";
+  if (tokenType !== expectedType) throw new Error("Invalid ARVIO token type");
   if (Number(payload.exp || 0) <= Math.floor(Date.now() / 1000)) {
     throw new Error("ARVIO token expired");
   }
   return {
     supabaseUserId: String(payload.sub),
     email: normalizeEmail(payload.email),
-    authProvider: "netlify"
+    authProvider: "netlify",
+    issuedAt: Number(payload.iat || 0),
+    expiresAt: Number(payload.exp || 0)
   };
+}
+
+function verifyArvioAccessToken(accessToken) {
+  return verifyArvioToken(accessToken, "access");
+}
+
+function verifyArvioRefreshToken(refreshToken) {
+  return verifyArvioToken(refreshToken, "refresh");
 }
 
 async function hashPassword(password) {
@@ -328,6 +396,37 @@ async function verifyPassword(password, encoded) {
 async function loadAuthAccount(event, email) {
   const store = authStores(event);
   return getJSONOrNull(store, accountKeyForEmail(email));
+}
+
+async function loadActiveAuthAccount(event, identity, allowPropagationGrace = false) {
+  const account = await loadAuthAccount(event, identity.email);
+  if (account) {
+    if (String(account.accountId) !== String(identity.supabaseUserId)) {
+      throw new Error("Account identity no longer matches");
+    }
+    return account;
+  }
+
+  const tokenAge = Math.floor(Date.now() / 1000) - Number(identity.issuedAt || 0);
+  if (
+    allowPropagationGrace &&
+    identity.issuedAt &&
+    tokenAge >= 0 &&
+    tokenAge <= ACCOUNT_PROPAGATION_GRACE_SECONDS
+  ) {
+    const revoked = await getJSONOrNull(
+      accountDeletionStore(event),
+      accountRevocationKey(identity.supabaseUserId)
+    );
+    if (!revoked) {
+      return {
+        accountId: identity.supabaseUserId,
+        email: identity.email,
+        propagationGrace: true
+      };
+    }
+  }
+  throw new Error("Account no longer exists");
 }
 
 async function saveAuthAccount(event, account) {
@@ -390,21 +489,7 @@ async function issueArvioSession(event, account) {
     email: normalizeEmail(account.email)
   };
   const accessToken = signArvioAccessToken(normalizedAccount);
-  const refreshToken = randomToken(48);
-  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString();
-  const store = authStores(event);
-  await store.setJSON(refreshKeyForToken(refreshToken), {
-    accountId: normalizedAccount.accountId,
-    email: normalizedAccount.email,
-    createdAt: new Date().toISOString(),
-    expiresAt
-  }, {
-    metadata: {
-      accountId: normalizedAccount.accountId,
-      email: normalizedAccount.email,
-      expiresAt
-    }
-  });
+  const refreshToken = signArvioRefreshToken(normalizedAccount);
   return {
     access_token: accessToken,
     refresh_token: refreshToken,
@@ -418,6 +503,28 @@ async function issueArvioSession(event, account) {
 }
 
 async function refreshArvioSession(event, refreshToken) {
+  if (String(refreshToken || "").split(".").length === 3) {
+    let identity;
+    try {
+      identity = verifyArvioRefreshToken(refreshToken);
+    } catch (error) {
+      const rejected = new Error(publicError(error, "Invalid refresh token"));
+      rejected.statusCode = 401;
+      throw rejected;
+    }
+    let account;
+    try {
+      account = await loadActiveAuthAccount(event, identity, true);
+    } catch {
+      const error = new Error("Invalid refresh token");
+      error.statusCode = 401;
+      throw error;
+    }
+    return issueArvioSession(event, account);
+  }
+
+  // Opaque refresh tokens were issued by older APKs. Accept each one once,
+  // migrate it to the signed format, and remove its Blob record.
   const store = authStores(event);
   const refreshKey = refreshKeyForToken(refreshToken);
   const session = await getJSONOrNull(store, refreshKey);
@@ -433,12 +540,20 @@ async function refreshArvioSession(event, refreshToken) {
   }
   const account = await loadAuthAccount(event, session.email);
   if (!account || String(account.accountId) !== String(session.accountId)) {
-    await store.delete(refreshKey).catch(() => {});
+    await Promise.all([
+      store.delete(refreshKey).catch(() => {}),
+      store.delete(refreshAccountReferenceKey(session.accountId, refreshToken)).catch(() => {})
+    ]);
     const error = new Error("Invalid refresh token");
     error.statusCode = 401;
     throw error;
   }
-  return issueArvioSession(event, account);
+  const replacement = await issueArvioSession(event, account);
+  await Promise.all([
+    store.delete(refreshKey).catch(() => {}),
+    store.delete(refreshAccountReferenceKey(session.accountId, refreshToken)).catch(() => {})
+  ]);
+  return replacement;
 }
 
 function emailProviderName() {
@@ -448,29 +563,15 @@ function emailProviderName() {
   return "";
 }
 
-async function sendPasswordSetupEmail(email, setupUrl) {
+async function sendTransactionalEmail(email, subject, text, html) {
   const provider = emailProviderName();
   if (!provider) {
-    const error = new Error("Password setup email is not configured yet");
+    const error = new Error("Transactional email is not configured yet");
     error.statusCode = 503;
     throw error;
   }
 
   const from = process.env.AUTH_EMAIL_FROM || "ARVIO <noreply@auth.arvio.tv>";
-  const subject = "Create your ARVIO Cloud password";
-  const text = [
-    "ARVIO Cloud moved to a new secure server.",
-    "To keep your account protected, create a new ARVIO Cloud password:",
-    setupUrl,
-    "This link expires in 1 hour."
-  ].join("\n\n");
-  const html = `
-    <p>ARVIO Cloud moved to a new secure server.</p>
-    <p>To keep your account protected, create a new ARVIO Cloud password:</p>
-    <p><a href="${setupUrl}">Create new password</a></p>
-    <p>This link expires in 1 hour.</p>
-  `;
-
   if (provider === "resend") {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -526,6 +627,38 @@ async function sendPasswordSetupEmail(email, setupUrl) {
   return { provider, id: null };
 }
 
+async function sendPasswordSetupEmail(email, setupUrl) {
+  const subject = "Create your ARVIO Cloud password";
+  const text = [
+    "ARVIO Cloud moved to a new secure server.",
+    "To keep your account protected, create a new ARVIO Cloud password:",
+    setupUrl,
+    "This link expires in 1 hour."
+  ].join("\n\n");
+  const html = `
+    <p>ARVIO Cloud moved to a new secure server.</p>
+    <p>To keep your account protected, create a new ARVIO Cloud password:</p>
+    <p><a href="${setupUrl}">Create new password</a></p>
+    <p>This link expires in 1 hour.</p>
+  `;
+  return sendTransactionalEmail(email, subject, text, html);
+}
+
+async function sendAccountDeletionConfirmation(email) {
+  const subject = "Your ARVIO account has been deleted";
+  const text = [
+    "Your ARVIO account and cloud-synced data have been permanently deleted.",
+    "No further action is required.",
+    "If you did not request this deletion, contact arvio.app@gmail.com."
+  ].join("\n\n");
+  const html = `
+    <p>Your ARVIO account and cloud-synced data have been permanently deleted.</p>
+    <p>No further action is required.</p>
+    <p>If you did not request this deletion, contact <a href="mailto:arvio.app@gmail.com">arvio.app@gmail.com</a>.</p>
+  `;
+  return sendTransactionalEmail(email, subject, text, html);
+}
+
 async function startPasswordSetup(event, email) {
   const normalizedEmail = normalizeEmail(email);
   const account = await loadAuthAccount(event, normalizedEmail);
@@ -534,21 +667,27 @@ async function startPasswordSetup(event, email) {
     return { exists: false, emailSent: false };
   }
 
-  const token = randomToken(48);
   const expiresAt = new Date(Date.now() + PASSWORD_SETUP_TTL_MS).toISOString();
+  const accountId = account?.accountId || legacy?.accountId || legacyAccountIdForEmail(normalizedEmail);
+  const token = `p2.${Buffer.from(String(accountId)).toString("base64url")}.${randomToken(48)}`;
   const pending = {
     email: normalizedEmail,
-    accountId: account?.accountId || legacy?.accountId || legacyAccountIdForEmail(normalizedEmail),
+    accountId,
     createdAt: new Date().toISOString(),
     expiresAt
   };
   const store = authStores(event);
-  await store.setJSON(passwordSetupKeyForToken(token), pending, {
+  const tokenKey = passwordSetupKeyForToken(token);
+  const expiryKey = passwordSetupExpiryKey(expiresAt, token);
+  await store.setJSON(tokenKey, pending, {
     metadata: {
       email: normalizedEmail,
       accountId: pending.accountId,
       expiresAt
     }
+  });
+  await store.setJSON(expiryKey, { tokenKey, expiresAt }, {
+    metadata: { expiresAt }
   });
 
   const baseUrl = (process.env.SITE_URL || process.env.TV_AUTH_VERIFY_BASE_URL || "https://auth.arvio.tv").replace(/\/+$/, "");
@@ -562,15 +701,29 @@ async function startPasswordSetup(event, email) {
   };
 }
 
+async function deletePasswordSetupToken(store, token, pending) {
+  await Promise.all([
+    store.delete(passwordSetupKeyForToken(token)).catch(() => {}),
+    pending?.expiresAt
+      ? store.delete(passwordSetupExpiryKey(pending.expiresAt, token)).catch(() => {})
+      : Promise.resolve(),
+    pending?.accountId
+      ? store.delete(legacyPasswordSetupReferenceKey(pending.accountId, token)).catch(() => {})
+      : Promise.resolve()
+  ]);
+}
+
 async function completePasswordSetup(event, token, password) {
   const store = authStores(event);
-  const pending = await getJSONOrNull(store, passwordSetupKeyForToken(token));
+  const tokenKey = passwordSetupKeyForToken(token);
+  const pending = await getJSONOrNull(store, tokenKey);
   if (!pending || !pending.email || !pending.accountId) {
     const error = new Error("Password setup link is invalid or expired");
     error.statusCode = 400;
     throw error;
   }
   if (Date.now() > Date.parse(pending.expiresAt || "")) {
+    await deletePasswordSetupToken(store, token, pending);
     const error = new Error("Password setup link expired. Request a new one.");
     error.statusCode = 400;
     throw error;
@@ -579,7 +732,7 @@ async function completePasswordSetup(event, token, password) {
   const legacy = existing ? null : await loadLegacyAccountReference(event, pending.email);
   const currentAccountId = existing?.accountId || legacy?.accountId || "";
   if (!currentAccountId || String(currentAccountId) !== String(pending.accountId)) {
-    await store.delete(passwordSetupKeyForToken(token)).catch(() => {});
+    await deletePasswordSetupToken(store, token, pending);
     const error = new Error("Password setup link is invalid or expired");
     error.statusCode = 400;
     throw error;
@@ -595,7 +748,7 @@ async function completePasswordSetup(event, token, password) {
     createdAt: existing?.createdAt || new Date().toISOString()
   });
   if (typeof store.delete === "function") {
-    await store.delete(passwordSetupKeyForToken(token)).catch(() => {});
+    await deletePasswordSetupToken(store, token, pending);
   }
   return issueArvioSession(event, account);
 }
@@ -652,6 +805,15 @@ async function authenticateNetlifyPassword(event, email, password) {
 }
 
 async function createNetlifyAccount(event, email, password) {
+  const deletionPointer = await getJSONOrNull(
+    accountDeletionStore(event),
+    accountDeletionEmailPointerKey(email)
+  );
+  if (deletionPointer?.jobId) {
+    const error = new Error("Account deletion is still being completed. Try again shortly.");
+    error.statusCode = 409;
+    throw error;
+  }
   const existing = await loadAuthAccount(event, email);
   const legacy = existing ? null : await loadLegacyAccountReference(event, email);
   if (requiresExplicitPasswordSetup(existing)) {
@@ -767,9 +929,14 @@ function tvSessionStores(event) {
 }
 
 function tvSessionKeys(session) {
+  const expiryHour = new Date(session.expiresAt).toISOString().slice(0, 13).replace(/[-T:]/g, "");
   return {
     device: `device/${session.deviceCode}.json`,
-    code: `code/${String(session.userCode || "").toUpperCase()}.json`
+    code: `code/${String(session.userCode || "").toUpperCase()}.json`,
+    expiry: `expiry/${expiryHour}/${session.deviceCode}/${String(session.userCode || "").toUpperCase()}.json`,
+    account: session.userId
+      ? `account/${sha256(session.userId)}/${session.deviceCode}.json`
+      : null
   };
 }
 
@@ -792,6 +959,34 @@ async function saveTvSession(event, session) {
       expiresAt: session.expiresAt
     }
   });
+  await store.setJSON(keys.expiry, {
+    deviceCode: session.deviceCode,
+    userCode: session.userCode,
+    expiresAt: session.expiresAt
+  }, {
+    metadata: { expiresAt: session.expiresAt }
+  });
+  if (keys.account) {
+    await store.setJSON(keys.account, {
+      deviceCode: session.deviceCode,
+      userCode: session.userCode,
+      expiresAt: session.expiresAt
+    }, {
+      metadata: { expiresAt: session.expiresAt }
+    });
+  }
+}
+
+async function deleteTvSession(event, session) {
+  if (!session?.deviceCode || !session?.userCode || !session?.expiresAt) return;
+  const store = tvSessionStores(event);
+  const keys = tvSessionKeys(session);
+  await Promise.all([
+    store.delete(keys.device).catch(() => {}),
+    store.delete(keys.code).catch(() => {}),
+    store.delete(keys.expiry).catch(() => {}),
+    keys.account ? store.delete(keys.account).catch(() => {}) : Promise.resolve()
+  ]);
 }
 
 async function loadTvSessionByDevice(event, deviceCode) {
@@ -935,18 +1130,12 @@ async function handleTvAuthStatus(event) {
     if (!deviceCode) return json(400, { error: "device_code is required" });
     const session = await loadTvSessionByDevice(event, deviceCode);
     if (!session) return json(200, { status: "expired", message: "Session not found" });
-    if (isTvSessionExpired(session) && session.status === "pending") {
-      await saveTvSession(event, { ...session, status: "expired", expiredAt: new Date().toISOString() });
+    if (isTvSessionExpired(session)) {
+      await deleteTvSession(event, session);
       return json(200, { status: "expired", message: "Code expired" });
     }
     if (session.status === "approved" && session.accessToken && session.refreshToken) {
-      await saveTvSession(event, {
-        ...session,
-        status: "consumed",
-        consumedAt: new Date().toISOString(),
-        accessToken: null,
-        refreshToken: null
-      });
+      await deleteTvSession(event, session);
       return json(200, {
         status: "approved",
         access_token: session.accessToken,
@@ -955,6 +1144,7 @@ async function handleTvAuthStatus(event) {
       });
     }
     if (session.status === "expired" || session.status === "consumed") {
+      await deleteTvSession(event, session);
       return json(200, { status: "expired", message: "Code expired" });
     }
     return json(200, { status: "pending" });
@@ -1363,7 +1553,9 @@ async function resolveIdentity(event) {
     throw new Error("Missing Authorization bearer token");
   }
   try {
-    return verifyArvioAccessToken(token);
+    const identity = verifyArvioAccessToken(token);
+    await loadActiveAuthAccount(event, identity, true);
+    return identity;
   } catch (error) {
     const rejected = new Error(`Token rejected (${publicError(error)})`);
     rejected.statusCode = 401;
@@ -1562,11 +1754,538 @@ async function claimLegacySnapshotIfNeeded(client, account, identity) {
   };
 }
 
+function accountDeletionStore(event) {
+  connectLambda(event);
+  return getStore("account-deletion-jobs");
+}
+
+function accountDeletionJobKey(jobId) {
+  return `jobs/${jobId}.json`;
+}
+
+function accountDeletionPointerKey(accountId) {
+  return `active/account/${sha256(accountId)}.json`;
+}
+
+function accountDeletionEmailPointerKey(email) {
+  return `active/email/${sha256(normalizeEmail(email))}.json`;
+}
+
+function accountRevocationKey(accountId) {
+  return `revoked/account/${sha256(accountId)}.json`;
+}
+
+function safeTokenEqual(actual, expectedHash) {
+  const actualHash = sha256(actual);
+  const actualBuffer = Buffer.from(actualHash);
+  const expectedBuffer = Buffer.from(String(expectedHash || ""));
+  return actualBuffer.length === expectedBuffer.length &&
+    crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+async function saveAccountDeletionJob(event, job) {
+  const store = accountDeletionStore(event);
+  await store.setJSON(accountDeletionJobKey(job.jobId), job, {
+    metadata: {
+      status: job.status,
+      accountHash: job.accountHash,
+      updatedAt: job.updatedAt,
+      expiresAt: job.expiresAt
+    }
+  });
+  return job;
+}
+
+async function listBlobKeys(store, prefix) {
+  const keys = [];
+  for await (const page of store.list({ prefix, paginate: true })) {
+    for (const blob of page.blobs || []) keys.push(blob.key);
+  }
+  return keys;
+}
+
+async function mapWithConcurrency(items, limit, task) {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      await task(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function deleteBlobPrefix(store, prefix) {
+  const keys = await listBlobKeys(store, prefix);
+  await mapWithConcurrency(keys, 24, (key) => store.delete(key));
+  return keys.length;
+}
+
+async function deleteTvSessionsForAccount(event, accountId) {
+  const store = tvSessionStores(event);
+  const prefix = `account/${sha256(accountId)}/`;
+  const keys = await listBlobKeys(store, prefix);
+  await mapWithConcurrency(keys, 12, async (key) => {
+    const reference = await getJSONOrNull(store, key);
+    if (reference?.deviceCode && reference?.userCode && reference?.expiresAt) {
+      await deleteTvSession(event, {
+        ...reference,
+        userId: accountId
+      });
+    }
+    await store.delete(key).catch(() => {});
+  });
+  return keys.length;
+}
+
+async function deleteUsageForAccount(event, accountId) {
+  const store = snapshotStores(event).usage;
+  const accountKey = privacyHash("usage-account", accountId);
+  let deleted = 0;
+  for (let daysAgo = 0; daysAgo <= 31; daysAgo++) {
+    const date = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    deleted += await deleteBlobPrefix(store, `date/${date}/account/${accountKey}/`);
+  }
+  return deleted;
+}
+
+async function deleteReferencedAuthRecords(store, prefix) {
+  const references = await listBlobKeys(store, prefix);
+  await mapWithConcurrency(references, 16, async (key) => {
+    const reference = await getJSONOrNull(store, key);
+    const targetKey = reference?.targetKey || reference?.refreshKey || reference?.tokenKey;
+    await Promise.all([
+      targetKey ? store.delete(targetKey).catch(() => {}) : Promise.resolve(),
+      store.delete(key).catch(() => {})
+    ]);
+  });
+  return references.length;
+}
+
+async function deleteAuthRecordsForAccount(event, accountId) {
+  const store = authStores(event);
+  const [setupTokens, legacySetupTokens, refreshTokens] = await Promise.all([
+    deleteBlobPrefix(store, passwordSetupPrefixForAccount(accountId)),
+    deleteReferencedAuthRecords(store, legacyPasswordSetupReferencePrefix(accountId)),
+    deleteReferencedAuthRecords(store, refreshAccountPrefix(accountId))
+  ]);
+  return {
+    passwordSetupTokens: setupTokens + legacySetupTokens,
+    refreshTokens
+  };
+}
+
+async function deleteDatabaseAccount(email, accountId) {
+  const connectionString = process.env.NETLIFY_DB_URL ||
+    process.env.NETLIFY_DATABASE_URL ||
+    process.env.DATABASE_URL;
+  if (!connectionString) return { skipped: true, deleted: 0 };
+
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const rows = await client.query(
+      `DELETE FROM public.legacy_supabase_rows
+        WHERE supabase_user_id::text = $1`,
+      [String(accountId)]
+    );
+    const snapshots = await client.query(
+      `DELETE FROM public.legacy_supabase_snapshots
+        WHERE supabase_user_id::text = $1 OR email_normalized = $2`,
+      [String(accountId), normalizeEmail(email)]
+    );
+    const users = await client.query(
+      `DELETE FROM public.legacy_supabase_users
+        WHERE supabase_user_id::text = $1 OR email_normalized = $2`,
+      [String(accountId), normalizeEmail(email)]
+    );
+    const accounts = await client.query(
+      `DELETE FROM public.arvio_accounts
+        WHERE supabase_user_id::text = $1 OR email_normalized = $2`,
+      [String(accountId), normalizeEmail(email)]
+    );
+    await client.query("COMMIT");
+    return {
+      skipped: false,
+      deleted: rows.rowCount + snapshots.rowCount + users.rowCount + accounts.rowCount
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function revokeAuthAccount(event, email, accountId) {
+  const store = authStores(event);
+  const key = accountKeyForEmail(email);
+  const account = await getJSONOrNull(store, key);
+  if (account && String(account.accountId) !== String(accountId)) {
+    const error = new Error("Account identity changed while deletion was queued");
+    error.statusCode = 409;
+    throw error;
+  }
+  const revokedAt = new Date();
+  await accountDeletionStore(event).setJSON(accountRevocationKey(accountId), {
+    accountHash: sha256(accountId),
+    revokedAt: revokedAt.toISOString(),
+    expiresAt: new Date(revokedAt.getTime() + ACCOUNT_DELETE_JOB_TTL_MS).toISOString()
+  }, {
+    metadata: {
+      revokedAt: revokedAt.toISOString(),
+      expiresAt: new Date(revokedAt.getTime() + ACCOUNT_DELETE_JOB_TTL_MS).toISOString()
+    }
+  });
+  if (account) await store.delete(key);
+  return !!account;
+}
+
+async function purgeAccountData(event, email, accountId) {
+  const stores = snapshotStores(event);
+  const identity = { email, supabaseUserId: accountId };
+  const keys = snapshotKeys(identity);
+
+  const [events, authRecords, tvSessions, usageEvents, database] = await Promise.all([
+    deleteBlobPrefix(stores.events, `supabase/${accountId}/`),
+    deleteAuthRecordsForAccount(event, accountId),
+    deleteTvSessionsForAccount(event, accountId),
+    deleteUsageForAccount(event, accountId),
+    deleteDatabaseAccount(email, accountId)
+  ]);
+
+  const fixedKeys = [
+    [stores.account, keys.supabase],
+    [stores.account, keys.email],
+    [stores.legacy, keys.supabase],
+    [stores.legacy, keys.email]
+  ];
+  await Promise.all(fixedKeys.map(([store, key]) => store.delete(key).catch(() => {})));
+
+  return {
+    syncSnapshots: fixedKeys.length,
+    syncEvents: events,
+    passwordSetupTokens: authRecords.passwordSetupTokens,
+    refreshTokens: authRecords.refreshTokens,
+    tvSessions,
+    usageEvents,
+    databaseRows: database.deleted,
+    databaseSkipped: database.skipped
+  };
+}
+
+function functionOrigin(event) {
+  const candidate = event?.rawUrl || process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.SITE_URL;
+  if (!candidate) throw new Error("Function origin is unavailable");
+  return new URL(candidate).origin;
+}
+
+async function triggerAccountDeletionWorker(event, jobId, workerToken) {
+  const response = await fetch(`${functionOrigin(event)}/.netlify/functions/account-delete-worker-background`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ job_id: jobId, worker_token: workerToken })
+  });
+  if (!response.ok && response.status !== 202) {
+    throw new Error(`Deletion worker could not start (${response.status})`);
+  }
+}
+
+async function handleAccountDeleteStart(event) {
+  const preflight = options(event);
+  if (preflight) return preflight;
+  const wrongMethod = methodGuard(event, ["POST"]);
+  if (wrongMethod) return wrongMethod;
+
+  try {
+    assertAppRequest(event);
+    const identity = await resolveIdentity(event);
+    const body = parseBody(event);
+    if (String(body.confirmation || "") !== "DELETE") {
+      return json(400, { error: "Type DELETE to confirm permanent account deletion" });
+    }
+    const tokenAge = Math.floor(Date.now() / 1000) - Number(identity.issuedAt || 0);
+    if (!identity.issuedAt || tokenAge < 0 || tokenAge > ACCOUNT_DELETE_REAUTH_SECONDS) {
+      return json(401, { error: "Sign in again before deleting your account" });
+    }
+
+    const store = accountDeletionStore(event);
+    const pointerKey = accountDeletionPointerKey(identity.supabaseUserId);
+    const pointer = await getJSONOrNull(store, pointerKey);
+    if (pointer?.jobId) {
+      const activeJob = await getJSONOrNull(store, accountDeletionJobKey(pointer.jobId));
+      if (activeJob && ["queued", "running"].includes(activeJob.status)) {
+        return json(409, { error: "Account deletion is already in progress" });
+      }
+    }
+
+    const now = new Date();
+    const jobId = randomToken(24);
+    const receiptToken = randomToken(32);
+    const workerToken = randomToken(32);
+    const job = {
+      jobId,
+      status: "queued",
+      accountId: identity.supabaseUserId,
+      accountHash: sha256(identity.supabaseUserId),
+      email: identity.email,
+      emailHash: sha256(identity.email),
+      receiptTokenHash: sha256(receiptToken),
+      workerToken,
+      workerTokenHash: sha256(workerToken),
+      attempts: 0,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + ACCOUNT_DELETE_JOB_TTL_MS).toISOString()
+    };
+    await saveAccountDeletionJob(event, job);
+    await Promise.all([
+      store.setJSON(pointerKey, { jobId, status: "queued" }),
+      store.setJSON(accountDeletionEmailPointerKey(identity.email), {
+        jobId,
+        accountHash: job.accountHash,
+        status: "queued"
+      })
+    ]);
+
+    try {
+      await triggerAccountDeletionWorker(event, jobId, workerToken);
+    } catch (error) {
+      await saveAccountDeletionJob(event, {
+        ...job,
+        status: "failed",
+        error: publicError(error, "Deletion worker could not start"),
+        updatedAt: new Date().toISOString()
+      });
+      throw error;
+    }
+
+    return json(202, {
+      ok: true,
+      status: "queued",
+      job_id: jobId,
+      receipt_token: receiptToken
+    });
+  } catch (error) {
+    return handlerError(event, error, "Account deletion could not start");
+  }
+}
+
+async function handleAccountDeleteStatus(event) {
+  const preflight = options(event);
+  if (preflight) return preflight;
+  const wrongMethod = methodGuard(event, ["POST"]);
+  if (wrongMethod) return wrongMethod;
+
+  try {
+    assertAppRequest(event);
+    const body = parseBody(event);
+    const jobId = String(body.job_id || "").trim();
+    const receiptToken = String(body.receipt_token || "").trim();
+    if (!jobId || !receiptToken) return json(400, { error: "Missing deletion receipt" });
+    const store = accountDeletionStore(event);
+    let job = await getJSONOrNull(store, accountDeletionJobKey(jobId));
+    if (!job || !safeTokenEqual(receiptToken, job.receiptTokenHash)) {
+      return json(404, { error: "Deletion receipt not found" });
+    }
+    if (job.status === "failed" && job.workerToken && Number(job.restartCount || 0) < 2) {
+      const retryJob = {
+        ...job,
+        status: "queued",
+        attempts: 0,
+        restartCount: Number(job.restartCount || 0) + 1,
+        error: null,
+        updatedAt: new Date().toISOString()
+      };
+      try {
+        job = await saveAccountDeletionJob(event, retryJob);
+        await triggerAccountDeletionWorker(event, job.jobId, job.workerToken);
+      } catch (error) {
+        job = await saveAccountDeletionJob(event, {
+          ...retryJob,
+          status: "failed",
+          error: publicError(error, "Deletion retry could not start"),
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }
+    return json(200, {
+      ok: job.status === "complete",
+      status: job.status,
+      started_at: job.startedAt || job.createdAt,
+      completed_at: job.completedAt || null,
+      email_sent: job.emailSent ?? null,
+      error: job.status === "failed" ? (job.error || "Deletion failed") : null
+    });
+  } catch (error) {
+    return handlerError(event, error, "Deletion status could not be loaded");
+  }
+}
+
+async function runAccountDeletionJob(event, jobId, workerToken) {
+  const store = accountDeletionStore(event);
+  let job = await getJSONOrNull(store, accountDeletionJobKey(jobId));
+  if (!job || !safeTokenEqual(workerToken, job.workerTokenHash)) {
+    const error = new Error("Invalid deletion worker token");
+    error.statusCode = 401;
+    throw error;
+  }
+  if (job.status === "complete") return job;
+
+  for (let attempt = Number(job.attempts || 0) + 1; attempt <= 3; attempt++) {
+    job = await saveAccountDeletionJob(event, {
+      ...job,
+      status: "running",
+      attempts: attempt,
+      startedAt: job.startedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      error: null
+    });
+    try {
+      const authRevokedInitially = await revokeAuthAccount(event, job.email, job.accountId);
+      const firstPass = await purgeAccountData(event, job.email, job.accountId);
+      await new Promise((resolve) => setTimeout(resolve, ACCOUNT_DELETE_PROPAGATION_WAIT_MS));
+      const authRevokedAfterPropagation = await revokeAuthAccount(event, job.email, job.accountId);
+      const deleted = await purgeAccountData(event, job.email, job.accountId);
+      let emailResult = null;
+      let emailError = null;
+      try {
+        emailResult = await sendAccountDeletionConfirmation(job.email);
+      } catch (error) {
+        emailError = publicError(error, "Confirmation email failed");
+      }
+
+      const completedAt = new Date().toISOString();
+      const completed = await saveAccountDeletionJob(event, {
+        jobId: job.jobId,
+        status: "complete",
+        accountHash: job.accountHash,
+        emailHash: job.emailHash,
+        receiptTokenHash: job.receiptTokenHash,
+        attempts: attempt,
+        authRevoked: authRevokedInitially || authRevokedAfterPropagation,
+        deleted: {
+          ...deleted,
+          firstPass
+        },
+        emailSent: !!emailResult,
+        emailProvider: emailResult?.provider || null,
+        emailError,
+        createdAt: job.createdAt,
+        startedAt: job.startedAt,
+        completedAt,
+        updatedAt: completedAt,
+        expiresAt: job.expiresAt
+      });
+      await Promise.all([
+        store.delete(accountDeletionPointerKey(job.accountId)).catch(() => {}),
+        store.delete(accountDeletionEmailPointerKey(job.email)).catch(() => {})
+      ]);
+      return completed;
+    } catch (error) {
+      job = await saveAccountDeletionJob(event, {
+        ...job,
+        status: attempt < 3 ? "retrying" : "failed",
+        error: publicError(error, "Account deletion failed"),
+        updatedAt: new Date().toISOString()
+      });
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+      }
+    }
+  }
+  return job;
+}
+
+async function handleRetentionCleanup(event) {
+  const now = new Date();
+  const currentHour = now.toISOString().slice(0, 13).replace(/[-T:]/g, "");
+  const tvStore = tvSessionStores(event);
+  const authStore = authStores(event);
+  const deletionStore = accountDeletionStore(event);
+
+  const tvExpiryKeys = (await listBlobKeys(tvStore, "expiry/"))
+    .filter((key) => String(key.split("/")[1] || "") < currentHour);
+  await mapWithConcurrency(tvExpiryKeys, 16, async (key) => {
+    const reference = await getJSONOrNull(tvStore, key);
+    const session = reference?.deviceCode
+      ? await loadTvSessionByDevice(event, reference.deviceCode)
+      : null;
+    if (session) {
+      await deleteTvSession(event, session);
+      return;
+    }
+    await Promise.all([
+      reference?.deviceCode
+        ? tvStore.delete(`device/${reference.deviceCode}.json`).catch(() => {})
+        : Promise.resolve(),
+      reference?.userCode
+        ? tvStore.delete(`code/${String(reference.userCode).toUpperCase()}.json`).catch(() => {})
+        : Promise.resolve(),
+      tvStore.delete(key).catch(() => {})
+    ]);
+  });
+
+  const passwordExpiryKeys = (await listBlobKeys(authStore, "password-setup-expiry/"))
+    .filter((key) => String(key.split("/")[1] || "") < currentHour);
+  await mapWithConcurrency(passwordExpiryKeys, 16, async (key) => {
+    const reference = await getJSONOrNull(authStore, key);
+    await Promise.all([
+      reference?.tokenKey ? authStore.delete(reference.tokenKey).catch(() => {}) : Promise.resolve(),
+      authStore.delete(key).catch(() => {})
+    ]);
+  });
+
+  const jobKeys = await listBlobKeys(deletionStore, "jobs/");
+  let deletionJobs = 0;
+  await mapWithConcurrency(jobKeys, 12, async (key) => {
+    const job = await getJSONOrNull(deletionStore, key);
+    if (!job?.expiresAt || Date.parse(job.expiresAt) > now.getTime()) return;
+    await Promise.all([
+      deletionStore.delete(key).catch(() => {}),
+      job.accountId
+        ? deletionStore.delete(accountDeletionPointerKey(job.accountId)).catch(() => {})
+        : Promise.resolve(),
+      job.email
+        ? deletionStore.delete(accountDeletionEmailPointerKey(job.email)).catch(() => {})
+        : Promise.resolve()
+    ]);
+    deletionJobs++;
+  });
+
+  const revocationKeys = await listBlobKeys(deletionStore, "revoked/account/");
+  let revocations = 0;
+  await mapWithConcurrency(revocationKeys, 12, async (key) => {
+    const record = await getJSONOrNull(deletionStore, key);
+    if (!record?.expiresAt || Date.parse(record.expiresAt) > now.getTime()) return;
+    await deletionStore.delete(key).catch(() => {});
+    revocations++;
+  });
+
+  const expiredUsageDate = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const usageEvents = await deleteBlobPrefix(
+    snapshotStores(event).usage,
+    `date/${expiredUsageDate}/`
+  );
+
+  return json(200, {
+    ok: true,
+    tv_sessions: tvExpiryKeys.length,
+    password_setup_tokens: passwordExpiryKeys.length,
+    deletion_jobs: deletionJobs,
+    revocations,
+    usage_events: usageEvents
+  });
+}
+
 module.exports = {
   getPool,
   json,
   options,
   parseBody,
+  assertAppRequest,
   payloadMetrics,
   isExistingSnapshotRicher,
   applyAddonWipeGuard,
@@ -1575,11 +2294,18 @@ module.exports = {
   claimLegacySnapshotIfNeeded,
   normalizeEmail,
   sha256,
+  privacyHash,
   snapshotStores,
   snapshotKeys,
   loadSnapshotFromBlobs,
   saveSnapshotToBlobs,
   appendSnapshotEvent,
+  listBlobKeys,
+  deleteBlobPrefix,
+  handleAccountDeleteStart,
+  handleAccountDeleteStatus,
+  runAccountDeletionJob,
+  handleRetentionCleanup,
   handleAuthLogin,
   handleAuthPasswordStart,
   handleAuthPasswordComplete,
@@ -1591,5 +2317,14 @@ module.exports = {
   handleTvAuthApprove,
   handleTvAuthComplete,
   handleTvAuthStart,
-  handleTvAuthStatus
+  handleTvAuthStatus,
+  _test: {
+    signArvioAccessToken,
+    signArvioRefreshToken,
+    verifyArvioAccessToken,
+    verifyArvioRefreshToken,
+    passwordSetupKeyForToken,
+    passwordSetupPrefixForAccount,
+    safeTokenEqual
+  }
 };

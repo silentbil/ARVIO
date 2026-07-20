@@ -1,205 +1,455 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ARVIO &mdash; Delete Account</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Delete ARVIO account</title>
   <link rel="icon" href="/assets/arvio-icon-512.png" type="image/png">
   <style>
     :root {
-      --bg-1: #050505;
-      --bg-2: #111111;
-      --card: rgba(12, 12, 12, 0.92);
-      --line: rgba(255,255,255,0.18);
-      --text: #f5f5f5;
-      --muted: #b7b7b7;
-      --accent: #0df0c2;
-      --danger: #f87171;
+      --bg: #050505;
+      --surface: #0c0c0c;
+      --surface-raised: #121212;
+      --line: #292929;
+      --line-strong: #444444;
+      --text: #f7f7f7;
+      --muted: #a4a4a4;
+      --danger: #ff5b62;
+      --danger-strong: #e83d46;
+      --success: #41d89b;
     }
 
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; min-height: 100%; font-family: "Segoe UI", Inter, system-ui, sans-serif; color: var(--text); }
+    html { min-height: 100%; background: var(--bg); }
     body {
-      background:
-        radial-gradient(900px 500px at 0% -10%, rgba(13,240,194,0.12), transparent 60%),
-        radial-gradient(900px 500px at 100% 120%, rgba(103,183,255,0.08), transparent 60%),
-        linear-gradient(160deg, var(--bg-1), var(--bg-2));
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }
-
-    .shell {
-      width: 100%;
-      max-width: 640px;
-      border-radius: 18px;
-      background: var(--card);
-      border: 1px solid var(--line);
-      box-shadow: 0 24px 80px rgba(0,0,0,0.5);
-      overflow: hidden;
-    }
-
-    .head {
-      padding: 24px 26px 20px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .brand {
-      display: block;
-      width: 132px;
-      height: auto;
-      margin-bottom: 12px;
-      filter: drop-shadow(0 0 16px rgba(13, 240, 194, 0.18));
-    }
-
-    .title {
+      min-height: 100vh;
       margin: 0;
-      font-size: 28px;
-      line-height: 1.15;
+      color: var(--text);
+      background: var(--bg);
+      font-family: Inter, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button, input { font: inherit; letter-spacing: 0; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.42; }
+
+    .topbar {
+      height: 72px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid #191919;
+    }
+
+    .topbar-inner, .page {
+      width: min(100% - 40px, 760px);
+      margin: 0 auto;
+    }
+
+    .brand { width: 114px; height: auto; display: block; }
+
+    .page { padding: 54px 0 72px; }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--danger);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 640px;
+      font-size: clamp(32px, 6vw, 48px);
+      line-height: 1.08;
+      font-weight: 720;
+    }
+
+    .intro {
+      max-width: 640px;
+      margin: 18px 0 34px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.65;
+    }
+
+    .panel {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border-bottom: 1px solid var(--line);
+      background: #090909;
+    }
+
+    .step {
+      min-width: 0;
+      padding: 15px 18px;
+      color: #717171;
+      font-size: 12px;
+      font-weight: 650;
+      text-align: center;
+      border-right: 1px solid #1e1e1e;
+    }
+
+    .step:last-child { border-right: 0; }
+    .step.active { color: var(--text); background: var(--surface-raised); }
+    .step.done { color: var(--success); }
+
+    .stage { padding: 28px; }
+    .stage[hidden] { display: none; }
+    .stage h2 { margin: 0 0 8px; font-size: 21px; }
+    .stage-copy { margin: 0 0 24px; color: var(--muted); line-height: 1.55; }
+
+    .field { display: grid; gap: 8px; margin-top: 17px; }
+    label { color: #d6d6d6; font-size: 13px; font-weight: 600; }
+    input {
+      width: 100%;
+      height: 48px;
+      padding: 0 14px;
+      color: var(--text);
+      background: #080808;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      outline: none;
+    }
+
+    input:focus { border-color: #e8e8e8; box-shadow: 0 0 0 2px rgba(255,255,255,0.1); }
+    input::placeholder { color: #666666; }
+
+    .primary, .danger, .secondary {
+      min-height: 46px;
+      padding: 0 18px;
+      border-radius: 6px;
       font-weight: 700;
     }
 
-    .subtitle {
-      margin: 10px 0 0;
-      color: var(--muted);
+    .primary { color: #050505; background: #ffffff; border: 1px solid #ffffff; }
+    .primary:hover:not(:disabled) { background: #dddddd; }
+    .danger { color: #ffffff; background: var(--danger-strong); border: 1px solid var(--danger-strong); }
+    .danger:hover:not(:disabled) { background: #c92e37; }
+    .secondary { color: var(--text); background: transparent; border: 1px solid var(--line-strong); }
+    .secondary:hover:not(:disabled) { border-color: #777777; }
+
+    .actions { display: flex; gap: 10px; margin-top: 24px; }
+    .actions > button { flex: 1; }
+
+    .data-list {
+      margin: 22px 0;
+      padding: 0;
+      list-style: none;
+      border-top: 1px solid var(--line);
+    }
+
+    .data-list li {
+      padding: 13px 0;
+      color: #d5d5d5;
       font-size: 14px;
+      border-bottom: 1px solid var(--line);
     }
 
-    .body {
-      padding: 22px 26px 26px;
-      font-size: 14.5px;
-      line-height: 1.6;
-    }
-
-    h2 {
-      font-size: 16px;
-      margin: 22px 0 8px;
-      color: #ffffff;
-    }
-
-    p, li {
-      color: #e3e3e3;
-    }
-
-    ul, ol {
-      padding-left: 20px;
-      margin: 8px 0 14px;
-    }
-
-    code {
-      background: rgba(255,255,255,0.08);
-      padding: 2px 6px;
-      border-radius: 6px;
-      font-size: 13px;
-    }
-
-    .email-box {
-      margin: 16px 0 4px;
+    .warning {
       padding: 14px 16px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.04);
-      border-radius: 12px;
+      color: #ffdadd;
+      background: #1b0c0e;
+      border-left: 3px solid var(--danger);
+      border-radius: 4px;
+      line-height: 1.5;
+    }
+
+    .account-line {
+      margin: 0 0 18px;
+      overflow-wrap: anywhere;
+      color: #d5d5d5;
       font-size: 14px;
     }
 
-    .email-box a {
-      color: #ffffff;
-      font-weight: 600;
-      text-decoration: none;
-      border-bottom: 1px dashed rgba(255,255,255,0.4);
-    }
+    .account-line strong { color: #ffffff; }
+    .confirm-help { margin: 8px 0 0; color: #838383; font-size: 12px; }
 
-    .email-box a:hover {
-      border-bottom-style: solid;
-    }
-
-    .note {
-      margin-top: 18px;
-      padding: 12px 14px;
-      border-left: 3px solid var(--danger);
-      background: rgba(248,113,113,0.08);
-      color: #f5d1d1;
-      font-size: 13.5px;
-      border-radius: 6px;
-    }
-
-    .foot {
-      margin-top: 22px;
-      color: var(--muted);
-      font-size: 12px;
+    .status-box {
+      display: grid;
+      justify-items: center;
+      padding: 20px 0 8px;
       text-align: center;
+    }
+
+    .spinner {
+      width: 42px;
+      height: 42px;
+      margin-bottom: 20px;
+      border: 3px solid #292929;
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+    }
+
+    .success-mark {
+      display: grid;
+      width: 46px;
+      height: 46px;
+      margin-bottom: 20px;
+      place-items: center;
+      color: #06180f;
+      background: var(--success);
+      border-radius: 50%;
+      font-size: 26px;
+      font-weight: 800;
+    }
+
+    .message {
+      min-height: 20px;
+      margin: 16px 0 0;
+      color: var(--danger);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .privacy-note {
+      margin: 22px 0 0;
+      color: #737373;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 560px) {
+      .topbar { height: 64px; }
+      .topbar-inner, .page { width: min(100% - 24px, 760px); }
+      .page { padding: 34px 0 48px; }
+      .intro { margin-bottom: 26px; font-size: 15px; }
+      .step { padding: 13px 6px; font-size: 11px; }
+      .stage { padding: 22px 18px; }
+      .actions { flex-direction: column-reverse; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation-duration: 1.8s; }
     }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header class="head">
-      <img class="brand" src="assets/arvio-wordmark.png" alt="ARVIO">
-      <h1 class="title">Delete Your Account</h1>
-      <p class="subtitle">How to permanently remove your ARVIO account and associated data.</p>
-    </header>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <img class="brand" src="/assets/arvio-wordmark.png" alt="ARVIO">
+    </div>
+  </header>
 
-    <section class="body">
-      <p>
-        ARVIO respects your right to control your data. If you no longer wish to use ARVIO
-        and want your account and personal data permanently deleted, you can request deletion
-        at any time.
-      </p>
+  <main class="page">
+    <p class="eyebrow">Account privacy</p>
+    <h1>Permanently delete your ARVIO account</h1>
+    <p class="intro">
+      Verify the account, review what will be removed, and confirm deletion. The process signs out every device and permanently removes your cloud data.
+    </p>
 
-      <h2>What happens when you delete your account</h2>
-      <p>
-        Deleting your ARVIO account will permanently remove:
-      </p>
-      <ul>
-        <li>Your account credentials (email and password)</li>
-        <li>Your watch history and continue watching progress</li>
-        <li>Your watchlist and favorites</li>
-        <li>Your profile settings, custom profile avatars, catalogs, and IPTV lists</li>
-        <li>Your synced home server configuration and source-matching metadata</li>
-        <li>Any linked third-party tokens (e.g. Trakt.tv)</li>
-      </ul>
-      <p>
-        Once your account is deleted, this action cannot be undone. Your user ID and all
-        cloud-synced data will be permanently erased from our database.
-      </p>
-
-      <h2>What is not deleted</h2>
-      <p>
-        ARVIO does not collect or store any content you watch from third-party providers.
-        We also do not store payment information, as the app is free. Anonymized diagnostic
-        logs that contain no personally identifiable information may be retained for up to 30 days
-        to troubleshoot crashes.
-      </p>
-
-      <h2>How to request deletion</h2>
-      <p>
-        To request deletion of your account, send an email from the address registered to your
-        ARVIO account to:
-      </p>
-
-      <div class="email-box">
-        <a href="mailto:arvio.app@gmail.com?subject=Account%20Deletion%20Request">arvio.app@gmail.com</a>
+    <section class="panel" aria-labelledby="stage-title">
+      <div class="steps" aria-label="Deletion progress">
+        <div class="step active" data-step="1">1. Verify</div>
+        <div class="step" data-step="2">2. Confirm</div>
+        <div class="step" data-step="3">3. Delete</div>
       </div>
 
-      <p>Include the following in your email:</p>
-      <ol>
-        <li>Subject line: <code>Account Deletion Request</code></li>
-        <li>The email address associated with your ARVIO account</li>
-        <li>A brief confirmation that you want your account permanently deleted</li>
-      </ol>
+      <form class="stage" id="login-stage">
+        <h2 id="stage-title">Verify your account</h2>
+        <p class="stage-copy">Sign in again so no one else can delete your account from an unattended device.</p>
 
-      <p>
-        We will process your request and delete your account within 7 business days. You will
-        receive a confirmation email once the deletion is complete.
-      </p>
+        <div class="field">
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required minlength="6">
+        </div>
+        <button class="primary" id="verify-button" type="submit" style="width:100%;margin-top:24px">Continue</button>
+        <p class="message" id="login-message" role="alert" aria-live="polite"></p>
+        <p class="privacy-note">Your password is used only for this verification and is never stored on this page.</p>
+      </form>
 
-      <div class="note">
-        <strong>Important:</strong> For your protection, requests must come from the email
-        address registered to the account. Requests from other email addresses cannot be honored.
-      </div>
+      <form class="stage" id="confirm-stage" hidden>
+        <h2>Review permanent deletion</h2>
+        <p class="account-line">Signed in as <strong id="verified-email"></strong></p>
+        <div class="warning">This cannot be undone. Local data on devices is not a backup and may be cleared when the account signs out.</div>
+        <ul class="data-list">
+          <li>Account credentials and every active cloud session</li>
+          <li>Profiles, settings, addons, catalogs, IPTV configuration, and home server configuration</li>
+          <li>Watch history, progress, watchlists, favorites, and synced third-party tokens</li>
+          <li>Cloud snapshots, sync history, and pending TV pairing sessions</li>
+        </ul>
+        <div class="field">
+          <label for="confirmation">Type DELETE to confirm</label>
+          <input id="confirmation" name="confirmation" type="text" autocomplete="off" spellcheck="false" placeholder="DELETE" required>
+          <p class="confirm-help">The confirmation is case-sensitive.</p>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="cancel-button" type="button">Cancel</button>
+          <button class="danger" id="delete-button" type="submit" disabled>Delete permanently</button>
+        </div>
+        <p class="message" id="delete-message" role="alert" aria-live="polite"></p>
+      </form>
 
-      <div class="foot">ARVIO &mdash; Account Data &amp; Privacy</div>
+      <section class="stage" id="progress-stage" hidden aria-live="polite">
+        <div class="status-box" id="working-state">
+          <div class="spinner" aria-hidden="true"></div>
+          <h2>Deleting your account</h2>
+          <p class="stage-copy">Revoking sessions and removing cloud data. Keep this page open.</p>
+        </div>
+        <div class="status-box" id="success-state" hidden>
+          <div class="success-mark" aria-hidden="true">&#10003;</div>
+          <h2>Account deleted</h2>
+          <p class="stage-copy">Your ARVIO account and cloud data have been removed. A confirmation email has been sent when delivery is available.</p>
+        </div>
+        <p class="message" id="progress-message" role="alert"></p>
+      </section>
     </section>
   </main>
+
+  <script>
+    const APP_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpyZHd2b3J0Y2Zub3lrbHR6dXFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3NDU4NzMsImV4cCI6MjA4MjMyMTg3M30.YfKZbSwxGs6_xMd6jkDtn1PKkfuyOHo9qVhUvFRddGU";
+    const FUNCTIONS = "/.netlify/functions";
+
+    const loginStage = document.getElementById("login-stage");
+    const confirmStage = document.getElementById("confirm-stage");
+    const progressStage = document.getElementById("progress-stage");
+    const loginMessage = document.getElementById("login-message");
+    const deleteMessage = document.getElementById("delete-message");
+    const progressMessage = document.getElementById("progress-message");
+    const verifyButton = document.getElementById("verify-button");
+    const deleteButton = document.getElementById("delete-button");
+    const confirmation = document.getElementById("confirmation");
+    const workingState = document.getElementById("working-state");
+    const successState = document.getElementById("success-state");
+
+    let accessToken = "";
+    let jobId = "";
+    let receiptToken = "";
+
+    function appHeaders(token = APP_ANON_KEY) {
+      return {
+        "content-type": "application/json",
+        apikey: APP_ANON_KEY,
+        authorization: `Bearer ${token}`
+      };
+    }
+
+    async function request(path, body, token) {
+      const response = await fetch(`${FUNCTIONS}/${path}`, {
+        method: "POST",
+        headers: appHeaders(token),
+        body: JSON.stringify(body)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(result.error || result.message || `Request failed (${response.status})`);
+        error.status = response.status;
+        error.code = result.code || "";
+        error.details = result;
+        throw error;
+      }
+      return result;
+    }
+
+    function showStage(number) {
+      loginStage.hidden = number !== 1;
+      confirmStage.hidden = number !== 2;
+      progressStage.hidden = number !== 3;
+      document.querySelectorAll(".step").forEach((element, index) => {
+        const step = index + 1;
+        element.classList.toggle("active", step === number);
+        element.classList.toggle("done", step < number);
+      });
+    }
+
+    loginStage.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      loginMessage.textContent = "";
+      verifyButton.disabled = true;
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      try {
+        const session = await request("auth-login", { email, password }, APP_ANON_KEY);
+        if (!session.access_token || !session.user?.email) throw new Error("Sign-in response was incomplete");
+        accessToken = session.access_token;
+        document.getElementById("password").value = "";
+        document.getElementById("verified-email").textContent = session.user.email;
+        showStage(2);
+        confirmation.focus();
+      } catch (error) {
+        if (error.code === "password_setup_required") {
+          loginMessage.textContent = error.details?.email_sent
+            ? "A password setup email was sent. Create your new ARVIO Cloud password, then return here."
+            : (error.message || "A new ARVIO Cloud password is required.");
+        } else {
+          loginMessage.textContent = error.message;
+        }
+      } finally {
+        verifyButton.disabled = false;
+      }
+    });
+
+    confirmation.addEventListener("input", () => {
+      deleteButton.disabled = confirmation.value !== "DELETE";
+      deleteMessage.textContent = "";
+    });
+
+    document.getElementById("cancel-button").addEventListener("click", () => {
+      accessToken = "";
+      confirmation.value = "";
+      deleteButton.disabled = true;
+      showStage(1);
+    });
+
+    confirmStage.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (confirmation.value !== "DELETE" || !accessToken) return;
+      deleteButton.disabled = true;
+      deleteMessage.textContent = "";
+      try {
+        const result = await request("account-delete-start", { confirmation: "DELETE" }, accessToken);
+        jobId = result.job_id;
+        receiptToken = result.receipt_token;
+        accessToken = "";
+        showStage(3);
+        await pollDeletion();
+      } catch (error) {
+        deleteMessage.textContent = error.message;
+        deleteButton.disabled = false;
+      }
+    });
+
+    async function pollDeletion() {
+      for (let attempt = 0; attempt < 120; attempt++) {
+        try {
+          const status = await request("account-delete-status", {
+            job_id: jobId,
+            receipt_token: receiptToken
+          }, APP_ANON_KEY);
+          if (status.status === "complete") {
+            workingState.hidden = true;
+            successState.hidden = false;
+            progressMessage.textContent = "";
+            jobId = "";
+            receiptToken = "";
+            return;
+          }
+          if (status.status === "failed") {
+            progressMessage.textContent = `${status.error || "Deletion could not finish."} Contact support with the time of this request.`;
+            return;
+          }
+        } catch (error) {
+          if (attempt > 4) progressMessage.textContent = "Waiting for the deletion service to respond...";
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      progressMessage.textContent = "Deletion is still processing. Contact support if you do not receive confirmation shortly.";
+    }
+  </script>
 </body>
 </html>
