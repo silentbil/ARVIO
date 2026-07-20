@@ -42,11 +42,19 @@ import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
+import com.arflix.tv.ui.theme.BackgroundElevated
+import com.arflix.tv.ui.screens.settings.LocalSettingsFocusTracker
+import com.arflix.tv.ui.screens.settings.settingsFocusSlot
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun PluginScreen(
     viewModel: PluginViewModel = hiltViewModel(),
+    focusedIndex: Int = -1,
+    onFocusedIndexChanged: (Int) -> Unit = {},
+    onMaxIndexChanged: (Int) -> Unit = {},
+    enterTrigger: Int = -1,
+    onEnterTriggerHandled: () -> Unit = {},
     onBackPressed: () -> Unit,
     onNavigateToSection: (() -> Unit)? = null
 ) {
@@ -57,11 +65,40 @@ fun PluginScreen(
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val sectionNavKey = if (isRtl) Key.DirectionRight else Key.DirectionLeft
 
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(100)
-        try {
-            addButtonFocusRequester.requestFocus()
-        } catch (_: Exception) {}
+    val repositories = uiState.repositories
+    val scrapers = uiState.scrapers
+
+    // Dynamic index mapping
+    // Slot 0: Add button
+    // Slot 1 to repos.size: Repos
+    // Slot repos.size + 1 to repos.size + scrapers.size (or + 1 if empty text)
+    // Slot repos.size + scrapers.size + 1: Reset button
+    val scrapersCount = if (scrapers.isEmpty()) 1 else scrapers.size
+    val totalItems = 1 + repositories.size + scrapersCount + 1
+
+    LaunchedEffect(totalItems) {
+        onMaxIndexChanged(totalItems - 1)
+    }
+
+    LaunchedEffect(enterTrigger) {
+        if (enterTrigger >= 0) {
+            when (enterTrigger) {
+                0 -> { showAddDialog = true }
+                in 1..repositories.size -> {
+                    val repo = repositories[enterTrigger - 1]
+                    viewModel.onEvent(PluginUiEvent.RemoveRepository(repo.id))
+                    onFocusedIndexChanged((enterTrigger - 1).coerceAtLeast(0))
+                }
+                in (1 + repositories.size)..(repositories.size + scrapersCount) -> {
+                    if (scrapers.isNotEmpty()) {
+                        val scraper = scrapers[enterTrigger - 1 - repositories.size]
+                        viewModel.onEvent(PluginUiEvent.ToggleScraper(scraper.id, !scraper.enabled))
+                    }
+                }
+                totalItems - 1 -> { showResetDialog = true }
+            }
+            onEnterTriggerHandled()
+        }
     }
 
     Column(
@@ -85,13 +122,6 @@ fun PluginScreen(
                 false
             }
     ) {
-        Text(
-            text = stringResource(R.string.plugin_screen_title),
-            style = ArflixTypography.sectionTitle.copy(fontSize = 24.sp),
-            color = TextPrimary,
-            modifier = Modifier.padding(bottom = 20.dp)
-        )
-
         uiState.errorMessage?.let { msg ->
             Text(msg, color = Color.Red, style = ArflixTypography.body)
             Spacer(modifier = Modifier.height(16.dp))
@@ -100,19 +130,24 @@ fun PluginScreen(
         // Full width Add Button styled exactly like Settings Row actions
         var isAddFocused by remember { mutableStateOf(false) }
         val accentColor = resolveAccentColor(fallback = Pink)
+        val isAddRowFocused = isAddFocused || (focusedIndex == 0)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(addButtonFocusRequester)
-                .onFocusChanged { isAddFocused = it.isFocused }
+                .settingsFocusSlot(0)
+                .onFocusChanged {
+                    isAddFocused = it.isFocused
+                    if (it.isFocused) onFocusedIndexChanged(0)
+                }
                 .clickable { showAddDialog = true }
                 .background(
-                    if (isAddFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
+                    if (isAddRowFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
                     RoundedCornerShape(12.dp)
                 )
                 .border(
-                    width = if (isAddFocused) 2.dp else 0.dp,
-                    color = if (isAddFocused) accentColor else Color.Transparent,
+                    width = if (isAddRowFocused) 2.dp else 0.dp,
+                    color = if (isAddRowFocused) accentColor else Color.Transparent,
                     shape = RoundedCornerShape(12.dp)
                 )
                 .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -135,7 +170,7 @@ fun PluginScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        if (uiState.repositories.isNotEmpty()) {
+        if (repositories.isNotEmpty()) {
             Text(
                 text = stringResource(R.string.plugin_screen_installed_repos),
                 style = ArflixTypography.caption.copy(fontSize = 12.sp, letterSpacing = 1.sp),
@@ -143,8 +178,12 @@ fun PluginScreen(
                 modifier = Modifier.padding(bottom = 10.dp)
             )
 
-            uiState.repositories.forEach { repo ->
+            repositories.forEachIndexed { idx, repo ->
+                val slotIndex = 1 + idx
                 FocusableSettingsRow(
+                    index = slotIndex,
+                    focusedIndex = focusedIndex,
+                    onFocusedIndexChanged = onFocusedIndexChanged,
                     icon = Icons.Default.Delete,
                     title = repo.name,
                     subtitle = repo.url,
@@ -163,15 +202,26 @@ fun PluginScreen(
             modifier = Modifier.padding(bottom = 10.dp)
         )
 
-        if (uiState.scrapers.isEmpty()) {
+        val scraperStartIdx = 1 + repositories.size
+        if (scrapers.isEmpty()) {
+            val slotIndex = scraperStartIdx
             Text(
                 text = stringResource(R.string.plugin_screen_no_scrapers),
                 style = ArflixTypography.body,
-                color = TextSecondary
+                color = TextSecondary,
+                modifier = Modifier
+                    .settingsFocusSlot(slotIndex)
+                    .onFocusChanged {
+                        if (it.isFocused) onFocusedIndexChanged(slotIndex)
+                    }
             )
         } else {
-            uiState.scrapers.forEach { scraper ->
+            scrapers.forEachIndexed { idx, scraper ->
+                val slotIndex = scraperStartIdx + idx
                 FocusableSettingsToggleRow(
+                    index = slotIndex,
+                    focusedIndex = focusedIndex,
+                    onFocusedIndexChanged = onFocusedIndexChanged,
                     title = scraper.name,
                     subtitle = scraper.id,
                     isEnabled = scraper.enabled,
@@ -182,19 +232,25 @@ fun PluginScreen(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
+        val resetIndex = totalItems - 1
         var isResetFocused by remember { mutableStateOf(false) }
+        val isResetRowFocused = isResetFocused || (focusedIndex == resetIndex)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { isResetFocused = it.isFocused }
+                .settingsFocusSlot(resetIndex)
+                .onFocusChanged {
+                    isResetFocused = it.isFocused
+                    if (it.isFocused) onFocusedIndexChanged(resetIndex)
+                }
                 .clickable { showResetDialog = true }
                 .background(
-                    if (isResetFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
+                    if (isResetRowFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
                     RoundedCornerShape(12.dp)
                 )
                 .border(
-                    width = if (isResetFocused) 2.dp else 0.dp,
-                    color = if (isResetFocused) Color.Red else Color.Transparent,
+                    width = if (isResetRowFocused) 2.dp else 0.dp,
+                    color = if (isResetRowFocused) Color.Red else Color.Transparent,
                     shape = RoundedCornerShape(12.dp)
                 )
                 .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -258,6 +314,9 @@ fun PluginScreen(
 
 @Composable
 fun FocusableSettingsRow(
+    index: Int,
+    focusedIndex: Int,
+    onFocusedIndexChanged: (Int) -> Unit,
     icon: ImageVector,
     title: String,
     subtitle: String = "",
@@ -266,19 +325,28 @@ fun FocusableSettingsRow(
     modifier: Modifier = Modifier
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val isItemFocused = isFocused || (focusedIndex == index)
     SettingsRow(
         icon = icon,
         title = title,
         subtitle = subtitle,
         value = value,
-        isFocused = isFocused,
+        isFocused = isItemFocused,
         onClick = onClick,
-        modifier = modifier.onFocusChanged { isFocused = it.isFocused }
+        modifier = modifier
+            .settingsFocusSlot(index)
+            .onFocusChanged {
+                isFocused = it.isFocused
+                if (it.isFocused) onFocusedIndexChanged(index)
+            }
     )
 }
 
 @Composable
 fun FocusableSettingsToggleRow(
+    index: Int,
+    focusedIndex: Int,
+    onFocusedIndexChanged: (Int) -> Unit,
     title: String,
     subtitle: String = "",
     isEnabled: Boolean,
@@ -286,13 +354,19 @@ fun FocusableSettingsToggleRow(
     modifier: Modifier = Modifier
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val isItemFocused = isFocused || (focusedIndex == index)
     SettingsToggleRow(
         title = title,
         subtitle = subtitle,
         isEnabled = isEnabled,
-        isFocused = isFocused,
+        isFocused = isItemFocused,
         onToggle = onToggle,
-        modifier = modifier.onFocusChanged { isFocused = it.isFocused }
+        modifier = modifier
+            .settingsFocusSlot(index)
+            .onFocusChanged {
+                isFocused = it.isFocused
+                if (it.isFocused) onFocusedIndexChanged(index)
+            }
     )
 }
 
@@ -303,10 +377,11 @@ fun AddRepoDialog(
 ) {
     var value by remember { mutableStateOf("") }
     val inputFocusRequester = remember { FocusRequester() }
-    val saveFocusRequester = remember { FocusRequester() }
+    val saveFocus = remember { FocusRequester() }
+    val cancelFocus = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(200)
+        kotlinx.coroutines.delay(100)
         try { inputFocusRequester.requestFocus() } catch (_: Exception) {}
     }
 
@@ -335,13 +410,12 @@ fun AddRepoDialog(
                 modifier = Modifier
                     .width(520.dp)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF1E1E1E))
-                    .clickable { /* absorb clicks */ }
+                    .background(BackgroundElevated)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
                     Text(
                         text = stringResource(R.string.plugin_screen_add_repo_dialog_title),
-                        style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
+                        style = ArflixTypography.sectionTitle,
                         color = TextPrimary
                     )
                     Spacer(modifier = Modifier.height(16.dp))
@@ -350,53 +424,63 @@ fun AddRepoDialog(
                         value = value,
                         onValueChange = { value = it },
                         singleLine = true,
-                        label = { androidx.compose.material3.Text(stringResource(R.string.plugin_screen_repo_url)) },
+                        placeholder = { Text(stringResource(R.string.plugin_screen_repo_url), color = TextSecondary.copy(alpha = 0.4f)) },
                         modifier = Modifier.fillMaxWidth().focusRequester(inputFocusRequester),
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(0xFFE91E63),
-                            unfocusedBorderColor = Color.Gray,
-                            focusedLabelColor = Color(0xFFE91E63),
-                            unfocusedLabelColor = Color.Gray
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            focusedBorderColor = Pink,
+                            unfocusedBorderColor = TextSecondary.copy(alpha = 0.3f),
+                            focusedLabelColor = Pink,
+                            unfocusedLabelColor = TextSecondary
                         )
                     )
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         androidx.tv.material3.Surface(
                             onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).focusRequester(cancelFocus),
                             colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                                containerColor = Color(0xFF2B2B2B),
-                                focusedContainerColor = Color(0xFF3B3B3B)
+                                containerColor = BackgroundElevated,
+                                focusedContainerColor = BackgroundElevated.copy(alpha = 0.8f)
                             ),
-                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp))
+                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                            border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                                border = androidx.tv.material3.Border(
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, TextSecondary.copy(alpha = 0.3f))
+                                )
+                            )
                         ) {
                             Text(
                                 text = stringResource(R.string.cancel),
                                 modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth(),
                                 textAlign = TextAlign.Center,
-                                color = Color.White,
+                                color = TextSecondary,
                                 style = ArflixTypography.button
                             )
                         }
 
                         androidx.tv.material3.Surface(
                             onClick = { onSave(value) },
-                            modifier = Modifier.weight(1f).focusRequester(saveFocusRequester),
+                            modifier = Modifier.weight(1f).focusRequester(saveFocus),
                             colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                                containerColor = Color(0xFFE91E63),
-                                focusedContainerColor = Color(0xFFFF4081)
+                                containerColor = Pink.copy(alpha = 0.15f),
+                                focusedContainerColor = Pink.copy(alpha = 0.25f)
                             ),
-                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp))
+                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                            border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                                border = androidx.tv.material3.Border(
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Pink.copy(alpha = 0.4f))
+                                )
+                            )
                         ) {
                             Text(
                                 text = stringResource(R.string.add),
                                 modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth(),
                                 textAlign = TextAlign.Center,
-                                color = Color.White,
+                                color = Pink,
                                 style = ArflixTypography.button
                             )
                         }
@@ -417,10 +501,13 @@ fun WarningDialog(
     onDismiss: () -> Unit
 ) {
     val cancelFocusRequester = remember { FocusRequester() }
+    val confirmFocus = remember { FocusRequester() }
+
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(200)
+        kotlinx.coroutines.delay(100)
         try { cancelFocusRequester.requestFocus() } catch (_: Exception) {}
     }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(dismissOnClickOutside = true, usePlatformDefaultWidth = false)
@@ -442,13 +529,13 @@ fun WarningDialog(
                 modifier = Modifier
                     .width(420.dp)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF1E1E1E))
+                    .background(BackgroundElevated)
                     .padding(24.dp)
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = title,
-                        style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
+                        style = ArflixTypography.sectionTitle,
                         color = Color.Red,
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Start
@@ -470,34 +557,44 @@ fun WarningDialog(
                             onClick = onDismiss,
                             modifier = Modifier.weight(1f).focusRequester(cancelFocusRequester),
                             colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                                containerColor = Color(0xFF2B2B2B),
-                                focusedContainerColor = Color(0xFF3B3B3B)
+                                containerColor = BackgroundElevated,
+                                focusedContainerColor = BackgroundElevated.copy(alpha = 0.8f)
                             ),
-                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp))
+                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                            border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                                border = androidx.tv.material3.Border(
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, TextSecondary.copy(alpha = 0.3f))
+                                )
+                            )
                         ) {
                             Text(
                                 text = cancelText,
                                 modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth(),
                                 textAlign = TextAlign.Center,
-                                color = Color.White,
+                                color = TextSecondary,
                                 style = ArflixTypography.button
                             )
                         }
 
                         androidx.tv.material3.Surface(
                             onClick = onConfirm,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).focusRequester(confirmFocus),
                             colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                                containerColor = Color(0xFFE91E63),
-                                focusedContainerColor = Color(0xFFFF4081)
+                                containerColor = Pink.copy(alpha = 0.15f),
+                                focusedContainerColor = Pink.copy(alpha = 0.25f)
                             ),
-                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp))
+                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                            border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                                border = androidx.tv.material3.Border(
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Pink.copy(alpha = 0.4f))
+                                )
+                            )
                         ) {
                             Text(
                                 text = confirmText,
                                 modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth(),
                                 textAlign = TextAlign.Center,
-                                color = Color.White,
+                                color = Pink,
                                 style = ArflixTypography.button
                             )
                         }
@@ -507,4 +604,3 @@ fun WarningDialog(
         }
     }
 }
-
