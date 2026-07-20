@@ -348,6 +348,7 @@ fun DetailsScreen(
 
         when {
             selectedStream != null && !shouldWaitForSources -> {
+                viewModel.recordPlayedEpisode(mediaId, request.season, request.episode)
                 onNavigateToPlayer(
                     mediaType,
                     mediaId,
@@ -391,6 +392,17 @@ fun DetailsScreen(
     LaunchedEffect(uiState.initialSeasonIndex) {
         if (uiState.initialSeasonIndex > 0) {
             seasonIndex = uiState.initialSeasonIndex
+        }
+    }
+
+    // Reflect the episodes of the season the user is MOVING to, not only the one they click. The
+    // 100ms debounce means stepping quickly through seasons (1→4) cancels the intermediate loads
+    // and only fetches the season they settle on. loadSeason() is idempotent, so this is a no-op
+    // when the focused season is already loaded.
+    LaunchedEffect(seasonIndex) {
+        if (uiState.totalSeasons > 1) {
+            delay(100)
+            viewModel.loadSeason(seasonIndex + 1)
         }
     }
 
@@ -991,6 +1003,7 @@ fun DetailsScreen(
                 }
                 showStreamSelector = false
                 val ep = uiState.episodes.getOrNull(episodeIndex)
+                viewModel.recordPlayedEpisode(mediaId, ep?.seasonNumber, ep?.episodeNumber)
                 onNavigateToPlayer(
                     mediaType, mediaId,
                     ep?.seasonNumber, ep?.episodeNumber,

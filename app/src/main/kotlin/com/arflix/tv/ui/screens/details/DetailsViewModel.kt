@@ -210,6 +210,18 @@ class DetailsViewModel @Inject constructor(
 
     private var currentMediaType: MediaType = MediaType.MOVIE
     private var currentMediaId: Int = 0
+    // The episode the user last started playing from this screen, kept so that returning from the
+    // player (which recreates the details screen) points the Continue button at that episode even
+    // when the play was too brief to record a resume point. Scoped to a media id.
+    private var lastPlayedMediaId: Int = 0
+    private var lastPlayedSeason: Int? = null
+    private var lastPlayedEpisode: Int? = null
+
+    fun recordPlayedEpisode(mediaId: Int, season: Int?, episode: Int?) {
+        lastPlayedMediaId = mediaId
+        lastPlayedSeason = season
+        lastPlayedEpisode = episode
+    }
     private var vodAppendJob: kotlinx.coroutines.Job? = null
     private var homeServerAppendJob: kotlinx.coroutines.Job? = null
     private var loadStreamsJob: kotlinx.coroutines.Job? = null
@@ -283,7 +295,27 @@ class DetailsViewModel @Inject constructor(
                 val previousState = _uiState.value
                 val previousMatches = previousState.item?.id == mediaId &&
                     previousState.item?.mediaType == mediaType
-                val seasonToLoad = initialSeason ?: 1
+                // When re-entering the same show (e.g. the details screen was recreated behind the
+                // player), the ViewModel survives in the back stack but the nav-arg episode target is
+                // stale (frozen at the original deeplink). Prefer the episode the user last played
+                // (recorded even for brief plays) so the Continue button follows it; fall back to
+                // re-deriving from the viewed season. The season rail keeps whatever season the user
+                // was browsing (previousState.currentSeason).
+                val reentry = previousMatches && previousState.currentSeason > 0
+                val playedSeason = lastPlayedSeason?.takeIf { lastPlayedMediaId == mediaId }
+                val playedEpisode = lastPlayedEpisode?.takeIf { lastPlayedMediaId == mediaId }
+                val initialSeason = when {
+                    reentry -> playedSeason
+                    else -> initialSeason
+                }
+                val initialEpisode = when {
+                    reentry -> playedEpisode
+                    else -> initialEpisode
+                }
+                val seasonToLoad = when {
+                    reentry -> previousState.currentSeason
+                    else -> initialSeason ?: 1
+                }
                 val hasExplicitEpisodeTarget = mediaType == MediaType.TV && initialSeason != null && initialEpisode != null
                 val previousItem = _uiState.value.item?.takeIf {
                     it.id == mediaId && it.mediaType == mediaType
