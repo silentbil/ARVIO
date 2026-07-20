@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.plugin
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,12 +18,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
@@ -30,6 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
@@ -55,13 +62,13 @@ fun PluginScreen(
     onMaxIndexChanged: (Int) -> Unit = {},
     enterTrigger: Int = -1,
     onEnterTriggerHandled: () -> Unit = {},
+    onModalStateChanged: (Boolean) -> Unit = {},
     onBackPressed: () -> Unit,
     onNavigateToSection: (() -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
-    val addButtonFocusRequester = remember { FocusRequester() }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val sectionNavKey = if (isRtl) Key.DirectionRight else Key.DirectionLeft
 
@@ -80,7 +87,12 @@ fun PluginScreen(
         onMaxIndexChanged(totalItems - 1)
     }
 
-    LaunchedEffect(enterTrigger) {
+    val modalOpen = showAddDialog || showResetDialog
+    LaunchedEffect(modalOpen) {
+        onModalStateChanged(modalOpen)
+    }
+
+    LaunchedEffect(enterTrigger, repositories, scrapersCount, totalItems) {
         if (enterTrigger >= 0) {
             when (enterTrigger) {
                 0 -> { showAddDialog = true }
@@ -128,18 +140,13 @@ fun PluginScreen(
         }
 
         // Full width Add Button styled exactly like Settings Row actions
-        var isAddFocused by remember { mutableStateOf(false) }
         val accentColor = resolveAccentColor(fallback = Pink)
-        val isAddRowFocused = isAddFocused || (focusedIndex == 0)
+        val isAddRowFocused = (focusedIndex == 0)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .focusRequester(addButtonFocusRequester)
                 .settingsFocusSlot(0)
-                .onFocusChanged {
-                    isAddFocused = it.isFocused
-                    if (it.isFocused) onFocusedIndexChanged(0)
-                }
+                .focusProperties { canFocus = false }
                 .clickable { showAddDialog = true }
                 .background(
                     if (isAddRowFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
@@ -183,7 +190,6 @@ fun PluginScreen(
                 FocusableSettingsRow(
                     index = slotIndex,
                     focusedIndex = focusedIndex,
-                    onFocusedIndexChanged = onFocusedIndexChanged,
                     icon = Icons.Default.Delete,
                     title = repo.name,
                     subtitle = repo.url,
@@ -209,11 +215,7 @@ fun PluginScreen(
                 text = stringResource(R.string.plugin_screen_no_scrapers),
                 style = ArflixTypography.body,
                 color = TextSecondary,
-                modifier = Modifier
-                    .settingsFocusSlot(slotIndex)
-                    .onFocusChanged {
-                        if (it.isFocused) onFocusedIndexChanged(slotIndex)
-                    }
+                modifier = Modifier.settingsFocusSlot(slotIndex)
             )
         } else {
             scrapers.forEachIndexed { idx, scraper ->
@@ -221,7 +223,6 @@ fun PluginScreen(
                 FocusableSettingsToggleRow(
                     index = slotIndex,
                     focusedIndex = focusedIndex,
-                    onFocusedIndexChanged = onFocusedIndexChanged,
                     title = scraper.name,
                     subtitle = scraper.id,
                     isEnabled = scraper.enabled,
@@ -233,16 +234,12 @@ fun PluginScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
         val resetIndex = totalItems - 1
-        var isResetFocused by remember { mutableStateOf(false) }
-        val isResetRowFocused = isResetFocused || (focusedIndex == resetIndex)
+        val isResetRowFocused = (focusedIndex == resetIndex)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .settingsFocusSlot(resetIndex)
-                .onFocusChanged {
-                    isResetFocused = it.isFocused
-                    if (it.isFocused) onFocusedIndexChanged(resetIndex)
-                }
+                .focusProperties { canFocus = false }
                 .clickable { showResetDialog = true }
                 .background(
                     if (isResetRowFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
@@ -277,11 +274,9 @@ fun PluginScreen(
             onSave = { url ->
                 viewModel.onEvent(PluginUiEvent.AddRepository(url))
                 showAddDialog = false
-                try { addButtonFocusRequester.requestFocus() } catch (_: Exception) {}
             },
             onDismiss = {
                 showAddDialog = false
-                try { addButtonFocusRequester.requestFocus() } catch (_: Exception) {}
             }
         )
     }
@@ -300,15 +295,25 @@ fun PluginScreen(
         )
     }
 
-    uiState.pendingScraperEnable?.let { pending ->
-        WarningDialog(
-            title = stringResource(R.string.plugin_risky_enable_title),
-            message = stringResource(R.string.plugin_risky_enable_message),
-            cancelText = stringResource(R.string.plugin_risky_enable_cancel),
-            confirmText = stringResource(R.string.plugin_risky_enable_confirm),
-            onConfirm = { viewModel.onEvent(PluginUiEvent.ConfirmPendingScraperEnable) },
-            onDismiss = { viewModel.onEvent(PluginUiEvent.DismissPendingScraperEnable) }
-        )
+
+}
+
+@Composable
+fun HideDialogSystemBars() {
+    val view = LocalView.current
+    val context = LocalContext.current
+    val window = (view.parent as? DialogWindowProvider)?.window
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+        uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+    LaunchedEffect(window) {
+        if (window != null && isTv) {
+            WindowInsetsControllerCompat(window, window.decorView).apply {
+                hide(WindowInsetsCompat.Type.systemBars())
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        }
     }
 }
 
@@ -316,7 +321,6 @@ fun PluginScreen(
 fun FocusableSettingsRow(
     index: Int,
     focusedIndex: Int,
-    onFocusedIndexChanged: (Int) -> Unit,
     icon: ImageVector,
     title: String,
     subtitle: String = "",
@@ -324,21 +328,16 @@ fun FocusableSettingsRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isFocused by remember { mutableStateOf(false) }
-    val isItemFocused = isFocused || (focusedIndex == index)
     SettingsRow(
         icon = icon,
         title = title,
         subtitle = subtitle,
         value = value,
-        isFocused = isItemFocused,
+        isFocused = (focusedIndex == index),
         onClick = onClick,
         modifier = modifier
             .settingsFocusSlot(index)
-            .onFocusChanged {
-                isFocused = it.isFocused
-                if (it.isFocused) onFocusedIndexChanged(index)
-            }
+            .focusProperties { canFocus = false }
     )
 }
 
@@ -346,27 +345,21 @@ fun FocusableSettingsRow(
 fun FocusableSettingsToggleRow(
     index: Int,
     focusedIndex: Int,
-    onFocusedIndexChanged: (Int) -> Unit,
     title: String,
     subtitle: String = "",
     isEnabled: Boolean,
     onToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isFocused by remember { mutableStateOf(false) }
-    val isItemFocused = isFocused || (focusedIndex == index)
     SettingsToggleRow(
         title = title,
         subtitle = subtitle,
         isEnabled = isEnabled,
-        isFocused = isItemFocused,
+        isFocused = (focusedIndex == index),
         onToggle = onToggle,
         modifier = modifier
             .settingsFocusSlot(index)
-            .onFocusChanged {
-                isFocused = it.isFocused
-                if (it.isFocused) onFocusedIndexChanged(index)
-            }
+            .focusProperties { canFocus = false }
     )
 }
 
@@ -375,6 +368,7 @@ fun AddRepoDialog(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    HideDialogSystemBars()
     var value by remember { mutableStateOf("") }
     val inputFocusRequester = remember { FocusRequester() }
     val saveFocus = remember { FocusRequester() }
@@ -500,6 +494,7 @@ fun WarningDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    HideDialogSystemBars()
     val cancelFocusRequester = remember { FocusRequester() }
     val confirmFocus = remember { FocusRequester() }
 

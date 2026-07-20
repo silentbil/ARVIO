@@ -362,6 +362,7 @@ fun SettingsScreen(
     var contentFocusIndex by remember { mutableIntStateOf(0) }
     var pluginsMaxIndex by remember { mutableIntStateOf(0) }
     var pluginsEnterTrigger by remember { mutableIntStateOf(-1) }
+    var pluginsModalOpen by remember { mutableStateOf(false) }
     var activeZone by remember { mutableStateOf(Zone.CONTENT) }
     var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
 
@@ -704,7 +705,8 @@ fun SettingsScreen(
         showDeletePackConfirm ||
         uiState.isPackLoading ||
         uiState.packError != null ||
-        uiState.pendingPackManifest != null
+        uiState.pendingPackManifest != null ||
+        pluginsModalOpen
 
     Box(
         modifier = Modifier
@@ -1623,6 +1625,7 @@ fun SettingsScreen(
                                 onMaxIndexChanged = { pluginsMaxIndex = it },
                                 enterTrigger = if (activeZone == Zone.CONTENT) pluginsEnterTrigger else -1,
                                 onEnterTriggerHandled = { pluginsEnterTrigger = -1 },
+                                onModalStateChanged = { pluginsModalOpen = it },
                                 onBackPressed = { activeZone = Zone.SECTION },
                                 onNavigateToSection = { activeZone = Zone.SECTION }
                             )

@@ -181,19 +181,6 @@ class PluginViewModel @Inject constructor(
     }
 
     private fun toggleScraper(scraperId: String, enabled: Boolean) {
-        val scraper = _uiState.value.scrapers.firstOrNull { it.id == scraperId }
-        if (enabled && scraper != null) {
-            _uiState.update {
-                it.copy(
-                    pendingScraperEnable = PendingScraperEnableInfo(
-                        scraperId = scraper.id,
-                        scraperName = scraper.name
-                    )
-                )
-            }
-            return
-        }
-
         viewModelScope.launch {
             pluginManager.toggleScraper(scraperId, enabled)
         }
