@@ -88,6 +88,8 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -812,7 +814,7 @@ fun SettingsScreen(
                                         iptvActionIndex++
                                     } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..uiState.iptvPlaylists.size && iptvActionIndex < 5) {
                                         iptvActionIndex++
-                                    } else if (currentSection == "catalogs" && contentFocusIndex > 1 && catalogActionIndex < 4) {
+                                    } else if (currentSection == "catalogs" && contentFocusIndex > 1 && catalogActionIndex < 5) {
                                         catalogActionIndex++
                                     }
                                 }
@@ -1060,6 +1062,11 @@ fun SettingsScreen(
                                                         3 -> scope.launch {
                                                             if (catalog.kind != CatalogKind.COLLECTION_RAIL) {
                                                                 toggleCatalogueRowLayoutMode(context, catalogueLayoutRowKey(catalog))
+                                                            }
+                                                        }
+                                                        4 -> {
+                                                            if (catalog.packId != null && catalog.isBulkDeletablePack) {
+                                                                viewModel.unpackCatalog(catalog.id)
                                                             }
                                                         }
                                                         else -> {
@@ -1591,7 +1598,8 @@ fun SettingsScreen(
                                 } else {
                                     viewModel.removeCatalog(catalog.id)
                                 }
-                            }
+                            },
+                            onUnpackCatalog = { catalog -> viewModel.unpackCatalog(catalog.id) }
                         )
                         "stremio" -> StremioAddonsSettings(
                             addons = stremioAddons,
@@ -4023,7 +4031,8 @@ private fun MobileSettingsSubPage(
                     onRenameCatalog = onRenameCatalogClick,
                     onMoveCatalogUp = { viewModel.moveCatalogUp(it.id) },
                     onMoveCatalogDown = { viewModel.moveCatalogDown(it.id) },
-                    onDeleteCatalog = onDeleteCatalogClick
+                    onDeleteCatalog = onDeleteCatalogClick,
+                    onUnpackCatalog = { viewModel.unpackCatalog(it.id) }
                 )
             }
             "TV" -> {
@@ -7125,7 +7134,8 @@ private fun CatalogsSettings(
     onRenameCatalog: (CatalogConfig) -> Unit,
     onMoveCatalogUp: (CatalogConfig) -> Unit,
     onMoveCatalogDown: (CatalogConfig) -> Unit,
-    onDeleteCatalog: (CatalogConfig) -> Unit
+    onDeleteCatalog: (CatalogConfig) -> Unit,
+    onUnpackCatalog: (CatalogConfig) -> Unit
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     var selectionMode by remember { mutableStateOf(false) }
@@ -7156,6 +7166,9 @@ private fun CatalogsSettings(
                 MobileSettingsCategory(title = stringResource(R.string.settings_section_my_catalogs)) {
                     catalogs.forEachIndexed { index, catalog ->
                         val title = if (catalog.isPreinstalled) { when (catalog.kind) { CatalogKind.COLLECTION -> stringResource(R.string.settings_title_builtin_collection, catalog.title); CatalogKind.COLLECTION_RAIL -> stringResource(R.string.settings_title_builtin_rail, catalog.title); else -> stringResource(R.string.settings_title_builtin, catalog.title) } } else catalog.title
+                        val currentPackId = catalog.packId
+                        val prevPackId = if (index > 0) catalogs[index - 1].packId else null
+                        val showPackHeader = currentPackId != null && currentPackId != prevPackId && catalog.isBulkDeletablePack
                         val collectionFallback = stringResource(R.string.settings_collection_fallback)
                         val addonFallback = stringResource(R.string.settings_source_addon)
                         val subtitle = run {
@@ -7182,6 +7195,32 @@ private fun CatalogsSettings(
                         val layoutToggleEnabled = catalog.kind != CatalogKind.COLLECTION_RAIL
                         val layoutRowKey = remember(catalog.id, catalog.kind) { catalogueLayoutRowKey(catalog) }
                         Column {
+                            if (showPackHeader) {
+                                if (index > 0) {
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Archive,
+                                        contentDescription = null,
+                                        tint = Pink,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = catalog.effectivePackName.uppercase(),
+                                        style = ArflixTypography.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, letterSpacing = androidx.compose.ui.unit.TextUnit.Unspecified),
+                                        color = Pink
+                                    )
+                                }
+                                Box(modifier = Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 16.dp).background(Pink.copy(alpha = 0.2f)))
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth()
                                     .background(if (isSelected) Pink.copy(alpha = 0.15f) else Color.Transparent)
@@ -7206,6 +7245,23 @@ private fun CatalogsSettings(
                                 if (!selectionMode) {
                                     CatalogueRowLayoutToggleButton(rowKey = layoutRowKey, enabled = layoutToggleEnabled)
                                     Spacer(modifier = Modifier.width(8.dp))
+                                    if (catalog.packId != null && catalog.isBulkDeletablePack) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clickable { onUnpackCatalog(catalog) }
+                                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Unarchive,
+                                                contentDescription = "Unpack catalog row",
+                                                tint = Color.White.copy(alpha = 0.7f),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
                                 }
                                 if (selectionMode && selectedIds.size == 1 && isSelected) {
                                     Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(catalog.id) {
@@ -7240,6 +7296,34 @@ private fun CatalogsSettings(
             Spacer(modifier = Modifier.height(16.dp))
             catalogs.forEachIndexed { index, catalog ->
                 val rowFocusIndex = index + 2; val isRowFocused = focusedIndex == rowFocusIndex
+                val currentPackId = catalog.packId
+                val prevPackId = if (index > 0) catalogs[index - 1].packId else null
+                val showPackHeader = currentPackId != null && currentPackId != prevPackId && catalog.isBulkDeletablePack
+
+                if (showPackHeader) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Archive,
+                            contentDescription = null,
+                            tint = Pink,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = catalog.effectivePackName.uppercase(),
+                            style = ArflixTypography.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, letterSpacing = androidx.compose.ui.unit.TextUnit.Unspecified),
+                            color = Pink
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
                 val title = if (catalog.isPreinstalled) { when (catalog.kind) { CatalogKind.COLLECTION -> stringResource(R.string.settings_title_builtin_collection, catalog.title); CatalogKind.COLLECTION_RAIL -> stringResource(R.string.settings_title_builtin_rail, catalog.title); else -> stringResource(R.string.settings_title_builtin, catalog.title) } } else catalog.title
                 val collectionFallback = stringResource(R.string.settings_collection_fallback)
                 val addonFallback = stringResource(R.string.settings_source_addon)
@@ -7281,7 +7365,9 @@ private fun CatalogsSettings(
                     Spacer(modifier = Modifier.width(6.dp))
                     CatalogueRowLayoutToggleButton(rowKey = layoutRowKey, enabled = layoutToggleEnabled, forceFocused = isRowFocused && focusedActionIndex == 3)
                     Spacer(modifier = Modifier.width(6.dp))
-                    CatalogActionChip(icon = Icons.Default.Delete, isFocused = isRowFocused && focusedActionIndex == 4, isDestructive = true, enabled = true, onClick = { onDeleteCatalog(catalog) })
+                    CatalogActionChip(icon = Icons.Default.Unarchive, isFocused = isRowFocused && focusedActionIndex == 4, enabled = catalog.packId != null && catalog.isBulkDeletablePack, onClick = { onUnpackCatalog(catalog) })
+                    Spacer(modifier = Modifier.width(6.dp))
+                    CatalogActionChip(icon = Icons.Default.Delete, isFocused = isRowFocused && focusedActionIndex == 5, isDestructive = true, enabled = true, onClick = { onDeleteCatalog(catalog) })
                 }
                 Spacer(modifier = Modifier.height(10.dp))
             }

@@ -1989,6 +1989,30 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun unpackCatalog(catalogId: String) {
+        viewModelScope.launch {
+            val current = catalogRepository.getCatalogs()
+            val index = current.indexOfFirst { it.id == catalogId }
+            if (index != -1) {
+                val target = current[index]
+                if (target.packId != null) {
+                    val updated = current.toMutableList()
+                    updated[index] = target.copy(packId = null, packName = null)
+                    catalogRepository.replaceCatalogsForActiveProfile(updated)
+                    
+                    // Update state
+                    val visible = visibleCatalogs(updated)
+                    _uiState.value = _uiState.value.copy(
+                        catalogs = visible,
+                        toastMessage = "Catalog row extracted from pack",
+                        toastType = ToastType.SUCCESS
+                    )
+                    syncLocalStateToCloud(silent = true)
+                }
+            }
+        }
+    }
+
     fun renameCatalog(catalogId: String, newTitle: String) {
         viewModelScope.launch {
             val success = catalogRepository.renameCatalog(catalogId, newTitle)
