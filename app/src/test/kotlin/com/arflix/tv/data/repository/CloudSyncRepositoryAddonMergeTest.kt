@@ -4,7 +4,6 @@ import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.AddonType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CloudSyncRepositoryAddonMergeTest {
@@ -13,7 +12,7 @@ class CloudSyncRepositoryAddonMergeTest {
         val local = addon(id = "flix", name = "Local Flix")
         val cloud = addon(id = "flix", name = "Cloud Flix", isEnabled = false)
 
-        val (merged, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(
+        val (merged, preserved) = reconcileAddonsWithCloud(
             cloudAddons = listOf(cloud),
             localAddons = listOf(local)
         )
@@ -24,30 +23,32 @@ class CloudSyncRepositoryAddonMergeTest {
     }
 
     @Test
-    fun `missing local custom addon is preserved from stale cloud payload`() {
+    fun `local addon absent from cloud is removed (removal propagates)`() {
+        // The other device removed "flix" — the cloud no longer lists it. Reconcile must drop it
+        // locally instead of re-adding it (the old union bug).
         val cloud = addon(id = "torrentio", name = "Torrentio")
         val localFlix = addon(id = "flix", name = "FlixStreams")
 
-        val (merged, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(
+        val (merged, preserved) = reconcileAddonsWithCloud(
             cloudAddons = listOf(cloud),
-            localAddons = listOf(localFlix)
-        )
-
-        assertTrue(preserved)
-        assertEquals(listOf("torrentio", "flix"), merged.map { it.id })
-    }
-
-    @Test
-    fun `missing subtitle addon is not preserved`() {
-        val localSubtitle = addon(id = "subtitle-only", name = "Subtitle Only", type = AddonType.SUBTITLE)
-
-        val (merged, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(
-            cloudAddons = emptyList(),
-            localAddons = listOf(localSubtitle)
+            localAddons = listOf(cloud, localFlix)
         )
 
         assertFalse(preserved)
-        assertEquals(emptyList<Addon>(), merged)
+        assertEquals(listOf("torrentio"), merged.map { it.id })
+    }
+
+    @Test
+    fun `empty cloud preserves local addons (empty-guard)`() {
+        val localFlix = addon(id = "flix", name = "FlixStreams")
+
+        val (merged, preserved) = reconcileAddonsWithCloud(
+            cloudAddons = emptyList(),
+            localAddons = listOf(localFlix)
+        )
+
+        assertFalse(preserved)
+        assertEquals(listOf("flix"), merged.map { it.id })
     }
 
     private fun addon(

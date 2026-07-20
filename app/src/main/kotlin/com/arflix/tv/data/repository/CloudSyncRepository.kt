@@ -38,35 +38,25 @@ import kotlin.math.max
 import javax.inject.Inject
 import javax.inject.Singleton
 
-internal fun mergeCloudAddonsPreservingLocalDirectAddons(
+/**
+ * Reconcile local addons to the cloud list — the cloud is authoritative. A local addon that is
+ * ABSENT from the cloud was removed on another device, so it is dropped here; this is what makes
+ * addon REMOVALS propagate across devices. (The previous behavior UNIONED the two lists, re-adding
+ * anything the cloud had dropped, which is exactly why a removal never took effect on other
+ * devices.) One guard: an EMPTY cloud list never wipes a non-empty local list — a blank or partial
+ * pull must not delete everything. The Boolean (kept for the call sites) is always false: we adopt
+ * the cloud, so there is nothing local to preserve or re-push.
+ */
+internal fun reconcileAddonsWithCloud(
     cloudAddons: List<Addon>,
     localAddons: List<Addon>
 ): Pair<List<Addon>, Boolean> {
-    val merged = LinkedHashMap<String, Addon>()
-    cloudAddons.forEach { addon ->
-        val id = addon.id.trim()
-        if (id.isNotBlank()) {
-            merged[id] = addon
-        }
-    }
-
-    var preservedLocalAddon = false
-    localAddons.forEach { addon ->
-        val id = addon.id.trim()
-        val shouldPreserve = id.isNotBlank() &&
-            id !in merged &&
-            id != "opensubtitles" &&
-            addon.isInstalled &&
-            addon.type == AddonType.CUSTOM &&
-            !addon.url.isNullOrBlank()
-
-        if (shouldPreserve) {
-            merged[id] = addon
-            preservedLocalAddon = true
-        }
-    }
-
-    return merged.values.toList() to preservedLocalAddon
+    val cloud = cloudAddons.filter { it.id.trim().isNotBlank() }
+    // Empty-guard: a blank cloud snapshot must never wipe local addons.
+    if (cloud.isEmpty()) return localAddons to false
+    val reconciled = LinkedHashMap<String, Addon>()
+    cloud.forEach { reconciled[it.id.trim()] = it }
+    return reconciled.values.toList() to false
 }
 
 /**
@@ -1462,7 +1452,7 @@ class CloudSyncRepository @Inject constructor(
                 val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
                 val sharedAddons = mergeAddonsForSharedRestore(map.values)
                 val localAddons = streamRepository.installedAddons.first()
-                val (resolvedAddons, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(sharedAddons, localAddons)
+                val (resolvedAddons, preserved) = reconcileAddonsWithCloud(sharedAddons, localAddons)
                 preservedLocalAddon = preservedLocalAddon || preserved
                 if (resolvedAddons.isNotEmpty()) {
                     streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
@@ -1473,7 +1463,7 @@ class CloudSyncRepository @Inject constructor(
                     val type = TypeToken.getParameterized(List::class.java, Addon::class.java).type
                     val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
                     val localAddons = streamRepository.installedAddons.first()
-                    val (resolvedAddons, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(addons, localAddons)
+                    val (resolvedAddons, preserved) = reconcileAddonsWithCloud(addons, localAddons)
                     preservedLocalAddon = preservedLocalAddon || preserved
                     if (resolvedAddons.isNotEmpty()) {
                         streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
