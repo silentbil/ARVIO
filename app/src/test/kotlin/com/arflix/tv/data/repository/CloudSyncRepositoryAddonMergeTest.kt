@@ -51,6 +51,37 @@ class CloudSyncRepositoryAddonMergeTest {
         assertEquals(listOf("flix"), merged.map { it.id })
     }
 
+    @Test
+    fun `intentional empty cloud (newer set-timestamp) removes all local addons`() {
+        val localFlix = addon(id = "flix", name = "FlixStreams")
+
+        val (merged, preserved) = reconcileAddonsWithCloud(
+            cloudAddons = emptyList(),
+            localAddons = listOf(localFlix),
+            cloudAddonsUpdatedAt = 100L,
+            localAddonsUpdatedAt = 50L
+        )
+
+        assertFalse(preserved)
+        assertEquals(emptyList<Addon>(), merged)
+    }
+
+    @Test
+    fun `newer local set is kept over a stale cloud (unpushed local change)`() {
+        val cloud = addon(id = "torrentio", name = "Torrentio")
+        val localFlix = addon(id = "flix", name = "FlixStreams")
+
+        val (merged, preserved) = reconcileAddonsWithCloud(
+            cloudAddons = listOf(cloud),
+            localAddons = listOf(localFlix),
+            cloudAddonsUpdatedAt = 50L,
+            localAddonsUpdatedAt = 100L
+        )
+
+        assertFalse(preserved)
+        assertEquals(listOf("flix"), merged.map { it.id })
+    }
+
     private fun addon(
         id: String,
         name: String,

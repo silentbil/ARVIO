@@ -662,6 +662,24 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   const legacySettings = objectRecord<unknown>(root.settings) as Partial<AppSettings>;
   const legacyCatalogs = arrayValue(root.catalogs) as AppSettings["catalogs"];
   const legacyHiddenCatalogIds = arrayValue<string>(root.hiddenPreinstalledCatalogs);
+  // Canonical, timestamp-managed GLOBAL settings live at the top level of the payload (written by
+  // Android with per-field timestamps), NOT in the legacy `root.settings` blob. Map them so an
+  // Android change (accent color, AI subtitles, etc.) is actually visible on web.
+  const globalSettings: Partial<AppSettings> = {};
+  if ("accentColor" in root) globalSettings.accentColor = String(root.accentColor ?? "");
+  if ("oledBlackBackground" in root) globalSettings.oledBlack = Boolean(root.oledBlackBackground);
+  if ("customUserAgent" in root) globalSettings.customUserAgent = String(root.customUserAgent ?? "");
+  if ("skipProfileSelection" in root) globalSettings.skipProfileSelection = Boolean(root.skipProfileSelection);
+  if ("subtitleAiEnabled" in root) globalSettings.aiSubtitlesEnabled = Boolean(root.subtitleAiEnabled);
+  if ("subtitleAiAutoSelect" in root) globalSettings.aiAutoSelect = Boolean(root.subtitleAiAutoSelect);
+  if ("subtitleAiApiKey" in root) globalSettings.aiApiKey = String(root.subtitleAiApiKey ?? "");
+  // The web's model is a small enum ("off"/"groq"/"gemini") while Android stores a full model id —
+  // only adopt the value when it's already in the web's vocabulary (i.e. the web wrote it last).
+  if ("subtitleAiModel" in root) {
+    const model = String(root.subtitleAiModel ?? "");
+    if (model === "off" || model === "groq" || model === "gemini") globalSettings.aiSubtitleModel = model;
+  }
+  if ("subtitleRemoveHearingImpaired" in root) globalSettings.removeHearingImpaired = Boolean(root.subtitleRemoveHearingImpaired);
   return {
     version: typeof root.version === "number" ? root.version : 1,
     // Union the per-profile scope with the global list. An empty/partial profile
@@ -670,6 +688,7 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
     settings: {
       ...legacySettings,
       ...profileSettings,
+      ...globalSettings,
       ...iptvSettings,
       ...(arrayValue(profileCatalogs).length ? { catalogs: arrayValue(profileCatalogs) as AppSettings["catalogs"] } : legacyCatalogs.length ? { catalogs: legacyCatalogs } : {}),
       ...(arrayValue(hiddenCatalogIds).length ? { hiddenCatalogIds: arrayValue<string>(hiddenCatalogIds) } : legacyHiddenCatalogIds.length ? { hiddenCatalogIds: legacyHiddenCatalogIds } : {})
@@ -706,6 +725,9 @@ export async function saveCloudAddons(
       const scoped = scopedValue<InstalledAddon[]>(root, "addonsByProfile", profileId);
       setScopedValue(root, "addonsByProfile", profileId, applyRemovals(unionAddons(addons, scoped)));
     }
+    // Set-level timestamp: lets Android tell an intentional "removed everything" from a blank pull,
+    // so removing the last add-on(s) from web actually propagates (reconcileAddonsWithCloud).
+    root.addonsUpdatedAt = Date.now();
   });
 }
 
@@ -800,7 +822,9 @@ export async function saveCloudSettings(
         merged.subtitleSettingsUpdatedAt = Date.now();
       }
       setScopedValue(root, "profileSettingsById", profileId, merged);
-      setScopedValue(root, "addonsByProfile", profileId, addons);
+      // NOTE: settings saves must NOT touch add-ons. Android now reconciles add-ons to the cloud
+      // authoritatively, so writing this session's (possibly stale) add-on list here could delete an
+      // add-on installed on another device. Add-ons are written exclusively by saveCloudAddons().
       setScopedValue(root, "catalogsByProfile", profileId, settings.catalogs);
       setScopedValue(root, "hiddenPreinstalledByProfile", profileId, settings.hiddenCatalogIds);
       setScopedValue(root, "iptvByProfile", profileId, {

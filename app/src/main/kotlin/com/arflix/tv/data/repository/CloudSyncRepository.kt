@@ -43,17 +43,35 @@ import javax.inject.Singleton
  * ABSENT from the cloud was removed on another device, so it is dropped here; this is what makes
  * addon REMOVALS propagate across devices. (The previous behavior UNIONED the two lists, re-adding
  * anything the cloud had dropped, which is exactly why a removal never took effect on other
- * devices.) One guard: an EMPTY cloud list never wipes a non-empty local list — a blank or partial
- * pull must not delete everything. The Boolean (kept for the call sites) is always false: we adopt
- * the cloud, so there is nothing local to preserve or re-push.
+ * devices.)
+ *
+ * The tricky case is an EMPTY cloud list, which could be either an intentional "removed everything"
+ * or a blank/partial pull. They are told apart by a set-level timestamp: [cloudAddonsUpdatedAt] is
+ * bumped on any user add/remove. An empty cloud is honored (all local addons dropped) only when it
+ * is genuinely NEWER than what we have ([cloudAddonsUpdatedAt] > [localAddonsUpdatedAt]); otherwise
+ * the empty is treated as a bad pull and local addons are preserved.
+ *
+ * The Boolean (kept for the call sites) is always false: we adopt the cloud, nothing to re-push.
  */
 internal fun reconcileAddonsWithCloud(
     cloudAddons: List<Addon>,
-    localAddons: List<Addon>
+    localAddons: List<Addon>,
+    cloudAddonsUpdatedAt: Long = 0L,
+    localAddonsUpdatedAt: Long = 0L
 ): Pair<List<Addon>, Boolean> {
     val cloud = cloudAddons.filter { it.id.trim().isNotBlank() }
-    // Empty-guard: a blank cloud snapshot must never wipe local addons.
-    if (cloud.isEmpty()) return localAddons to false
+    if (cloud.isEmpty()) {
+        // Intentional removal of everything (STRICTLY newer set-timestamp) → honor it; otherwise
+        // this is a blank/partial pull (or a fresh install with default addons) → keep local.
+        return if (cloudAddonsUpdatedAt > localAddonsUpdatedAt) {
+            emptyList<Addon>() to false
+        } else {
+            localAddons to false
+        }
+    }
+    // A local set-change newer than the cloud's hasn't been pushed yet — keep it so a stale pull
+    // can't revert a just-made local add/remove.
+    if (localAddonsUpdatedAt > cloudAddonsUpdatedAt) return localAddons to false
     val reconciled = LinkedHashMap<String, Addon>()
     cloud.forEach { reconciled[it.id.trim()] = it }
     return reconciled.values.toList() to false
@@ -480,8 +498,12 @@ class CloudSyncRepository @Inject constructor(
             val current = mergeFieldValue(localRoot, key)?.toString() ?: continue
             val base = if (baseMap.has(key)) baseMap.optString(key) else null
             if (base == null) {
+                // First time we've seen this field (e.g. a fresh upgrade): record the baseline but
+                // do NOT stamp a timestamp. A field with no prior baseline is not evidence of a
+                // local change, so it must not out-timestamp a peer's newer cloud value and revert
+                // it — it stays untimestamped (loses to any real cloud timestamp) until the user
+                // actually changes it, which the next build detects via this baseline.
                 baseMap.put(key, current)
-                if (!tsMap.has(key)) tsMap.put(key, now)
                 changed = true
             } else if (base != current) {
                 baseMap.put(key, current)
@@ -706,6 +728,9 @@ class CloudSyncRepository @Inject constructor(
             }
         }
         root.put("addonsByProfile", JSONObject(gson.toJson(addonsByProfile)))
+        // Set-level timestamp so an intentional "removed everything" can be told apart from a blank
+        // pull on apply (see reconcileAddonsWithCloud).
+        root.put("addonsUpdatedAt", streamRepository.getAddonsUpdatedAt())
 
         // Catalogs per profile
         val catalogsByProfile = buildMap<String, List<CatalogConfig>> {
@@ -1446,32 +1471,35 @@ class CloudSyncRepository @Inject constructor(
 
         // ── Addons ──
         runCatching {
-            var preservedLocalAddon = false
+            val cloudAddonsTs = root.optLong("addonsUpdatedAt", 0L)
+            val localAddonsTs = streamRepository.getAddonsUpdatedAt()
+            var appliedCloudAddons = false
             root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Addon::class.java).type).type
                 val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
                 val sharedAddons = mergeAddonsForSharedRestore(map.values)
                 val localAddons = streamRepository.installedAddons.first()
-                val (resolvedAddons, preserved) = reconcileAddonsWithCloud(sharedAddons, localAddons)
-                preservedLocalAddon = preservedLocalAddon || preserved
-                if (resolvedAddons.isNotEmpty()) {
-                    streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
-                }
+                val (resolvedAddons, _) = reconcileAddonsWithCloud(sharedAddons, localAddons, cloudAddonsTs, localAddonsTs)
+                // Apply the reconciled list even when it is empty — an intentional "removed all"
+                // must propagate (reconcile only returns empty when the cloud set is genuinely newer;
+                // opensubtitles is re-enforced downstream so playback isn't left with nothing).
+                streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
+                appliedCloudAddons = true
             }
             root.optJSONArray("addons")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 if (!root.has("addonsByProfile")) {
                     val type = TypeToken.getParameterized(List::class.java, Addon::class.java).type
                     val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
                     val localAddons = streamRepository.installedAddons.first()
-                    val (resolvedAddons, preserved) = reconcileAddonsWithCloud(addons, localAddons)
-                    preservedLocalAddon = preservedLocalAddon || preserved
-                    if (resolvedAddons.isNotEmpty()) {
-                        streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
-                    }
+                    val (resolvedAddons, _) = reconcileAddonsWithCloud(addons, localAddons, cloudAddonsTs, localAddonsTs)
+                    streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
+                    appliedCloudAddons = true
                 }
             }
-            if (preservedLocalAddon) {
-                markLocalStateDirty()
+            // Keep the local set-timestamp in step with the cloud we just adopted, so we don't
+            // re-adopt/loop on the next pull.
+            if (appliedCloudAddons && cloudAddonsTs > localAddonsTs) {
+                streamRepository.setAddonsUpdatedAt(cloudAddonsTs)
             }
         }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_addons")) }
 
