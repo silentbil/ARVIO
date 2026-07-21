@@ -14,6 +14,7 @@ import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { WatchlistScreen } from "@/components/watchlist/WatchlistScreen";
 import { BackHandler } from "./BackHandler";
 import { ExternalPlaybackPrompt } from "./ExternalPlaybackPrompt";
+import { EntitlementGate } from "./Paywall";
 import { Toast } from "./Toast";
 import { TopNav } from "./TopNav";
 
@@ -66,7 +67,11 @@ export function AppShell() {
 
   const accent = ACCENTS[settings.accentColor] ?? ACCENTS.arctic;
 
+  // Between profile selection and the app: web membership gate. Off unless
+  // NEXT_PUBLIC_PAYWALL_ENABLED=true, so nothing changes for users until you
+  // flip it. The APK never mounts this.
   return (
+    <EntitlementGate>
     <main
       className={`app-shell ${settings.oledBlack ? "oled" : ""} ${settings.spoilerBlur ? "spoiler-blur" : ""}`}
       style={{ ["--accent" as string]: accent }}
@@ -93,5 +98,6 @@ export function AppShell() {
       <BackHandler />
       <Toast />
     </main>
+    </EntitlementGate>
   );
 }

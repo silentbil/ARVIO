@@ -306,6 +306,17 @@
       font-weight: 500;
     }
 
+    .privacy-link {
+      display: block;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .privacy-link:hover, .privacy-link:focus-visible { color: var(--text); }
+
     @media (max-width: 480px) {
       .head { padding: 24px 22px 18px; }
       .body { padding: 18px 22px 22px; }
@@ -356,6 +367,7 @@
 
       <p class="small">If you opened this from a TV QR code, signing in will automatically pair that TV.</p>
       <div class="foot">ARVIO Cloud Auth</div>
+      <a class="privacy-link" href="/delete-account">Delete account</a>
     </section>
   </main>
 
@@ -874,8 +886,15 @@
         setTimeout(() => { window.location.href = "https://arvio.tv"; }, 1200);
       } catch (err) {
         const msg = err.message || String(err);
-        if (msg.toLowerCase().includes("email") && msg.toLowerCase().includes("confirm")) {
+        const lower = msg.toLowerCase();
+        if (lower.includes("email") && lower.includes("confirm")) {
           setStatus("Account created. Check your email, then sign in.", "ok");
+        } else if (lower.includes("already exists")) {
+          setStatus("An account with this email already exists — use Sign In instead.", "error");
+        } else if (lower.includes("real email")) {
+          setStatus("Please use a real, personal email address (temporary/placeholder addresses aren't allowed).", "error");
+        } else if (lower.includes("valid email")) {
+          setStatus("That email address doesn't look valid — please check for typos.", "error");
         } else {
           setStatus(msg, "error");
         }

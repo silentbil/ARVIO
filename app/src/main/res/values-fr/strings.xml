@@ -1133,4 +1133,5 @@
     <string name="live_menu_move_down">Descendre</string>
     <string name="live_menu_hide_category">Masquer la catégorie</string>
     <string name="live_menu_unhide_category">Afficher la catégorie</string>
+    <string name="ratings">Notes des Épisodes</string>
 </resources>

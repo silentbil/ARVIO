@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, openExternalPlayer, triggerDownload } from "@/lib/externalPlayers";
+import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_URL } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -376,6 +376,20 @@ function SourcePickerModal({
   const [addonFilter, setAddonFilter] = useState("all");
   const [mode, setMode] = useState<"all" | "playable">("all");
   const [query, setQuery] = useState("");
+  // Windows-only: offer the one-time vlc:// setup so "Open in VLC" launches VLC
+  // directly instead of downloading a .m3u. Hidden once the user has set it up.
+  // macOS is excluded — VLC self-registers vlc:// there, so no installer is
+  // needed (and the .bat wouldn't run on a Mac anyway).
+  const [vlcReady, setVlcReady] = useState<boolean>(() => vlcProtocolReady());
+  const showVlcSetup = isWindows() && !vlcReady;
+  const enableVlcProtocol = () => {
+    // Download the tiny installer, then remember the user set it up so the VLC
+    // button switches to the direct vlc:// launch.
+    triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
+    setVlcProtocolReady(true);
+    setVlcReady(true);
+    onToast("Run the downloaded vlc-setup.bat once — then Open in VLC works instantly.");
+  };
   // Addon subtitles for this title, fetched in the background when the panel
   // opens so the VLC/Infuse buttons can attach them synchronously on click.
   const [panelSubtitles, setPanelSubtitles] = useState<SubtitleTrack[]>([]);
@@ -483,6 +497,28 @@ function SourcePickerModal({
     // lost, so the app would appear to do nothing. Launch last.
     openExternalPlayer(player, target, title, settings.defaultSubtitle);
   };
+  // Android: open in whichever player the user picks (VLC, MX Player, …) via the
+  // system chooser — the equivalent of the iOS-only Infuse button.
+  const openAnyPlayer = (stream: StreamSource) => {
+    if (!stream.url) {
+      onToast("This source has no direct URL for an external player.");
+      return;
+    }
+    const cachedCdn = parseDebridStream(stream.url) ? cachedDebridDirectUrl(stream.url) : null;
+    let target = cachedCdn ? { ...stream, url: cachedCdn, originalUrl: stream.url } : stream;
+    if (!target.subtitles?.length && panelSubtitles.length) target = { ...target, subtitles: panelSubtitles };
+    onToast("Opening in your player…");
+    createPendingExternalPlayback({
+      player: "vlc",
+      item,
+      stream: target,
+      title,
+      profileId: activeProfileId,
+      season: selectedEpisode?.season ?? item.seasonNumber ?? null,
+      episode: selectedEpisode?.episode ?? item.episodeNumber ?? null
+    });
+    openInAnyPlayer(target, title, settings.defaultSubtitle);
+  };
   const copyUrl = async (stream: StreamSource) => {
     const copied = await copyStreamUrl(stream).catch(() => false);
     onToast(copied ? "Stream URL copied." : "Could not copy this stream URL.");
@@ -551,6 +587,13 @@ function SourcePickerModal({
           <button type="button" className="person-close" onClick={onClose} aria-label="Close source picker"><X size={24} /></button>
         </header>
 
+        {showVlcSetup && (
+          <div className="vlc-setup-hint">
+            <span>Windows/desktop: enable one-click "Open in VLC" (no more .m3u download).</span>
+            <button type="button" onClick={enableVlcProtocol}>Set up VLC integration</button>
+          </div>
+        )}
+
         <div className="source-toolbar">
           <label className="source-search">
             <Search size={18} />
@@ -617,8 +660,8 @@ function SourcePickerModal({
                     <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("vlc", stream)}>
                       <ExternalLink size={13} /> VLC
                     </button>
-                    <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("infuse", stream)}>
-                      <ExternalLink size={13} /> Infuse
+                    <button type="button" className="source-action" disabled={locked} onClick={() => openAnyPlayer(stream)}>
+                      <ExternalLink size={13} /> Player
                     </button>
                     <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void downloadSource(stream)} aria-label="Download this source">
                       <Download size={13} />

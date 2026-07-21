@@ -93,6 +93,26 @@ class LiveCategoryIndexTest {
     }
 
     @Test
+    fun pagedChannelSelectionIsDetachedFromMutableBackingList() {
+        val providerWindow = MutableList(100) { index ->
+            channel("list:$index", "Channel $index", "General")
+        }
+
+        val result = selectPagedChannelsInProviderOrder(
+            categoryId = "all",
+            providerWindow = providerWindow,
+            favoriteChannels = emptyList(),
+            recentChannels = emptyList(),
+            limit = 48,
+        )
+        providerWindow.clear()
+
+        assertThat(result).hasSize(48)
+        assertThat(result.first().id).isEqualTo("list:0")
+        assertThat(result.last().id).isEqualTo("list:47")
+    }
+
+    @Test
     fun categoryTreeKeepsProviderFirstOccurrenceOrder() {
         val channels = listOf(
             channel("list:9", "Nine", "Z Last alphabetically"),

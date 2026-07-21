@@ -1,4 +1,9 @@
 /delete
   Content-Type: text/html; charset=UTF-8
+  X-Robots-Tag: noindex
 /account-deletion
   Content-Type: text/html; charset=UTF-8
+  X-Robots-Tag: noindex
+/delete-account*
+  Content-Type: text/html; charset=UTF-8
+  X-Robots-Tag: noindex

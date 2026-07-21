@@ -11,6 +11,11 @@ export const config = {
   traktClientId: process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID ?? "",
   traktClientSecret: envValue(process.env.NEXT_PUBLIC_TRAKT_CLIENT_SECRET, ""),
   allowNetlifyMediaProxy: envValue(process.env.NEXT_PUBLIC_ALLOW_NETLIFY_MEDIA_PROXY, "false") === "true",
+  // Web subscription: the Ko-fi membership page the paywall links to, and a
+  // master switch to enable the paywall (off by default so nothing changes for
+  // users until you flip it in the environment).
+  kofiUrl: envValue(process.env.NEXT_PUBLIC_KOFI_URL, ""),
+  paywallEnabled: envValue(process.env.NEXT_PUBLIC_PAYWALL_ENABLED, "false") === "true",
   imageBase: "https://image.tmdb.org/t/p/w780",
   backdropBase: "https://image.tmdb.org/t/p/w1280",
   backdropOriginal: "https://image.tmdb.org/t/p/original"

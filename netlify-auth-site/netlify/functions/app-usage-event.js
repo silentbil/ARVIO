@@ -2,7 +2,9 @@ const {
   json,
   options,
   parseBody,
+  assertAppRequest,
   snapshotStores,
+  privacyHash,
   sha256
 } = require("./_backend");
 
@@ -14,6 +16,7 @@ exports.handler = async (event) => {
   }
 
   try {
+    assertAppRequest(event);
     const stores = snapshotStores(event);
     const body = parseBody(event);
     const eventName = String(body.event_name || "app_open").slice(0, 80);
@@ -22,16 +25,21 @@ exports.handler = async (event) => {
 
     const email = String(body.email || "").trim().toLowerCase();
     const supabaseUserId = String(body.user_id || "").trim();
+    const profileId = String(body.profile_id || "").trim();
     const date = new Date().toISOString().slice(0, 10);
-    const key = `${date}/${sha256(`${supabaseUserId}:${email}:${installId}:${eventName}`)}.json`;
+    const accountIdentity = supabaseUserId || email;
+    const accountKey = accountIdentity ? privacyHash("usage-account", accountIdentity) : "";
+    const installKey = privacyHash("usage-install", installId);
+    const profileKey = profileId ? privacyHash("usage-profile", profileId) : null;
+    const ownerPath = accountKey ? `account/${accountKey}` : "anonymous";
+    const key = `date/${date}/${ownerPath}/${sha256(`${installKey}:${eventName}`)}.json`;
     const existing = await stores.usage.get(key, { type: "json", consistency: "strong" }).catch(() => null);
     await stores.usage.setJSON(key, {
       date,
       eventName,
-      installId,
-      userId: supabaseUserId || null,
-      email: email || null,
-      profileId: body.profile_id || null,
+      installKey,
+      accountKey: accountKey || null,
+      profileKey,
       platform: body.platform || null,
       deviceType: body.device_type || null,
       appVersion: body.app_version || null,

@@ -69,11 +69,47 @@ export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, 
     return `infuse://x-callback-url/play?${params.toString()}`;
   }
 
+  // Android: vlc-x-callback:// is iOS-ONLY — Android VLC doesn't register it, so
+  // it silently does nothing (the Samsung/Chrome bug). Android launches players
+  // via an intent:// URL instead. Target VLC's package, with a browser fallback.
+  if (player === "vlc" && isAndroid()) {
+    return androidIntentUrl(targetUrl, filename, sub, "org.videolan.vlc");
+  }
+
+  // Desktop with the one-time vlc:// handler installed: our handler runs
+  // `vlc.exe --open <url>`, stripping the vlc:// prefix. Just prepend the scheme.
+  if (player === "vlc" && isDesktop()) {
+    return `vlc://${targetUrl}`;
+  }
+
   // VLC's "download" action saves the file to VLC's own storage (offline
   // playback) instead of just streaming it — the reliable way to get a large
   // file onto an iPad, where a browser tab can't (WebKit memory limit). "stream"
   // just plays it.
   return `vlc-x-callback://x-callback-url/${mode === "download" ? "download" : "stream"}?${params.toString()}`;
+}
+
+// Android intent:// URL. When `pkg` is set it targets that app (e.g. VLC);
+// when omitted, Android shows its own "Open with" chooser listing every
+// installed video player (MX Player, Just Player, VLC, …). The video MIME type
+// makes Android offer players rather than browsers.
+function androidIntentUrl(url: string, filename: string, sub: string, pkg?: string) {
+  const scheme = url.startsWith("https") ? "https" : "http";
+  const bare = url.replace(/^https?:\/\//, "");
+  const mime = /\.m3u8|mpegurl/i.test(url) ? "application/x-mpegurl" : "video/*";
+  const parts = [
+    `intent://${bare}#Intent`,
+    `scheme=${scheme}`,
+    "action=android.intent.action.VIEW",
+    `type=${mime}`
+  ];
+  if (pkg) parts.push(`package=${pkg}`);
+  if (sub) parts.push(`S.subtitles_location=${encodeURIComponent(sub)}`);
+  parts.push(`S.title=${encodeURIComponent(filename)}`);
+  // If the targeted app isn't installed, fall back to opening the raw URL.
+  parts.push(`S.browser_fallback_url=${encodeURIComponent(url)}`);
+  parts.push("end");
+  return parts.join(";");
 }
 
 // iOS home-screen webapps (standalone PWAs) silently DROP custom-scheme
@@ -129,12 +165,60 @@ function isAndroid() {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 }
 
-// How VLC/Infuse are launched on this platform. vlc-x-callback:// is an
-// iOS-ONLY scheme — desktop VLC (Windows/macOS/Linux) registers no URL
-// protocol at all, so on desktop the only reliable handoff is a tiny .m3u
-// playlist download: VLC owns the .m3u association, one click plays it.
+export function isWindows() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  // Exclude Windows Phone (long dead, but the token exists) and Android.
+  return /Windows NT/i.test(ua) && !/Android/i.test(ua);
+}
+
+// macOS desktop (NOT an iPad masquerading as Macintosh — those have touch
+// points and are handled by isAppleMobile). On macOS, VLC registers the vlc://
+// scheme itself at install time, so the direct scheme launch works with no
+// setup — unlike Windows, which needs the vlc-setup.bat handler.
+export function isMac() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /Macintosh|Mac OS X/i.test(ua) && !(navigator.maxTouchPoints > 1);
+}
+
+export function isDesktop() {
+  return !isAppleMobile() && !isAndroid();
+}
+
+// One-time setup that registers the vlc:// handler so the desktop "Open in VLC"
+// button launches VLC directly instead of downloading a .m3u. Hosted by ARVIO.
+export const VLC_SETUP_URL = "/vlc-setup.bat";
+
+// Whether the user has run the one-time desktop vlc:// setup. We can't detect
+// protocol registration from the browser, so we remember that they installed
+// it and use the direct vlc:// launch; otherwise we fall back to the .m3u.
+const VLC_PROTOCOL_KEY = "arvio.web.vlcProtocolReady";
+
+export function vlcProtocolReady(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  return localStorage.getItem(VLC_PROTOCOL_KEY) === "1";
+}
+
+export function setVlcProtocolReady(ready: boolean) {
+  if (typeof localStorage === "undefined") return;
+  if (ready) localStorage.setItem(VLC_PROTOCOL_KEY, "1");
+  else localStorage.removeItem(VLC_PROTOCOL_KEY);
+}
+
+// How VLC is launched on this platform:
+// - iOS/Android: a custom scheme (vlc-x-callback:// / intent://).
+// - Desktop WITH the one-time vlc:// handler installed: direct scheme launch.
+// - Desktop WITHOUT it: a tiny .m3u download (VLC owns the .m3u association),
+//   which needs no setup but takes an extra click.
 export function externalLaunchMode(player: ExternalPlayer): "scheme" | "playlist" {
-  if (player === "vlc" && !isAppleMobile() && !isAndroid()) return "playlist";
+  if (player === "vlc" && isDesktop()) {
+    // macOS: VLC self-registers vlc://, so the direct scheme launch always
+    // works — no installer, no .m3u fallback. Windows needs the one-time
+    // vlc-setup.bat handler, so fall back to the .m3u until it's installed.
+    if (isMac()) return "scheme";
+    return vlcProtocolReady() ? "scheme" : "playlist";
+  }
   return "scheme";
 }
 
@@ -179,6 +263,41 @@ export function downloadToVlc(stream: StreamSource, title: string, preferredSubt
   if (!href) return false;
   launchScheme(href);
   return true;
+}
+
+// A single "Open in external player" button, shown on every device (replaces
+// the iOS-only Infuse button). It does the best each platform allows, because a
+// generic "pick a player" chooser only exists on Android:
+//   - Android: intent chooser listing every installed player (VLC, MX Player, …)
+//   - iOS: VLC (the only generic scheme handoff on iOS)
+//   - Desktop: VLC via vlc:// (if the one-time handler is set up) else a .m3u
+// Always available — there's a working route on every platform.
+export function canOpenInAnyPlayer() {
+  return true;
+}
+
+export function openInAnyPlayer(stream: StreamSource, title: string, preferredSubtitleLang = "") {
+  const targetUrl = isTorrentioResolve(stream.originalUrl) ? stream.url : (stream.originalUrl ?? stream.url);
+  if (!targetUrl) return false;
+
+  if (isAndroid()) {
+    const ext = /\.m3u8|mpegurl/i.test(targetUrl) ? "m3u8" : /\.mp4(?:[?#/]|$)/i.test(targetUrl) ? "mp4" : "mkv";
+    const filename = `${cleanFilename(title)}.${ext}`;
+    const sub = subtitleUrl(pickSubtitle(stream.subtitles, preferredSubtitleLang));
+    // No package → Android's own "Open with" chooser across all video apps.
+    launchScheme(androidIntentUrl(targetUrl, filename, sub));
+    return true;
+  }
+
+  // iOS + desktop: VLC is the one route that works generically. This reuses the
+  // platform-correct VLC path (iOS scheme, desktop vlc:// or .m3u fallback).
+  return openExternalPlayer("vlc", stream, title, preferredSubtitleLang);
+}
+
+// Whether "Open in external player" resolves to a specific-app launch (so the UI
+// can hint what happens). Only Android shows a real chooser.
+export function externalPlayerIsChooser() {
+  return isAndroid();
 }
 
 export async function copyStreamUrl(stream: StreamSource) {

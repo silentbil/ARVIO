@@ -5,6 +5,10 @@ import { useState } from "react";
 import { hasNetlifyBackendConfig, hasSupabaseConfig } from "@/lib/config";
 import { useApp } from "@/lib/store";
 
+// Account creation lives on the dedicated auth site (email verification, the
+// full signup flow), not inline here — the in-app path duplicated it and drifted.
+const SIGNUP_URL = "https://auth.arvio.tv/";
+
 export function LoginScreen() {
   const { signIn, backToProfiles, cloudLoginRequired } = useApp();
   const [email, setEmail] = useState("");
@@ -53,30 +57,48 @@ export function LoginScreen() {
         </div>
 
         <div className="login-card">
-          <p className="login-card-title">{isSignUp ? "Create your account" : "Sign in to continue"}</p>
-          {!cloudConfigured && <p className="login-error">ARVIO Cloud backend env is missing. Add values in web/.env.local.</p>}
-          {error && <p className="login-error">{error}</p>}
-          <input
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="Email"
-            type="email"
-            autoFocus
-            onKeyDown={(event) => event.key === "Enter" && submit()}
-          />
-          <input
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="Password"
-            type="password"
-            onKeyDown={(event) => event.key === "Enter" && submit()}
-          />
-          <button type="button" className="primary login-submit" onClick={submit} disabled={loading || !cloudConfigured}>
-            {loading ? "Please wait…" : isSignUp ? "Sign Up" : "Sign In"}
-          </button>
-          <button type="button" className="login-toggle" onClick={() => setIsSignUp(!isSignUp)} disabled={loading}>
-            {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
-          </button>
+          {isSignUp ? (
+            <>
+              <p className="login-card-title">Create your account</p>
+              <p className="login-sub login-signup-copy">
+                Create your ARVIO Cloud account on our secure account page, then come
+                back here and sign in.
+              </p>
+              <a className="primary login-submit login-signup-link" href={SIGNUP_URL} target="_blank" rel="noopener noreferrer">
+                Create account on auth.arvio.tv
+              </a>
+              <button type="button" className="login-toggle" onClick={() => { setIsSignUp(false); setError(null); }} disabled={loading}>
+                Already have an account? Sign In
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="login-card-title">Sign in to continue</p>
+              {!cloudConfigured && <p className="login-error">ARVIO Cloud backend env is missing. Add values in web/.env.local.</p>}
+              {error && <p className="login-error">{error}</p>}
+              <input
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="Email"
+                type="email"
+                autoFocus
+                onKeyDown={(event) => event.key === "Enter" && submit()}
+              />
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Password"
+                type="password"
+                onKeyDown={(event) => event.key === "Enter" && submit()}
+              />
+              <button type="button" className="primary login-submit" onClick={submit} disabled={loading || !cloudConfigured}>
+                {loading ? "Please wait…" : "Sign In"}
+              </button>
+              <button type="button" className="login-toggle" onClick={() => { setIsSignUp(true); setError(null); }} disabled={loading}>
+                Don&apos;t have an account? Sign Up
+              </button>
+            </>
+          )}
         </div>
       </div>
     </main>
