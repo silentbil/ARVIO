@@ -35,23 +35,31 @@ if not defined VLC (
 echo   Found VLC: !VLC!
 echo.
 
-REM --- Write a tiny handler script next to this file's data dir ----------
+REM --- Write the handler as a standalone PowerShell script ---------------
+REM  The handler must (a) strip the vlc:// scheme prefix, (b) repair a mangled
+REM  scheme slash (browsers/Windows can collapse vlc://https://... to https:/...),
+REM  and (c) launch VLC with the real URL. Doing that string surgery in pure
+REM  batch — especially written from inside a ( ) block — is fragile (the v1
+REM  "set u=vlc://=" / blank --open "" bug, plus !-token and ^-escaping traps).
+REM  So the handler is a .ps1: PowerShell handles !, & and :// with no escaping
+REM  pain, and each echoed line below is plain text (no cmd-hostile characters).
+REM  Delayed expansion is OFF here so nothing in the body is reinterpreted.
 set "HANDLERDIR=%LOCALAPPDATA%\ARVIO"
 if not exist "%HANDLERDIR%" mkdir "%HANDLERDIR%"
-set "HANDLER=%HANDLERDIR%\arvio-vlc.bat"
-(
-  echo @echo off
-  echo setlocal EnableDelayedExpansion
-  echo set "u=%%~1"
-  echo set "u=!u:vlc://=!"
-  echo start "VLC" "!VLC!" --open "!u!"
-) > "%HANDLER%"
+set "HANDLER=%HANDLERDIR%\arvio-vlc.ps1"
+setlocal DisableDelayedExpansion
+> "%HANDLER%" echo param([string]$Url)
+>>"%HANDLER%" echo $vlc = '%VLC%'
+>>"%HANDLER%" echo $u = $Url -replace '^^vlc:/*', ''
+>>"%HANDLER%" echo $u = $u -replace '^^(https?):/(?!/)', '$1://'
+>>"%HANDLER%" echo if ($u) { Start-Process -FilePath $vlc -ArgumentList $u }
+endlocal
 
 REM --- Register vlc:// under the current user (no admin required) --------
 reg add "HKCU\Software\Classes\vlc" /ve /t REG_SZ /d "URL:vlc Protocol" /f >nul
 reg add "HKCU\Software\Classes\vlc" /v "URL Protocol" /t REG_SZ /d "" /f >nul
 reg add "HKCU\Software\Classes\vlc\DefaultIcon" /ve /t REG_SZ /d "\"!VLC!\",0" /f >nul
-reg add "HKCU\Software\Classes\vlc\shell\open\command" /ve /t REG_SZ /d "\"%HANDLER%\" \"%%1\"" /f >nul
+reg add "HKCU\Software\Classes\vlc\shell\open\command" /ve /t REG_SZ /d "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%HANDLER%\" \"%%1\"" /f >nul
 
 if errorlevel 1 (
   echo   [!] Registration failed.
