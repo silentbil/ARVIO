@@ -43,6 +43,26 @@ const settingsKey = "arvio.web.settings";
 const PROFILES_KEY = "arvio.web.profiles";
 const ACTIVE_PROFILE_KEY = "arvio.web.activeProfileId";
 const AVATAR_IMAGES_KEY = "arvio.web.avatarImages";
+// Which account the locally-cached profiles belong to. Profiles live in a single
+// browser-global localStorage key, so without this a second account signing in
+// on the same browser would see the FIRST account's profiles (they persist until
+// the cloud pull replaces them — and a brand-new account has no cloud profiles to
+// replace them with). We stamp the owner email and ignore cached profiles that
+// belong to a different account.
+const PROFILES_OWNER_KEY = "arvio.web.profilesOwner";
+
+function currentAccountEmail(): string {
+  return (authClient.session?.email ?? "").trim().toLowerCase();
+}
+
+// Cached profiles are only trusted when they belong to the signed-in account
+// (or when signed out, where local-only profiles are expected).
+function localProfilesMatchAccount(): boolean {
+  const owner = (loadStored<string | null>(PROFILES_OWNER_KEY, null) ?? "").trim().toLowerCase();
+  const email = currentAccountEmail();
+  if (!email) return true; // signed out: local profiles are fine
+  return owner === email;
+}
 
 // Instant-paint caches for Continue Watching / Watchlist. The TTL is deliberately
 // long: a stale list is strictly better than a blank rail (the fresh fetch
@@ -501,10 +521,14 @@ export function AppProvider({
   const lastSyncedSettingsRef = useRef<string | null>(null);
 
   const [profiles, setProfiles] = useState<Profile[]>(() => {
-    const stored = loadStored<Profile[]>(PROFILES_KEY, []);
+    // Don't surface a previous account's cached profiles when a different account
+    // is signed in on this browser — start clean and let the cloud pull fill in.
+    const stored = localProfilesMatchAccount() ? loadStored<Profile[]>(PROFILES_KEY, []) : [];
     return stored.length ? stored : [makeProfile("Profile 1", 0xffe50914, 0)];
   });
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(() => loadStored<string | null>(ACTIVE_PROFILE_KEY, null));
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(() =>
+    localProfilesMatchAccount() ? loadStored<string | null>(ACTIVE_PROFILE_KEY, null) : null
+  );
   // Hydrate cached custom-avatar images synchronously so profile tiles paint the
   // real avatar on first render instead of flashing the letter fallback.
   const [avatarImages, setAvatarImagesState] = useState<Record<string, string>>(() => loadStored<Record<string, string>>(AVATAR_IMAGES_KEY, {}));
@@ -864,7 +888,10 @@ export function AppProvider({
   useEffect(() => {
     saveStored(PROFILES_KEY, profiles);
     saveStored(ACTIVE_PROFILE_KEY, activeProfileId);
-  }, [profiles, activeProfileId]);
+    // Stamp which account these cached profiles belong to (empty when signed
+    // out), so another account on this browser won't inherit them.
+    saveStored(PROFILES_OWNER_KEY, currentAccountEmail());
+  }, [profiles, activeProfileId, auth]);
 
   // When signed in, pull the shared profiles from the same account_sync_state
   // payload Android writes to (cloud wins, matching replaceProfilesFromCloud).
@@ -888,7 +915,18 @@ export function AppProvider({
             void refreshData(cloud.profiles[0].id);
           }
         } else {
-          void refreshData(activeProfileId);
+          // New account with no cloud profiles yet. If the local profiles were
+          // stamped for a DIFFERENT account, they leaked from a previous
+          // session — replace them with one clean profile.
+          if (!localProfilesMatchAccount()) {
+            const fresh = [makeProfile("Profile 1", randomProfileColor(), 0)];
+            setProfiles(fresh);
+            setActiveProfileId(fresh[0].id);
+            saveStored(PROFILES_OWNER_KEY, currentAccountEmail());
+            void refreshData(fresh[0].id);
+          } else {
+            void refreshData(activeProfileId);
+          }
         }
         setCloudProfilesHydrated(true);
       })
@@ -1294,7 +1332,22 @@ export function AppProvider({
     setBusy(mode === "sign-up" ? "Creating account" : "Signing in");
     setToast(null);
     try {
+      const previousEmail = currentAccountEmail();
       const session = mode === "sign-up" ? await authClient.signUp(trimmedEmail, password) : await authClient.signIn(trimmedEmail, password);
+      // Signing into a DIFFERENT account on this browser: drop the previous
+      // account's in-memory + cached profiles so they don't show through while
+      // the new account's cloud profiles load. A brand-new account then starts
+      // with one clean profile instead of inheriting the old ones.
+      if (previousEmail && previousEmail !== trimmedEmail.toLowerCase()) {
+        const fresh = [makeProfile("Profile 1", randomProfileColor(), 0)];
+        setProfiles(fresh);
+        setActiveProfileId(fresh[0].id);
+        setContinueWatching([]);
+        setWatchlist([]);
+        setCategories([]);
+        setWatchedKeys(new Set());
+        cwSourceRef.current = "none";
+      }
       setCloudProfilesHydrated(false);
       setAuth(session);
     } catch (error) {
