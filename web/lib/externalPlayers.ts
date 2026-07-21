@@ -251,24 +251,39 @@ export function downloadToVlc(stream: StreamSource, title: string, preferredSubt
   return true;
 }
 
-// Open in ANY installed player. On Android this fires an intent chooser listing
-// every video player on the device (VLC, MX Player, Just Player, …) — a better
-// fit than Infuse, which is iOS-only. Returns false on platforms where there's
-// no generic chooser (iOS: use VLC/Infuse buttons there instead).
+// A single "Open in external player" button, shown on every device (replaces
+// the iOS-only Infuse button). It does the best each platform allows, because a
+// generic "pick a player" chooser only exists on Android:
+//   - Android: intent chooser listing every installed player (VLC, MX Player, …)
+//   - iOS: VLC (the only generic scheme handoff on iOS)
+//   - Desktop: VLC via vlc:// (if the one-time handler is set up) else a .m3u
+// Always available — there's a working route on every platform.
 export function canOpenInAnyPlayer() {
-  return isAndroid();
+  return true;
 }
 
 export function openInAnyPlayer(stream: StreamSource, title: string, preferredSubtitleLang = "") {
-  if (!isAndroid()) return false;
   const targetUrl = isTorrentioResolve(stream.originalUrl) ? stream.url : (stream.originalUrl ?? stream.url);
   if (!targetUrl) return false;
-  const ext = /\.m3u8|mpegurl/i.test(targetUrl) ? "m3u8" : /\.mp4(?:[?#/]|$)/i.test(targetUrl) ? "mp4" : "mkv";
-  const filename = `${cleanFilename(title)}.${ext}`;
-  const sub = subtitleUrl(pickSubtitle(stream.subtitles, preferredSubtitleLang));
-  // No package → Android's own "Open with" chooser across all video apps.
-  launchScheme(androidIntentUrl(targetUrl, filename, sub));
-  return true;
+
+  if (isAndroid()) {
+    const ext = /\.m3u8|mpegurl/i.test(targetUrl) ? "m3u8" : /\.mp4(?:[?#/]|$)/i.test(targetUrl) ? "mp4" : "mkv";
+    const filename = `${cleanFilename(title)}.${ext}`;
+    const sub = subtitleUrl(pickSubtitle(stream.subtitles, preferredSubtitleLang));
+    // No package → Android's own "Open with" chooser across all video apps.
+    launchScheme(androidIntentUrl(targetUrl, filename, sub));
+    return true;
+  }
+
+  // iOS + desktop: VLC is the one route that works generically. This reuses the
+  // platform-correct VLC path (iOS scheme, desktop vlc:// or .m3u fallback).
+  return openExternalPlayer("vlc", stream, title, preferredSubtitleLang);
+}
+
+// Whether "Open in external player" resolves to a specific-app launch (so the UI
+// can hint what happens). Only Android shows a real chooser.
+export function externalPlayerIsChooser() {
+  return isAndroid();
 }
 
 export async function copyStreamUrl(stream: StreamSource) {

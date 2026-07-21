@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { canOpenInAnyPlayer, copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_URL } from "@/lib/externalPlayers";
+import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_URL } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -658,15 +658,9 @@ function SourcePickerModal({
                     <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("vlc", stream)}>
                       <ExternalLink size={13} /> VLC
                     </button>
-                    {canOpenInAnyPlayer() ? (
-                      <button type="button" className="source-action" disabled={locked} onClick={() => openAnyPlayer(stream)}>
-                        <ExternalLink size={13} /> Player
-                      </button>
-                    ) : (
-                      <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("infuse", stream)}>
-                        <ExternalLink size={13} /> Infuse
-                      </button>
-                    )}
+                    <button type="button" className="source-action" disabled={locked} onClick={() => openAnyPlayer(stream)}>
+                      <ExternalLink size={13} /> Player
+                    </button>
                     <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void downloadSource(stream)} aria-label="Download this source">
                       <Download size={13} />
                     </button>

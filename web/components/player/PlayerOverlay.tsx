@@ -27,7 +27,7 @@ import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, resolveDebridDirectUrl } from "@/lib/debrid";
 import type { RemuxAudioTrack } from "@/lib/remux";
-import { canOpenInAnyPlayer, copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer } from "@/lib/externalPlayers";
+import { copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer } from "@/lib/externalPlayers";
 import { proxiedUrl } from "@/lib/http";
 import { attachPlayback } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
@@ -1089,15 +1089,9 @@ function VideoPlayer({
             <button type="button" className="player-error-external" onClick={() => openExternal("vlc", stream)}>
               <ExternalLink size={15} /> Open in VLC
             </button>
-            {canOpenInAnyPlayer() ? (
-              <button type="button" className="player-error-external" onClick={() => openAnyPlayer(stream)}>
-                <ExternalLink size={15} /> Open in player
-              </button>
-            ) : (
-              <button type="button" className="player-error-external" onClick={() => openExternal("infuse", stream)}>
-                <ExternalLink size={15} /> Open in Infuse
-              </button>
-            )}
+            <button type="button" className="player-error-external" onClick={() => openAnyPlayer(stream)}>
+              <ExternalLink size={15} /> Open in player
+            </button>
             {!liveTv && !stream.transcoded && parseDebridStream(stream.url) && (
               <button type="button" className="player-error-transcode" onClick={() => onSelectStream(stream, { forceTranscode: true })}>
                 <Play size={15} fill="currentColor" /> Transcode
@@ -1168,15 +1162,9 @@ function VideoPlayer({
                         <button type="button" onClick={() => openExternal("vlc", candidate)}>
                           <ExternalLink size={13} /> VLC
                         </button>
-                        {canOpenInAnyPlayer() ? (
-                          <button type="button" onClick={() => openAnyPlayer(candidate)}>
-                            <ExternalLink size={13} /> Player
-                          </button>
-                        ) : (
-                          <button type="button" onClick={() => openExternal("infuse", candidate)}>
-                            <ExternalLink size={13} /> Infuse
-                          </button>
-                        )}
+                        <button type="button" onClick={() => openAnyPlayer(candidate)}>
+                          <ExternalLink size={13} /> Player
+                        </button>
                         <button type="button" onClick={() => void copyUrl(candidate)} aria-label="Copy stream URL">
                           <Copy size={13} />
                         </button>
