@@ -119,7 +119,13 @@ function toSource(name: string, url: string, quality: string, addonName: string)
     quality,
     size: "",
     url,
-    description: addonName
+    // Honest expectation: these play through the user's own IPTV line. Panels
+    // gate streams by IP/region/player and can flip policy at any time — when
+    // they refuse the user's network, NO player (browser, VLC, the app) can
+    // open the stream, and that is invisible to us up front (the catalog API
+    // and the media endpoints have separate access rules; e.g. tx-4kott serves
+    // its catalog to datacenter egress while 403'ing media to the same client).
+    description: `${addonName} — streams via your IPTV line; if your provider blocks your network or region, no player can open it`
   };
 }
 
