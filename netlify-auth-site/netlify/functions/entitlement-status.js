@@ -65,7 +65,30 @@ exports.handler = async (event) => {
       return json(400, { error: "unknown_action" });
     }
 
-    return json(200, evaluateEntitlement(record));
+    // Renewal sync for linked Ko-fi emails. The Ko-fi webhook renews the record
+    // under the KO-FI email; an account that linked a different email holds a
+    // COPY with the old expiry. When that copy lapses, chase linkedFrom — if the
+    // source subscription is still active, refresh the copy in place so
+    // mismatched-email subscribers never have to re-link after each renewal.
+    let state = evaluateEntitlement(record);
+    if (!state.entitled && record && record.linkedFrom) {
+      const sourceEmail = normalizeEmail(record.linkedFrom);
+      if (sourceEmail && sourceEmail !== email) {
+        const source = await readEntitlement(store, sha256(sourceEmail));
+        if (evaluateEntitlement(source).entitled) {
+          record = {
+            ...source,
+            linkedFrom: sourceEmail,
+            trialUsed: record.trialUsed === true || source.trialUsed === true,
+            updatedAt: new Date().toISOString()
+          };
+          await writeEntitlement(store, emailHash, record);
+          state = evaluateEntitlement(record);
+        }
+      }
+    }
+
+    return json(200, state);
   } catch (error) {
     console.error("entitlement-status failed", error);
     return json(500, { error: "entitlement_status_failed", message: error.message });
