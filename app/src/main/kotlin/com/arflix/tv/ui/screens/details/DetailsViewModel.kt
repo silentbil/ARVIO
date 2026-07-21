@@ -229,6 +229,9 @@ class DetailsViewModel @Inject constructor(
     private var focusedStreamPrewarmJob: kotlinx.coroutines.Job? = null
     private var streamListPrewarmJob: kotlinx.coroutines.Job? = null
     private var lastStreamListPrewarmKey: String = ""
+    // Guards overlapping season loads: only the most recently requested season may apply its result.
+    private var seasonLoadJob: kotlinx.coroutines.Job? = null
+    private var seasonLoadRequestedSeason: Int = -1
     /** Set to true after loadDetails() child coroutines finish populating episodes/seasons. */
     @Volatile private var initialLoadComplete = false
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
@@ -864,13 +867,23 @@ class DetailsViewModel @Inject constructor(
         if (currentMediaType != MediaType.TV) return
         // Don't reload if already on this season
         if (_uiState.value.currentSeason == seasonNumber && _uiState.value.episodes.isNotEmpty()) return
+        // Ignore a duplicate request for a load that is already in flight (the click handler and the
+        // hover effect can both ask for the same season).
+        if (seasonLoadRequestedSeason == seasonNumber && seasonLoadJob?.isActive == true) return
 
-        viewModelScope.launch {
+        // Cancel any in-flight season load so only the most recently requested season can win —
+        // otherwise an older, slower request could finish last and display the wrong season's
+        // episodes for the currently selected season.
+        seasonLoadJob?.cancel()
+        seasonLoadRequestedSeason = seasonNumber
+        seasonLoadJob = viewModelScope.launch {
             // Keep current episodes visible while loading new ones
             val currentEpisodes = _uiState.value.episodes
 
             try {
                 val episodes = mediaRepository.getSeasonEpisodes(currentMediaId, seasonNumber)
+                // A newer request superseded this one while we were fetching — drop the stale result.
+                if (seasonLoadRequestedSeason != seasonNumber) return@launch
                 if (episodes.isNotEmpty()) {
                     // Decorate episodes with watched status from cache
                     val watchedKeys = runCatching {
@@ -891,6 +904,9 @@ class DetailsViewModel @Inject constructor(
                         }
                     }
 
+                    // Re-check after the watched-status fetch (another suspension point) so a
+                    // superseded request never overwrites the newer season's episodes.
+                    if (seasonLoadRequestedSeason != seasonNumber) return@launch
                     _uiState.value = _uiState.value.copy(
                         episodes = decoratedEpisodes,
                         currentSeason = seasonNumber
@@ -902,6 +918,9 @@ class DetailsViewModel @Inject constructor(
                         toastType = ToastType.ERROR
                     )
                 }
+            } catch (e: CancellationException) {
+                // Superseded by a newer season request — leave the newer load's state untouched.
+                throw e
             } catch (e: Exception) {
                 // On error, keep showing current episodes
                 _uiState.value = _uiState.value.copy(

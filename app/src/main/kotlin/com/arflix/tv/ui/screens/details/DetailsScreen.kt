@@ -381,10 +381,22 @@ fun DetailsScreen(
         }
     }
 
-    // Sync episodeIndex with initialEpisodeIndex from ViewModel
-    LaunchedEffect(uiState.initialEpisodeIndex, uiState.episodes) {
-        if (uiState.initialEpisodeIndex > 0 && uiState.episodes.isNotEmpty()) {
-            episodeIndex = uiState.initialEpisodeIndex
+    // Place episode focus for whichever season is actually loaded. Keyed on currentSeason (which
+    // loadSeason updates atomically with episodes) so it also fixes the automatic season switch:
+    // moving to a different season focuses its first episode instead of leaving focus on the
+    // previously-selected episode index. For the initially-loaded season we keep the ViewModel's
+    // resume / first-unwatched target.
+    LaunchedEffect(
+        uiState.currentSeason,
+        uiState.episodes,
+        uiState.initialSeasonIndex,
+        uiState.initialEpisodeIndex
+    ) {
+        if (uiState.episodes.isEmpty()) return@LaunchedEffect
+        episodeIndex = if (uiState.currentSeason == uiState.initialSeasonIndex + 1) {
+            uiState.initialEpisodeIndex.coerceIn(0, uiState.episodes.lastIndex)
+        } else {
+            0
         }
     }
 
@@ -397,8 +409,9 @@ fun DetailsScreen(
 
     // Reflect the episodes of the season the user is MOVING to, not only the one they click. The
     // 100ms debounce means stepping quickly through seasons (1→4) cancels the intermediate loads
-    // and only fetches the season they settle on. loadSeason() is idempotent, so this is a no-op
-    // when the focused season is already loaded.
+    // and only fetches the season they settle on. loadSeason() ignores duplicate/in-flight requests
+    // and cancels a superseded load, so overlapping requests can't display a stale season. Episode
+    // focus is reset by the currentSeason-driven effect above once the new season's episodes arrive.
     LaunchedEffect(seasonIndex) {
         if (uiState.totalSeasons > 1) {
             delay(100)
