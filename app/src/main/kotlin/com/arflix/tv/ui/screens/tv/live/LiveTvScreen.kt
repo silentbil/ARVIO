@@ -189,7 +189,10 @@ internal fun selectPagedChannelsInProviderOrder(
         "recent" -> recentChannels
         else -> providerWindow
     }
-    return if (source.size <= limit) source else source.subList(0, limit)
+    // Compose may still request an index from the previous lazy-list snapshot
+    // while paging replaces the backing list. Never expose a live SubList view:
+    // its size can change underneath the item provider and crash older TV ART.
+    return source.take(limit.coerceAtLeast(0))
 }
 
 /**
