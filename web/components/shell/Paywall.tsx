@@ -13,6 +13,10 @@ import {
 } from "@/lib/entitlement";
 import { authClient, useApp } from "@/lib/store";
 
+// 24-hour free trial: hidden for now (subscribe-only paywall). The trial
+// backend + start flow stay intact — flip this to true to re-enable the button.
+const SHOW_TRIAL = false;
+
 // Gate that stands between profile selection and the app when the paywall is
 // enabled. Fails OPEN on backend errors (a paying user is never locked out by a
 // hiccup) and CLOSED on a confirmed non-entitled state.
@@ -127,7 +131,7 @@ function PaywallScreen({
           <BadgeCheck size={18} /> Subscribe on Ko-fi <ExternalLink size={15} />
         </a>
 
-        {trialAvailable && !expired && (
+        {SHOW_TRIAL && trialAvailable && !expired && (
           <button type="button" className="paywall-trial" onClick={() => void beginTrial()} disabled={busy !== null}>
             {busy === "trial" ? <Loader2 className="paywall-spinner" size={16} /> : <Sparkles size={16} />}
             Start 24-hour free trial
