@@ -1089,9 +1089,21 @@ function VideoPlayer({
             <button type="button" className="player-error-external" onClick={() => openExternal("vlc", stream)}>
               <ExternalLink size={15} /> Open in VLC
             </button>
+<<<<<<< HEAD
             <button type="button" className="player-error-external" onClick={() => openAnyPlayer(stream)}>
               <ExternalLink size={15} /> Open in player
             </button>
+=======
+            {canOpenInAnyPlayer() ? (
+              <button type="button" className="player-error-external" onClick={() => openAnyPlayer(stream)}>
+                <ExternalLink size={15} /> Open in player
+              </button>
+            ) : (
+              <button type="button" className="player-error-external" onClick={() => openExternal("infuse", stream)}>
+                <ExternalLink size={15} /> Open in Infuse
+              </button>
+            )}
+>>>>>>> 38ffc6c0 (fix(web): Android external-player launch (VLC intent) + 'open in any player')
             {!liveTv && !stream.transcoded && parseDebridStream(stream.url) && (
               <button type="button" className="player-error-transcode" onClick={() => onSelectStream(stream, { forceTranscode: true })}>
                 <Play size={15} fill="currentColor" /> Transcode
@@ -1162,9 +1174,21 @@ function VideoPlayer({
                         <button type="button" onClick={() => openExternal("vlc", candidate)}>
                           <ExternalLink size={13} /> VLC
                         </button>
+<<<<<<< HEAD
                         <button type="button" onClick={() => openAnyPlayer(candidate)}>
                           <ExternalLink size={13} /> Player
                         </button>
+=======
+                        {canOpenInAnyPlayer() ? (
+                          <button type="button" onClick={() => openAnyPlayer(candidate)}>
+                            <ExternalLink size={13} /> Player
+                          </button>
+                        ) : (
+                          <button type="button" onClick={() => openExternal("infuse", candidate)}>
+                            <ExternalLink size={13} /> Infuse
+                          </button>
+                        )}
+>>>>>>> 38ffc6c0 (fix(web): Android external-player launch (VLC intent) + 'open in any player')
                         <button type="button" onClick={() => void copyUrl(candidate)} aria-label="Copy stream URL">
                           <Copy size={13} />
                         </button>
