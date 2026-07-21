@@ -166,4 +166,3 @@ data class CatalogPackItem(
     val name: String?,
     val url: String?
 ) : Serializable
-
