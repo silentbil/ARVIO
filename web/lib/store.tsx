@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getStreams, getStreamsProgressive, installAddon as installAddonManifest, loadLocalAddons, normalizeAddons, saveLocalAddons } from "./addons";
-import { AuthClient } from "./auth";
+import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, pullCloudPayload, pullCloudProfiles, pullCloudTraktToken, pullCloudWatchlist, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTraktToken } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
@@ -842,6 +842,54 @@ export function AppProvider({
       missing.forEach((channel) => iptvGuideInFlightRef.current.delete(channel.id));
     }
   }, [iptvSnapshot.nowNext]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash || "";
+    if (hash.includes("access_token=") && hash.includes("refresh_token=")) {
+      try {
+        const params = new URLSearchParams(hash.replace(/^#/, ""));
+        const access_token = params.get("access_token");
+        const refresh_token = params.get("refresh_token");
+        const email = params.get("email") || "";
+        const expires_in = Number(params.get("expires_in") || "3600");
+        if (access_token && refresh_token) {
+          const payload = decodeJwtPayload(access_token);
+          const userId = (payload.sub as string | undefined) ?? "";
+          const provider = ((payload.iss as string | undefined) === "arvio-netlify" ? "netlify" : "supabase") as "netlify" | "supabase";
+          const session = {
+            accessToken: access_token,
+            refreshToken: refresh_token,
+            userId,
+            email,
+            expiresAt: Date.now() + expires_in * 1000,
+            provider
+          };
+
+          saveStored(SESSION_KEY, session);
+          authClient.session = session;
+          setAuth(session);
+          setCloudProfilesHydrated(false);
+
+          // Clear hash parameters from URL without a page reload
+          const cleanUrl = window.location.pathname + window.location.search;
+          window.history.replaceState({}, document.title, cleanUrl);
+
+          // Redirect to appropriate view
+          const stored = loadStored<Profile[]>(PROFILES_KEY, []);
+          const activeId = loadStored<string | null>(ACTIVE_PROFILE_KEY, null);
+          const skip = settings.skipProfileSelection;
+          if (skip && activeId && stored.some((p) => p.id === activeId)) {
+            setView("app");
+          } else {
+            setView("profiles");
+          }
+        }
+      } catch (err) {
+        console.error("Failed to parse callback auth parameters", err);
+      }
+    }
+  }, [settings.skipProfileSelection]);
 
   useEffect(() => {
     // Also runs on the profile-selection screen ("profiles" view): the last-used

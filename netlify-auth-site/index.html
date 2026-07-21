@@ -519,6 +519,22 @@
     const FUNCTION_BASE = "/.netlify/functions";
     const qs = new URLSearchParams(window.location.search);
     const pairCode = (qs.get("code") || "").trim();
+    const redirectUri = (qs.get("redirect_uri") || "").trim();
+
+    function isValidRedirectUri(uri) {
+      if (!uri) return false;
+      try {
+        const url = new URL(uri);
+        return (
+          url.hostname === "arvio.tv" ||
+          url.hostname.endsWith(".arvio.tv") ||
+          url.hostname === "localhost" ||
+          url.hostname === "127.0.0.1"
+        );
+      } catch {
+        return false;
+      }
+    }
 
     const statusEl = document.getElementById("status");
     const subtitleEl = document.getElementById("subtitle");
@@ -761,7 +777,7 @@
         throw new Error("Account created but sign-in response was incomplete.");
       }
       markEmailSent("signup", normalizedEmail);
-      return normalizedEmail;
+      return { email: normalizedEmail, tokens: json };
     }
 
     async function signInEmail() {
@@ -791,7 +807,7 @@
         }
         throw new Error((json.error || "Sign in failed") + setupHint);
       }
-      return { email, password };
+      return { email, password, tokens: json };
     }
 
     async function signUpEmail() {
@@ -799,7 +815,7 @@
       const password = passEl.value;
       if (!password) throw new Error("Password is required.");
       if (password.length < 6) throw new Error("Password must be at least 6 characters.");
-      await createAccountViaServer(email, password);
+      return await createAccountViaServer(email, password);
     }
 
     async function sendPasswordReset() {
@@ -853,7 +869,15 @@
           await approveTvViaServer(creds.email, creds.password);
         }
         setStatus(pairCode ? "TV paired. Redirecting..." : "Signed in. Redirecting...", "ok");
-        setTimeout(() => { window.location.href = "https://arvio.tv"; }, 900);
+        setTimeout(() => {
+          if (isValidRedirectUri(redirectUri)) {
+            const url = new URL(redirectUri);
+            url.hash = `access_token=${creds.tokens.access_token}&refresh_token=${creds.tokens.refresh_token}&email=${encodeURIComponent(creds.email)}&expires_in=${creds.tokens.expires_in || 3600}`;
+            window.location.href = url.toString();
+          } else {
+            window.location.href = "https://arvio.tv";
+          }
+        }, 900);
       } catch (err) {
         setStatus(err.message || String(err), "error");
       } finally {
@@ -878,12 +902,20 @@
         }
 
         setStatus("Creating account...");
-        await signUpEmail();
+        const creds = await signUpEmail();
         if (pairCode) {
           await approveTvViaServer(email, password);
         }
         setStatus(pairCode ? "Account created and TV paired. Redirecting..." : "Account created. Redirecting...", "ok");
-        setTimeout(() => { window.location.href = "https://arvio.tv"; }, 1200);
+        setTimeout(() => {
+          if (isValidRedirectUri(redirectUri)) {
+            const url = new URL(redirectUri);
+            url.hash = `access_token=${creds.tokens.access_token}&refresh_token=${creds.tokens.refresh_token}&email=${encodeURIComponent(creds.email)}&expires_in=${creds.tokens.expires_in || 3600}`;
+            window.location.href = url.toString();
+          } else {
+            window.location.href = "https://arvio.tv";
+          }
+        }, 1200);
       } catch (err) {
         const msg = err.message || String(err);
         const lower = msg.toLowerCase();
