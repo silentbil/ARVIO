@@ -1381,48 +1381,33 @@ class HomeViewModel @Inject constructor(
                 }
         }
 
-        // Load top-level UI preferences used on Home
+        // Keep Home preferences bound to the active profile. Cloud restore and profile
+        // switching can update DataStore after this ViewModel has already been created.
         viewModelScope.launch {
             try {
-                val prefs = context.settingsDataStore.data.first()
-                // Search for any profile key that matches trailer_auto_play
-                val trailerEnabled = prefs.asMap().any { (key, value) ->
-                    key.name.endsWith("_trailer_auto_play") && value == true
+                observeHomeProfilePreferences(
+                    activeProfileId = profileManager.activeProfileId,
+                    preferences = context.settingsDataStore.data
+                ).collect { preferences ->
+                    val previousState = _uiState.value
+                    val autoplayJustEnabled = !previousState.trailerAutoPlay && preferences.trailerAutoPlay
+                    _uiState.value = previousState.copy(
+                        trailerAutoPlay = preferences.trailerAutoPlay,
+                        trailerSoundEnabled = preferences.trailerSoundEnabled,
+                        trailerDelaySeconds = preferences.trailerDelaySeconds,
+                        trailerInCards = preferences.trailerInCards,
+                        showBudget = preferences.showBudget,
+                        clockFormat = preferences.clockFormat,
+                        smoothScrolling = preferences.smoothScrolling
+                    )
+
+                    if (autoplayJustEnabled) {
+                        _uiState.value.heroItem?.let(::hydrateHeroDetailsIfNeeded)
+                    }
                 }
-                // show_budget_on_home defaults to TRUE so existing users see no change
-                // until they explicitly disable it. We check any active-profile key; if
-                // none exist yet the default of true is preserved. Issue #72.
-                val showBudgetExplicit = prefs.asMap().entries
-                    .firstOrNull { (key, _) -> key.name.endsWith("_show_budget_on_home") }
-                    ?.value as? Boolean
-                val showBudget = showBudgetExplicit ?: true
-                val clockFormat = prefs.asMap().entries
-                    .firstOrNull { (key, _) -> key.name.endsWith("_clock_format") }
-                    ?.value as? String ?: "24h"
-                val trailerSoundEnabled = prefs.asMap().entries
-                    .firstOrNull { (key, _) -> key.name.endsWith("_trailer_sound_enabled") }
-                    ?.value as? Boolean ?: false
-                val trailerDelaySeconds = (prefs.asMap().entries
-                    .firstOrNull { (key, _) -> key.name.endsWith("_trailer_delay_seconds") }
-                    ?.value as? String)?.toIntOrNull() ?: 2
-                val trailerInCards = prefs.asMap().entries
-                    .firstOrNull { (key, _) -> key.name.endsWith("_trailer_in_cards") }
-                    ?.value as? Boolean ?: true
-                val smoothScrollingExplicit = prefs.asMap().entries
-                    .firstOrNull { (key, _) -> key.name.endsWith("_smooth_scrolling") }
-                    ?.value as? Boolean
-                val smoothScrolling = smoothScrollingExplicit ?: false
-                _uiState.value = _uiState.value.copy(
-                    trailerAutoPlay = trailerEnabled,
-                    trailerSoundEnabled = trailerSoundEnabled,
-                    trailerDelaySeconds = trailerDelaySeconds,
-                    trailerInCards = trailerInCards,
-                    showBudget = showBudget,
-                    clockFormat = clockFormat,
-                    smoothScrolling = smoothScrolling
-                )
-                    } catch (e: Exception) {
+            } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                AppLogger.e("HomeVM", "Failed to observe profile preferences: ${e.message}", e)
             }
         }
 
