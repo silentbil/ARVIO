@@ -172,6 +172,16 @@ export function isWindows() {
   return /Windows NT/i.test(ua) && !/Android/i.test(ua);
 }
 
+// macOS desktop (NOT an iPad masquerading as Macintosh — those have touch
+// points and are handled by isAppleMobile). On macOS, VLC registers the vlc://
+// scheme itself at install time, so the direct scheme launch works with no
+// setup — unlike Windows, which needs the vlc-setup.bat handler.
+export function isMac() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /Macintosh|Mac OS X/i.test(ua) && !(navigator.maxTouchPoints > 1);
+}
+
 export function isDesktop() {
   return !isAppleMobile() && !isAndroid();
 }
@@ -203,6 +213,10 @@ export function setVlcProtocolReady(ready: boolean) {
 //   which needs no setup but takes an extra click.
 export function externalLaunchMode(player: ExternalPlayer): "scheme" | "playlist" {
   if (player === "vlc" && isDesktop()) {
+    // macOS: VLC self-registers vlc://, so the direct scheme launch always
+    // works — no installer, no .m3u fallback. Windows needs the one-time
+    // vlc-setup.bat handler, so fall back to the .m3u until it's installed.
+    if (isMac()) return "scheme";
     return vlcProtocolReady() ? "scheme" : "playlist";
   }
   return "scheme";

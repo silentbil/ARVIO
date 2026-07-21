@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_URL } from "@/lib/externalPlayers";
+import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_URL } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -376,10 +376,12 @@ function SourcePickerModal({
   const [addonFilter, setAddonFilter] = useState("all");
   const [mode, setMode] = useState<"all" | "playable">("all");
   const [query, setQuery] = useState("");
-  // Desktop-only: offer the one-time vlc:// setup so "Open in VLC" launches VLC
+  // Windows-only: offer the one-time vlc:// setup so "Open in VLC" launches VLC
   // directly instead of downloading a .m3u. Hidden once the user has set it up.
+  // macOS is excluded — VLC self-registers vlc:// there, so no installer is
+  // needed (and the .bat wouldn't run on a Mac anyway).
   const [vlcReady, setVlcReady] = useState<boolean>(() => vlcProtocolReady());
-  const showVlcSetup = isDesktop() && !vlcReady;
+  const showVlcSetup = isWindows() && !vlcReady;
   const enableVlcProtocol = () => {
     // Download the tiny installer, then remember the user set it up so the VLC
     // button switches to the direct vlc:// launch.
