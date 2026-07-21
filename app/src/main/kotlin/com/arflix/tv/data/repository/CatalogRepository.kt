@@ -730,25 +730,37 @@ class CatalogRepository @Inject constructor(
         if (cats.isNullOrEmpty()) {
             return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: catalogs list is empty or missing"))
         }
+        val normalizedUrls = mutableSetOf<String>()
         for (item in cats) {
             if (item.name.isNullOrBlank() || item.url.isNullOrBlank()) {
                 return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: catalog items must have a name and url"))
+            }
+            val normalized = CatalogUrlParser.normalize(item.url).lowercase()
+            if (!normalizedUrls.add(normalized)) {
+                return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: duplicate catalog URL '$normalized'"))
             }
         }
         return Result.success(manifest)
     }
 
-    suspend fun addCatalogPack(packUrl: String): Result<CatalogPackManifest> {
-        val manifestResult = fetchCatalogPackManifest(packUrl)
-        if (manifestResult.isFailure) return manifestResult
-        val manifest = manifestResult.getOrThrow()
+    suspend fun addCatalogPack(packUrl: String, manifest: CatalogPackManifest? = null): Result<CatalogPackManifest> {
+        val finalManifest = if (manifest != null) {
+            manifest
+        } else {
+            val manifestResult = fetchCatalogPackManifest(packUrl)
+            if (manifestResult.isFailure) return manifestResult
+            manifestResult.getOrThrow()
+        }
 
         val current = getCatalogs().toMutableList()
         val addedConfigs = mutableListOf<CatalogConfig>()
 
-        val manifestId = manifest.id ?: return Result.failure(IllegalArgumentException("Manifest missing ID"))
-        val manifestName = manifest.name ?: return Result.failure(IllegalArgumentException("Manifest missing Name"))
-        val manifestCatalogs = manifest.catalogs ?: return Result.failure(IllegalArgumentException("Manifest missing catalogs"))
+        val manifestId = finalManifest.id ?: return Result.failure(IllegalArgumentException("Manifest missing ID"))
+        val manifestName = finalManifest.name ?: return Result.failure(IllegalArgumentException("Manifest missing Name"))
+        val manifestCatalogs = finalManifest.catalogs ?: return Result.failure(IllegalArgumentException("Manifest missing catalogs"))
+
+        val normalizedPackUrl = CatalogUrlParser.normalize(packUrl).lowercase()
+        val derivedPackId = "pack_${sha256Short(normalizedPackUrl + "|" + manifestId)}"
 
         for (item in manifestCatalogs) {
             val itemUrl = item.url ?: continue
@@ -768,7 +780,7 @@ class CatalogRepository @Inject constructor(
                 ?: fallbackMetadata(normalizedUrl, sourceType)
                 ?: continue
 
-            val stableId = "custom_${sha256Short(manifestId + "|" + normalizedUrl)}"
+            val stableId = "custom_${sha256Short(derivedPackId + "|" + normalizedUrl)}"
             val newCatalog = CatalogConfig(
                 id = stableId,
                 title = item.name?.trim()?.ifBlank { resolved.title } ?: resolved.title,
@@ -776,7 +788,7 @@ class CatalogRepository @Inject constructor(
                 sourceUrl = normalizedUrl,
                 sourceRef = resolved.sourceRef,
                 isPreinstalled = false,
-                packId = manifestId,
+                packId = derivedPackId,
                 packName = manifestName
             )
             addedConfigs.add(newCatalog)
@@ -788,7 +800,7 @@ class CatalogRepository @Inject constructor(
 
         current.addAll(0, addedConfigs)
         saveCatalogs(current)
-        return Result.success(manifest)
+        return Result.success(finalManifest)
     }
 
     suspend fun removeCatalogPack(packId: String): Result<Unit> {

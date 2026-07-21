@@ -7,7 +7,7 @@
   "catalogs": [
     {
       "name": "James Bond Collection",
-      "url": "https://trakt.tv/users/mrbones/lists/james-bond"
+      "url": "https://mdblist.com/lists/hdlists/james-bond-movies"
     },
     {
       "name": "Harry Potter Collection",
@@ -19,11 +19,11 @@
     },
     {
       "name": "Lord of the Rings and Hobbit Collection",
-      "url": "https://trakt.tv/users/tolkien-guy/lists/middle-earth"
+      "url": "https://mdblist.com/lists/spudhead15/lord-of-the-rings-and-hobbit-collection"
     },
     {
       "name": "Jurassic Park Collection",
-      "url": "https://trakt.tv/users/dino-fan/lists/jurassic-park"
+      "url": "https://mdblist.com/lists/purple_smurf/jurassic-park"
     }
   ]
 }

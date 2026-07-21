@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Copy, Check, Download, HelpCircle, Code, ListVideo, Loader2, Plus, X, Globe, User, BookOpen, AlertCircle } from "lucide-react";
-import { config, hasSupabaseConfig } from "@/lib/config";
+import { config } from "@/lib/config";
 
 export const dynamic = "force-static";
 
@@ -80,28 +80,21 @@ export default function DiscoverPage() {
 
   async function loadPacks() {
     try {
-      if (hasSupabaseConfig()) {
-        const res = await fetch(`${config.supabaseUrl}/rest/v1/catalog_packs?status=eq.approved&select=*`, {
-          headers: {
-            apikey: config.supabaseAnonKey,
-            Accept: "application/json"
-          }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const parsed = data.map((item: any) => ({
-            ...item,
-            catalogs: typeof item.catalogs === "string" ? JSON.parse(item.catalogs) : item.catalogs
-          }));
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setPacks(parsed);
-            setLoading(false);
-            return;
-          }
+      const res = await fetch(`${config.netlifyBackendUrl}/catalog-packs-list`);
+      if (res.ok) {
+        const data = await res.json();
+        const parsed = data.map((item: any) => ({
+          ...item,
+          catalogs: typeof item.catalogs === "string" ? JSON.parse(item.catalogs) : item.catalogs
+        }));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setPacks(parsed);
+          setLoading(false);
+          return;
         }
       }
     } catch (err) {
-      console.warn("Supabase fetch failed, falling back to static packs.json:", err);
+      console.warn("Netlify backend packs fetch failed, falling back to static packs.json:", err);
     }
 
     // Fallback: fetch from /packs.json
@@ -177,30 +170,41 @@ export default function DiscoverPage() {
         throw new Error("Invalid manifest format: JSON must contain 'id', 'name', and a 'catalogs' list.");
       }
 
-      if (!hasSupabaseConfig()) {
-        throw new Error("Supabase is not configured on the website backend. Please submit packs via GitHub.");
+      // Check for duplicate URLs inside manifest (normalized)
+      const normalizedUrls = new Set<string>();
+      for (const item of verifyJson.catalogs) {
+        if (!item.name || !item.url) {
+          throw new Error("All catalog items in the manifest must have a 'name' and 'url'.");
+        }
+        // Normalize: trim, lowercase, remove trailing slash, ensure http/https scheme
+        const trimmed = item.url.trim();
+        const withScheme = trimmed.startsWith("http://") || trimmed.startsWith("https://")
+          ? trimmed
+          : `https://${trimmed}`;
+        const normalized = withScheme.replace(/\/$/, "").toLowerCase();
+
+        if (normalizedUrls.has(normalized)) {
+          throw new Error(`Duplicate catalog URL found in manifest: '${item.url}'`);
+        }
+        normalizedUrls.add(normalized);
       }
 
-      const res = await fetch(`${config.supabaseUrl}/rest/v1/catalog_packs`, {
+      const res = await fetch(`${config.netlifyBackendUrl}/catalog-packs-submit`, {
         method: "POST",
         headers: {
-          apikey: config.supabaseAnonKey,
-          "Content-Type": "application/json",
-          Prefer: "return=minimal"
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
           name: formName.trim(),
           url: formUrl.trim(),
           author: formAuthor.trim() || "Anonymous",
-          version: "1.0.0",
-          description: formDesc.trim(),
-          catalogs: catalogList,
-          status: "pending" // Require moderator approval
+          description: formDesc.trim()
         })
       });
 
       if (!res.ok) {
-        throw new Error(`Failed to submit: ${res.statusText}`);
+        const errorJson = await res.json().catch(() => null);
+        throw new Error(errorJson?.message || `Failed to submit: ${res.statusText}`);
       }
 
       setSubmitSuccess(true);
@@ -228,8 +232,8 @@ export default function DiscoverPage() {
             <img src="/arvio-logo.svg" alt="ARVIO Logo" className="logo" />
             <span className="logo-text">ARVIO</span>
           </div>
-          <button 
-            type="button" 
+          <button
+            type="button"
             className="submit-trigger-button"
             onClick={() => {
               setSubmitError(null);
@@ -240,7 +244,7 @@ export default function DiscoverPage() {
             <Plus size={16} /> Submit A Pack
           </button>
         </div>
-        
+
         <h1 className="hero-title">Catalog Pack Discovery</h1>
         <p className="hero-subtitle">
           Enhance your streaming layout. Browse community-curated catalog packs and install multiple rows of content with a single click.
@@ -264,7 +268,7 @@ export default function DiscoverPage() {
                 </div>
               </div>
               <p className="pack-description">{pack.description}</p>
-              
+
               <div className="catalogs-section">
                 <h3 className="section-label">
                   <ListVideo size={14} className="icon-inline" /> Included Rows ({pack.catalogs?.length || 0})
@@ -277,15 +281,15 @@ export default function DiscoverPage() {
               </div>
 
               <div className="pack-actions">
-                <a 
-                  href={getDeepLink(pack.url)} 
+                <a
+                  href={getDeepLink(pack.url)}
                   className="install-button"
                   title="Install this pack on your Android TV or local app"
                 >
                   <Download size={16} /> Install Pack
                 </a>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => copyToClipboard(pack.id || pack.url, getAbsoluteUrl(pack.url))}
                   className="copy-button"
                   title="Copy manifest JSON URL to clipboard"
@@ -303,8 +307,8 @@ export default function DiscoverPage() {
       {showSubmitModal && (
         <div className="modal-backdrop">
           <div className="modal-content">
-            <button 
-              type="button" 
+            <button
+              type="button"
               className="modal-close"
               onClick={() => setShowSubmitModal(false)}
             >
@@ -335,8 +339,8 @@ export default function DiscoverPage() {
 
                 <div className="form-field">
                   <label htmlFor="pack-name"><BookOpen size={14} /> Pack Name *</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     id="pack-name"
                     required
                     placeholder="e.g. Action Blockbusters Bundle"
@@ -347,8 +351,8 @@ export default function DiscoverPage() {
 
                 <div className="form-field">
                   <label htmlFor="pack-url"><Globe size={14} /> Manifest JSON URL *</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     id="pack-url"
                     required
                     placeholder="e.g. https://raw.githubusercontent.com/.../pack.json"
@@ -361,8 +365,8 @@ export default function DiscoverPage() {
                 <div className="form-field-row">
                   <div className="form-field">
                     <label htmlFor="pack-author"><User size={14} /> Author / Creator</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       id="pack-author"
                       placeholder="e.g. @cinephile_dev"
                       value={formAuthor}
@@ -373,7 +377,7 @@ export default function DiscoverPage() {
 
                 <div className="form-field">
                   <label htmlFor="pack-desc">Description *</label>
-                  <textarea 
+                  <textarea
                     id="pack-desc"
                     required
                     rows={3}
@@ -385,8 +389,8 @@ export default function DiscoverPage() {
 
                 <div className="form-field">
                   <label htmlFor="pack-catalogs">Included Catalogs *</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     id="pack-catalogs"
                     required
                     placeholder="e.g. Marvel Universe, Star Wars Timeline, MCU Extras (comma separated)"
@@ -396,8 +400,8 @@ export default function DiscoverPage() {
                   <span className="field-hint">Provide names for the catalog rows included in your manifest.</span>
                 </div>
 
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   className="form-submit-button"
                   disabled={submitLoading}
                 >
@@ -427,7 +431,7 @@ export default function DiscoverPage() {
           <div className="faq-item">
             <h3>How do I host my own Catalog Pack?</h3>
             <p>
-              Create a JSON file matching the manifest structure below, host it on a public server (like GitHub Gist, Supabase, or Netlify), and share your raw link or deep link code!
+              Create a JSON file matching the manifest structure below, host it on a public server (like GitHub Gist, Netlify, or other public hosting), and share your raw link or deep link code!
             </p>
           </div>
         </div>
@@ -577,8 +581,8 @@ export default function DiscoverPage() {
           padding: 28px;
           display: flex;
           flex-direction: column;
-          transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), 
-                      border-color 220ms ease, 
+          transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                      border-color 220ms ease,
                       box-shadow 220ms ease;
         }
 

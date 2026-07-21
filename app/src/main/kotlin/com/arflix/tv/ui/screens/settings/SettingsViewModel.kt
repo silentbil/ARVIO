@@ -1820,18 +1820,19 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun confirmInstallPack(url: String) {
+        val manifest = _uiState.value.pendingPackManifest
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isPackLoading = true,
                 packError = null
             )
-            val result = catalogRepository.addCatalogPack(url)
-            result.onSuccess { manifest ->
+            val result = catalogRepository.addCatalogPack(url, manifest)
+            result.onSuccess { installedManifest ->
                 _uiState.value = _uiState.value.copy(
                     isPackLoading = false,
                     pendingPackManifest = null,
                     pendingPackUrl = null,
-                    toastMessage = "Installed pack: ${manifest.name}",
+                    toastMessage = "Installed pack: ${installedManifest.name}",
                     toastType = ToastType.SUCCESS
                 )
                 syncLocalStateToCloud(silent = true)
@@ -1999,7 +2000,7 @@ class SettingsViewModel @Inject constructor(
                     val updated = current.toMutableList()
                     updated[index] = target.copy(packId = null, packName = null)
                     catalogRepository.replaceCatalogsForActiveProfile(updated)
-                    
+
                     // Update state
                     val visible = visibleCatalogs(updated)
                     _uiState.value = _uiState.value.copy(

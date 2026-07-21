@@ -75,16 +75,7 @@
                 <data android:scheme="arvio" android:host="install-pack" />
             </intent-filter>
 
-            <!-- App Link: https://arvio.app/install-pack?url=... -->
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:host="arvio.app" />
-                <data android:pathPrefix="/install-pack" />
-            </intent-filter>
+
 
         </activity>
 
