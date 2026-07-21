@@ -55,6 +55,15 @@ setlocal DisableDelayedExpansion
 >>"%HANDLER%" echo if ($u) { Start-Process -FilePath $vlc -ArgumentList $u }
 endlocal
 
+REM --- Also (re)write the legacy .bat handler path as a delegating shim ---
+REM  v1 of this installer registered %LOCALAPPDATA%\ARVIO\arvio-vlc.bat with
+REM  broken logic. Browsers (Chrome) cache the resolved protocol handler for
+REM  the whole browser session, so an already-running browser keeps launching
+REM  that old .bat path even after re-registration. Overwriting it in place
+REM  with a shim that delegates to the .ps1 fixes those cached sessions too.
+> "%HANDLERDIR%\arvio-vlc.bat" echo @echo off
+>>"%HANDLERDIR%\arvio-vlc.bat" echo powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%%LOCALAPPDATA%%\ARVIO\arvio-vlc.ps1" "%%~1"
+
 REM --- Register vlc:// under the current user (no admin required) --------
 reg add "HKCU\Software\Classes\vlc" /ve /t REG_SZ /d "URL:vlc Protocol" /f >nul
 reg add "HKCU\Software\Classes\vlc" /v "URL Protocol" /t REG_SZ /d "" /f >nul
