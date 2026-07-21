@@ -76,6 +76,12 @@ export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, 
     return androidIntentUrl(targetUrl, filename, sub, "org.videolan.vlc");
   }
 
+  // Desktop with the one-time vlc:// handler installed: our handler runs
+  // `vlc.exe --open <url>`, stripping the vlc:// prefix. Just prepend the scheme.
+  if (player === "vlc" && isDesktop()) {
+    return `vlc://${targetUrl}`;
+  }
+
   // VLC's "download" action saves the file to VLC's own storage (offline
   // playback) instead of just streaming it — the reliable way to get a large
   // file onto an iPad, where a browser tab can't (WebKit memory limit). "stream"
@@ -159,12 +165,46 @@ function isAndroid() {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 }
 
-// How VLC/Infuse are launched on this platform. vlc-x-callback:// is an
-// iOS-ONLY scheme — desktop VLC (Windows/macOS/Linux) registers no URL
-// protocol at all, so on desktop the only reliable handoff is a tiny .m3u
-// playlist download: VLC owns the .m3u association, one click plays it.
+export function isWindows() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  // Exclude Windows Phone (long dead, but the token exists) and Android.
+  return /Windows NT/i.test(ua) && !/Android/i.test(ua);
+}
+
+export function isDesktop() {
+  return !isAppleMobile() && !isAndroid();
+}
+
+// One-time setup that registers the vlc:// handler so the desktop "Open in VLC"
+// button launches VLC directly instead of downloading a .m3u. Hosted by ARVIO.
+export const VLC_SETUP_URL = "/vlc-setup.bat";
+
+// Whether the user has run the one-time desktop vlc:// setup. We can't detect
+// protocol registration from the browser, so we remember that they installed
+// it and use the direct vlc:// launch; otherwise we fall back to the .m3u.
+const VLC_PROTOCOL_KEY = "arvio.web.vlcProtocolReady";
+
+export function vlcProtocolReady(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  return localStorage.getItem(VLC_PROTOCOL_KEY) === "1";
+}
+
+export function setVlcProtocolReady(ready: boolean) {
+  if (typeof localStorage === "undefined") return;
+  if (ready) localStorage.setItem(VLC_PROTOCOL_KEY, "1");
+  else localStorage.removeItem(VLC_PROTOCOL_KEY);
+}
+
+// How VLC is launched on this platform:
+// - iOS/Android: a custom scheme (vlc-x-callback:// / intent://).
+// - Desktop WITH the one-time vlc:// handler installed: direct scheme launch.
+// - Desktop WITHOUT it: a tiny .m3u download (VLC owns the .m3u association),
+//   which needs no setup but takes an extra click.
 export function externalLaunchMode(player: ExternalPlayer): "scheme" | "playlist" {
-  if (player === "vlc" && !isAppleMobile() && !isAndroid()) return "playlist";
+  if (player === "vlc" && isDesktop()) {
+    return vlcProtocolReady() ? "scheme" : "playlist";
+  }
   return "scheme";
 }
 

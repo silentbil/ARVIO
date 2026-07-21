@@ -37,3 +37,10 @@
   for = "/index.html"
   [headers.values]
     Cache-Control = "no-store, must-revalidate"
+
+# The one-time "Open in VLC" setup script must download, not render in the tab.
+[[headers]]
+  for = "/vlc-setup.bat"
+  [headers.values]
+    Content-Type = "application/octet-stream"
+    Content-Disposition = "attachment; filename=\"vlc-setup.bat\""

@@ -1033,6 +1033,33 @@ input:focus {
 }
 .paywall-signout:hover { color: #fff; }
 
+.vlc-setup-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(0, 213, 136, 0.1);
+  border: 1px solid rgba(0, 213, 136, 0.24);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.82);
+}
+.vlc-setup-hint button {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: 9px;
+  border: 0;
+  background: linear-gradient(90deg, #00d588, #09b3f0);
+  color: #04120c;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+.vlc-setup-hint button:hover { filter: brightness(1.06); }
+
 .episode-retry {
   background: none;
   border: 1px solid var(--muted);
