@@ -886,8 +886,15 @@
         setTimeout(() => { window.location.href = "https://arvio.tv"; }, 1200);
       } catch (err) {
         const msg = err.message || String(err);
-        if (msg.toLowerCase().includes("email") && msg.toLowerCase().includes("confirm")) {
+        const lower = msg.toLowerCase();
+        if (lower.includes("email") && lower.includes("confirm")) {
           setStatus("Account created. Check your email, then sign in.", "ok");
+        } else if (lower.includes("already exists")) {
+          setStatus("An account with this email already exists — use Sign In instead.", "error");
+        } else if (lower.includes("real email")) {
+          setStatus("Please use a real, personal email address (temporary/placeholder addresses aren't allowed).", "error");
+        } else if (lower.includes("valid email")) {
+          setStatus("That email address doesn't look valid — please check for typos.", "error");
         } else {
           setStatus(msg, "error");
         }

@@ -1755,12 +1755,17 @@ input:focus {
 }
 .login-copy { min-width: 0; }
 .login-brand-lockup {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: clamp(16px, 2vw, 28px);
   margin-bottom: clamp(24px, 4vh, 42px);
+  /* Keep the lockup inside its grid column — the wide wordmark SVG (width:auto)
+     was overflowing right and sliding under the sign-in card. */
+  max-width: 100%;
+  min-width: 0;
 }
 .login-brand-logo {
+  flex: 0 0 auto;
   width: clamp(68px, 7vw, 112px) !important;
   height: clamp(68px, 7vw, 112px) !important;
   object-fit: contain;
@@ -1768,7 +1773,12 @@ input:focus {
 }
 .login-wordmark {
   height: clamp(34px, 4.4vw, 68px) !important;
+  /* Cap width to the remaining column space; the SVG keeps its aspect ratio via
+     object-fit and simply scales down instead of overflowing. */
   width: auto !important;
+  max-width: 100%;
+  min-width: 0;
+  object-fit: contain;
   filter: drop-shadow(0 0 28px rgba(0, 213, 136, 0.24));
 }
 .login-tag {
@@ -1826,6 +1836,22 @@ input:focus {
   font-size: 13px;
 }
 .login-submit { width: 100%; }
+/* Sign-up variant: the submit is an <a> to the auth site. Keep it identical to
+   the .primary button and centre its label. */
+a.login-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+.login-signup-copy {
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.72);
+  margin: 0 0 4px;
+  max-width: none;
+}
 .login-toggle {
   background: transparent;
   border: 0;
