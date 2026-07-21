@@ -125,7 +125,7 @@ function toSource(name: string, url: string, quality: string, addonName: string)
     // open the stream, and that is invisible to us up front (the catalog API
     // and the media endpoints have separate access rules; e.g. tx-4kott serves
     // its catalog to datacenter egress while 403'ing media to the same client).
-    description: `${addonName} — streams via your IPTV line; if your provider blocks your network or region, no player can open it`
+    description: "Streams via your IPTV line — if your provider blocks your network or region, no player can open it"
   };
 }
 
