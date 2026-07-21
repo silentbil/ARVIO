@@ -113,6 +113,7 @@ data class SettingsUiState(
     val trailerDelaySeconds: Int = 2,
     val trailerInCards: Boolean = true,
     val showBudget: Boolean = true,
+    val showEpisodeRatings: Boolean = true,
     // Volume boost in decibels (0 = off, up to 15 dB). Applied via system LoudnessEnhancer
     // attached to the ExoPlayer audio session. Issue #88.
     val volumeBoostDb: Int = 0,
@@ -266,6 +267,7 @@ class SettingsViewModel @Inject constructor(
     private fun trailerDelayKey() = profileManager.profileStringKey("trailer_delay_seconds")
     private fun trailerInCardsKey() = profileManager.profileBooleanKey("trailer_in_cards")
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
+    private fun showEpisodeRatingsKey() = profileManager.profileBooleanKey("show_episode_ratings")
     private fun clockFormatKey() = profileManager.profileStringKey("clock_format")
     private fun smoothScrollingKey() = profileManager.profileBooleanKey("smooth_scrolling")
     private fun spoilerBlurKey() = profileManager.profileBooleanKey("spoiler_blur")
@@ -451,6 +453,7 @@ class SettingsViewModel @Inject constructor(
             val trailerInCards = prefs[trailerInCardsKey()] ?: true
             val spoilerBlurEnabled = prefs[spoilerBlurKey()] ?: false
             val showBudget = prefs[showBudgetKey()] ?: true
+            val showEpisodeRatings = prefs[showEpisodeRatingsKey()] ?: true
             val clockFormat = prefs[clockFormatKey()] ?: "24h"
             // One-time migration: read old "focus_border_color" key if new "accent_color" is absent
             val OLD_FOCUS_BORDER_COLOR_KEY = stringPreferencesKey("focus_border_color")
@@ -538,6 +541,7 @@ class SettingsViewModel @Inject constructor(
                 trailerDelaySeconds = trailerDelaySeconds,
                 trailerInCards = trailerInCards,
                 showBudget = showBudget,
+                showEpisodeRatings = showEpisodeRatings,
                 volumeBoostDb = volumeBoostDb,
                 showLoadingStats = showLoadingStats,
 
@@ -1195,6 +1199,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[showBudgetKey()] = enabled }
             _uiState.value = _uiState.value.copy(showBudget = enabled)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun setShowEpisodeRatings(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[showEpisodeRatingsKey()] = enabled }
+            _uiState.value = _uiState.value.copy(showEpisodeRatings = enabled)
             syncLocalStateToCloud(silent = true)
         }
     }

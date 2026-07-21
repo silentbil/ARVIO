@@ -233,4 +233,5 @@
     <string name="ai_qr_scan_hint">סרוק עם הטלפון — בחר Groq או Gemini</string>
     <string name="plugin_prefix">Plugin: </string>
     <string name="plugins_loading">פלאגינים: %1$s</string>
+    <string name="ratings">דירוגי פרקים</string>
 </resources>

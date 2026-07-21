@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Subtitles
@@ -219,7 +220,7 @@ private fun tvGeneralRowsForSection(section: String): List<Int> {
         "subtitles" -> listOf(1, 2, 38, 39, 4, 5, 6, 7, 8, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
         "playback" -> listOf(10, 11, 12, 13, 14, 37, 34, 16, 15, 40, 27)
-        "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 36)
+        "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 41, 36)
         "profiles" -> listOf(19)
         "network" -> listOf(25, 26, 35)
         else -> emptyList()
@@ -896,6 +897,7 @@ fun SettingsScreen(
                                                 20 -> viewModel.setOledBlackBackground(!uiState.oledBlackBackground)
                                                 21 -> viewModel.cycleClockFormat()
                                                 22 -> viewModel.setShowBudget(!uiState.showBudget)
+                                                41 -> viewModel.setShowEpisodeRatings(!uiState.showEpisodeRatings)
                                                  36 -> viewModel.setSmoothScrolling(!uiState.smoothScrolling)
                                                 23 -> viewModel.setSpoilerBlurEnabled(!uiState.spoilerBlurEnabled)
                                                 24 -> viewModel.cycleAccentColor()
@@ -1316,6 +1318,8 @@ fun SettingsScreen(
                             onOledBlackBackgroundToggle = { viewModel.setOledBlackBackground(it) },
                             onClockFormatClick = { viewModel.cycleClockFormat() },
                             onShowBudgetToggle = { viewModel.setShowBudget(it) },
+                            showEpisodeRatings = uiState.showEpisodeRatings,
+                            onShowEpisodeRatingsToggle = { viewModel.setShowEpisodeRatings(it) },
                             smoothScrolling = uiState.smoothScrolling,
                             onSmoothScrollingToggle = { viewModel.setSmoothScrolling(it) },
                             spoilerBlurEnabled = uiState.spoilerBlurEnabled,
@@ -3858,6 +3862,14 @@ private fun MobileSettingsSubPage(
                         onClick = { viewModel.setShowBudget(!uiState.showBudget) }
                     )
                     MobileSettingsRow(
+                        icon = Icons.Default.Star,
+                        title = stringResource(R.string.show_episode_ratings),
+                        value = if (uiState.showEpisodeRatings) "On" else "Off",
+                        isFocused = false,
+                        showDivider = true,
+                        onClick = { viewModel.setShowEpisodeRatings(!uiState.showEpisodeRatings) }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.VisibilityOff,
                         title = stringResource(R.string.spoiler_blur),
                         value = if (uiState.spoilerBlurEnabled) "On" else "Off",
@@ -4732,6 +4744,7 @@ private fun TvGeneralSettingsRows(
     oledBlackBackground: Boolean = false,
     clockFormat: String = "24h",
     showBudget: Boolean = true,
+    showEpisodeRatings: Boolean = true,
     smoothScrolling: Boolean = true,
     spoilerBlurEnabled: Boolean = false,
     accentColor: String = "White",
@@ -4752,6 +4765,7 @@ private fun TvGeneralSettingsRows(
     onOledBlackBackgroundToggle: (Boolean) -> Unit = {},
     onClockFormatClick: () -> Unit = {},
     onShowBudgetToggle: (Boolean) -> Unit = {},
+    onShowEpisodeRatingsToggle: (Boolean) -> Unit = {},
     onSmoothScrollingToggle: (Boolean) -> Unit = {},
     onSpoilerBlurToggle: (Boolean) -> Unit = {},
     onAccentColorClick: () -> Unit = {},
@@ -4868,6 +4882,7 @@ private fun TvGeneralSettingsRows(
                 20 -> SettingsToggleRow(stringResource(R.string.oled_black_background), stringResource(R.string.oled_black_background_desc), oledBlackBackground, focusedIndex == localIndex, onOledBlackBackgroundToggle, Modifier.settingsFocusSlot(localIndex))
                 21 -> SettingsRow(Icons.Default.Schedule, stringResource(R.string.clock_format), stringResource(R.string.clock_format_desc), if (clockFormat == "12h") "12-hour" else "24-hour", focusedIndex == localIndex, onClockFormatClick, Modifier.settingsFocusSlot(localIndex))
                 22 -> SettingsToggleRow(stringResource(R.string.show_budget), stringResource(R.string.show_budget_desc), showBudget, focusedIndex == localIndex, onShowBudgetToggle, Modifier.settingsFocusSlot(localIndex))
+                41 -> SettingsToggleRow(stringResource(R.string.show_episode_ratings), stringResource(R.string.show_episode_ratings_desc), showEpisodeRatings, focusedIndex == localIndex, onShowEpisodeRatingsToggle, Modifier.settingsFocusSlot(localIndex))
                 36 -> SettingsToggleRow(stringResource(R.string.smooth_scrolling), stringResource(R.string.smooth_scrolling_desc), smoothScrolling, focusedIndex == localIndex, onSmoothScrollingToggle, Modifier.settingsFocusSlot(localIndex))
                 23 -> SettingsToggleRow(stringResource(R.string.spoiler_blur), stringResource(R.string.spoiler_blur_desc), spoilerBlurEnabled, focusedIndex == localIndex, onSpoilerBlurToggle, Modifier.settingsFocusSlot(localIndex))
                 24 -> SettingsRow(Icons.Default.Palette, stringResource(R.string.accent_color), stringResource(R.string.accent_color_desc), accentColor, focusedIndex == localIndex, onAccentColorClick, Modifier.settingsFocusSlot(localIndex))
@@ -4933,6 +4948,7 @@ private fun GeneralSettings(
     oledBlackBackground: Boolean = false,
     clockFormat: String = "24h",
     showBudget: Boolean = true,
+    showEpisodeRatings: Boolean = true,
     spoilerBlurEnabled: Boolean = false,
     accentColor: String = "White",
     volumeBoostDb: Int = 0,
@@ -4952,6 +4968,7 @@ private fun GeneralSettings(
     onOledBlackBackgroundToggle: (Boolean) -> Unit = {},
     onClockFormatClick: () -> Unit = {},
     onShowBudgetToggle: (Boolean) -> Unit = {},
+    onShowEpisodeRatingsToggle: (Boolean) -> Unit = {},
     onSpoilerBlurToggle: (Boolean) -> Unit = {},
     onAccentColorClick: () -> Unit = {},
     showLoadingStats: Boolean = true,
@@ -5240,6 +5257,15 @@ private fun GeneralSettings(
             isFocused = focusedIndex == 22,
             onToggle = onShowBudgetToggle,
             modifier = Modifier.settingsFocusSlot(22)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsToggleRow(
+            title = stringResource(R.string.show_episode_ratings),
+            subtitle = stringResource(R.string.show_episode_ratings_desc),
+            isEnabled = showEpisodeRatings,
+            isFocused = focusedIndex == 41,
+            onToggle = onShowEpisodeRatingsToggle,
+            modifier = Modifier.settingsFocusSlot(41)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsToggleRow(

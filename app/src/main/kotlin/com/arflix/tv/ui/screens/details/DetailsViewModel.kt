@@ -77,6 +77,7 @@ data class DetailsUiState(
     val hasStreamingAddons: Boolean = true,
     val addonOrderedIds: List<String> = emptyList(),
     val isInWatchlist: Boolean = false,
+    val showEpisodeRatings: Boolean = true,
     // Toast
     val toastMessage: String? = null,
     val toastType: ToastType = ToastType.INFO,
@@ -222,6 +223,7 @@ class DetailsViewModel @Inject constructor(
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
     private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
+    private fun showEpisodeRatingsKey() = profileManager.profileBooleanKey("show_episode_ratings")
 
     private fun isBlankRating(value: String): Boolean {
         return value.isBlank() || value == "0.0" || value == "0"
@@ -279,6 +281,7 @@ class DetailsViewModel @Inject constructor(
                 val autoPlaySingleSource = prefs[autoPlaySingleSourceKey()] ?: true
                 val autoPlayMinQuality = normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()])
                 val showBudget = prefs[showBudgetKey()] ?: true
+                val showEpisodeRatings = prefs[showEpisodeRatingsKey()] ?: true
 
                 val previousState = _uiState.value
                 val previousMatches = previousState.item?.id == mediaId &&
@@ -319,6 +322,7 @@ class DetailsViewModel @Inject constructor(
                     } else {
                         null
                     },
+                    showEpisodeRatings = showEpisodeRatings,
                     autoPlaySingleSource = autoPlaySingleSource,
                     autoPlayMinQuality = autoPlayMinQuality
                 )
