@@ -51,7 +51,10 @@ setlocal DisableDelayedExpansion
 > "%HANDLER%" echo param([string]$Url)
 >>"%HANDLER%" echo $vlc = '%VLC%'
 >>"%HANDLER%" echo $u = $Url -replace '^^vlc:/*', ''
->>"%HANDLER%" echo $u = $u -replace '^^(https?):/(?!/)', '$1://'
+REM  Browsers parse vlc://https://... as scheme+authority and normalize the
+REM  inner URL: Chrome drops the colon (https//...), others may collapse the
+REM  slashes (https:/...). Repair ANY mangled scheme separator back to ://.
+>>"%HANDLER%" echo $u = $u -replace '^^(https?)[:/]+', '$1://'
 >>"%HANDLER%" echo if ($u) { Start-Process -FilePath $vlc -ArgumentList $u }
 endlocal
 
