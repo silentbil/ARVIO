@@ -69,11 +69,41 @@ export function externalPlayerUrl(player: ExternalPlayer, stream: StreamSource, 
     return `infuse://x-callback-url/play?${params.toString()}`;
   }
 
+  // Android: vlc-x-callback:// is iOS-ONLY — Android VLC doesn't register it, so
+  // it silently does nothing (the Samsung/Chrome bug). Android launches players
+  // via an intent:// URL instead. Target VLC's package, with a browser fallback.
+  if (player === "vlc" && isAndroid()) {
+    return androidIntentUrl(targetUrl, filename, sub, "org.videolan.vlc");
+  }
+
   // VLC's "download" action saves the file to VLC's own storage (offline
   // playback) instead of just streaming it — the reliable way to get a large
   // file onto an iPad, where a browser tab can't (WebKit memory limit). "stream"
   // just plays it.
   return `vlc-x-callback://x-callback-url/${mode === "download" ? "download" : "stream"}?${params.toString()}`;
+}
+
+// Android intent:// URL. When `pkg` is set it targets that app (e.g. VLC);
+// when omitted, Android shows its own "Open with" chooser listing every
+// installed video player (MX Player, Just Player, VLC, …). The video MIME type
+// makes Android offer players rather than browsers.
+function androidIntentUrl(url: string, filename: string, sub: string, pkg?: string) {
+  const scheme = url.startsWith("https") ? "https" : "http";
+  const bare = url.replace(/^https?:\/\//, "");
+  const mime = /\.m3u8|mpegurl/i.test(url) ? "application/x-mpegurl" : "video/*";
+  const parts = [
+    `intent://${bare}#Intent`,
+    `scheme=${scheme}`,
+    "action=android.intent.action.VIEW",
+    `type=${mime}`
+  ];
+  if (pkg) parts.push(`package=${pkg}`);
+  if (sub) parts.push(`S.subtitles_location=${encodeURIComponent(sub)}`);
+  parts.push(`S.title=${encodeURIComponent(filename)}`);
+  // If the targeted app isn't installed, fall back to opening the raw URL.
+  parts.push(`S.browser_fallback_url=${encodeURIComponent(url)}`);
+  parts.push("end");
+  return parts.join(";");
 }
 
 // iOS home-screen webapps (standalone PWAs) silently DROP custom-scheme
@@ -178,6 +208,26 @@ export function downloadToVlc(stream: StreamSource, title: string, preferredSubt
   const href = externalPlayerUrl("vlc", stream, title, preferredSubtitleLang, "download");
   if (!href) return false;
   launchScheme(href);
+  return true;
+}
+
+// Open in ANY installed player. On Android this fires an intent chooser listing
+// every video player on the device (VLC, MX Player, Just Player, …) — a better
+// fit than Infuse, which is iOS-only. Returns false on platforms where there's
+// no generic chooser (iOS: use VLC/Infuse buttons there instead).
+export function canOpenInAnyPlayer() {
+  return isAndroid();
+}
+
+export function openInAnyPlayer(stream: StreamSource, title: string, preferredSubtitleLang = "") {
+  if (!isAndroid()) return false;
+  const targetUrl = isTorrentioResolve(stream.originalUrl) ? stream.url : (stream.originalUrl ?? stream.url);
+  if (!targetUrl) return false;
+  const ext = /\.m3u8|mpegurl/i.test(targetUrl) ? "m3u8" : /\.mp4(?:[?#/]|$)/i.test(targetUrl) ? "mp4" : "mkv";
+  const filename = `${cleanFilename(title)}.${ext}`;
+  const sub = subtitleUrl(pickSubtitle(stream.subtitles, preferredSubtitleLang));
+  // No package → Android's own "Open with" chooser across all video apps.
+  launchScheme(androidIntentUrl(targetUrl, filename, sub));
   return true;
 }
 

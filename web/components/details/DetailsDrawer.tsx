@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, openExternalPlayer, triggerDownload } from "@/lib/externalPlayers";
+import { canOpenInAnyPlayer, copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, openExternalPlayer, openInAnyPlayer, triggerDownload } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -483,6 +483,28 @@ function SourcePickerModal({
     // lost, so the app would appear to do nothing. Launch last.
     openExternalPlayer(player, target, title, settings.defaultSubtitle);
   };
+  // Android: open in whichever player the user picks (VLC, MX Player, …) via the
+  // system chooser — the equivalent of the iOS-only Infuse button.
+  const openAnyPlayer = (stream: StreamSource) => {
+    if (!stream.url) {
+      onToast("This source has no direct URL for an external player.");
+      return;
+    }
+    const cachedCdn = parseDebridStream(stream.url) ? cachedDebridDirectUrl(stream.url) : null;
+    let target = cachedCdn ? { ...stream, url: cachedCdn, originalUrl: stream.url } : stream;
+    if (!target.subtitles?.length && panelSubtitles.length) target = { ...target, subtitles: panelSubtitles };
+    onToast("Opening in your player…");
+    createPendingExternalPlayback({
+      player: "vlc",
+      item,
+      stream: target,
+      title,
+      profileId: activeProfileId,
+      season: selectedEpisode?.season ?? item.seasonNumber ?? null,
+      episode: selectedEpisode?.episode ?? item.episodeNumber ?? null
+    });
+    openInAnyPlayer(target, title, settings.defaultSubtitle);
+  };
   const copyUrl = async (stream: StreamSource) => {
     const copied = await copyStreamUrl(stream).catch(() => false);
     onToast(copied ? "Stream URL copied." : "Could not copy this stream URL.");
@@ -617,9 +639,15 @@ function SourcePickerModal({
                     <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("vlc", stream)}>
                       <ExternalLink size={13} /> VLC
                     </button>
-                    <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("infuse", stream)}>
-                      <ExternalLink size={13} /> Infuse
-                    </button>
+                    {canOpenInAnyPlayer() ? (
+                      <button type="button" className="source-action" disabled={locked} onClick={() => openAnyPlayer(stream)}>
+                        <ExternalLink size={13} /> Player
+                      </button>
+                    ) : (
+                      <button type="button" className="source-action" disabled={locked} onClick={() => openExternal("infuse", stream)}>
+                        <ExternalLink size={13} /> Infuse
+                      </button>
+                    )}
                     <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void downloadSource(stream)} aria-label="Download this source">
                       <Download size={13} />
                     </button>
