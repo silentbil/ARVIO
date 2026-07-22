@@ -2322,42 +2322,75 @@ a.login-submit {
 .app-shell.oled { background: #000 !important; }
 
 .settings-shell {
-  display: grid;
-  grid-template-columns: minmax(220px, 18vw) 1fr;
-  gap: 24px;
+  display: block;
   min-height: 100vh;
-  padding: clamp(96px, 12vh, 130px) 3.35vw 80px;
-  align-items: start;
-  transition: grid-template-columns 0.22s ease-in-out;
+  padding: clamp(90px, 11vh, 125px) clamp(18px, 3.35vw, 64px) 80px;
+  width: 100%;
+  box-sizing: border-box;
 }
-.settings-shell.sidebar-collapsed {
-  grid-template-columns: 56px 1fr;
-}
+
 .settings-sidebar {
-  position: sticky;
-  top: clamp(96px, 12vh, 130px);
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  left: clamp(18px, 3.35vw, 64px);
+  width: 240px;
+  height: fit-content;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  padding: 14px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  background: rgba(14, 16, 20, 0.72);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  transition: width 0.28s cubic-bezier(0.16, 1, 0.3, 1), padding 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: width;
+  z-index: 30;
 }
+
+.settings-shell.sidebar-collapsed .settings-sidebar {
+  width: 64px;
+  padding: 14px 6px;
+}
+
 .settings-sidebar-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
   min-height: 38px;
+  padding: 0 6px;
+  overflow: hidden;
 }
-.settings-sidebar-header h2 {
+
+.settings-sidebar-title {
   margin: 0;
-  font-size: clamp(20px, 1.8vw, 26px);
+  font-size: 20px;
   font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  opacity: 1;
+  max-width: 160px;
+  overflow: hidden;
+  transition: opacity 0.2s ease, max-width 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+.sidebar-collapsed .settings-sidebar-title {
+  opacity: 0;
+  max-width: 0;
+}
+
 .settings-collapse-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 36px;
   height: 36px;
+  flex: 0 0 36px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -2365,61 +2398,104 @@ a.login-submit {
   cursor: pointer;
   transition: background-color 0.16s ease, color 0.16s ease;
 }
+
 .settings-collapse-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.09);
   color: #fff;
 }
+
 .settings-nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.sidebar-collapsed .settings-section-btn {
-  justify-content: center;
-  padding: 12px 0;
+
+.settings-section-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 14.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
 }
+
+.sidebar-collapsed .settings-section-btn {
+  justify-content: flex-start;
+  padding: 10px 13px;
+}
+
 .settings-btn-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
 }
+
 .settings-btn-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  opacity: 1;
+  max-width: 160px;
+  transition: opacity 0.2s ease, max-width 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.settings-section-btn {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 15px;
+
+.sidebar-collapsed .settings-btn-label {
+  opacity: 0;
+  max-width: 0;
+}
+
+.settings-section-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.settings-section-btn.is-active {
+  color: #ffffff;
   font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-  transition: background 140ms ease, color 140ms ease;
+  background: color-mix(in srgb, var(--accent, #fff) 22%, rgba(255, 255, 255, 0.08));
+  border-color: color-mix(in srgb, var(--accent, #fff) 35%, rgba(255, 255, 255, 0.16));
+  box-shadow: none !important;
 }
-.settings-section-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
-.settings-section-btn.is-active { color: #fff; background: var(--chip-focus); }
 
 .settings-content {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 20px;
   min-width: 0;
-  max-width: 920px;
+  width: calc(100% - 264px);
+  max-width: 1280px;
+  margin-left: 264px;
+  transition: margin-left 0.28s cubic-bezier(0.16, 1, 0.3, 1), width 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+.sidebar-collapsed .settings-content,
+.settings-shell.sidebar-collapsed .settings-content {
+  margin-left: 84px;
+  width: calc(100% - 84px);
+}
+
 .settings-panel-card {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.04);
   border-radius: 18px;
   padding: 24px;
-  /* Size to content — a small floor keeps short sections from looking cramped
-     without forcing a huge empty void (a full-viewport min-height made the
-     Accounts panel a giant near-empty box). */
+  width: 100%;
+  box-sizing: border-box;
   min-height: 220px;
 }
 .settings-panel-card h2 {
@@ -3445,14 +3521,7 @@ select:focus {
   color: #ffd86a;
 }
 
-.settings-section-btn {
-  min-height: 46px;
-  border-radius: 14px;
-}
-
-.settings-section-btn.is-active {
-  background: color-mix(in srgb, var(--accent, #fff) 18%, rgba(255, 255, 255, 0.1));
-}
+/* settings section button sizing handled in core settings-shell styling */
 
 .set-row {
   min-height: 64px;
@@ -8283,8 +8352,7 @@ button,
 .settings-panel-card .primary,
 .settings-panel-card .secondary,
 .settings-panel-card .text-button,
-.settings-panel-card .icon-button,
-.settings-section-btn {
+.settings-panel-card .icon-button {
   box-sizing: border-box;
   min-width: 0;
   letter-spacing: 0;
@@ -8301,10 +8369,10 @@ button,
 .settings-panel-card .text-button {
   max-width: 100%;
   width: fit-content;
-  min-height: 46px;
+  min-height: 44px;
   height: auto;
   padding: 10px 18px;
-  border-radius: 999px;
+  border-radius: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8325,8 +8393,7 @@ button,
 .settings-panel-card .primary:hover:not(:disabled),
 .settings-panel-card .secondary:hover:not(:disabled),
 .settings-panel-card .text-button:hover:not(:disabled),
-.settings-panel-card .icon-button:hover:not(:disabled),
-.settings-section-btn:hover {
+.settings-panel-card .icon-button:hover:not(:disabled) {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--accent, #fff) 34%, rgba(255, 255, 255, 0.16));
   background:

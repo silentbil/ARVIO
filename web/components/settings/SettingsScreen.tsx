@@ -192,7 +192,7 @@ export function SettingsScreen() {
           >
             <Menu size={20} />
           </button>
-          {!collapsed && <h2>Settings</h2>}
+          <h2 className="settings-sidebar-title">Settings</h2>
         </div>
         <nav className="settings-nav">
           {SECTIONS.map((s) => {
@@ -212,7 +212,7 @@ export function SettingsScreen() {
                 title={s.label}
               >
                 <span className="settings-btn-icon"><Icon size={18} /></span>
-                {!collapsed && <span className="settings-btn-label">{s.label}</span>}
+                <span className="settings-btn-label">{s.label}</span>
               </button>
             );
           })}
