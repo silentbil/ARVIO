@@ -8,7 +8,7 @@ import { getContinueWatching, pullCloudPayload, pullCloudProfiles, pullCloudTrak
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
-import { streamPlayability } from "./streamCompatibility";
+import { canDirectPlayMkvStream, streamPlayability } from "./streamCompatibility";
 import { loadHomeServerRows } from "./homeserver";
 import { buildXtreamCatchupUrl, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
@@ -1248,7 +1248,24 @@ export function AppProvider({
     // handing the raw torrentio link to <video>, which can only fail and burn a
     // ~13s stall-timeout before escalating. This is the biggest "not instant"
     // win — the top pick is almost always an MKV.
+    //
+    // EXCEPT on Chromium, whose <video> demuxes Matroska natively: an MKV whose
+    // codecs the device decodes (H.264/HEVC + AAC/Opus) plays directly from the
+    // CDN URL — instant, zero remux CPU, and immune to remux-pipeline stalls.
+    // The player's ladder still auto-escalates to remux if direct really fails.
     const debrid = parseDebridStream(stream.url);
+    if (debrid && streamPlayability(stream).mode === "remux" && canDirectPlayMkvStream(stream)) {
+      const cachedDirect = cachedDebridDirectUrl(stream.url);
+      if (cachedDirect) {
+        setActiveStream({ ...stream, url: cachedDirect, originalUrl: stream.url });
+        return;
+      }
+      void resolveDebridDirectUrl(debrid).then((result) => {
+        if (result.url) setActiveStream({ ...stream, url: result.url, originalUrl: stream.url });
+        else { setToast(result.error ?? "Source not ready — trying the next one."); setActiveStream(stream); }
+      });
+      return;
+    }
     if (debrid && streamPlayability(stream).mode === "remux") {
       const cached = cachedDebridDirectUrl(stream.url);
       if (cached) {

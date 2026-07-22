@@ -607,6 +607,13 @@ function SourcePickerModal({
 
         <div className="source-addon-tabs">
           <button type="button" className={addonFilter === "all" ? "is-active" : ""} onClick={() => setAddonFilter("all")}>All Addons</button>
+          <button
+            type="button"
+            className={mode === "playable" ? "is-active" : ""}
+            onClick={() => setMode(mode === "playable" ? "all" : "playable")}
+          >
+            Browser playable{playable > 0 ? ` ${playable}` : ""}
+          </button>
           {addons.map((addon) => (
             <button type="button" key={addon.id} className={addonFilter === addon.id ? "is-active" : ""} onClick={() => setAddonFilter(addon.id)}>
               {addon.name}{addon.count > 0 ? ` ${addon.count}` : ""}
