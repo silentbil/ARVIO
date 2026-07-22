@@ -11497,3 +11497,12 @@ html { background: #000; }
   .grid-results { grid-template-columns: 1fr !important; }
   .poster-results .grid-results { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 }
+
+/* --- TV / keyboard navigation ------------------------------------------- */
+/* Universal fallback focus ring for D-pad (Tizen/webOS) and keyboard users.
+   :where() keeps specificity at zero so every bespoke :focus-visible rule
+   above still wins; this only catches interactive elements without one. */
+:where(button, a[href], [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--accent, #fff);
+  outline-offset: 2px;
+}
