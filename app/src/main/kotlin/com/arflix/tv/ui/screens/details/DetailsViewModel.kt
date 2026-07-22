@@ -211,6 +211,18 @@ class DetailsViewModel @Inject constructor(
 
     private var currentMediaType: MediaType = MediaType.MOVIE
     private var currentMediaId: Int = 0
+    // The episode the user last started playing from this screen, kept so that returning from the
+    // player (which recreates the details screen) points the Continue button at that episode even
+    // when the play was too brief to record a resume point. Scoped to a media id.
+    private var lastPlayedMediaId: Int = 0
+    private var lastPlayedSeason: Int? = null
+    private var lastPlayedEpisode: Int? = null
+
+    fun recordPlayedEpisode(mediaId: Int, season: Int?, episode: Int?) {
+        lastPlayedMediaId = mediaId
+        lastPlayedSeason = season
+        lastPlayedEpisode = episode
+    }
     private var vodAppendJob: kotlinx.coroutines.Job? = null
     private var homeServerAppendJob: kotlinx.coroutines.Job? = null
     private var loadStreamsJob: kotlinx.coroutines.Job? = null
@@ -218,6 +230,9 @@ class DetailsViewModel @Inject constructor(
     private var focusedStreamPrewarmJob: kotlinx.coroutines.Job? = null
     private var streamListPrewarmJob: kotlinx.coroutines.Job? = null
     private var lastStreamListPrewarmKey: String = ""
+    // Guards overlapping season loads: only the most recently requested season may apply its result.
+    private var seasonLoadJob: kotlinx.coroutines.Job? = null
+    private var seasonLoadRequestedSeason: Int = -1
     /** Set to true after loadDetails() child coroutines finish populating episodes/seasons. */
     @Volatile private var initialLoadComplete = false
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
@@ -286,7 +301,27 @@ class DetailsViewModel @Inject constructor(
                 val previousState = _uiState.value
                 val previousMatches = previousState.item?.id == mediaId &&
                     previousState.item?.mediaType == mediaType
-                val seasonToLoad = initialSeason ?: 1
+                // When re-entering the same show (e.g. the details screen was recreated behind the
+                // player), the ViewModel survives in the back stack but the nav-arg episode target is
+                // stale (frozen at the original deeplink). Prefer the episode the user last played
+                // (recorded even for brief plays) so the Continue button follows it; fall back to
+                // re-deriving from the viewed season. The season rail keeps whatever season the user
+                // was browsing (previousState.currentSeason).
+                val reentry = previousMatches && previousState.currentSeason > 0
+                val playedSeason = lastPlayedSeason?.takeIf { lastPlayedMediaId == mediaId }
+                val playedEpisode = lastPlayedEpisode?.takeIf { lastPlayedMediaId == mediaId }
+                val initialSeason = when {
+                    reentry -> playedSeason
+                    else -> initialSeason
+                }
+                val initialEpisode = when {
+                    reentry -> playedEpisode
+                    else -> initialEpisode
+                }
+                val seasonToLoad = when {
+                    reentry -> previousState.currentSeason
+                    else -> initialSeason ?: 1
+                }
                 val hasExplicitEpisodeTarget = mediaType == MediaType.TV && initialSeason != null && initialEpisode != null
                 val previousItem = _uiState.value.item?.takeIf {
                     it.id == mediaId && it.mediaType == mediaType
@@ -836,13 +871,23 @@ class DetailsViewModel @Inject constructor(
         if (currentMediaType != MediaType.TV) return
         // Don't reload if already on this season
         if (_uiState.value.currentSeason == seasonNumber && _uiState.value.episodes.isNotEmpty()) return
+        // Ignore a duplicate request for a load that is already in flight (the click handler and the
+        // hover effect can both ask for the same season).
+        if (seasonLoadRequestedSeason == seasonNumber && seasonLoadJob?.isActive == true) return
 
-        viewModelScope.launch {
+        // Cancel any in-flight season load so only the most recently requested season can win —
+        // otherwise an older, slower request could finish last and display the wrong season's
+        // episodes for the currently selected season.
+        seasonLoadJob?.cancel()
+        seasonLoadRequestedSeason = seasonNumber
+        seasonLoadJob = viewModelScope.launch {
             // Keep current episodes visible while loading new ones
             val currentEpisodes = _uiState.value.episodes
 
             try {
                 val episodes = mediaRepository.getSeasonEpisodes(currentMediaId, seasonNumber)
+                // A newer request superseded this one while we were fetching — drop the stale result.
+                if (seasonLoadRequestedSeason != seasonNumber) return@launch
                 if (episodes.isNotEmpty()) {
                     // Decorate episodes with watched status from cache
                     val watchedKeys = runCatching {
@@ -863,6 +908,9 @@ class DetailsViewModel @Inject constructor(
                         }
                     }
 
+                    // Re-check after the watched-status fetch (another suspension point) so a
+                    // superseded request never overwrites the newer season's episodes.
+                    if (seasonLoadRequestedSeason != seasonNumber) return@launch
                     _uiState.value = _uiState.value.copy(
                         episodes = decoratedEpisodes,
                         currentSeason = seasonNumber
@@ -874,6 +922,9 @@ class DetailsViewModel @Inject constructor(
                         toastType = ToastType.ERROR
                     )
                 }
+            } catch (e: CancellationException) {
+                // Superseded by a newer season request — leave the newer load's state untouched.
+                throw e
             } catch (e: Exception) {
                 // On error, keep showing current episodes
                 _uiState.value = _uiState.value.copy(
