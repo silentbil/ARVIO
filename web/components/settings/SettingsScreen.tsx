@@ -5,8 +5,11 @@ import {
   ArrowUp,
   Captions,
   Check,
+  CheckCircle,
   ChevronDown,
   Cloud,
+  Download,
+  ExternalLink,
   Eye,
   EyeOff,
   Languages,
@@ -27,7 +30,7 @@ import {
   User,
   UserCircle,
 } from "lucide-react";
-import { Component, useEffect, useState, type ReactNode } from "react";
+import { Component, CSSProperties, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { defaultCatalogs, mergeCatalogs } from "@/lib/catalogs";
 import {
@@ -36,6 +39,14 @@ import {
   hasTraktConfig,
   getAuthPortalUrl,
 } from "@/lib/config";
+import {
+  isLinux,
+  setVlcProtocolReady,
+  triggerDownload,
+  vlcProtocolReady,
+  VLC_SETUP_SH_URL,
+  VLC_SETUP_URL,
+} from "@/lib/externalPlayers";
 import { defaultSettings, useApp } from "@/lib/store";
 import type {
   AppSettings,
@@ -47,10 +58,42 @@ import type {
 
 const settingsKey = "arvio.web.settings";
 
+function VlcIcon({
+  size = 18,
+  className = "",
+  style = {},
+}: {
+  size?: number;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      style={{ display: "inline-block", verticalAlign: "middle", ...style }}
+    >
+      {/* Cone tip */}
+      <path d="M10.8 4.2C11.1 3.4 11.5 3 12 3C12.5 3 12.9 3.4 13.2 4.2L14.2 6.5H9.8L10.8 4.2Z" />
+      {/* Upper cone band */}
+      <path d="M9.1 8H14.9L16.2 11H7.8L9.1 8Z" />
+      {/* Lower cone band */}
+      <path d="M7.1 12.5H16.9L18.4 16H5.6L7.1 12.5Z" />
+      {/* Base stand */}
+      <path d="M2.5 17.5L4.5 17H19.5L21.5 17.5L20.5 21C20.4 21.6 19.8 22 19.2 22H4.8C4.2 22 3.6 21.6 3.5 21L2.5 17.5Z" />
+    </svg>
+  );
+}
+
 const SECTIONS = [
   { id: "accounts", label: "Accounts", icon: Cloud },
   { id: "profiles", label: "Profiles", icon: User },
   { id: "playback", label: "Playback", icon: Play },
+  { id: "vlc", label: "VLC Integration", icon: VlcIcon },
   { id: "language", label: "Language & Audio", icon: Languages },
   { id: "subtitles", label: "Subtitles", icon: Subtitles },
   { id: "ai", label: "AI Subtitles", icon: Captions },
@@ -498,6 +541,24 @@ function SectionBody({ section }: { section: SectionId }) {
                 ["infuse", "Infuse"],
               ]}
             />
+          </Row>
+          <Row
+            label="VLC One-Click Setup"
+            hint="Download vlc-setup.bat to enable direct vlc:// launching on Windows without saving .m3u playlist files"
+          >
+            <button
+              type="button"
+              className="secondary text-button"
+              onClick={() => {
+                triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
+                setVlcProtocolReady(true);
+                app.setToast(
+                  "Downloaded vlc-setup.bat — run it once on Windows to enable direct VLC launching.",
+                );
+              }}
+            >
+              <Download size={16} /> Download .bat
+            </button>
           </Row>
           <Row label="Auto play next episode">
             <Toggle
@@ -967,6 +1028,8 @@ function SectionBody({ section }: { section: SectionId }) {
       return <CatalogsSection />;
     case "addons":
       return <AddonsSection />;
+    case "vlc":
+      return <VlcSection />;
     default:
       return null;
   }
@@ -1802,6 +1865,218 @@ function AddonsSection() {
       >
         <Trash2 size={18} /> Reset all web settings
       </button>
+    </Panel>
+  );
+}
+
+/* ---------- VLC Integration ---------- */
+
+function VlcSection() {
+  const { setToast } = useApp();
+  const [vlcReady, setVlcReady] = useState<boolean>(() => vlcProtocolReady());
+  const [checkStatus, setCheckStatus] = useState<
+    "idle" | "testing" | "working" | "not_installed"
+  >("idle");
+
+  const handleDownloadWindows = () => {
+    triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
+    setVlcProtocolReady(true);
+    setVlcReady(true);
+    setToast(
+      "Downloaded vlc-setup.bat — run it once on Windows to enable direct VLC launching.",
+    );
+  };
+
+  const handleDownloadLinux = () => {
+    triggerDownload(VLC_SETUP_SH_URL, "vlc-setup.sh");
+    setVlcProtocolReady(true);
+    setVlcReady(true);
+    setToast(
+      "Downloaded vlc-setup.sh — run `bash vlc-setup.sh` to enable direct VLC launching on Linux.",
+    );
+  };
+
+  const handleToggleReady = () => {
+    const next = !vlcReady;
+    setVlcProtocolReady(next);
+    setVlcReady(next);
+    setToast(
+      next
+        ? "VLC direct protocol handler marked as ready."
+        : "VLC direct protocol handler status reset.",
+    );
+  };
+
+  const handleCheckIntegration = () => {
+    setCheckStatus("testing");
+    let blurred = false;
+
+    const onBlur = () => {
+      blurred = true;
+    };
+
+    window.addEventListener("blur", onBlur);
+
+    const testUrl =
+      "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+    try {
+      const a = document.createElement("a");
+      a.href = `vlc://${testUrl}`;
+      a.rel = "noopener";
+      a.style.position = "fixed";
+      a.style.left = "-9999px";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 1000);
+    } catch {
+      /* ignore */
+    }
+
+    setTimeout(() => {
+      window.removeEventListener("blur", onBlur);
+      if (blurred) {
+        setCheckStatus("working");
+        setVlcProtocolReady(true);
+        setVlcReady(true);
+        setToast(
+          "✓ VLC Integration Confirmed! VLC launched directly via vlc:// protocol.",
+        );
+      } else {
+        setCheckStatus("not_installed");
+        setToast(
+          "✕ VLC handler not detected. Please run the setup script for your OS.",
+        );
+      }
+    }, 1500);
+  };
+
+  return (
+    <Panel title="VLC Integration">
+      <Row
+        label="Check VLC Integration"
+        hint="Automatically tests launching VLC via vlc:// and reports if integration is working"
+      >
+        <button
+          type="button"
+          className={
+            checkStatus === "working"
+              ? "secondary text-button"
+              : checkStatus === "not_installed"
+                ? "text-button danger"
+                : "secondary text-button"
+          }
+          disabled={checkStatus === "testing"}
+          onClick={handleCheckIntegration}
+        >
+          {checkStatus === "testing" ? (
+            <RefreshCw size={16} className="spin" />
+          ) : checkStatus === "working" ? (
+            <CheckCircle size={16} />
+          ) : (
+            <CheckCircle size={16} />
+          )}
+          {checkStatus === "testing"
+            ? "Testing VLC Launcher..."
+            : checkStatus === "working"
+              ? "Working (VLC Integration Verified)"
+              : checkStatus === "not_installed"
+                ? "Not Working — Run Setup"
+                : "Check Integration"}
+        </button>
+      </Row>
+
+      <Row
+        label="Protocol Handler Status"
+        hint="When enabled, ARVIO launches streams directly via vlc:// instead of saving .m3u playlist files"
+      >
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            className={vlcReady ? "secondary text-button" : "text-button"}
+            onClick={handleToggleReady}
+          >
+            {vlcReady ? <Check size={16} /> : null}
+            {vlcReady ? "Protocol Enabled (vlc://)" : "Mark Protocol Enabled"}
+          </button>
+        </div>
+      </Row>
+
+      <Row
+        label="Download Setup Scripts Anytime"
+        hint="Re-download the installer script for your desktop OS"
+      >
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="secondary text-button"
+            onClick={handleDownloadWindows}
+          >
+            <Download size={15} /> vlc-setup.bat (Windows)
+          </button>
+          <button
+            type="button"
+            className="secondary text-button"
+            onClick={handleDownloadLinux}
+          >
+            <Download size={15} /> vlc-setup.sh (Linux)
+          </button>
+        </div>
+      </Row>
+
+      <div
+        style={{
+          marginTop: "24px",
+          padding: "16px",
+          background: "rgba(255, 255, 255, 0.03)",
+          borderRadius: "12px",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          fontSize: "13px",
+          lineHeight: "1.6",
+          color: "var(--muted)",
+        }}
+      >
+        <strong
+          style={{
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            marginBottom: "8px",
+          }}
+        >
+          <VlcIcon size={18} /> Platform Integration Guide:
+        </strong>
+        <ul style={{ paddingLeft: "20px", margin: 0 }}>
+          <li style={{ marginBottom: "6px" }}>
+            <strong style={{ color: "#fff" }}>Windows Desktop:</strong> Run{" "}
+            <code>vlc-setup.bat</code> once to register the <code>vlc://</code>{" "}
+            protocol handler for your user account (no administrator rights
+            needed).
+          </li>
+          <li style={{ marginBottom: "6px" }}>
+            <strong style={{ color: "#fff" }}>Linux Desktop:</strong> Download{" "}
+            <code>vlc-setup.sh</code> and run <code>bash vlc-setup.sh</code> in
+            your terminal. It creates a <code>.desktop</code> entry and registers{" "}
+            <code>x-scheme-handler/vlc</code> via <code>xdg-mime</code> for
+            GNOME, KDE, XFCE, etc.
+          </li>
+          <li style={{ marginBottom: "6px" }}>
+            <strong style={{ color: "#fff" }}>macOS Desktop:</strong> VLC
+            automatically self-registers the <code>vlc://</code> protocol
+            handler upon installation. No setup script required.
+          </li>
+          <li style={{ marginBottom: "6px" }}>
+            <strong style={{ color: "#fff" }}>Android:</strong> Uses native
+            Android intents to launch VLC directly or prompt with an app chooser
+            (MX Player, Just Player, VLC).
+          </li>
+          <li>
+            <strong style={{ color: "#fff" }}>iOS / iPadOS:</strong> Launches
+            VLC directly using the native <code>vlc-x-callback://</code>{" "}
+            protocol.
+          </li>
+        </ul>
+      </div>
     </Panel>
   );
 }
