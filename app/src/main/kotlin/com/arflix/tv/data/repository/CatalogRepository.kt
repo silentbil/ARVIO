@@ -10,6 +10,8 @@ import com.arflix.tv.data.model.AddonCatalog
 import com.arflix.tv.data.model.AddonType
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogPackManifest
+import com.arflix.tv.data.model.CatalogPackItem
 import com.arflix.tv.data.model.CollectionGroupKind
 import com.arflix.tv.data.model.CollectionSourceConfig
 import com.arflix.tv.data.model.CollectionTileShape
@@ -706,6 +708,112 @@ class CatalogRepository @Inject constructor(
         return true
     }
 
+    suspend fun fetchCatalogPackManifest(packUrl: String): Result<CatalogPackManifest> {
+        val trimmed = packUrl.trim()
+        if (!trimmed.startsWith("http://", ignoreCase = true) && !trimmed.startsWith("https://", ignoreCase = true)) {
+            return Result.failure(IllegalArgumentException("Invalid URL: must start with http:// or https://"))
+        }
+
+        val json = fetchUrl(trimmed)
+            ?: return Result.failure(IllegalArgumentException("Failed to fetch catalog pack from URL"))
+        val manifest = try {
+            val type = object : com.google.gson.reflect.TypeToken<CatalogPackManifest>() {}.type
+            gson.fromJson<CatalogPackManifest>(json, type)
+        } catch (e: Exception) {
+            null
+        } ?: return Result.failure(IllegalArgumentException("Failed to parse catalog pack manifest"))
+
+        if (manifest.id.isNullOrBlank() || manifest.name.isNullOrBlank()) {
+            return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: missing ID or Name"))
+        }
+        val cats = manifest.catalogs
+        if (cats.isNullOrEmpty()) {
+            return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: catalogs list is empty or missing"))
+        }
+        val normalizedUrls = mutableSetOf<String>()
+        for (item in cats) {
+            if (item.name.isNullOrBlank() || item.url.isNullOrBlank()) {
+                return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: catalog items must have a name and url"))
+            }
+            val normalized = CatalogUrlParser.normalize(item.url).lowercase()
+            if (!normalizedUrls.add(normalized)) {
+                return Result.failure(IllegalArgumentException("Invalid catalog pack manifest: duplicate catalog URL '$normalized'"))
+            }
+        }
+        return Result.success(manifest)
+    }
+
+    suspend fun addCatalogPack(packUrl: String, manifest: CatalogPackManifest? = null): Result<CatalogPackManifest> {
+        val finalManifest = if (manifest != null) {
+            manifest
+        } else {
+            val manifestResult = fetchCatalogPackManifest(packUrl)
+            if (manifestResult.isFailure) return manifestResult
+            manifestResult.getOrThrow()
+        }
+
+        val current = getCatalogs().toMutableList()
+        val addedConfigs = mutableListOf<CatalogConfig>()
+
+        val manifestId = finalManifest.id ?: return Result.failure(IllegalArgumentException("Manifest missing ID"))
+        val manifestName = finalManifest.name ?: return Result.failure(IllegalArgumentException("Manifest missing Name"))
+        val manifestCatalogs = finalManifest.catalogs ?: return Result.failure(IllegalArgumentException("Manifest missing catalogs"))
+
+        val normalizedPackUrl = CatalogUrlParser.normalize(packUrl).lowercase()
+        val derivedPackId = "pack_${sha256Short(normalizedPackUrl + "|" + manifestId)}"
+
+        for (item in manifestCatalogs) {
+            val itemUrl = item.url ?: continue
+            val validation = validateCatalogUrl(itemUrl)
+            if (!validation.isValid || validation.normalizedUrl == null || validation.sourceType == null) {
+                continue
+            }
+            val normalizedUrl = validation.normalizedUrl
+            val sourceType = validation.sourceType
+
+            // Skip if this URL is already added
+            if (current.any { it.sourceUrl.equals(normalizedUrl, ignoreCase = true) }) {
+                continue
+            }
+
+            val resolved = resolveMetadata(normalizedUrl, sourceType)
+                ?: fallbackMetadata(normalizedUrl, sourceType)
+                ?: continue
+
+            val stableId = "custom_${sha256Short(derivedPackId + "|" + normalizedUrl)}"
+            val newCatalog = CatalogConfig(
+                id = stableId,
+                title = item.name?.trim()?.ifBlank { resolved.title } ?: resolved.title,
+                sourceType = sourceType,
+                sourceUrl = normalizedUrl,
+                sourceRef = resolved.sourceRef,
+                isPreinstalled = false,
+                packId = derivedPackId,
+                packName = manifestName
+            )
+            addedConfigs.add(newCatalog)
+        }
+
+        if (addedConfigs.isEmpty()) {
+            return Result.failure(IllegalArgumentException("No new or valid catalogs found in this pack to import"))
+        }
+
+        current.addAll(0, addedConfigs)
+        saveCatalogs(current)
+        return Result.success(finalManifest)
+    }
+
+    suspend fun removeCatalogPack(packId: String): Result<Unit> {
+        val current = getCatalogs().toMutableList()
+        val beforeSize = current.size
+        current.removeAll { it.packId == packId }
+        if (current.size == beforeSize) {
+            return Result.failure(IllegalArgumentException("No catalogs found for pack: $packId"))
+        }
+        saveCatalogs(current)
+        return Result.success(Unit)
+    }
+
     suspend fun addCustomCatalog(rawUrl: String): Result<CatalogConfig> {
         val validation = validateCatalogUrl(rawUrl)
         if (!validation.isValid || validation.normalizedUrl == null || validation.sourceType == null) {
@@ -1019,11 +1127,11 @@ class CatalogRepository @Inject constructor(
 
     private suspend fun fetchUrl(url: String): String? {
         return withContext(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
-                .build()
             try {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
+                    .build()
                 okHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use null
                     response.body?.string()

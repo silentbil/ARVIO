@@ -18,6 +18,7 @@ import com.arflix.tv.data.model.Addon
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogDiscoveryResult
 import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogPackManifest
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.QualityFilterConfig
 import com.arflix.tv.data.repository.AuthRepository
@@ -169,6 +170,10 @@ data class SettingsUiState(
     val catalogSearchResults: List<CatalogDiscoveryResult> = emptyList(),
     val isCatalogSearching: Boolean = false,
     val catalogSearchError: String? = null,
+    val pendingPackManifest: CatalogPackManifest? = null,
+    val pendingPackUrl: String? = null,
+    val isPackLoading: Boolean = false,
+    val packError: String? = null,
     // Addons
     val addons: List<Addon> = emptyList(),
     val torrServerBaseUrl: String = "",
@@ -1780,6 +1785,84 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun loadPackManifest(url: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isPackLoading = true,
+                packError = null,
+                pendingPackManifest = null,
+                pendingPackUrl = null
+            )
+            val result = catalogRepository.fetchCatalogPackManifest(url)
+            result.onSuccess { manifest ->
+                _uiState.value = _uiState.value.copy(
+                    isPackLoading = false,
+                    pendingPackManifest = manifest,
+                    pendingPackUrl = url
+                )
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    isPackLoading = false,
+                    packError = error.message ?: "Failed to load pack manifest",
+                    pendingPackUrl = null
+                )
+            }
+        }
+    }
+
+    fun clearPendingPack() {
+        _uiState.value = _uiState.value.copy(
+            pendingPackManifest = null,
+            pendingPackUrl = null,
+            isPackLoading = false,
+            packError = null
+        )
+    }
+
+    fun confirmInstallPack(url: String) {
+        val manifest = _uiState.value.pendingPackManifest
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isPackLoading = true,
+                packError = null
+            )
+            val result = catalogRepository.addCatalogPack(url, manifest)
+            result.onSuccess { installedManifest ->
+                _uiState.value = _uiState.value.copy(
+                    isPackLoading = false,
+                    pendingPackManifest = null,
+                    pendingPackUrl = null,
+                    toastMessage = "Installed pack: ${installedManifest.name}",
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    isPackLoading = false,
+                    packError = error.message ?: "Failed to install pack"
+                )
+            }
+        }
+    }
+
+    fun removeCatalogPack(packId: String) {
+        viewModelScope.launch {
+            val result = catalogRepository.removeCatalogPack(packId)
+            result.onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = "Pack removed",
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.message ?: "Failed to remove pack",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
     fun addCatalog(url: String) {
         viewModelScope.launch {
             val result = catalogRepository.addCustomCatalog(url)
@@ -1903,6 +1986,30 @@ class SettingsViewModel @Inject constructor(
                     toastMessage = error.message ?: context.getString(R.string.catalog_failed_remove),
                     toastType = ToastType.ERROR
                 )
+            }
+        }
+    }
+
+    fun unpackCatalog(catalogId: String) {
+        viewModelScope.launch {
+            val current = catalogRepository.getCatalogs()
+            val index = current.indexOfFirst { it.id == catalogId }
+            if (index != -1) {
+                val target = current[index]
+                if (target.packId != null) {
+                    val updated = current.toMutableList()
+                    updated[index] = target.copy(packId = null, packName = null)
+                    catalogRepository.replaceCatalogsForActiveProfile(updated)
+
+                    // Update state
+                    val visible = visibleCatalogs(updated)
+                    _uiState.value = _uiState.value.copy(
+                        catalogs = visible,
+                        toastMessage = "Catalog row extracted from pack",
+                        toastType = ToastType.SUCCESS
+                    )
+                    syncLocalStateToCloud(silent = true)
+                }
             }
         }
     }

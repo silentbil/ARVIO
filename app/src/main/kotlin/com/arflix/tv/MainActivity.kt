@@ -166,6 +166,7 @@ class MainActivity : ComponentActivity() {
 
     private var jankStats: JankStats? = null
     private var pendingLauncherRequest by mutableStateOf<LauncherContinueWatchingRequest?>(null)
+    private var pendingInstallPackUrl by mutableStateOf<String?>(null)
 
     // StartupViewModel for parallel loading during splash
     private val startupViewModel: StartupViewModel by viewModels()
@@ -204,6 +205,7 @@ class MainActivity : ComponentActivity() {
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
         pendingLauncherRequest = parseLauncherRequest(intent)
+        pendingInstallPackUrl = parseInstallPackUrl(intent)
 
         val crashPrefs = getSharedPreferences("arvio_crash_store", Context.MODE_PRIVATE)
         if (crashPrefs.getBoolean("has_pending_crash_report", false)) {
@@ -356,6 +358,8 @@ class MainActivity : ComponentActivity() {
                         skipProfileSelection = skipProfileSelection,
                         pendingLauncherRequest = pendingLauncherRequest,
                         onConsumeLauncherRequest = { pendingLauncherRequest = null },
+                        pendingInstallPackUrl = pendingInstallPackUrl,
+                        onConsumeInstallPackUrl = { pendingInstallPackUrl = null },
                         preloadedCategories = startupState.categories,
                         preloadedHeroItem = startupState.heroItem,
                         preloadedHeroLogoUrl = startupState.heroLogoUrl,
@@ -394,6 +398,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingLauncherRequest = parseLauncherRequest(intent)
+        pendingInstallPackUrl = parseInstallPackUrl(intent)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -419,6 +424,19 @@ class MainActivity : ComponentActivity() {
 
 private fun MainActivity.parseLauncherRequest(intent: android.content.Intent?): LauncherContinueWatchingRequest? {
     return intent?.data?.toLauncherContinueWatchingRequest()
+}
+
+private fun MainActivity.parseInstallPackUrl(intent: android.content.Intent?): String? {
+    val data = intent?.data ?: return null
+    val scheme = data.scheme ?: return null
+    val host = data.host ?: return null
+    return if (scheme == "arvio" && host == "install-pack") {
+        data.getQueryParameter("url")
+    } else if ((scheme == "http" || scheme == "https") && host == "arvio.app" && data.path?.startsWith("/install-pack") == true) {
+        data.getQueryParameter("url")
+    } else {
+        null
+    }
 }
 
 private fun ComponentActivity.runAfterFirstDraw(block: () -> Unit) {
@@ -541,6 +559,8 @@ fun ArflixApp(
     skipProfileSelection: Boolean? = null,
     pendingLauncherRequest: LauncherContinueWatchingRequest? = null,
     onConsumeLauncherRequest: () -> Unit = {},
+    pendingInstallPackUrl: String? = null,
+    onConsumeInstallPackUrl: () -> Unit = {},
     preloadedCategories: List<com.arflix.tv.data.model.Category> = emptyList(),
     preloadedHeroItem: com.arflix.tv.data.model.MediaItem? = null,
     preloadedHeroLogoUrl: String? = null,
@@ -689,6 +709,19 @@ fun ArflixApp(
             launchSingleTop = true
         }
         onConsumeLauncherRequest()
+    }
+
+    LaunchedEffect(activeProfile?.id, pendingInstallPackUrl) {
+        val packUrl = pendingInstallPackUrl ?: return@LaunchedEffect
+        if (activeProfile == null) return@LaunchedEffect
+
+        val encodedUrl = java.net.URLEncoder.encode(packUrl, "UTF-8")
+        val route = "settings?initialSection=catalogs&installPackUrl=$encodedUrl"
+        navController.navigate(route) {
+            popUpTo(Screen.ProfileSelection.route) { inclusive = true }
+            launchSingleTop = true
+        }
+        onConsumeInstallPackUrl()
     }
 }
 

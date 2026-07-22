@@ -100,8 +100,37 @@ data class CatalogConfig(
     val collectionTileShape: CollectionTileShape = CollectionTileShape.LANDSCAPE,
     val collectionHideTitle: Boolean = false,
     val collectionSources: List<CollectionSourceConfig> = emptyList(),
-    val requiredAddonUrls: List<String> = emptyList()
+    val requiredAddonUrls: List<String> = emptyList(),
+    val packId: String? = null,
+    val packName: String? = null
 ) : Serializable
+
+val CatalogConfig.effectivePackId: String
+    get() = packId ?: when (sourceType) {
+        CatalogSourceType.PREINSTALLED -> "system"
+        CatalogSourceType.ADDON -> "addon"
+        CatalogSourceType.TRAKT -> "trakt"
+        CatalogSourceType.MDBLIST -> "mdblist"
+        CatalogSourceType.HOME_SERVER -> "home_server"
+    }
+
+val CatalogConfig.effectivePackName: String
+    get() = packName ?: when (sourceType) {
+        CatalogSourceType.PREINSTALLED -> "System Catalogs"
+        CatalogSourceType.ADDON -> "Addon Catalogs"
+        CatalogSourceType.TRAKT -> "Trakt Catalogs"
+        CatalogSourceType.MDBLIST -> "MDBlist Catalogs"
+        CatalogSourceType.HOME_SERVER -> "Home Server Catalogs"
+    }
+
+val CatalogConfig.isBulkDeletablePack: Boolean
+    get() = packId != null &&
+            packId != "system" &&
+            packId != "addon" &&
+            packId != "trakt" &&
+            packId != "mdblist" &&
+            packId != "home_server" &&
+            packId != "individual"
 
 data class CatalogDiscoveryResult(
     val id: String,
@@ -123,3 +152,17 @@ data class CatalogValidationResult(
     val sourceType: CatalogSourceType? = null,
     val error: String? = null
 )
+
+data class CatalogPackManifest(
+    val id: String?,
+    val name: String?,
+    val author: String? = null,
+    val version: String? = null,
+    val description: String? = null,
+    val catalogs: List<CatalogPackItem>?
+) : Serializable
+
+data class CatalogPackItem(
+    val name: String?,
+    val url: String?
+) : Serializable

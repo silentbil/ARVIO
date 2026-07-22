@@ -1,0 +1,29 @@
+{
+  "id": "classics-franchises",
+  "name": "Action & Franchise Classics",
+  "author": "Cinephile",
+  "version": "1.0.5",
+  "description": "Full box-sets and classic franchise collections, including James Bond, Harry Potter, Lord of the Rings, and Jurassic Park.",
+  "catalogs": [
+    {
+      "name": "James Bond Collection",
+      "url": "https://mdblist.com/lists/hdlists/james-bond-movies"
+    },
+    {
+      "name": "Harry Potter Collection",
+      "url": "https://trakt.tv/users/harrym/lists/harry-potter-collection"
+    },
+    {
+      "name": "The Matrix Collection",
+      "url": "https://trakt.tv/users/matrix-fan/lists/the-matrix-collection"
+    },
+    {
+      "name": "Lord of the Rings and Hobbit Collection",
+      "url": "https://mdblist.com/lists/spudhead15/lord-of-the-rings-and-hobbit-collection"
+    },
+    {
+      "name": "Jurassic Park Collection",
+      "url": "https://mdblist.com/lists/purple_smurf/jurassic-park"
+    }
+  ]
+}

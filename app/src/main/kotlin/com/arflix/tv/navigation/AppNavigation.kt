@@ -290,7 +290,7 @@ fun AppNavigation(
 
         // Settings screen
         composable(
-            route = "settings?autoCloudAuth={autoCloudAuth}&initialSection={initialSection}",
+            route = "settings?autoCloudAuth={autoCloudAuth}&initialSection={initialSection}&installPackUrl={installPackUrl}",
             arguments = listOf(
                 navArgument("autoCloudAuth") {
                     type = NavType.BoolType
@@ -300,15 +300,22 @@ fun AppNavigation(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                navArgument("installPackUrl") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
             val autoCloudAuth = backStackEntry.arguments?.getBoolean("autoCloudAuth") ?: false
             val initialSection = backStackEntry.arguments?.getString("initialSection")
+            val installPackUrl = backStackEntry.arguments?.getString("installPackUrl")
             SettingsScreen(
                 currentProfile = currentProfile,
                 autoStartCloudAuth = autoCloudAuth,
                 initialSection = initialSection,
+                installPackUrl = installPackUrl,
                 onNavigateToHome = { navigateHome() },
                 onNavigateToSearch = { navigateTopLevel(Screen.Search.route) },
                 onNavigateToTv = { navigateTopLevel(Screen.Tv.createRoute()) },
