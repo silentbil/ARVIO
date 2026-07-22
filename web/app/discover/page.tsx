@@ -73,7 +73,6 @@ export default function DiscoverPage() {
   const [formAuthor, setFormAuthor] = useState("");
   const [formUrl, setFormUrl] = useState("");
   const [formDesc, setFormDesc] = useState("");
-  const [formCatalogs, setFormCatalogs] = useState("");
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
@@ -140,55 +139,20 @@ export default function DiscoverPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formName.trim() || !formUrl.trim() || !formDesc.trim() || !formCatalogs.trim()) {
+    if (!formName.trim() || !formUrl.trim() || !formDesc.trim()) {
       setSubmitError("Please fill out all required fields.");
       return;
     }
 
-    // Basic URL validation
-    if (!formUrl.startsWith("http://") && !formUrl.startsWith("https://")) {
-      setSubmitError("Manifest URL must start with http:// or https://");
+    if (!formUrl.startsWith("https://")) {
+      setSubmitError("Manifest URL must start with https://");
       return;
     }
 
     setSubmitLoading(true);
     setSubmitError(null);
 
-    const catalogList = formCatalogs
-      .split(",")
-      .map((c) => c.trim())
-      .filter(Boolean);
-
     try {
-      // Verify manifest content format via proxy to bypass CORS
-      const verifyRes = await fetch(`/api/proxy?url=${encodeURIComponent(formUrl.trim())}`);
-      if (!verifyRes.ok) {
-        throw new Error(`Unable to fetch manifest JSON from "${formUrl}". Please verify the URL is correct and public.`);
-      }
-      const verifyJson = await verifyRes.json();
-      if (!verifyJson.id || !verifyJson.name || !Array.isArray(verifyJson.catalogs)) {
-        throw new Error("Invalid manifest format: JSON must contain 'id', 'name', and a 'catalogs' list.");
-      }
-
-      // Check for duplicate URLs inside manifest (normalized)
-      const normalizedUrls = new Set<string>();
-      for (const item of verifyJson.catalogs) {
-        if (!item.name || !item.url) {
-          throw new Error("All catalog items in the manifest must have a 'name' and 'url'.");
-        }
-        // Normalize: trim, lowercase, remove trailing slash, ensure http/https scheme
-        const trimmed = item.url.trim();
-        const withScheme = trimmed.startsWith("http://") || trimmed.startsWith("https://")
-          ? trimmed
-          : `https://${trimmed}`;
-        const normalized = withScheme.replace(/\/$/, "").toLowerCase();
-
-        if (normalizedUrls.has(normalized)) {
-          throw new Error(`Duplicate catalog URL found in manifest: '${item.url}'`);
-        }
-        normalizedUrls.add(normalized);
-      }
-
       const res = await fetch(`${config.netlifyBackendUrl}/catalog-packs-submit`, {
         method: "POST",
         headers: {
@@ -212,7 +176,6 @@ export default function DiscoverPage() {
       setFormAuthor("");
       setFormUrl("");
       setFormDesc("");
-      setFormCatalogs("");
       setTimeout(() => {
         setSubmitSuccess(false);
         setShowSubmitModal(false);
@@ -359,7 +322,7 @@ export default function DiscoverPage() {
                     value={formUrl}
                     onChange={(e) => setFormUrl(e.target.value)}
                   />
-                  <span className="field-hint">Must be public, CORS-enabled, and serve valid JSON.</span>
+                  <span className="field-hint">Must be a public HTTPS URL that serves valid JSON.</span>
                 </div>
 
                 <div className="form-field-row">
@@ -385,19 +348,6 @@ export default function DiscoverPage() {
                     value={formDesc}
                     onChange={(e) => setFormDesc(e.target.value)}
                   />
-                </div>
-
-                <div className="form-field">
-                  <label htmlFor="pack-catalogs">Included Catalogs *</label>
-                  <input
-                    type="text"
-                    id="pack-catalogs"
-                    required
-                    placeholder="e.g. Marvel Universe, Star Wars Timeline, MCU Extras (comma separated)"
-                    value={formCatalogs}
-                    onChange={(e) => setFormCatalogs(e.target.value)}
-                  />
-                  <span className="field-hint">Provide names for the catalog rows included in your manifest.</span>
                 </div>
 
                 <button

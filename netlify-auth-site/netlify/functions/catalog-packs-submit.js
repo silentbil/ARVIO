@@ -1,4 +1,6 @@
 const dns = require("dns").promises;
+const https = require("https");
+const ipaddr = require("ipaddr.js");
 const {
   json,
   options,
@@ -7,61 +9,113 @@ const {
   sha256
 } = require("./_backend");
 
-// Self-contained helper to check if an IP is private/loopback/link-local/multicast/cloud metadata
+const MAX_MANIFEST_BYTES = 512 * 1024;
+const MANIFEST_TIMEOUT_MS = 4_000;
+const MAX_REDIRECTS = 3;
+
 function isPrivateIp(ip) {
   if (!ip) return true;
-
-  let cleaned = ip.trim().replace(/^\[|\]$/g, "");
-
-  // Convert IPv4-mapped IPv6 address to IPv4
-  if (cleaned.toLowerCase().startsWith("::ffff:")) {
-    cleaned = cleaned.substring(7);
+  const cleaned = String(ip).trim().replace(/^\[|\]$/g, "");
+  try {
+    // process() converts IPv4-mapped IPv6 addresses before classification.
+    return ipaddr.process(cleaned).range() !== "unicast";
+  } catch {
+    return true;
   }
-
-  // IPv4 format check
-  if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(cleaned)) {
-    const parts = cleaned.split(".").map(Number);
-    if (parts.some(isNaN) || parts.some(p => p < 0 || p > 255)) return true;
-
-    const first = parts[0];
-    const second = parts[1];
-
-    // Loopback: 127.0.0.0/8
-    if (first === 127) return true;
-    // Broadcast/any: 0.0.0.0/8
-    if (first === 0) return true;
-    // Private RFC 1918: 10.0.0.0/8
-    if (first === 10) return true;
-    // Link-local/Cloud metadata: 169.254.0.0/16
-    if (first === 169 && second === 254) return true;
-    // Private RFC 1918: 172.16.0.0/12
-    if (first === 172 && (second >= 16 && second <= 31)) return true;
-    // Private RFC 1918: 192.168.0.0/16
-    if (first === 192 && second === 168) return true;
-    // Carrier-grade NAT: 100.64.0.0/10
-    if (first === 100 && (second >= 64 && second <= 127)) return true;
-    // Benchmark testing: 198.18.0.0/15
-    if (first === 198 && (second === 18 || second === 19)) return true;
-    // Multicast/Reserved: >= 224
-    if (first >= 224) return true;
-
-    return false;
-  }
-
-  // IPv6 format check
-  const ipv6Lower = cleaned.toLowerCase();
-  if (ipv6Lower === "::1" || ipv6Lower === "0:0:0:0:0:0:0:1") return true;
-  if (ipv6Lower === "::" || ipv6Lower === "0:0:0:0:0:0:0:0") return true;
-
-  // Link-local: fe80::/10
-  if (ipv6Lower.startsWith("fe8") || ipv6Lower.startsWith("fe9") || ipv6Lower.startsWith("fea") || ipv6Lower.startsWith("feb")) return true;
-  // ULA (Unique Local Address): fc00::/7
-  if (ipv6Lower.startsWith("fc") || ipv6Lower.startsWith("fd")) return true;
-  // Multicast: ff00::/8
-  if (ipv6Lower.startsWith("ff")) return true;
-
-  return false;
 }
+
+async function resolvePublicAddresses(hostname) {
+  const cleaned = hostname.trim().replace(/^\[|\]$/g, "");
+  let addresses;
+
+  if (ipaddr.isValid(cleaned)) {
+    const parsed = ipaddr.parse(cleaned);
+    addresses = [{ address: cleaned, family: parsed.kind() === "ipv6" ? 6 : 4 }];
+  } else {
+    try {
+      addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+    } catch {
+      throw new Error(`DNS lookup failed for hostname: ${hostname}`);
+    }
+  }
+
+  if (!Array.isArray(addresses) || addresses.length === 0) {
+    throw new Error(`DNS lookup returned no addresses for hostname: ${hostname}`);
+  }
+  if (addresses.some(({ address }) => isPrivateIp(address))) {
+    throw new Error("Access to private, loopback, or link-local IP addresses is blocked");
+  }
+  return addresses;
+}
+
+function requestPinnedHttps(url, resolvedAddress) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const request = https.request(url, {
+      method: "GET",
+      agent: false,
+      headers: { "User-Agent": "ARVIO-Pack-Validator/1.0" },
+      // Pin the connection to the address that passed validation. TLS still
+      // verifies the certificate against the original URL hostname.
+      lookup: (_hostname, options, callback) => {
+        if (options && options.all) {
+          callback(null, [resolvedAddress]);
+        } else {
+          callback(null, resolvedAddress.address, resolvedAddress.family);
+        }
+      }
+    }, (response) => {
+      const contentLength = Number(response.headers["content-length"] || 0);
+      if (contentLength > MAX_MANIFEST_BYTES) {
+        fail(new Error("Response size exceeds the maximum limit of 512 KB"));
+        response.destroy();
+        return;
+      }
+
+      const chunks = [];
+      let totalBytes = 0;
+      response.on("data", (chunk) => {
+        if (settled) return;
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalBytes += buffer.length;
+        if (totalBytes > MAX_MANIFEST_BYTES) {
+          fail(new Error("Response size exceeds the maximum limit of 512 KB"));
+          response.destroy();
+          request.destroy();
+          return;
+        }
+        chunks.push(buffer);
+      });
+      response.on("error", fail);
+      response.on("end", () => {
+        if (settled) return;
+        settled = true;
+        resolve({
+          statusCode: response.statusCode || 0,
+          headers: response.headers,
+          body: Buffer.concat(chunks)
+        });
+      });
+    });
+
+    request.setTimeout(MANIFEST_TIMEOUT_MS, () => {
+      const error = new Error("Request timed out");
+      error.code = "ETIMEDOUT";
+      fail(error);
+      request.destroy();
+    });
+    request.on("error", fail);
+    request.end();
+  });
+}
+
+let secureRequest = requestPinnedHttps;
 
 // Normalize URL helper
 function normalizeManifestUrl(urlStr) {
@@ -75,18 +129,16 @@ function normalizeManifestUrl(urlStr) {
 async function fetchSecure(urlStr) {
   let currentUrl = urlStr;
   let redirects = 0;
-  const maxRedirects = 3;
 
   while (true) {
-    if (!currentUrl.startsWith("https://")) {
-      throw new Error("Only HTTPS manifest URLs are allowed");
-    }
-
     let parsedUrl;
     try {
       parsedUrl = new URL(currentUrl);
-    } catch (err) {
+    } catch {
       throw new Error("Invalid URL format");
+    }
+    if (parsedUrl.protocol !== "https:") {
+      throw new Error("Only HTTPS manifest URLs are allowed");
     }
 
     const hostname = parsedUrl.hostname;
@@ -94,50 +146,22 @@ async function fetchSecure(urlStr) {
       throw new Error("Invalid hostname");
     }
 
-    // DNS Resolution check
-    let ip;
-    if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(hostname) || hostname.includes(":")) {
-      ip = hostname;
-    } else {
-      try {
-        const lookup = await dns.lookup(hostname);
-        ip = lookup.address;
-      } catch (dnsErr) {
-        throw new Error(`DNS lookup failed for hostname: ${hostname}`);
-      }
-    }
-
-    if (isPrivateIp(ip)) {
-      throw new Error("Access to private, loopback, or link-local IP addresses is blocked");
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout
-
+    const addresses = await resolvePublicAddresses(hostname);
     let response;
     try {
-      response = await fetch(currentUrl, {
-        signal: controller.signal,
-        redirect: "manual",
-        headers: {
-          "User-Agent": "ARVIO-Pack-Validator/1.0"
-        }
-      });
+      response = await secureRequest(parsedUrl, addresses[0]);
     } catch (err) {
-      if (err.name === "AbortError") {
+      if (err.code === "ETIMEDOUT" || /timed out/i.test(err.message || "")) {
         throw new Error("Request timed out");
       }
       throw new Error(`Failed to fetch manifest: ${err.message}`);
-    } finally {
-      clearTimeout(timeoutId);
     }
 
-    // Handle redirects manually to secure them
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      if (redirects >= maxRedirects) {
+    if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
+      if (redirects >= MAX_REDIRECTS) {
         throw new Error("Too many redirects");
       }
-      const location = response.headers.get("location");
+      const location = response.headers.location;
       if (!location) {
         throw new Error("Redirect response missing location header");
       }
@@ -146,31 +170,22 @@ async function fetchSecure(urlStr) {
       continue;
     }
 
-    if (!response.ok) {
-      throw new Error(`Server returned status ${response.status}`);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(`Server returned status ${response.statusCode}`);
     }
 
-    // Content-Type validation
-    const contentType = response.headers.get("content-type") || "";
+    const contentType = String(response.headers["content-type"] || "");
     if (!contentType.includes("application/json") && !contentType.includes("text/plain")) {
       throw new Error("Response content-type must be JSON");
     }
 
-    // Content-Length check
-    const contentLength = response.headers.get("content-length");
-    if (contentLength && parseInt(contentLength, 10) > 512 * 1024) {
+    const contentLength = Number(response.headers["content-length"] || 0);
+    if (contentLength > MAX_MANIFEST_BYTES || response.body.length > MAX_MANIFEST_BYTES) {
       throw new Error("Response size exceeds the maximum limit of 512 KB");
     }
 
-    // Download body buffer and enforce size limit
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength > 512 * 1024) {
-      throw new Error("Response size exceeds the maximum limit of 512 KB");
-    }
-
-    const text = new TextDecoder().decode(buffer);
     try {
-      return JSON.parse(text);
+      return JSON.parse(response.body.toString("utf8"));
     } catch (e) {
       throw new Error("Failed to parse manifest as JSON. Please ensure it is valid JSON.");
     }
@@ -346,5 +361,16 @@ exports.handler = async (event) => {
   } catch (error) {
     console.error("catalog-packs-submit failed", error);
     return json(500, { error: "internal_error", message: error.message });
+  }
+};
+
+exports._test = {
+  fetchSecure,
+  isPrivateIp,
+  setSecureRequest(requester) {
+    secureRequest = requester;
+  },
+  resetSecureRequest() {
+    secureRequest = requestPinnedHttps;
   }
 };

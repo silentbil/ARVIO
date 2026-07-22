@@ -36,7 +36,7 @@ require.cache[require.resolve("../netlify/functions/_backend")] = {
   exports: mockBackend
 };
 
-const { handler } = require("../netlify/functions/catalog-packs-submit");
+const { handler, _test } = require("../netlify/functions/catalog-packs-submit");
 
 // Helper to create events
 function createEvent({ url, clientIp = "1.2.3.4", bodyExtra = {} }) {
@@ -53,10 +53,8 @@ function createEvent({ url, clientIp = "1.2.3.4", bodyExtra = {} }) {
 }
 
 test("catalog-packs-submit unit tests", async (t) => {
-  const originalFetch = globalThis.fetch;
-
   t.afterEach(() => {
-    globalThis.fetch = originalFetch;
+    _test.resetSecureRequest();
     mockQueries.length = 0;
     mockRateLimitRows = [];
     mockDuplicateCheckRows = [];
@@ -80,11 +78,20 @@ test("catalog-packs-submit unit tests", async (t) => {
     assert.match(body.message, /private, loopback, or link-local IP addresses/);
   });
 
+  await t.test("Block IPv4-mapped IPv6 loopback addresses", async () => {
+    const event = createEvent({ url: "https://[::ffff:127.0.0.1]/manifest.json" });
+    const res = await handler(event);
+    assert.strictEqual(res.statusCode, 400);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.error, "fetch_failed");
+    assert.match(body.message, /private, loopback, or link-local IP addresses/);
+  });
+
   await t.test("Block hostnames that resolve to private IPs (DNS resolution check)", async () => {
     // Resolve any test local hostname or stub DNS lookup.
     // For safety in this test, we can mock dns.lookup or mock a local URL
     const originalLookup = dns.lookup;
-    dns.lookup = async () => ({ address: "192.168.1.50" });
+    dns.lookup = async () => [{ address: "192.168.1.50", family: 4 }];
 
     try {
       const event = createEvent({ url: "https://some-internal-domain.local/manifest.json" });
@@ -98,21 +105,63 @@ test("catalog-packs-submit unit tests", async (t) => {
     }
   });
 
-  await t.test("Fail on response size exceeding maximum limit", async () => {
-    globalThis.fetch = async () => ({
-      ok: true,
-      status: 200,
-      headers: {
-        get: (name) => {
-          if (name.toLowerCase() === "content-type") return "application/json";
-          if (name.toLowerCase() === "content-length") return String(1024 * 1024); // 1 MB
-          return null;
-        }
-      },
-      arrayBuffer: async () => new ArrayBuffer(1024 * 1024)
+  await t.test("Block a hostname when any DNS result is private", async () => {
+    const originalLookup = dns.lookup;
+    dns.lookup = async () => [
+      { address: "93.184.216.34", family: 4 },
+      { address: "10.0.0.8", family: 4 }
+    ];
+
+    try {
+      const event = createEvent({ url: "https://mixed-addresses.example/manifest.json" });
+      const res = await handler(event);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body);
+      assert.strictEqual(body.error, "fetch_failed");
+      assert.match(body.message, /private, loopback, or link-local IP addresses/);
+    } finally {
+      dns.lookup = originalLookup;
+    }
+  });
+
+  await t.test("Pin the request to the validated DNS address", async () => {
+    const originalLookup = dns.lookup;
+    dns.lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+    let requestedAddress;
+    _test.setSecureRequest(async (_url, address) => {
+      requestedAddress = address;
+      return {
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: Buffer.from(JSON.stringify({
+          id: "safe-pack",
+          name: "Safe Pack",
+          catalogs: [{ name: "Movies", url: "https://mdblist.com/lists/test/movies" }]
+        }))
+      };
     });
 
-    const event = createEvent({ url: "https://example.com/huge.json" });
+    try {
+      const event = createEvent({ url: "https://public-manifest.example/manifest.json" });
+      const res = await handler(event);
+      assert.strictEqual(res.statusCode, 201);
+      assert.deepStrictEqual(requestedAddress, { address: "93.184.216.34", family: 4 });
+    } finally {
+      dns.lookup = originalLookup;
+    }
+  });
+
+  await t.test("Fail on response size exceeding maximum limit", async () => {
+    _test.setSecureRequest(async () => ({
+      statusCode: 200,
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(1024 * 1024)
+      },
+      body: Buffer.alloc(0)
+    }));
+
+    const event = createEvent({ url: "https://93.184.216.34/huge.json" });
     const res = await handler(event);
     assert.strictEqual(res.statusCode, 400);
     const body = JSON.parse(res.body);
@@ -121,14 +170,13 @@ test("catalog-packs-submit unit tests", async (t) => {
   });
 
   await t.test("Fail on fetch timeout", async () => {
-    globalThis.fetch = () => new Promise((resolve, reject) => {
-      // Simulate timeout by rejecting with AbortError
-      const err = new Error("The operation was aborted.");
-      err.name = "AbortError";
-      setTimeout(() => reject(err), 50);
+    _test.setSecureRequest(async () => {
+      const error = new Error("Request timed out");
+      error.code = "ETIMEDOUT";
+      throw error;
     });
 
-    const event = createEvent({ url: "https://example.com/slow.json" });
+    const event = createEvent({ url: "https://93.184.216.34/slow.json" });
     const res = await handler(event);
     assert.strictEqual(res.statusCode, 400);
     const body = JSON.parse(res.body);
@@ -137,18 +185,13 @@ test("catalog-packs-submit unit tests", async (t) => {
   });
 
   await t.test("Fail on invalid JSON content-type", async () => {
-    globalThis.fetch = async () => ({
-      ok: true,
-      status: 200,
-      headers: {
-        get: (name) => {
-          if (name.toLowerCase() === "content-type") return "text/html";
-          return null;
-        }
-      }
-    });
+    _test.setSecureRequest(async () => ({
+      statusCode: 200,
+      headers: { "content-type": "text/html" },
+      body: Buffer.from("<html></html>")
+    }));
 
-    const event = createEvent({ url: "https://example.com/index.html" });
+    const event = createEvent({ url: "https://93.184.216.34/index.html" });
     const res = await handler(event);
     assert.strictEqual(res.statusCode, 400);
     const body = JSON.parse(res.body);

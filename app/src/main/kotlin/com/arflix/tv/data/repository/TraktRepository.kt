@@ -3963,7 +3963,7 @@ data class ContinueWatchingItem(
 
         val subtitle = if (mediaType == MediaType.TV && season != null && episode != null) {
             val base = context?.getString(R.string.continue_season_episode, season, episode)
-                ?: "Continue S${season}.E${episode}"
+                ?: "Continue S${season}E${episode}"
             if (!resumeLabel.isNullOrBlank()) {
                 context?.getString(R.string.continue_from, resumeLabel) ?: "$base from $resumeLabel"
             } else {
