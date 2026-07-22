@@ -349,7 +349,7 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
   // starved user-initiated fetches (opening a details page mid-boot timed out
   // and rendered without seasons/cast).
   const source = items.slice(0, 50);
-  const hydrated: MediaItem[] = new Array(source.length);
+  const hydrated: Array<MediaItem | null> = new Array(source.length).fill(null);
   let cursor = 0;
   const workers = Array.from({ length: Math.min(10, source.length) }, async () => {
     while (cursor < source.length) {
@@ -357,7 +357,7 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
       cursor += 1;
       const item = source[index];
       const details = await getDetails(item).catch(() => item);
-      hydrated[index] = {
+      hydrated[index] = clampUpNextEpisode({
         ...details,
         ...item,
         image: item.image || details.image,
@@ -365,11 +365,39 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
         overview: details.overview || item.overview,
         rating: details.rating || item.rating,
         duration: details.duration || item.duration
-      };
+      });
     }
   });
   await Promise.all(workers);
-  return hydrated;
+  return hydrated.filter((item): item is MediaItem => Boolean(item));
+}
+
+// Trakt's episode database can list MORE episodes than TMDB does for the same
+// season (specials folded in, split-release counting) — its next_episode then
+// points past the last episode the app can actually show ("Up next S1 E11" on
+// a 10-episode season, which plays nothing). Clamp against the hydrated TMDB
+// season data: advance to the next real season when one exists, otherwise the
+// show is finished and the row is dropped from Continue Watching.
+function clampUpNextEpisode(item: MediaItem): MediaItem | null {
+  if (item.timeRemainingLabel !== "Up next") return item;
+  const seasonNumber = item.seasonNumber;
+  const episodeNumber = item.episodeNumber;
+  if (item.mediaType !== "tv" || !seasonNumber || !episodeNumber) return item;
+  const seasons = (item.seasons ?? []).filter((season) => season.seasonNumber > 0);
+  if (!seasons.length) return item;
+  const current = seasons.find((season) => season.seasonNumber === seasonNumber);
+  if (!current?.episodeCount || episodeNumber <= current.episodeCount) return item;
+  const nextSeason = seasons
+    .filter((season) => season.seasonNumber > seasonNumber && (season.episodeCount ?? 0) > 0)
+    .sort((a, b) => a.seasonNumber - b.seasonNumber)[0];
+  if (!nextSeason) return null; // watched past the final episode — show done
+  return {
+    ...item,
+    seasonNumber: nextSeason.seasonNumber,
+    episodeNumber: 1,
+    episodeTitle: null,
+    subtitle: `S${nextSeason.seasonNumber} E1`
+  };
 }
 
 function sameSettings(a: AppSettings, b: AppSettings) {
