@@ -3,6 +3,7 @@
 import { BadgeCheck, ExternalLink, Loader2, LogOut, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { config } from "@/lib/config";
+import { HttpError } from "@/lib/http";
 import {
   cachedEntitlement,
   fetchEntitlement,
@@ -79,8 +80,15 @@ function PaywallScreen({
       const next = await startTrial(authClient);
       if (next.entitled) onEntitled(next);
       else setError("Your free trial has already been used.");
-    } catch {
-      setError("Could not start the trial. Please try again.");
+    } catch (err) {
+      // startTrial already refreshed + retried on a stale token; reaching this
+      // catch means the session is genuinely dead, the trial was consumed, or
+      // the backend hiccuped — say which, and give the dead-session case a way
+      // out (the generic message left users stuck with no next step).
+      const status = err instanceof HttpError ? err.status : null;
+      if (status === 401) setError("Your session has expired — sign out below and sign back in, then try again.");
+      else if (status === 409) setError("Your free trial has already been used.");
+      else setError("Could not start the trial — please try again in a moment.");
     } finally {
       setBusy(null);
     }
