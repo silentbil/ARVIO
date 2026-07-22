@@ -34,6 +34,7 @@ import {
   hasNetlifyBackendConfig,
   hasSupabaseConfig,
   hasTraktConfig,
+  getAuthPortalUrl,
 } from "@/lib/config";
 import { defaultSettings, useApp } from "@/lib/store";
 import type {
@@ -997,42 +998,20 @@ function AccountsSection() {
     auth,
     traktConnected,
     deviceCode,
-    signIn,
     signOut,
     beginTrakt,
     pollTrakt,
     disconnectTrakt,
     refreshData,
   } = useApp();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [loginBusy, setLoginBusy] = useState<"sign-in" | "sign-up" | null>(
-    null,
-  );
   const [traktError, setTraktError] = useState<string | null>(null);
   const [traktBusy, setTraktBusy] = useState<"start" | "poll" | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const cloudConfigured = hasNetlifyBackendConfig() || hasSupabaseConfig();
 
-  const submitCloudAuth = async (mode: "sign-in" | "sign-up") => {
-    if (!email.trim() || !password) {
-      setLoginError("Enter your email and password.");
-      return;
-    }
-    setLoginBusy(mode);
-    setLoginError(null);
-    try {
-      await signIn(email.trim(), password, mode);
-      setEmail("");
-      setPassword("");
-    } catch (error) {
-      setLoginError(
-        error instanceof Error ? error.message : "Authentication failed.",
-      );
-    } finally {
-      setLoginBusy(null);
-    }
+  const redirectToAuthPortal = () => {
+    const redirectUri = window.location.origin + "/login";
+    window.location.href = `${getAuthPortalUrl()}?redirect_uri=${encodeURIComponent(redirectUri)}`;
   };
 
   const startTraktLink = async () => {
@@ -1111,7 +1090,6 @@ function AccountsSection() {
             <strong>{auth ? "Cloud saved" : "Local only"}</strong>
           </div>
         </div>
-        {loginError && <p className="login-error">{loginError}</p>}
         {auth ? (
           <div className="account-row">
             <UserCircle size={34} />
@@ -1125,41 +1103,14 @@ function AccountsSection() {
           </div>
         ) : (
           <div className="login-form">
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Email"
-              type="email"
-              autoComplete="email"
-            />
-            <input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
-              type="password"
-              autoComplete="current-password"
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void submitCloudAuth("sign-in");
-              }}
-            />
-            <div className="hero-actions">
-              <button
-                type="button"
-                className="primary"
-                disabled={Boolean(loginBusy) || !cloudConfigured}
-                onClick={() => void submitCloudAuth("sign-in")}
-              >
-                {loginBusy === "sign-in" ? "Signing in..." : "Sign in"}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={Boolean(loginBusy) || !cloudConfigured}
-                onClick={() => void submitCloudAuth("sign-up")}
-              >
-                {loginBusy === "sign-up" ? "Creating..." : "Create"}
-              </button>
-            </div>
+            <button
+              type="button"
+              className="primary"
+              disabled={!cloudConfigured}
+              onClick={redirectToAuthPortal}
+            >
+              Sign In with ARVIO Cloud
+            </button>
           </div>
         )}
       </Panel>

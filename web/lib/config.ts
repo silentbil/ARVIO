@@ -36,3 +36,15 @@ export function hasResolverConfig() {
 export function hasTraktConfig() {
   return config.traktClientId.length > 10 && !config.traktClientId.startsWith("__");
 }
+
+export function getAuthPortalUrl(): string {
+  const backend = config.netlifyBackendUrl;
+  try {
+    const url = new URL(backend);
+    const cleanPath = url.pathname.replace(/\/\.netlify\/functions\/?$/, "/");
+    return `${url.protocol}//${url.host}${cleanPath}`;
+  } catch {
+    return "https://auth.arvio.tv/";
+  }
+}
+

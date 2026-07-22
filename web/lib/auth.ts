@@ -3,7 +3,7 @@ import { jsonRequest } from "./http";
 import { loadStored, removeStored, saveStored } from "./storage";
 import type { AuthSession, UserProfile } from "./types";
 
-const SESSION_KEY = "arvio.web.supabase.session";
+export const SESSION_KEY = "arvio.web.supabase.session";
 
 interface SupabaseAuthResponse {
   access_token: string;
@@ -12,7 +12,7 @@ interface SupabaseAuthResponse {
   user?: { id?: string; email?: string };
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> {
+export function decodeJwtPayload(token: string): Record<string, unknown> {
   const part = token.split(".")[1];
   if (!part) return {};
   const padded = part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=");
