@@ -13,9 +13,9 @@ import {
 } from "@/lib/entitlement";
 import { authClient, useApp } from "@/lib/store";
 
-// 24-hour free trial: hidden for now (subscribe-only paywall). The trial
-// backend + start flow stay intact — flip this to true to re-enable the button.
-const SHOW_TRIAL = false;
+// 24-hour free trial: enabled — try-before-you-buy converts far better than a
+// blind $2.99 ask. One trial per account (trialUsed is stamped server-side).
+const SHOW_TRIAL = true;
 
 // Gate that stands between profile selection and the app when the paywall is
 // enabled. Fails OPEN on backend errors (a paying user is never locked out by a
