@@ -41,6 +41,8 @@ import {
 } from "@/lib/config";
 import {
   isLinux,
+  isMac,
+  isWindows,
   setVlcProtocolReady,
   triggerDownload,
   vlcProtocolReady,
@@ -542,24 +544,52 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
-          <Row
-            label="VLC One-Click Setup"
-            hint="Download vlc-setup.bat to enable direct vlc:// launching on Windows without saving .m3u playlist files"
-          >
-            <button
-              type="button"
-              className="secondary text-button"
-              onClick={() => {
-                triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
-                setVlcProtocolReady(true);
-                app.setToast(
-                  "Downloaded vlc-setup.bat — run it once on Windows to enable direct VLC launching.",
-                );
-              }}
+          {isMac() ? (
+            <Row
+              label="VLC One-Click Setup"
+              hint="macOS self-registers the vlc:// protocol upon VLC installation — no setup script required"
             >
-              <Download size={16} /> Download .bat
-            </button>
-          </Row>
+              <span className="muted" style={{ fontSize: "13px" }}>Natively supported</span>
+            </Row>
+          ) : isLinux() ? (
+            <Row
+              label="VLC One-Click Setup"
+              hint="Download vlc-setup.sh to enable direct vlc:// launching on Linux without saving .m3u playlist files"
+            >
+              <button
+                type="button"
+                className="secondary text-button"
+                onClick={() => {
+                  triggerDownload(VLC_SETUP_SH_URL, "vlc-setup.sh");
+                  setVlcProtocolReady(true);
+                  app.setToast(
+                    "Downloaded vlc-setup.sh — run `bash vlc-setup.sh` to enable direct VLC launching.",
+                  );
+                }}
+              >
+                <Download size={16} /> Download .sh
+              </button>
+            </Row>
+          ) : isWindows() ? (
+            <Row
+              label="VLC One-Click Setup"
+              hint="Download vlc-setup.bat to enable direct vlc:// launching on Windows without saving .m3u playlist files"
+            >
+              <button
+                type="button"
+                className="secondary text-button"
+                onClick={() => {
+                  triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
+                  setVlcProtocolReady(true);
+                  app.setToast(
+                    "Downloaded vlc-setup.bat — run it once on Windows to enable direct VLC launching.",
+                  );
+                }}
+              >
+                <Download size={16} /> Download .bat
+              </button>
+            </Row>
+          ) : null}
           <Row label="Auto play next episode">
             <Toggle
               value={settings.autoPlayNext}
@@ -1918,7 +1948,7 @@ function VlcSection() {
     window.addEventListener("blur", onBlur);
 
     const testUrl =
-      "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+      "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_5MB.mp4";
     try {
       const a = document.createElement("a");
       a.href = `vlc://${testUrl}`;
@@ -1990,14 +2020,20 @@ function VlcSection() {
         hint="When enabled, ARVIO launches streams directly via vlc:// instead of saving .m3u playlist files"
       >
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <button
-            type="button"
-            className={vlcReady ? "secondary text-button" : "text-button"}
-            onClick={handleToggleReady}
-          >
-            {vlcReady ? <Check size={16} /> : null}
-            {vlcReady ? "Protocol Enabled (vlc://)" : "Mark Protocol Enabled"}
-          </button>
+          {isMac() ? (
+            <span className="muted" style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}>
+              <Check size={16} style={{ color: "#4ade80" }} /> Natively Enabled on macOS (no setup script needed)
+            </span>
+          ) : (
+            <button
+              type="button"
+              className={vlcReady ? "secondary text-button" : "text-button"}
+              onClick={handleToggleReady}
+            >
+              {vlcReady ? <Check size={16} /> : null}
+              {vlcReady ? "Protocol Enabled (vlc://)" : "Mark Protocol Enabled"}
+            </button>
+          )}
         </div>
       </Row>
 

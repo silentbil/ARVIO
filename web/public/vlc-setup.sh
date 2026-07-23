@@ -25,11 +25,13 @@ SCRIPT_PATH="$BIN_DIR/arvio-vlc"
 cat << 'EOF' > "$SCRIPT_PATH"
 #!/usr/bin/env bash
 URL="$1"
-# Strip vlc:// or vlc:/ prefix
-URL="${URL#vlc://}"
-URL="${URL#vlc:/}"
-# Fix scheme collapse if browser stripped slashes
-if [[ "$URL" =~ ^(https?)([^/].*) ]]; then
+# Strip leading vlc: and any slashes following it
+URL="${URL#vlc:}"
+while [[ "$URL" == /* ]]; do
+  URL="${URL#/}"
+done
+# Repair mangled scheme separator (e.g. Chrome stripping colon https// -> https://, or collapsing slashes https:/ -> https://)
+if [[ "$URL" =~ ^(https?)[:/]+(.*) ]]; then
   URL="${BASH_REMATCH[1]}://${BASH_REMATCH[2]}"
 fi
 if [ -n "$URL" ]; then

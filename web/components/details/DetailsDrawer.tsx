@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_URL } from "@/lib/externalPlayers";
+import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isLinux, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_SH_URL, VLC_SETUP_URL } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -381,14 +381,20 @@ function SourcePickerModal({
   // macOS is excluded — VLC self-registers vlc:// there, so no installer is
   // needed (and the .bat wouldn't run on a Mac anyway).
   const [vlcReady, setVlcReady] = useState<boolean>(() => vlcProtocolReady());
-  const showVlcSetup = isWindows() && !vlcReady;
+  const showVlcSetup = (isWindows() || isLinux()) && !vlcReady;
   const enableVlcProtocol = () => {
-    // Download the tiny installer, then remember the user set it up so the VLC
-    // button switches to the direct vlc:// launch.
-    triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
-    setVlcProtocolReady(true);
-    setVlcReady(true);
-    onToast("Run the downloaded vlc-setup.bat once — then Open in VLC works instantly.");
+    // Download the tiny installer script for the platform, then remember the user set it up
+    if (isLinux()) {
+      triggerDownload(VLC_SETUP_SH_URL, "vlc-setup.sh");
+      setVlcProtocolReady(true);
+      setVlcReady(true);
+      onToast("Run `bash vlc-setup.sh` once in terminal — then Open in VLC works instantly.");
+    } else {
+      triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
+      setVlcProtocolReady(true);
+      setVlcReady(true);
+      onToast("Run the downloaded vlc-setup.bat once — then Open in VLC works instantly.");
+    }
   };
   // Addon subtitles for this title, fetched in the background when the panel
   // opens so the VLC/Infuse buttons can attach them synchronously on click.
