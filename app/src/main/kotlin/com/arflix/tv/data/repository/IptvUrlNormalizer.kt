@@ -39,7 +39,9 @@ private fun decodeLegacyHttpUrl(value: String): String? {
         .mapNotNull { flags ->
             try {
                 String(Base64.decode(value, flags), StandardCharsets.UTF_8).trim()
-            } catch (e: Exception) { null }
+            } catch (e: IllegalArgumentException) {
+                null
+            }
         }
         .firstOrNull { decoded ->
             decoded.startsWith("http://", ignoreCase = true) ||
