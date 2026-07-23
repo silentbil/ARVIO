@@ -651,11 +651,28 @@ class ExternalExtensionLoader @Inject constructor(
     }
 
     fun deleteExtension(scraperId: String) {
-        apiCache.keys.filter { it.startsWith(scraperId) }.forEach { apiCache.remove(it) }
+        val cachedApis = apiCache.keys.filter { it.startsWith(scraperId) }.mapNotNull { apiCache.remove(it) }
         classLoaderCache.remove(scraperId)
         extractorPreloadedIds.remove(scraperId)
         File(extensionsDir, "${safeFileName(scraperId)}.cs3").delete()
+        if (cachedApis.isNotEmpty()) {
+            synchronized(APIHolder.allProviders) {
+                APIHolder.allProviders.removeAll(cachedApis.toSet())
+            }
+        }
         Log.d(TAG, "Deleted extension $scraperId")
+    }
+
+    fun clearAllExtensions() {
+        apiCache.clear()
+        classLoaderCache.clear()
+        extractorPreloadedIds.clear()
+        extensionsDir.listFiles()?.forEach { it.delete() }
+        extractorRegistry.clear()
+        synchronized(APIHolder.allProviders) {
+            APIHolder.allProviders.clear()
+        }
+        Log.d(TAG, "Cleared all external extensions")
     }
 
     fun evictCache(scraperId: String) {
