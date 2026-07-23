@@ -421,16 +421,19 @@ function SourcePickerModal({
   }, [visible, item?.id, selectedEpisode?.season, selectedEpisode?.episode]);
 
   const addons = useMemo(() => {
+    // Only surface addons that actually returned sources for this title. Seeding a
+    // chip for every installed stream-capable addon meant subtitle providers
+    // (OpenSubtitles, Ktuvit, Wizdom) — whose manifests also declare a "stream"
+    // resource — showed up as empty source filters. A name lookup from the
+    // installed list keeps the pretty addon names.
+    const nameById = new Map(installedAddons.map((addon) => [addon.id, addon.name]));
     const unique = new Map<string, { id: string; name: string; count: number }>();
-    installedAddons
-      .filter((addon) => addon.enabled !== false && addonHasResource(addon, "stream"))
-      .forEach((addon) => unique.set(addon.id, { id: addon.id, name: addon.name, count: 0 }));
     streams.forEach((stream) => {
       const id = stream.addonId || stream.addonName;
       const existing = unique.get(id);
       unique.set(id, {
         id,
-        name: existing?.name || stream.addonName,
+        name: existing?.name || nameById.get(id) || stream.addonName,
         count: (existing?.count ?? 0) + 1
       });
     });
@@ -789,12 +792,6 @@ function streamBadges(stream: StreamSource) {
     seen.add(badge.label);
     return true;
   }).slice(0, 7);
-}
-
-function addonHasResource(addon: InstalledAddon, resource: string) {
-  const resources = addon.resources ?? [];
-  if (!resources.length) return true;
-  return resources.some((item) => typeof item === "string" ? item === resource : item.name === resource);
 }
 
 function detectSourceBadge(text: string) {

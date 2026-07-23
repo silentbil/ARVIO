@@ -19,6 +19,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Send,
   Server,
   Sparkles,
   Subtitles,
@@ -58,6 +59,7 @@ const SECTIONS = [
   { id: "network", label: "Network", icon: Network },
   { id: "tv", label: "TV (IPTV)", icon: Tv },
   { id: "homeserver", label: "Home Server", icon: Server },
+  { id: "telegram", label: "Telegram", icon: Send },
   { id: "catalogs", label: "Catalogs", icon: ListVideo },
   { id: "addons", label: "Addons", icon: Sparkles },
 ] as const;
@@ -963,6 +965,8 @@ function SectionBody({ section }: { section: SectionId }) {
       return <TvSettingsSection />;
     case "homeserver":
       return <HomeServerSection />;
+    case "telegram":
+      return <TelegramSection />;
     case "catalogs":
       return <CatalogsSection />;
     case "addons":
@@ -1351,6 +1355,250 @@ function HomeServerSection() {
           <p className="empty">No home servers configured.</p>
         )}
       </div>
+    </Panel>
+  );
+}
+
+/* ---------- Telegram ---------- */
+
+// Lazily-loaded shape of @/lib/telegram. GramJS is a large browser-only bundle,
+// so the module (and its dynamic gramjs import) only load when this section is
+// first opened.
+type TgModule = typeof import("@/lib/telegram");
+type TgAuthState = import("@/lib/telegram").TgAuthState;
+
+function TelegramSection() {
+  const { settings, setToast } = useApp();
+  const [mod, setMod] = useState<TgModule | null>(null);
+  const [authState, setAuthState] = useState<TgAuthState>({ k: "idle" });
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [phone, setPhone] = useState("+");
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [usePhone, setUsePhone] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+
+  // Load the Telegram module and subscribe to its auth state.
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    let active = true;
+    void (async () => {
+      try {
+        const m = await import("@/lib/telegram");
+        if (!active) return;
+        setMod(m);
+        unsub = m.subscribe(setAuthState);
+      } catch {
+        setToast("Telegram module failed to load in this browser.");
+      }
+    })();
+    return () => {
+      active = false;
+      unsub?.();
+    };
+  }, [setToast]);
+
+  // Render the QR login link to an image whenever it (re)appears.
+  useEffect(() => {
+    if (authState.k !== "waitQr") {
+      setQrDataUrl(null);
+      return;
+    }
+    const url = authState.url;
+    let active = true;
+    void (async () => {
+      try {
+        const QRCode = await import("qrcode");
+        const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 320 });
+        if (active) setQrDataUrl(dataUrl);
+      } catch {
+        /* Fall back to showing the raw link below. */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [authState]);
+
+  if (!mod) {
+    return (
+      <Panel title="Telegram">
+        <p className="empty">Loading…</p>
+      </Panel>
+    );
+  }
+
+  const connect = () => {
+    setUsePhone(false);
+    void mod.startQrAuth();
+  };
+  const connectPhone = () => {
+    const digits = phone.replace(/\D/g, "");
+    if (!phone.startsWith("+") || digits.length < 7) {
+      setToast("Enter a valid phone number in international format (e.g. +1 650 555 1234).");
+      return;
+    }
+    void mod.startPhoneAuth(phone.trim());
+  };
+
+  return (
+    <Panel title="Telegram">
+      <p className="empty">
+        Connect your Telegram account to stream video files from your chats and
+        channels as sources — the same feature as the Android app. Everything
+        runs in your browser; nothing is sent to ARVIO servers.
+      </p>
+
+      {authState.k === "idle" && !usePhone && (
+        <div className="tg-center">
+          <p className="tg-lead">Scan a QR code with the Telegram app on your phone to sign in.</p>
+          <div className="tg-actions">
+            <button type="button" className="primary" onClick={connect}>
+              <Send size={18} /> Connect with QR
+            </button>
+            <button type="button" className="secondary" onClick={() => setUsePhone(true)}>
+              Use phone number instead
+            </button>
+          </div>
+        </div>
+      )}
+
+      {authState.k === "idle" && usePhone && (
+        <div className="tg-center">
+          <p className="tg-lead">Enter your phone number in international format.</p>
+          <div className="inline-form">
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+1 650 555 1234"
+              inputMode="tel"
+            />
+            <button type="button" className="primary" onClick={connectPhone}>
+              Send code
+            </button>
+            <button type="button" className="secondary" onClick={() => setUsePhone(false)}>
+              Back to QR
+            </button>
+          </div>
+        </div>
+      )}
+
+      {authState.k === "initializing" && <p className="empty">Connecting to Telegram…</p>}
+
+      {authState.k === "waitQr" && (
+        <div className="tg-center">
+          <p className="tg-lead">Open Telegram on your phone → Settings → Devices → Link Desktop Device, then scan:</p>
+          <div className="tg-qr">
+            {qrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={qrDataUrl} alt="Telegram login QR code" width={280} height={280} />
+            ) : (
+              <p className="empty">Generating QR…</p>
+            )}
+          </div>
+          <p className="empty tg-fineprint">The code refreshes automatically. Approving it on your phone signs you in here.</p>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              mod.resetToIdle();
+              setUsePhone(true);
+            }}
+          >
+            Use phone number instead
+          </button>
+        </div>
+      )}
+
+      {authState.k === "waitCode" && (
+        <div className="tg-center">
+          <p className="tg-lead">Enter the {authState.codeLength}-digit code Telegram just sent you.</p>
+          <div className="inline-form">
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, authState.codeLength))}
+              placeholder="Login code"
+              inputMode="numeric"
+            />
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                if (code) mod.submitCode(code);
+              }}
+            >
+              Confirm
+            </button>
+          </div>
+        </div>
+      )}
+
+      {authState.k === "waitPassword" && (
+        <div className="tg-center">
+          <p className="tg-lead">
+            Two-step verification is on. Enter your Telegram password
+            {authState.hint ? ` (hint: ${authState.hint})` : ""}.
+          </p>
+          <div className="inline-form">
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="2FA password"
+              type="password"
+            />
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                if (password) mod.submitPassword(password);
+                setPassword("");
+              }}
+            >
+              Confirm
+            </button>
+          </div>
+        </div>
+      )}
+
+      {authState.k === "ready" && (
+        <div className="tg-connected">
+          <div className="tg-badge">
+            <strong>Connected</strong>
+            <span>Signed in as {authState.firstName || "your account"}</span>
+          </div>
+          {!confirmDisconnect ? (
+            <button type="button" className="secondary" onClick={() => setConfirmDisconnect(true)}>
+              <LogOut size={18} /> Disconnect
+            </button>
+          ) : (
+            <div className="tg-actions">
+              <span className="empty">Disconnect and forget this session?</span>
+              <button
+                type="button"
+                className="danger-button"
+                onClick={() => {
+                  setConfirmDisconnect(false);
+                  void mod.disconnect();
+                }}
+              >
+                Disconnect
+              </button>
+              <button type="button" className="secondary" onClick={() => setConfirmDisconnect(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {authState.k === "error" && (
+        <div className="tg-center">
+          <p className="tg-lead tg-error">Connection failed: {authState.message}</p>
+          <button type="button" className="primary" onClick={connect}>
+            Try again
+          </button>
+        </div>
+      )}
     </Panel>
   );
 }

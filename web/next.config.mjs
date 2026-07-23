@@ -28,6 +28,31 @@ const nextConfig = {
       { protocol: "https", hostname: "image.tmdb.org" },
       { protocol: "https", hostname: "**" }
     ]
+  },
+  webpack: (config, { isServer }) => {
+    // GramJS (the browser-side Telegram/MTProto client used by lib/telegram)
+    // imports Node core modules for its Node TCP transport and StoreSession. In
+    // the browser it uses WebSocket + StringSession instead, so stub the Node-only
+    // modules for the client bundle — otherwise webpack fails to resolve fs/net/etc.
+    if (!isServer) {
+      config.resolve = config.resolve ?? {};
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+        dns: false,
+        os: false,
+        path: false,
+        zlib: false,
+        http: false,
+        https: false,
+        stream: false,
+        crypto: false,
+        perf_hooks: false
+      };
+    }
+    return config;
   }
 };
 
