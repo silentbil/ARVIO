@@ -61,6 +61,18 @@ If ARVIO helps you and you want to support development, donations are appreciate
 |--------|----------|
 | ![Mobile screen](screenshots/mobile_home.webp) | ![Profiles screen](screenshots/profiles_v1991.png) |
 
+### ARVIO Web — iPhone, iPad & any browser
+
+The same ARVIO experience in the browser at [web.arvio.tv](https://web.arvio.tv) — for the devices an APK can't reach. Profiles, watchlist and progress sync with the app.
+
+| Web · Home (iPad) | Web · Details (iPad) |
+|-------------------|----------------------|
+| ![ARVIO Web home on iPad](screenshots/ipad_home.webp) | ![ARVIO Web details on iPad](screenshots/ipad_details.webp) |
+
+| Web · Live TV guide (iPad) | Web · Catalogs (iPad) |
+|----------------------------|-----------------------|
+| ![ARVIO Web live TV on iPad](screenshots/ipad_live_tv.webp) | ![ARVIO Web catalogs on iPad](screenshots/ipad_catalogs.webp) |
+
 ## Content And Source Policy
 
 ARVIO is a media browser and player interface for user-configured sources. It works like a media player or browser: users provide their own services, playlists, addons, and URLs.
