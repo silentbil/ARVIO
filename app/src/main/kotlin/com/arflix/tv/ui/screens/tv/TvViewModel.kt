@@ -9,8 +9,11 @@ import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
+import com.arflix.tv.data.repository.IptvPlaybackTarget
+import com.arflix.tv.data.repository.IptvPlaybackUrlResolver
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvTvSessionState
+import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.util.AppLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -25,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 
@@ -114,6 +118,16 @@ class TvViewModel @Inject constructor(
     private var preparedContentJob: Job? = null
     private var preparedContentRevision: Long = 0L
     private val resolvedStalkerStreamCache = LinkedHashMap<String, String>()
+    private val iptvPlaybackUrlResolver by lazy {
+        IptvPlaybackUrlResolver(
+            OkHttpProvider.playbackClient.newBuilder()
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(4, TimeUnit.SECONDS)
+                .writeTimeout(3, TimeUnit.SECONDS)
+                .callTimeout(5, TimeUnit.SECONDS)
+                .build()
+        )
+    }
     private val catchupHistoryRefreshAt = LinkedHashMap<String, Long>()
     private val currentChannelEpgRefreshAt = LinkedHashMap<String, Long>()
     private val epgNetworkRefreshLock = Any()
@@ -1910,18 +1924,23 @@ class TvViewModel @Inject constructor(
         }
     }
 
-    suspend fun resolvePlayableStreamUrl(
+    internal suspend fun resolvePlayableStreamUrl(
         channel: IptvChannel,
         program: IptvProgram? = null,
         forceRefresh: Boolean = false,
         catchupAttempt: Int = 0
-    ): String {
+    ): IptvPlaybackTarget {
         val rawUrl = if (program != null) {
             iptvRepository.resolvePlayableCatchupUrl(channel, program, catchupAttempt)
         } else {
             channel.streamUrl
         }
-        return resolveStalkerStreamIfNeeded(rawUrl, forceRefresh)
+        val resolvedUrl = resolveStalkerStreamIfNeeded(rawUrl, forceRefresh)
+        return iptvPlaybackUrlResolver.resolve(
+            rawUrl = resolvedUrl,
+            headers = channel.requestHeaders,
+            forceRefresh = forceRefresh,
+        )
     }
 
     private suspend fun resolveStalkerStreamIfNeeded(rawUrl: String, forceRefresh: Boolean): String {
