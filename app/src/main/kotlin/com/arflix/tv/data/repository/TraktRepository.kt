@@ -2725,7 +2725,12 @@ class TraktRepository @Inject constructor(
 
     private fun parseTraktListedAtMs(value: String?): Long {
         if (value.isNullOrBlank()) return 0L
-        return runCatching { java.time.Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
+        try {
+            return java.time.Instant.parse(value).toEpochMilli()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            return 0L
+        }
     }
 
     private suspend fun resolveWatchlistMovieTmdbId(movie: TraktMovieInfo): Int? {
@@ -2856,7 +2861,7 @@ class TraktRepository @Inject constructor(
 
         val exactIdMatches = mutableListOf<TmdbMovieDetails>()
         for (id in ids) {
-            val details = runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            val details = try { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null } ?: continue
             val sameTitle = isSameWatchlistTitle(movie.title, details.title) ||
                 details.originalTitle?.let { isSameWatchlistTitle(movie.title, it) } == true
             val sameYear = yearCompatible(movie.year, details.releaseDate?.take(4)?.toIntOrNull())
@@ -2875,14 +2880,14 @@ class TraktRepository @Inject constructor(
 
         val searchMatch = searchTmdbWatchlistMatch(movie.title, movie.year, MediaType.MOVIE)
         if (searchMatch != null) {
-            return runCatching { tmdbApi.getMovieDetails(searchMatch, Constants.TMDB_API_KEY) }.getOrNull()
+            return try { tmdbApi.getMovieDetails(searchMatch, Constants.TMDB_API_KEY) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         }
 
         return if (movie.year == null) {
             exactIdMatches.firstOrNull()
         } else if (normalizeWatchlistTitle(movie.title).isBlank()) {
             ids.firstNotNullOfOrNull { id ->
-                runCatching { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) }.getOrNull()
+                try { tmdbApi.getMovieDetails(id, Constants.TMDB_API_KEY) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             }
         } else {
             null
@@ -2912,7 +2917,7 @@ class TraktRepository @Inject constructor(
 
         val exactIdMatches = mutableListOf<TmdbTvDetails>()
         for (id in ids) {
-            val details = runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull() ?: continue
+            val details = try { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null } ?: continue
             val sameTitle = isSameWatchlistTitle(show.title, details.name) ||
                 details.originalName?.let { isSameWatchlistTitle(show.title, it) } == true
             val sameYear = yearCompatible(show.year, details.firstAirDate?.take(4)?.toIntOrNull())
@@ -2936,14 +2941,14 @@ class TraktRepository @Inject constructor(
             allowTitleOnly = ids.isEmpty()
         )
         if (searchMatch != null) {
-            return runCatching { tmdbApi.getTvDetails(searchMatch, Constants.TMDB_API_KEY) }.getOrNull()
+            return try { tmdbApi.getTvDetails(searchMatch, Constants.TMDB_API_KEY) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         }
 
         return if (show.year == null) {
             exactIdMatches.firstOrNull()
         } else if (normalizeWatchlistTitle(show.title).isBlank()) {
             ids.firstNotNullOfOrNull { id ->
-                runCatching { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) }.getOrNull()
+                try { tmdbApi.getTvDetails(id, Constants.TMDB_API_KEY) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             }
         } else {
             null
