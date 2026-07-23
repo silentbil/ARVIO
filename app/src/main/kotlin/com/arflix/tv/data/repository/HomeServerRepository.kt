@@ -1167,7 +1167,7 @@ class HomeServerRepository @Inject constructor(
                 accountToken = trimmedAccountToken,
                 lastConnectedAt = System.currentTimeMillis()
             )
-            val info = runCatching { fetchSystemInfo(candidate) }
+            val info = try { Result.success(fetchSystemInfo(candidate)) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; Result.failure(e) }
                 .getOrElse { error ->
                     lastError = error
                     null
@@ -1189,7 +1189,7 @@ class HomeServerRepository @Inject constructor(
                 serverId = info.serverId.ifBlank { candidate.serverId },
                 lastConnectedAt = System.currentTimeMillis()
             )
-            val collections = runCatching { fetchCollections(shell) }
+            val collections = try { Result.success(fetchCollections(shell)) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; Result.failure(e) }
                 .getOrElse { error ->
                     lastError = error
                     emptyList()
