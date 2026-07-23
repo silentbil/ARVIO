@@ -1,6 +1,7 @@
 package com.arflix.tv.data.repository
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,12 +31,29 @@ class CloudSyncCoordinator @Inject constructor(
 
     private val started = AtomicBoolean(false)
 
+    private suspend fun getSyncUserIdOrNull(): String? {
+        return try {
+            authRepository.getCurrentUserIdForSync()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: retrofit2.HttpException) {
+            Log.w("CloudSyncCoordinator", "HTTP error retrieving sync user ID", e)
+            null
+        } catch (e: java.io.IOException) {
+            Log.w("CloudSyncCoordinator", "Network error retrieving sync user ID", e)
+            null
+        } catch (e: Exception) {
+            Log.w("CloudSyncCoordinator", "Failed to retrieve sync user ID", e)
+            null
+        }
+    }
+
     fun start() {
         synchronized(lifecycleLock) {
             if (!started.compareAndSet(false, true)) return
             collectorJob = scope.launch {
                 invalidationBus.events.collectLatest { invalidation ->
-                    val userId = try { authRepository.getCurrentUserIdForSync() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+                    val userId = getSyncUserIdOrNull()
                     if (userId.isNullOrBlank()) {
                         cloudSyncRepository.markLocalStateDirtyNow()
                         CloudSyncWorker.enqueueRecovery(context)
@@ -76,7 +94,7 @@ class CloudSyncCoordinator @Inject constructor(
                 }
                 delay(backoffMs)
 
-                val userId = try { authRepository.getCurrentUserIdForSync() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+                val userId = getSyncUserIdOrNull()
                 if (userId.isNullOrBlank()) {
                     cloudSyncRepository.markLocalStateDirtyNow()
                     CloudSyncWorker.enqueueRecovery(context)
@@ -84,12 +102,23 @@ class CloudSyncCoordinator @Inject constructor(
                     return@launch
                 }
                 Log.i("CloudSyncCoordinator", "Flushing cloud sync for ${invalidation.scope}")
-                try { cloudSyncRepository.pushToCloud(force = true); Result.success(Unit) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
-                    .onFailure { error ->
-                        Log.w("CloudSyncCoordinator", "Cloud push failed after ${invalidation.scope}: ${error.message}")
-                        cloudSyncRepository.markLocalStateDirty()
-                        CloudSyncWorker.enqueueRecovery(context)
-                    }
+                try {
+                    cloudSyncRepository.pushToCloud(force = true)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: retrofit2.HttpException) {
+                    Log.w("CloudSyncCoordinator", "HTTP error during cloud push for ${invalidation.scope}: ${e.message}")
+                    cloudSyncRepository.markLocalStateDirty()
+                    CloudSyncWorker.enqueueRecovery(context)
+                } catch (e: java.io.IOException) {
+                    Log.w("CloudSyncCoordinator", "Network error during cloud push for ${invalidation.scope}: ${e.message}")
+                    cloudSyncRepository.markLocalStateDirty()
+                    CloudSyncWorker.enqueueRecovery(context)
+                } catch (error: Exception) {
+                    Log.w("CloudSyncCoordinator", "Cloud push failed after ${invalidation.scope}: ${error.message}")
+                    cloudSyncRepository.markLocalStateDirty()
+                    CloudSyncWorker.enqueueRecovery(context)
+                }
             }
         }
     }

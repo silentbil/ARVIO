@@ -1178,20 +1178,30 @@ class CatalogRepository @Inject constructor(
                 val collectionHeroVideoUrl = asTrimmedString(row["collectionHeroVideoUrl"])
                 val collectionTileShape = parseCollectionTileShapeCompat(asTrimmedString(row["collectionTileShape"]))
                 val collectionHideTitle = (row["collectionHideTitle"] as? Boolean) ?: false
-                val collectionSources = runCatching {
+                val collectionSources = try {
                     val jsonValue = gson.toJson(row["collectionSources"])
                     gson.fromJson<List<CollectionSourceConfig>>(
                         jsonValue,
                         TypeToken.getParameterized(List::class.java, CollectionSourceConfig::class.java).type
                     ) ?: emptyList()
-                }.getOrDefault(emptyList())
-                val requiredAddonUrls = runCatching {
+                } catch (e: com.google.gson.JsonSyntaxException) {
+                    emptyList()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    emptyList()
+                }
+                val requiredAddonUrls = try {
                     val jsonValue = gson.toJson(row["requiredAddonUrls"])
                     gson.fromJson<List<String>>(
                         jsonValue,
                         TypeToken.getParameterized(List::class.java, String::class.java).type
                     )?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
-                }.getOrDefault(emptyList())
+                } catch (e: com.google.gson.JsonSyntaxException) {
+                    emptyList()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    emptyList()
+                }
                 val sourceTypeRaw = (row["sourceType"] as? String)?.trim().orEmpty()
                 val sourceType = parseSourceTypeCompat(sourceTypeRaw, sourceUrl, sourceRef)
                 val isPreinstalledRaw = (row["isPreinstalled"] as? Boolean) ?: false
@@ -1237,11 +1247,18 @@ class CatalogRepository @Inject constructor(
         val normalizedRef = config.sourceRef?.trim().takeUnless { it.isNullOrBlank() }
         val bundledPreinstalled = isBundledPreinstalledCatalogId(config.id)
         val sourceRefAddon = parseAddonSourceRef(normalizedRef)
-        val sourceTypeName = runCatching { config.sourceType.name }
-            .getOrDefault(CatalogSourceType.PREINSTALLED.name)
-        val configKind = runCatching { config.kind.name }
-            .mapCatching { CatalogKind.valueOf(it) }
-            .getOrDefault(CatalogKind.STANDARD)
+        val sourceTypeName = try {
+            config.sourceType.name
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            CatalogSourceType.PREINSTALLED.name
+        }
+        val configKind = try {
+            CatalogKind.valueOf(config.kind.name)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            CatalogKind.STANDARD
+        }
         val safeCollectionSources = config.collectionSources.orEmpty()
         val safeRequiredAddonUrls = config.requiredAddonUrls.orEmpty()
         val normalizedCollectionTileShape = try {

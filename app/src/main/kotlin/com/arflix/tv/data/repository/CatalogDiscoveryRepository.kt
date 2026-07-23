@@ -28,8 +28,18 @@ class CatalogDiscoveryRepository @Inject constructor(
             return@withContext Result.success(emptyList())
         }
 
-        val trakt = runCatching { searchTraktLists(normalizedQuery) }
-        val mdblist = runCatching { searchMdblistLists(normalizedQuery) }
+        val trakt = try {
+            Result.success(searchTraktLists(normalizedQuery))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Result.failure(e)
+        }
+        val mdblist = try {
+            Result.success(searchMdblistLists(normalizedQuery))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Result.failure(e)
+        }
 
         val combined = (trakt.getOrDefault(emptyList()) + mdblist.getOrDefault(emptyList()))
             .distinctBy { it.sourceUrl.lowercase() }

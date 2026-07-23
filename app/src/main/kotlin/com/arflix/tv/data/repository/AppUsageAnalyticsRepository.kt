@@ -38,11 +38,11 @@ class AppUsageAnalyticsRepository @Inject constructor(
             (Constants.SUPABASE_URL.isBlank() || Constants.SUPABASE_ANON_KEY.isBlank())
         ) return@withContext
 
-        runCatching {
+        try {
             val now = System.currentTimeMillis()
             val lastSentAt = context.settingsDataStore.data.first()[LAST_APP_OPEN_SENT_AT_KEY] ?: 0L
             if (now - lastSentAt < APP_OPEN_MIN_INTERVAL_MS) {
-                return@runCatching
+                return@withContext
             }
 
             withTimeoutOrNull(AUTH_STATE_WAIT_MS) {
@@ -50,10 +50,18 @@ class AppUsageAnalyticsRepository @Inject constructor(
             }
 
             val installId = getOrCreateInstallId()
-            val accessToken = runCatching { authRepository.getAccessToken() }.getOrNull().orEmpty()
-            val profileId = runCatching { profileManager.getProfileId() }
-                .getOrDefault(profileManager.getProfileIdSync())
-                .takeIf { it.isNotBlank() }
+            val accessToken = try {
+                authRepository.getAccessToken()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                ""
+            }
+            val profileId = try {
+                profileManager.getProfileId()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                profileManager.getProfileIdSync()
+            }.takeIf { it.isNotBlank() }
             val deviceType = detectDeviceType(context).name.lowercase()
 
             val metadata = JSONObject()
@@ -87,7 +95,7 @@ class AppUsageAnalyticsRepository @Inject constructor(
                 requestBuilder
                     .header("apikey", Constants.SUPABASE_ANON_KEY)
                     .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
-                if (accessToken.isNotBlank()) {
+                if (!accessToken.isNullOrBlank()) {
                     requestBuilder.header("x-user-token", accessToken)
                 }
             } else {
@@ -105,8 +113,11 @@ class AppUsageAnalyticsRepository @Inject constructor(
             context.settingsDataStore.edit { prefs ->
                 prefs[LAST_APP_OPEN_SENT_AT_KEY] = now
             }
-        }.onFailure { error ->
-            AppLogger.w(TAG, "App usage analytics event failed", error)
+        } catch (e: java.io.IOException) {
+            AppLogger.w(TAG, "App usage analytics event failed (Network)", e)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.w(TAG, "App usage analytics event failed", e)
         }
     }
 

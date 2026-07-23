@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.ComponentCallbacks2
 import android.graphics.Bitmap
 import android.os.Build
+import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -146,7 +147,13 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
             // Wait for first navigation/auth restore work to start so the
             // event can include account context without delaying app launch.
             delay(3_000L)
-            runCatching { appUsageAnalyticsRepository.recordAppOpen() }
+            try {
+                appUsageAnalyticsRepository.recordAppOpen()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("ArflixApplication", "Failed to record app open analytics", e)
+            }
         }
 
         // Observe auth state: start realtime on login, stop on logout
