@@ -506,9 +506,14 @@ class HomeViewModel @Inject constructor(
             return base
         }
 
-        val searchMatches = runCatching { mediaRepository.search(item.title) }.getOrDefault(emptyList())
+        val searchMatches = try {
+            mediaRepository.search(item.title)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
         val bestMatch = searchMatches
-            .asSequence()
             .filter { match -> match.overview.isNotBlank() }
             .maxByOrNull { match ->
                 val titleBonus = if (match.title.equals(item.title, ignoreCase = true)) 1_000 else 0
@@ -1903,8 +1908,11 @@ class HomeViewModel @Inject constructor(
         // Don't restart if already running
         if (cwFetchJob?.isActive == true) return
         cwFetchJob = viewModelScope.launch(Dispatchers.IO) {
-            val cachedResult = runCatching { preloadStartupContinueWatchingItems() }
-            cachedResult.onFailure { error ->
+            val cached = try {
+                preloadStartupContinueWatchingItems()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (error: Exception) {
                 AppLogger.recordException(
                     throwable = error,
                     context = mapOf(
@@ -1912,8 +1920,8 @@ class HomeViewModel @Inject constructor(
                         "cw_phase" to "preload_startup"
                     )
                 )
+                emptyList()
             }
-            val cached = cachedResult.getOrDefault(emptyList())
             if (cached.isNotEmpty()) {
                 publishContinueWatching(cached)
             }
@@ -1922,8 +1930,11 @@ class HomeViewModel @Inject constructor(
             // immediately. Avoids the 30–60s cold-refresh wait that used to
             // leave the CW row empty for minutes (especially when the Trakt
             // progress endpoint throttles with HTTP 429).
-            val instantResult = runCatching { resolveContinueWatchingItemsStable(forceFresh = false) }
-            instantResult.onFailure { error ->
+            val instant = try {
+                resolveContinueWatchingItemsStable(forceFresh = false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (error: Exception) {
                 AppLogger.recordException(
                     throwable = error,
                     context = mapOf(
@@ -1931,8 +1942,8 @@ class HomeViewModel @Inject constructor(
                         "cw_phase" to "instant"
                     )
                 )
+                emptyList()
             }
-            val instant = instantResult.getOrDefault(emptyList())
             if (instant.isNotEmpty()) {
                 publishContinueWatching(instant)
             }
@@ -1940,8 +1951,11 @@ class HomeViewModel @Inject constructor(
             // SLOW PATH — do a freshness refresh in the background. If it
             // returns something different, republish. Swallows transient
             // Trakt 429s so the visible row doesn't blink back to empty.
-            val freshResult = runCatching { resolveContinueWatchingItemsStable(forceFresh = true) }
-            freshResult.onFailure { error ->
+            val fresh = try {
+                resolveContinueWatchingItemsStable(forceFresh = true)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (error: Exception) {
                 AppLogger.recordException(
                     throwable = error,
                     context = mapOf(
@@ -1949,12 +1963,18 @@ class HomeViewModel @Inject constructor(
                         "cw_phase" to "fresh"
                     )
                 )
+                emptyList()
             }
-            val fresh = freshResult.getOrDefault(emptyList())
             if (fresh.isNotEmpty() && fresh != instant) {
                 publishContinueWatching(fresh)
             }
-            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+            val traktConnected = try {
+            traktRepository.hasTrakt()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
             if (traktConnected && cached.isEmpty() && instant.isEmpty() && fresh.isEmpty()) {
                 AppLogger.breadcrumb(
                     tag = "ContinueWatching",
@@ -3065,7 +3085,13 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun resolveContinueWatchingItems(forceFresh: Boolean): List<ContinueWatchingItem> {
-        val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+        val isTraktAuthenticated = try {
+            traktRepository.isAuthenticated.first()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         // Debug: write CW state to a file we can pull via adb
         val items: List<ContinueWatchingItem> = if (isTraktAuthenticated) {
             // When connected to Trakt, use ONLY Trakt as the source of truth for
@@ -3330,9 +3356,9 @@ class HomeViewModel @Inject constructor(
                 )
             }
             traktRepository.enrichContinueWatchingItems(mapped)
-        } catch (e: Exception) {
-                if (e is CancellationException) throw e
-
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -3377,48 +3403,66 @@ class HomeViewModel @Inject constructor(
                 )
             }
             traktRepository.enrichContinueWatchingItems(mapped)
-        } catch (e: Exception) {
-                if (e is CancellationException) throw e
-
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
             emptyList()
         }
     }
 
     private suspend fun resolveContinueWatchingItemsStable(forceFresh: Boolean): List<ContinueWatchingItem> {
-        val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+        val isTraktAuthenticated = try {
+            traktRepository.isAuthenticated.first()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         val items = if (isTraktAuthenticated) {
             val traktItems = if (forceFresh) {
-                runCatching { traktRepository.getContinueWatching(forceRefresh = true) }
-                    .onFailure { error ->
-                        AppLogger.recordException(
-                            throwable = error,
-                            context = mapOf(
-                                "error_area" to "ContinueWatching",
-                                "cw_phase" to "trakt_fresh",
-                                "force_fresh" to forceFresh.toString()
-                            )
+                try {
+                    traktRepository.getContinueWatching(forceRefresh = true)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (error: Exception) {
+                    AppLogger.recordException(
+                        throwable = error,
+                        context = mapOf(
+                            "error_area" to "ContinueWatching",
+                            "cw_phase" to "trakt_fresh",
+                            "force_fresh" to forceFresh.toString()
                         )
-                    }
-                    .getOrDefault(emptyList())
+                    )
+                    emptyList()
+                }
             } else {
                 val cached = traktRepository.getCachedContinueWatching()
                 if (cached.isNotEmpty()) {
                     cached
                 } else {
-                    runCatching { traktRepository.getContinueWatching() }
-                        .onFailure { error ->
-                            AppLogger.recordException(
-                                throwable = error,
-                                context = mapOf(
-                                    "error_area" to "ContinueWatching",
-                                    "cw_phase" to "trakt_cached_miss"
-                                )
+                    try {
+                        traktRepository.getContinueWatching()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (error: Exception) {
+                        AppLogger.recordException(
+                            throwable = error,
+                            context = mapOf(
+                                "error_area" to "ContinueWatching",
+                                "cw_phase" to "trakt_cached_miss"
                             )
-                        }
-                        .getOrDefault(emptyList())
+                        )
+                        emptyList()
+                    }
                 }
             }
-            val localItems = runCatching { traktRepository.getLocalContinueWatching() }.getOrDefault(emptyList())
+            val localItems = try {
+                traktRepository.getLocalContinueWatching()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emptyList()
+            }
             val historyItems = loadContinueWatchingFromHistoryStable()
             if (traktItems.isEmpty() && historyItems.isNotEmpty()) {
                 historyItems
@@ -3434,13 +3478,23 @@ class HomeViewModel @Inject constructor(
             if (historyItems.isNotEmpty()) {
                 historyItems
             } else {
-                runCatching { traktRepository.getLocalContinueWatching() }.getOrDefault(emptyList())
+                try {
+                    traktRepository.getLocalContinueWatching()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    emptyList()
+                }
             }
         }
 
-        val persistedDismissedKeys = runCatching {
+        val persistedDismissedKeys = try {
             traktRepository.getDismissedContinueWatchingShowKeys()
-        }.getOrDefault(emptySet())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptySet()
+        }
 
         val repairedItems = repairContinueWatchingMetadataIfNeeded(items)
         return sanitizeContinueWatchingItems(repairedItems)
@@ -3455,7 +3509,13 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
-        val isTraktAuthenticated = runCatching { traktRepository.isAuthenticated.first() }.getOrDefault(false)
+        val isTraktAuthenticated = try {
+            traktRepository.isAuthenticated.first()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         val items = if (isTraktAuthenticated) {
             try {
                 traktRepository.preloadContinueWatchingCache()
@@ -3476,13 +3536,23 @@ class HomeViewModel @Inject constructor(
             if (historyItems.isNotEmpty()) {
                 historyItems
             } else {
-                runCatching { traktRepository.getLocalContinueWatching() }.getOrDefault(emptyList())
+                try {
+                    traktRepository.getLocalContinueWatching()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    emptyList()
+                }
             }
         }
 
-        val persistedDismissedKeys = runCatching {
+        val persistedDismissedKeys = try {
             traktRepository.getDismissedContinueWatchingShowKeys()
-        }.getOrDefault(emptySet())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptySet()
+        }
 
         val repairedItems = repairContinueWatchingMetadataIfNeeded(items)
         return sanitizeContinueWatchingItems(repairedItems)
@@ -4095,7 +4165,13 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val isInWatchlist = watchlistRepository.isInWatchlist(item.mediaType, item.id)
-                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val traktConnected = try {
+            traktRepository.hasTrakt()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
                 if (isInWatchlist) {
                     if (traktConnected && !traktRepository.removeFromWatchlist(item.mediaType, item.id)) {
                         throw IllegalStateException("Failed to remove from Trakt watchlist")
@@ -4123,6 +4199,8 @@ class HomeViewModel @Inject constructor(
                     toastMessage = if (isInWatchlist) context.getString(R.string.watchlist_toast_removed) else context.getString(R.string.added_to_watchlist),
                     toastType = ToastType.SUCCESS
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 AppLogger.recordException(

@@ -1981,7 +1981,13 @@ class TraktRepository @Inject constructor(
         // The previous code used refreshTokenIfNeeded() == null which could
         // incorrectly trigger for Trakt users on network errors, polluting
         // the Trakt CW cache with local-only items.
-        val isTraktAuth = try { isAuthenticated.first() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
+        val isTraktAuth = try {
+            isAuthenticated.first()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         if (!isTraktAuth) {
             cachedContinueWatching = trimmed
         }
@@ -2328,7 +2334,13 @@ class TraktRepository @Inject constructor(
         cachedContinueWatching = cachedContinueWatching.filterNot {
             it.id == item.id && it.mediaType == item.mediaType
         }
-        val activeProfileId = try { profileManager.getProfileIdSync() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+        val activeProfileId = try {
+            profileManager.getProfileIdSync()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
         if (!activeProfileId.isNullOrBlank()) {
             preloadedProfileCache[activeProfileId] = preloadedProfileCache[activeProfileId]
                 ?.filterNot { it.id == item.id && it.mediaType == item.mediaType }
