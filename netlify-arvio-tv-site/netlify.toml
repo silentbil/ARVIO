@@ -3,7 +3,7 @@
 
 [[redirects]]
   from = "/app"
-  to = "https://web.arvio.tv/login"
+  to = "https://web.arvio.tv"
   status = 302
   force = true
 

@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getStreams, getStreamsProgressive, installAddon as installAddonManifest, loadLocalAddons, normalizeAddons, saveLocalAddons } from "./addons";
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
+import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, pullCloudPayload, pullCloudProfiles, pullCloudTraktToken, pullCloudWatchlist, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTraktToken } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
@@ -1540,7 +1541,13 @@ export function AppProvider({
     setView("profiles");
   }, []);
 
-  const goToLogin = useCallback(() => setView("login"), []);
+  const goToLogin = useCallback(() => {
+    if (typeof window !== "undefined") {
+      const redirectUri = window.location.origin + "/";
+      const portalUrl = getAuthPortalUrl();
+      window.location.href = `${portalUrl}?redirect_uri=${encodeURIComponent(redirectUri)}`;
+    }
+  }, []);
   const backToProfiles = useCallback(() => setView("profiles"), []);
 
   const value = useMemo<AppStore>(() => ({
