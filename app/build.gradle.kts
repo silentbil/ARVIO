@@ -122,7 +122,6 @@ android {
 
             // Build config fields for release
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "true")
-            buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
         }
 
         debug {
@@ -147,7 +146,6 @@ android {
             isJniDebuggable = false
 
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "true")
-            buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
         }
     }
 

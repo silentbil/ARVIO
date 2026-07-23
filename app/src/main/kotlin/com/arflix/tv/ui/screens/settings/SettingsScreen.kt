@@ -4022,7 +4022,7 @@ private fun MobileSettingsSubPage(
                     )
                 }
             }
-            "Addons", "Plugins & Extensions" -> {
+            "Addons" -> {
                 StremioAddonsSettings(
                     addons = stremioAddons,
                     focusedIndex = -1,
@@ -4032,6 +4032,18 @@ private fun MobileSettingsSubPage(
                     onMoveAddonDown = { viewModel.moveAddonDown(it) },
                     onDeleteAddon = { viewModel.removeAddon(it) },
                     onAddCustomAddon = onAddCustomAddonClick
+                )
+            }
+            "Plugins & Extensions" -> {
+                com.arflix.tv.ui.screens.plugin.PluginScreen(
+                    focusedIndex = -1,
+                    onFocusedIndexChanged = {},
+                    onMaxIndexChanged = {},
+                    enterTrigger = -1,
+                    onEnterTriggerHandled = {},
+                    onModalStateChanged = {},
+                    onBackPressed = { onNavigate("MAIN") },
+                    onNavigateToSection = {}
                 )
             }
             "Catalogs" -> {

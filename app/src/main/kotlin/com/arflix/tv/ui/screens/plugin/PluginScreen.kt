@@ -85,6 +85,9 @@ fun PluginScreen(
 
     LaunchedEffect(totalItems) {
         onMaxIndexChanged(totalItems - 1)
+        if (focusedIndex >= totalItems) {
+            onFocusedIndexChanged((totalItems - 1).coerceAtLeast(0))
+        }
     }
 
     val modalOpen = showAddDialog || showResetDialog
@@ -289,6 +292,7 @@ fun PluginScreen(
             confirmText = stringResource(R.string.delete),
             onConfirm = {
                 viewModel.onEvent(PluginUiEvent.ResetAllPlugins)
+                onFocusedIndexChanged(0)
                 showResetDialog = false
             },
             onDismiss = { showResetDialog = false }
