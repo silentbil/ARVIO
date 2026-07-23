@@ -1001,7 +1001,11 @@ class HomeServerRepository @Inject constructor(
     }
 
     private fun fetchPublicInfo(serverUrl: String): ServerInfo {
-        val info = try { getJson(buildUrl(serverUrl, "/System/Info/Public")) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
+        val info = try {
+            getJson(buildUrl(serverUrl, "/System/Info/Public"))
+        } catch (e: Exception) {
+            null
+        }
         if (info != null && info.entrySet().isNotEmpty()) {
             return ServerInfo(
                 serverName = info.string("ServerName"),
@@ -1011,7 +1015,11 @@ class HomeServerRepository @Inject constructor(
             )
         }
 
-        val plexIdentity = try { getText(buildUrl(serverUrl, "/identity")) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
+        val plexIdentity = try {
+            getText(buildUrl(serverUrl, "/identity"))
+        } catch (e: Exception) {
+            null
+        }
         val (plexName, plexId) = parsePlexIdentity(plexIdentity.orEmpty())
         return ServerInfo(
             serverName = plexName,
