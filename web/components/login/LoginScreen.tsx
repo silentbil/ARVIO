@@ -12,7 +12,7 @@ export function LoginScreen() {
 
   const redirectToAuthPortal = () => {
     if (typeof window === "undefined") return;
-    const redirectUri = window.location.origin + "/login";
+    const redirectUri = window.location.origin + "/";
     const portalUrl = getAuthPortalUrl();
     window.location.href = `${portalUrl}?redirect_uri=${encodeURIComponent(redirectUri)}`;
   };

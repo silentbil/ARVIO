@@ -1164,7 +1164,7 @@ function AccountsSection() {
   const cloudConfigured = hasNetlifyBackendConfig() || hasSupabaseConfig();
 
   const redirectToAuthPortal = () => {
-    const redirectUri = window.location.origin + "/login";
+    const redirectUri = window.location.origin + "/";
     window.location.href = `${getAuthPortalUrl()}?redirect_uri=${encodeURIComponent(redirectUri)}`;
   };
 
