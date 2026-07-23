@@ -440,13 +440,19 @@ class RealtimeSyncManager @Inject constructor(
         pendingPullJob = scope.launch {
             delay(DEBOUNCE_MS)
             Log.i(TAG, "Pulling cloud state after realtime notification")
-            runCatching { cloudSyncRepository.pullFromCloud() }
-                .onSuccess { result ->
-                    if (result == CloudSyncRepository.RestoreResult.RESTORED) {
-                        _accountSyncEvents.tryEmit(Unit)
-                    }
+            try {
+                val result = cloudSyncRepository.pullFromCloud()
+                if (result == CloudSyncRepository.RestoreResult.RESTORED) {
+                    _accountSyncEvents.tryEmit(Unit)
                 }
-                .onFailure { Log.w(TAG, "Realtime pull failed: ${it.message}") }
+            } catch (e: retrofit2.HttpException) {
+                Log.w(TAG, "Realtime pull failed (HTTP): ${e.message}")
+            } catch (e: java.io.IOException) {
+                Log.w(TAG, "Realtime pull failed (Network): ${e.message}")
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "Realtime pull failed: ${e.message}")
+            }
         }
     }
 
@@ -518,15 +524,31 @@ class RealtimeSyncManager @Inject constructor(
                 // pushToCloud, so there's no retry loop risk.
                 if (cloudSyncRepository.isPushDirty) {
                     Log.i(TAG, "Periodic sync: retrying dirty push")
-                    runCatching { cloudSyncRepository.pushToCloud() }
-                        .onFailure {
-                            Log.w(TAG, "Dirty push retry failed: ${it.message}")
-                            com.arflix.tv.worker.CloudSyncWorker.enqueueRecovery(context)
-                        }
+                    try {
+                        cloudSyncRepository.pushToCloud()
+                    } catch (e: retrofit2.HttpException) {
+                        Log.w(TAG, "Dirty push retry failed (HTTP): ${e.message}")
+                        com.arflix.tv.worker.CloudSyncWorker.enqueueRecovery(context)
+                    } catch (e: java.io.IOException) {
+                        Log.w(TAG, "Dirty push retry failed (Network): ${e.message}")
+                        com.arflix.tv.worker.CloudSyncWorker.enqueueRecovery(context)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        Log.w(TAG, "Dirty push retry failed: ${e.message}")
+                        com.arflix.tv.worker.CloudSyncWorker.enqueueRecovery(context)
+                    }
                 }
                 Log.d(TAG, "Periodic sync tick")
-                runCatching { cloudSyncRepository.pullFromCloud() }
-                    .onFailure { Log.w(TAG, "Periodic sync failed: ${it.message}") }
+                try {
+                    cloudSyncRepository.pullFromCloud()
+                } catch (e: retrofit2.HttpException) {
+                    Log.w(TAG, "Periodic sync failed (HTTP): ${e.message}")
+                } catch (e: java.io.IOException) {
+                    Log.w(TAG, "Periodic sync failed (Network): ${e.message}")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Log.w(TAG, "Periodic sync failed: ${e.message}")
+                }
             }
         }
     }

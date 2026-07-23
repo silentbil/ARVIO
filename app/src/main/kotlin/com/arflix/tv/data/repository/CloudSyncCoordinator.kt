@@ -36,6 +36,12 @@ class CloudSyncCoordinator @Inject constructor(
             authRepository.getCurrentUserIdForSync()
         } catch (e: CancellationException) {
             throw e
+        } catch (e: retrofit2.HttpException) {
+            Log.w("CloudSyncCoordinator", "HTTP error retrieving sync user ID", e)
+            null
+        } catch (e: java.io.IOException) {
+            Log.w("CloudSyncCoordinator", "Network error retrieving sync user ID", e)
+            null
         } catch (e: Exception) {
             Log.w("CloudSyncCoordinator", "Failed to retrieve sync user ID", e)
             null
@@ -100,6 +106,14 @@ class CloudSyncCoordinator @Inject constructor(
                     cloudSyncRepository.pushToCloud(force = true)
                 } catch (e: CancellationException) {
                     throw e
+                } catch (e: retrofit2.HttpException) {
+                    Log.w("CloudSyncCoordinator", "HTTP error during cloud push for ${invalidation.scope}: ${e.message}")
+                    cloudSyncRepository.markLocalStateDirty()
+                    CloudSyncWorker.enqueueRecovery(context)
+                } catch (e: java.io.IOException) {
+                    Log.w("CloudSyncCoordinator", "Network error during cloud push for ${invalidation.scope}: ${e.message}")
+                    cloudSyncRepository.markLocalStateDirty()
+                    CloudSyncWorker.enqueueRecovery(context)
                 } catch (error: Exception) {
                     Log.w("CloudSyncCoordinator", "Cloud push failed after ${invalidation.scope}: ${error.message}")
                     cloudSyncRepository.markLocalStateDirty()
