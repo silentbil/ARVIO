@@ -992,6 +992,37 @@ export function prefetchDetails(item: MediaItem) {
   void fetchDetailsPayload(item).catch(() => undefined);
 }
 
+/**
+ * Fetch the English and localized titles for a title, used by the Telegram
+ * source resolver to search files named in either language (mirrors Android's
+ * TelegramSourceResolver.fetchTitles). Returns nulls on any failure.
+ */
+export async function getTitlesForSearch(
+  item: MediaItem,
+  language: string
+): Promise<{ english: string | null; localized: string | null }> {
+  if (!item.id || item.id <= 0) return { english: null, localized: null };
+  const type = item.mediaType === "tv" ? "tv" : "movie";
+  const langCode = language.replace("iw", "he").split("-")[0];
+  const nameOf = (d: { title?: string; name?: string } | null) =>
+    (d?.title ?? d?.name)?.trim() || null;
+  try {
+    const en = await tmdb<{ title?: string; name?: string }>(`${type}/${item.id}`, { language: "en" }).catch(() => null);
+    const english = nameOf(en);
+    let localized: string | null = null;
+    if (langCode !== "en") {
+      const loc = await tmdb<{ title?: string; name?: string }>(`${type}/${item.id}`, { language: langCode }).catch(() => null);
+      // Only keep the localized title when it actually differs from English —
+      // otherwise TMDB just echoed the English name and there's nothing to add.
+      const locName = nameOf(loc);
+      localized = locName && locName.toLowerCase() !== (english ?? "").toLowerCase() ? locName : null;
+    }
+    return { english, localized };
+  } catch {
+    return { english: null, localized: null };
+  }
+}
+
 export async function getDetails(item: MediaItem) {
   try {
     const details = await fetchDetailsPayload(item);

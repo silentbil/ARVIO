@@ -600,6 +600,24 @@ export function AppProvider({
     deviceCodeRef.current = deviceCode;
   }, [deviceCode]);
 
+  // Restore a saved Telegram (browser GramJS) session and prep the streaming
+  // service worker so a connected user's sources resolve and play after a
+  // reload — the browser equivalent of Android re-opening its TDLib database.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const tg = await import("./telegram");
+        await tg.restoreSession();
+        // Only pre-warm the streaming service worker for users who are actually
+        // connected — no need to register a worker for accounts that never link
+        // Telegram (a first play still registers it lazily via registerStream).
+        if (tg.isConnected()) void tg.initTelegramStreaming();
+      } catch {
+        /* Telegram is optional; a failure just leaves it disconnected. */
+      }
+    })();
+  }, []);
+
   const persistAddons = useCallback(async (next: InstalledAddon[], options: { removedIds?: string[] } = {}) => {
     const normalized = normalizeAddons(next);
     setAddons(normalized);
@@ -1059,7 +1077,10 @@ export function AppProvider({
       // Preserve the supplemental sources injected in parallel (Xtream VOD and
       // home-server files) when the addon/debrid streams resolve.
       const extras = prev.filter(
-        (source) => source.addonId === "iptv_xtream_vod" || source.addonId === "home_server"
+        (source) =>
+          source.addonId === "iptv_xtream_vod" ||
+          source.addonId === "home_server" ||
+          source.addonId === "telegram_native"
       );
       const seen = new Set(incoming.map((s) => s.url ?? s.source));
       return [...incoming, ...extras.filter((s) => !seen.has(s.url ?? s.source))];
@@ -1120,6 +1141,30 @@ export function AppProvider({
     })();
   }, []);
 
+  // Search the user's connected Telegram account for the opened title and append
+  // any matching video files as sources — parity with the Android app, which
+  // surfaces Telegram media in the same source list as addons.
+  const appendTelegramSources = useCallback((item: MediaItem, season?: number, episode?: number) => {
+    if (item.isHomeServer) return;
+    void (async () => {
+      try {
+        const { resolveTelegramSources, isConnected } = await import("./telegram");
+        if (!isConnected()) return;
+        const sources = await resolveTelegramSources(item, season, episode, {
+          language: settingsRef.current.language
+        });
+        if (!sources.length) return;
+        setStreams((prev) => {
+          const seen = new Set(prev.map((s) => s.url ?? s.source));
+          const fresh = sources.filter((s) => !seen.has(s.url ?? s.source));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+      } catch {
+        // Best-effort; addon/debrid sources are unaffected on failure.
+      }
+    })();
+  }, []);
+
   const openDetails = useCallback(async (item: MediaItem) => {
     setSelectedEpisode(null);
     // Home-server items carry their own metadata + a direct stream URL — no TMDB.
@@ -1147,19 +1192,21 @@ export function AppProvider({
       setBusy("Finding sources");
       appendVodSources(withResumeEpisode);
       appendHomeServerSources(withResumeEpisode);
-      const found = await getStreamsProgressive(addonsRef.current, withResumeEpisode, undefined, undefined, setStreams).catch(() => []);
+      appendTelegramSources(withResumeEpisode);
+      const found = await getStreamsProgressive(addonsRef.current, withResumeEpisode, undefined, undefined, mergeStreams).catch(() => []);
       mergeStreams(found);
     } else if (withResumeEpisode.seasonNumber && withResumeEpisode.episodeNumber) {
       setSelectedEpisode({ season: withResumeEpisode.seasonNumber, episode: withResumeEpisode.episodeNumber });
       setBusy("Finding sources");
       appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
       appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
+      appendTelegramSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
       const found = await getStreamsProgressive(
         addonsRef.current,
         withResumeEpisode,
         withResumeEpisode.seasonNumber,
         withResumeEpisode.episodeNumber,
-        setStreams
+        mergeStreams
       ).catch(() => []);
       mergeStreams(found);
     }
@@ -1173,7 +1220,8 @@ export function AppProvider({
     setBusy("Finding sources");
     appendVodSources(item, season, episode);
     appendHomeServerSources(item, season, episode);
-    const found = await getStreamsProgressive(addonsRef.current, item, season, episode, setStreams).catch(() => []);
+    appendTelegramSources(item, season, episode);
+    const found = await getStreamsProgressive(addonsRef.current, item, season, episode, mergeStreams).catch(() => []);
     mergeStreams(found);
     setBusy("");
     return found;
