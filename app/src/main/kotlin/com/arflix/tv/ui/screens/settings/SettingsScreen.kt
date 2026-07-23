@@ -201,12 +201,12 @@ import com.arflix.tv.network.OkHttpProvider
  * "focus moves but screen doesn't scroll" bug, e.g. reaching "Account").
  */
 @OptIn(ExperimentalFoundationApi::class)
-private class SettingsFocusTracker {
+class SettingsFocusTracker {
     val requesters = mutableStateMapOf<Int, BringIntoViewRequester>()
     fun clear() = requesters.clear()
 }
 
-private val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null }
+val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null }
 
 private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete"
 
@@ -275,7 +275,7 @@ private fun formatUserAgentPreview(value: String?, maxLength: Int): String {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Modifier.settingsFocusSlot(index: Int): Modifier {
+fun Modifier.settingsFocusSlot(index: Int): Modifier {
     val tracker = LocalSettingsFocusTracker.current ?: return this
     val requester = remember(index) { BringIntoViewRequester() }
     DisposableEffect(tracker, index, requester) {
@@ -360,6 +360,9 @@ fun SettingsScreen(
         )
     }
     var contentFocusIndex by remember { mutableIntStateOf(0) }
+    var pluginsMaxIndex by remember { mutableIntStateOf(0) }
+    var pluginsEnterTrigger by remember { mutableIntStateOf(-1) }
+    var pluginsModalOpen by remember { mutableStateOf(false) }
     var activeZone by remember { mutableStateOf(Zone.CONTENT) }
     var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
 
@@ -449,6 +452,7 @@ fun SettingsScreen(
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
             "stremio" -> stremioAddons.size // rows + add button
+            "plugins" -> pluginsMaxIndex
             "accounts" -> 5 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data
             else -> 0
         }
@@ -701,7 +705,8 @@ fun SettingsScreen(
         showDeletePackConfirm ||
         uiState.isPackLoading ||
         uiState.packError != null ||
-        uiState.pendingPackManifest != null
+        uiState.pendingPackManifest != null ||
+        pluginsModalOpen
 
     Box(
         modifier = Modifier
@@ -715,7 +720,6 @@ fun SettingsScreen(
 
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
-                    if (currentSection == "plugins" && activeZone == Zone.CONTENT) return@onPreviewKeyEvent false
                     val focusedStremioAddon = stremioAddons.getOrNull(contentFocusIndex)
                     val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
                         !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
@@ -1134,6 +1138,9 @@ fun SettingsScreen(
                                                     }
                                                 }
                                             }
+                                        }
+                                        "plugins" -> {
+                                            pluginsEnterTrigger = contentFocusIndex
                                         }
                                         else -> Unit
                                     }
@@ -1613,6 +1620,12 @@ fun SettingsScreen(
                         )
                         "plugins" -> {
                             com.arflix.tv.ui.screens.plugin.PluginScreen(
+                                focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
+                                onFocusedIndexChanged = { contentFocusIndex = it },
+                                onMaxIndexChanged = { pluginsMaxIndex = it },
+                                enterTrigger = if (activeZone == Zone.CONTENT) pluginsEnterTrigger else -1,
+                                onEnterTriggerHandled = { pluginsEnterTrigger = -1 },
+                                onModalStateChanged = { pluginsModalOpen = it },
                                 onBackPressed = { activeZone = Zone.SECTION },
                                 onNavigateToSection = { activeZone = Zone.SECTION }
                             )
@@ -4009,7 +4022,7 @@ private fun MobileSettingsSubPage(
                     )
                 }
             }
-            "Addons", "Plugins & Extensions" -> {
+            "Addons" -> {
                 StremioAddonsSettings(
                     addons = stremioAddons,
                     focusedIndex = -1,
@@ -4019,6 +4032,18 @@ private fun MobileSettingsSubPage(
                     onMoveAddonDown = { viewModel.moveAddonDown(it) },
                     onDeleteAddon = { viewModel.removeAddon(it) },
                     onAddCustomAddon = onAddCustomAddonClick
+                )
+            }
+            "Plugins & Extensions" -> {
+                com.arflix.tv.ui.screens.plugin.PluginScreen(
+                    focusedIndex = -1,
+                    onFocusedIndexChanged = {},
+                    onMaxIndexChanged = {},
+                    enterTrigger = -1,
+                    onEnterTriggerHandled = {},
+                    onModalStateChanged = {},
+                    onBackPressed = { onNavigate("MAIN") },
+                    onNavigateToSection = {}
                 )
             }
             "Catalogs" -> {

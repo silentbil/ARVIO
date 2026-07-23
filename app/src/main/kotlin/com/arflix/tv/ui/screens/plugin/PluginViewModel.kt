@@ -101,6 +101,7 @@ class PluginViewModel @Inject constructor(
             PluginUiEvent.RejectPendingRepoChange -> rejectPendingRepoChange()
             PluginUiEvent.ConfirmPendingScraperEnable -> confirmPendingScraperEnable()
             PluginUiEvent.DismissPendingScraperEnable -> dismissPendingScraperEnable()
+            PluginUiEvent.ResetAllPlugins -> resetAllPlugins()
         }
     }
 
@@ -180,19 +181,6 @@ class PluginViewModel @Inject constructor(
     }
 
     private fun toggleScraper(scraperId: String, enabled: Boolean) {
-        val scraper = _uiState.value.scrapers.firstOrNull { it.id == scraperId }
-        if (enabled && scraper != null) {
-            _uiState.update {
-                it.copy(
-                    pendingScraperEnable = PendingScraperEnableInfo(
-                        scraperId = scraper.id,
-                        scraperName = scraper.name
-                    )
-                )
-            }
-            return
-        }
-
         viewModelScope.launch {
             pluginManager.toggleScraper(scraperId, enabled)
         }
@@ -267,6 +255,20 @@ class PluginViewModel @Inject constructor(
             )
         }
     }
+
+    private fun resetAllPlugins() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
+            pluginManager.clearAllPlugins()
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    successMessage = "All plugins and extensions cleared successfully"
+                )
+            }
+        }
+    }
+
 
     private fun normalizeUrlForComparison(url: String): String {
         return url.trim().trimEnd('/').lowercase()

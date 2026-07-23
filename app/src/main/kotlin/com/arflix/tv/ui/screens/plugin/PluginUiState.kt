@@ -60,4 +60,5 @@ sealed interface PluginUiEvent {
     data object RejectPendingRepoChange : PluginUiEvent
     data object ConfirmPendingScraperEnable : PluginUiEvent
     data object DismissPendingScraperEnable : PluginUiEvent
+    data object ResetAllPlugins : PluginUiEvent
 }
