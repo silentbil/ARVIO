@@ -8,7 +8,7 @@ import { getContinueWatching, pullCloudPayload, pullCloudProfiles, pullCloudTrak
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
-import { streamPlayability } from "./streamCompatibility";
+import { canDirectPlayMkvStream, streamPlayability } from "./streamCompatibility";
 import { loadHomeServerRows } from "./homeserver";
 import { buildXtreamCatchupUrl, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
@@ -349,7 +349,7 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
   // starved user-initiated fetches (opening a details page mid-boot timed out
   // and rendered without seasons/cast).
   const source = items.slice(0, 50);
-  const hydrated: MediaItem[] = new Array(source.length);
+  const hydrated: Array<MediaItem | null> = new Array(source.length).fill(null);
   let cursor = 0;
   const workers = Array.from({ length: Math.min(10, source.length) }, async () => {
     while (cursor < source.length) {
@@ -357,7 +357,7 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
       cursor += 1;
       const item = source[index];
       const details = await getDetails(item).catch(() => item);
-      hydrated[index] = {
+      hydrated[index] = clampUpNextEpisode({
         ...details,
         ...item,
         image: item.image || details.image,
@@ -365,11 +365,39 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
         overview: details.overview || item.overview,
         rating: details.rating || item.rating,
         duration: details.duration || item.duration
-      };
+      });
     }
   });
   await Promise.all(workers);
-  return hydrated;
+  return hydrated.filter((item): item is MediaItem => Boolean(item));
+}
+
+// Trakt's episode database can list MORE episodes than TMDB does for the same
+// season (specials folded in, split-release counting) — its next_episode then
+// points past the last episode the app can actually show ("Up next S1 E11" on
+// a 10-episode season, which plays nothing). Clamp against the hydrated TMDB
+// season data: advance to the next real season when one exists, otherwise the
+// show is finished and the row is dropped from Continue Watching.
+function clampUpNextEpisode(item: MediaItem): MediaItem | null {
+  if (item.timeRemainingLabel !== "Up next") return item;
+  const seasonNumber = item.seasonNumber;
+  const episodeNumber = item.episodeNumber;
+  if (item.mediaType !== "tv" || !seasonNumber || !episodeNumber) return item;
+  const seasons = (item.seasons ?? []).filter((season) => season.seasonNumber > 0);
+  if (!seasons.length) return item;
+  const current = seasons.find((season) => season.seasonNumber === seasonNumber);
+  if (!current?.episodeCount || episodeNumber <= current.episodeCount) return item;
+  const nextSeason = seasons
+    .filter((season) => season.seasonNumber > seasonNumber && (season.episodeCount ?? 0) > 0)
+    .sort((a, b) => a.seasonNumber - b.seasonNumber)[0];
+  if (!nextSeason) return null; // watched past the final episode — show done
+  return {
+    ...item,
+    seasonNumber: nextSeason.seasonNumber,
+    episodeNumber: 1,
+    episodeTitle: null,
+    subtitle: `S${nextSeason.seasonNumber} E1`
+  };
 }
 
 function sameSettings(a: AppSettings, b: AppSettings) {
@@ -571,6 +599,24 @@ export function AppProvider({
   useEffect(() => {
     deviceCodeRef.current = deviceCode;
   }, [deviceCode]);
+
+  // Restore a saved Telegram (browser GramJS) session and prep the streaming
+  // service worker so a connected user's sources resolve and play after a
+  // reload — the browser equivalent of Android re-opening its TDLib database.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const tg = await import("./telegram");
+        await tg.restoreSession();
+        // Only pre-warm the streaming service worker for users who are actually
+        // connected — no need to register a worker for accounts that never link
+        // Telegram (a first play still registers it lazily via registerStream).
+        if (tg.isConnected()) void tg.initTelegramStreaming();
+      } catch {
+        /* Telegram is optional; a failure just leaves it disconnected. */
+      }
+    })();
+  }, []);
 
   const persistAddons = useCallback(async (next: InstalledAddon[], options: { removedIds?: string[] } = {}) => {
     const normalized = normalizeAddons(next);
@@ -1031,7 +1077,10 @@ export function AppProvider({
       // Preserve the supplemental sources injected in parallel (Xtream VOD and
       // home-server files) when the addon/debrid streams resolve.
       const extras = prev.filter(
-        (source) => source.addonId === "iptv_xtream_vod" || source.addonId === "home_server"
+        (source) =>
+          source.addonId === "iptv_xtream_vod" ||
+          source.addonId === "home_server" ||
+          source.addonId === "telegram_native"
       );
       const seen = new Set(incoming.map((s) => s.url ?? s.source));
       return [...incoming, ...extras.filter((s) => !seen.has(s.url ?? s.source))];
@@ -1092,6 +1141,30 @@ export function AppProvider({
     })();
   }, []);
 
+  // Search the user's connected Telegram account for the opened title and append
+  // any matching video files as sources — parity with the Android app, which
+  // surfaces Telegram media in the same source list as addons.
+  const appendTelegramSources = useCallback((item: MediaItem, season?: number, episode?: number) => {
+    if (item.isHomeServer) return;
+    void (async () => {
+      try {
+        const { resolveTelegramSources, isConnected } = await import("./telegram");
+        if (!isConnected()) return;
+        const sources = await resolveTelegramSources(item, season, episode, {
+          language: settingsRef.current.language
+        });
+        if (!sources.length) return;
+        setStreams((prev) => {
+          const seen = new Set(prev.map((s) => s.url ?? s.source));
+          const fresh = sources.filter((s) => !seen.has(s.url ?? s.source));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+      } catch {
+        // Best-effort; addon/debrid sources are unaffected on failure.
+      }
+    })();
+  }, []);
+
   const openDetails = useCallback(async (item: MediaItem) => {
     setSelectedEpisode(null);
     // Home-server items carry their own metadata + a direct stream URL — no TMDB.
@@ -1119,19 +1192,21 @@ export function AppProvider({
       setBusy("Finding sources");
       appendVodSources(withResumeEpisode);
       appendHomeServerSources(withResumeEpisode);
-      const found = await getStreamsProgressive(addonsRef.current, withResumeEpisode, undefined, undefined, setStreams).catch(() => []);
+      appendTelegramSources(withResumeEpisode);
+      const found = await getStreamsProgressive(addonsRef.current, withResumeEpisode, undefined, undefined, mergeStreams).catch(() => []);
       mergeStreams(found);
     } else if (withResumeEpisode.seasonNumber && withResumeEpisode.episodeNumber) {
       setSelectedEpisode({ season: withResumeEpisode.seasonNumber, episode: withResumeEpisode.episodeNumber });
       setBusy("Finding sources");
       appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
       appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
+      appendTelegramSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
       const found = await getStreamsProgressive(
         addonsRef.current,
         withResumeEpisode,
         withResumeEpisode.seasonNumber,
         withResumeEpisode.episodeNumber,
-        setStreams
+        mergeStreams
       ).catch(() => []);
       mergeStreams(found);
     }
@@ -1145,7 +1220,8 @@ export function AppProvider({
     setBusy("Finding sources");
     appendVodSources(item, season, episode);
     appendHomeServerSources(item, season, episode);
-    const found = await getStreamsProgressive(addonsRef.current, item, season, episode, setStreams).catch(() => []);
+    appendTelegramSources(item, season, episode);
+    const found = await getStreamsProgressive(addonsRef.current, item, season, episode, mergeStreams).catch(() => []);
     mergeStreams(found);
     setBusy("");
     return found;
@@ -1248,7 +1324,24 @@ export function AppProvider({
     // handing the raw torrentio link to <video>, which can only fail and burn a
     // ~13s stall-timeout before escalating. This is the biggest "not instant"
     // win — the top pick is almost always an MKV.
+    //
+    // EXCEPT on Chromium, whose <video> demuxes Matroska natively: an MKV whose
+    // codecs the device decodes (H.264/HEVC + AAC/Opus) plays directly from the
+    // CDN URL — instant, zero remux CPU, and immune to remux-pipeline stalls.
+    // The player's ladder still auto-escalates to remux if direct really fails.
     const debrid = parseDebridStream(stream.url);
+    if (debrid && streamPlayability(stream).mode === "remux" && canDirectPlayMkvStream(stream)) {
+      const cachedDirect = cachedDebridDirectUrl(stream.url);
+      if (cachedDirect) {
+        setActiveStream({ ...stream, url: cachedDirect, originalUrl: stream.url });
+        return;
+      }
+      void resolveDebridDirectUrl(debrid).then((result) => {
+        if (result.url) setActiveStream({ ...stream, url: result.url, originalUrl: stream.url });
+        else { setToast(result.error ?? "Source not ready — trying the next one."); setActiveStream(stream); }
+      });
+      return;
+    }
     if (debrid && streamPlayability(stream).mode === "remux") {
       const cached = cachedDebridDirectUrl(stream.url);
       if (cached) {

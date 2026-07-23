@@ -126,6 +126,26 @@ export function isBrowserPlayableStream(stream: CompatStream) {
   return mode === "direct" || mode === "remux" || mode === "transcode";
 }
 
+// Chromium's <video> demuxes Matroska natively (Chrome/Edge/Opera/Brave, desktop
+// and Android) — an MKV whose codecs the device can decode plays DIRECTLY, no
+// remux needed. canPlayType lies about this ("" for x-matroska), so detect the
+// engine instead. Safari and Firefox stay on the remux path.
+function isChromiumEngine() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /Chrome\/|Chromium\/|CriOS\/|EdgA?\//.test(ua) && !/Firefox\//.test(ua);
+}
+
+// A "remux"-classified stream that Chromium can in fact play straight from the
+// URL: blocked ONLY by its MKV container, with video AND audio codecs this
+// device decodes (AC-3/DTS tracks still need the remux to pick a safe track).
+export function canDirectPlayMkvStream(stream: CompatStream): boolean {
+  if (!isChromiumEngine()) return false;
+  const text = streamText(stream);
+  if (!MKV_CONTAINER.test(text) && !/\bremux\b/.test(text)) return false;
+  return videoBlockReason(text) === null && audioBlockReason(text) === null;
+}
+
 export function isDirectPlayableStream(stream: CompatStream) {
   return streamPlayability(stream).mode === "direct";
 }

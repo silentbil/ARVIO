@@ -34,6 +34,12 @@ export function AppShell() {
     setMounted(true);
   }, []);
 
+  // D-pad / keyboard spatial navigation for TV browsers (Tizen, webOS) and
+  // desktop keyboards: arrows move focus, Enter activates, TV Back → Escape.
+  useEffect(() => {
+    void import("@/lib/tvNav").then((mod) => mod.installTvNav()).catch(() => undefined);
+  }, []);
+
   // Warm the lazy player libraries during idle time so the first Play press
   // doesn't pay their download cost. They stay out of the initial bundle.
   useEffect(() => {

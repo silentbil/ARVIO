@@ -1,6 +1,6 @@
 import { AuthClient } from "./auth";
 import { config } from "./config";
-import { jsonRequest } from "./http";
+import { HttpError, jsonRequest } from "./http";
 import { loadStored, saveStored } from "./storage";
 
 // Web subscription entitlement — gates the web app only (the APK never checks
@@ -72,11 +72,26 @@ export async function fetchEntitlement(auth: AuthClient): Promise<EntitlementSta
 
 /** Start the one-time 24h trial for the signed-in account. */
 export async function startTrial(auth: AuthClient): Promise<EntitlementState> {
-  const state = await backendRequest<EntitlementState>(auth, "entitlement-status", {
+  const attempt = () => backendRequest<EntitlementState>(auth, "entitlement-status", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action: "start-trial" })
   });
+  let state: EntitlementState;
+  try {
+    state = await attempt();
+  } catch (error) {
+    // A stale access token 401s here even though the paywall itself rendered
+    // (its GET may have come from cache). Refresh the session once and retry
+    // before surfacing an error — this was the main source of "could not
+    // start the trial" reports.
+    if (error instanceof HttpError && error.status === 401) {
+      await auth.refresh();
+      state = await attempt();
+    } else {
+      throw error;
+    }
+  }
   cache(state);
   return state;
 }

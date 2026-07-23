@@ -587,6 +587,7 @@ function VideoPlayer({
     if (stream.remux) {
       let cancelled = false;
       let handle: { destroy: () => void } | null = null;
+      let remuxWatchdog: number | undefined;
       setError(false);
       setBuffering(true);
       setActiveSubtitle(-1);
@@ -610,12 +611,26 @@ function VideoPlayer({
           await prepared.start(video, startIndex);
           if (cancelled) return;
           void video.play().catch(() => undefined);
+          // The remux pipeline can die silently (conversion abort, CDN cutting
+          // the range stream) — every internal error is swallowed and the UI
+          // would spin forever. Watchdog: if no actual frames arrived shortly
+          // after start resolved, declare the remux dead and move down the
+          // ladder (next source, then the error screen with its VLC handoff).
+          remuxWatchdog = window.setTimeout(() => {
+            if (cancelled || video.readyState >= 2) return;
+            handle?.destroy();
+            handle = null;
+            if (tryNextSource()) return;
+            setBuffering(false);
+            setError(true);
+          }, 15000);
         } catch {
           if (!cancelled && !tryNextSource()) { setBuffering(false); setError(true); }
         }
       })();
       return () => {
         cancelled = true;
+        window.clearTimeout(remuxWatchdog);
         handle?.destroy();
         video.removeAttribute("src");
         video.load();
