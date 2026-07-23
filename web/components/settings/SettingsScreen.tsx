@@ -26,6 +26,7 @@ import {
   Tv,
   User,
   UserCircle,
+  X,
 } from "lucide-react";
 import { Component, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -179,9 +180,23 @@ function qualityPresetFilters(
 export function SettingsScreen() {
   const [section, setSection] = useState<SectionId>("accounts");
   const [collapsed, setCollapsed] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const activeSectionObj = SECTIONS.find((s) => s.id === section);
 
   return (
     <div className={`settings-shell ${collapsed ? "sidebar-collapsed" : "sidebar-expanded"}`}>
+      {/* Mobile Floating Transparent Menu Button (Constant) */}
+      <button
+        type="button"
+        className={`settings-floating-menu-btn ${mobileMenuOpen ? "is-open" : ""}`}
+        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+      >
+        <Menu size={20} />
+      </button>
+
+      {/* Desktop Sidebar */}
       <aside className="settings-sidebar">
         <div className="settings-sidebar-header">
           <button
@@ -218,6 +233,48 @@ export function SettingsScreen() {
           })}
         </nav>
       </aside>
+
+      {/* Mobile Navigation Drawer & Backdrop Overlay */}
+      <div
+        className={`settings-mobile-overlay ${mobileMenuOpen ? "is-open" : ""}`}
+        onClick={() => setMobileMenuOpen(false)}
+      >
+        <div className="settings-mobile-drawer" onClick={(e) => e.stopPropagation()}>
+          <div className="settings-mobile-drawer-header">
+            <span className="settings-mobile-drawer-title">{activeSectionObj?.label ?? "Navigation"}</span>
+            <button
+              type="button"
+              className="settings-mobile-drawer-close"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-label="Close settings menu"
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <nav className="settings-mobile-nav">
+            {SECTIONS.map((s) => {
+              const Icon = s.icon;
+              const isActive = section === s.id;
+              return (
+                <button
+                  type="button"
+                  key={s.id}
+                  className={`settings-section-btn ${isActive ? "is-active" : ""}`}
+                  onClick={() => {
+                    setSection(s.id);
+                    setMobileMenuOpen(false);
+                    window.scrollTo({ top: 0 });
+                  }}
+                >
+                  <span className="settings-btn-icon"><Icon size={18} /></span>
+                  <span className="settings-btn-label">{s.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </div>
+
       <div className="settings-content">
         <SettingsSectionBoundary section={section}>
           <SectionBody section={section} />
