@@ -44,3 +44,9 @@
   [headers.values]
     Content-Type = "application/octet-stream"
     Content-Disposition = "attachment; filename=\"vlc-setup.bat\""
+
+[[headers]]
+  for = "/vlc-setup.sh"
+  [headers.values]
+    Content-Type = "application/x-sh"
+    Content-Disposition = "attachment; filename=\"vlc-setup.sh\""

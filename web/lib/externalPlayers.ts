@@ -182,13 +182,20 @@ export function isMac() {
   return /Macintosh|Mac OS X/i.test(ua) && !(navigator.maxTouchPoints > 1);
 }
 
+export function isLinux() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /Linux/i.test(ua) && !/Android/i.test(ua);
+}
+
 export function isDesktop() {
   return !isAppleMobile() && !isAndroid();
 }
 
-// One-time setup that registers the vlc:// handler so the desktop "Open in VLC"
-// button launches VLC directly instead of downloading a .m3u. Hosted by ARVIO.
+// One-time setup scripts that register the vlc:// handler so desktop "Open in VLC"
+// launches VLC directly instead of downloading a .m3u. Hosted by ARVIO.
 export const VLC_SETUP_URL = "/vlc-setup.bat";
+export const VLC_SETUP_SH_URL = "/vlc-setup.sh";
 
 // Whether the user has run the one-time desktop vlc:// setup. We can't detect
 // protocol registration from the browser, so we remember that they installed
