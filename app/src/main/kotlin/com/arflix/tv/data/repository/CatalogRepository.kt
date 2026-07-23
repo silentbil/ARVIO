@@ -1253,7 +1253,12 @@ class CatalogRepository @Inject constructor(
             if (e is kotlinx.coroutines.CancellationException) throw e
             CatalogSourceType.PREINSTALLED.name
         }
-        val configKind = config.kind
+        val configKind = try {
+            CatalogKind.valueOf(config.kind.name)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            CatalogKind.STANDARD
+        }
         val safeCollectionSources = config.collectionSources.orEmpty()
         val safeRequiredAddonUrls = config.requiredAddonUrls.orEmpty()
         val normalizedCollectionTileShape = try {
