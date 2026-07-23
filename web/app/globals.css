@@ -7198,6 +7198,9 @@ button,
   padding-bottom: 2px;
   scrollbar-width: none;
   height: 50px;
+  /* overflow-x:auto lets this collapse to 0 min-height, so in the flex column
+     the tall source list's shrink pressure would crush it. Pin its size. */
+  flex: 0 0 50px;
 }
 
 .source-addon-tabs::-webkit-scrollbar {
