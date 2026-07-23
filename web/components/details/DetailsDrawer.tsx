@@ -8,7 +8,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_URL } from "@/lib/externalPlayers";
+import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isLinux, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_SH_URL, VLC_SETUP_URL } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
@@ -381,14 +381,20 @@ function SourcePickerModal({
   // macOS is excluded — VLC self-registers vlc:// there, so no installer is
   // needed (and the .bat wouldn't run on a Mac anyway).
   const [vlcReady, setVlcReady] = useState<boolean>(() => vlcProtocolReady());
-  const showVlcSetup = isWindows() && !vlcReady;
+  const showVlcSetup = (isWindows() || isLinux()) && !vlcReady;
   const enableVlcProtocol = () => {
-    // Download the tiny installer, then remember the user set it up so the VLC
-    // button switches to the direct vlc:// launch.
-    triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
-    setVlcProtocolReady(true);
-    setVlcReady(true);
-    onToast("Run the downloaded vlc-setup.bat once — then Open in VLC works instantly.");
+    // Download the tiny installer script for the platform, then remember the user set it up
+    if (isLinux()) {
+      triggerDownload(VLC_SETUP_SH_URL, "vlc-setup.sh");
+      setVlcProtocolReady(true);
+      setVlcReady(true);
+      onToast("Run `bash vlc-setup.sh` once in terminal — then Open in VLC works instantly.");
+    } else {
+      triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
+      setVlcProtocolReady(true);
+      setVlcReady(true);
+      onToast("Run the downloaded vlc-setup.bat once — then Open in VLC works instantly.");
+    }
   };
   // Addon subtitles for this title, fetched in the background when the panel
   // opens so the VLC/Infuse buttons can attach them synchronously on click.
@@ -421,16 +427,19 @@ function SourcePickerModal({
   }, [visible, item?.id, selectedEpisode?.season, selectedEpisode?.episode]);
 
   const addons = useMemo(() => {
+    // Only surface addons that actually returned sources for this title. Seeding a
+    // chip for every installed stream-capable addon meant subtitle providers
+    // (OpenSubtitles, Ktuvit, Wizdom) — whose manifests also declare a "stream"
+    // resource — showed up as empty source filters. A name lookup from the
+    // installed list keeps the pretty addon names.
+    const nameById = new Map(installedAddons.map((addon) => [addon.id, addon.name]));
     const unique = new Map<string, { id: string; name: string; count: number }>();
-    installedAddons
-      .filter((addon) => addon.enabled !== false && addonHasResource(addon, "stream"))
-      .forEach((addon) => unique.set(addon.id, { id: addon.id, name: addon.name, count: 0 }));
     streams.forEach((stream) => {
       const id = stream.addonId || stream.addonName;
       const existing = unique.get(id);
       unique.set(id, {
         id,
-        name: existing?.name || stream.addonName,
+        name: existing?.name || nameById.get(id) || stream.addonName,
         count: (existing?.count ?? 0) + 1
       });
     });
@@ -796,12 +805,6 @@ function streamBadges(stream: StreamSource) {
     seen.add(badge.label);
     return true;
   }).slice(0, 7);
-}
-
-function addonHasResource(addon: InstalledAddon, resource: string) {
-  const resources = addon.resources ?? [];
-  if (!resources.length) return true;
-  return resources.some((item) => typeof item === "string" ? item === resource : item.name === resource);
 }
 
 function detectSourceBadge(text: string) {

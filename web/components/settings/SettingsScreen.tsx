@@ -5,8 +5,11 @@ import {
   ArrowUp,
   Captions,
   Check,
+  CheckCircle,
   ChevronDown,
   Cloud,
+  Download,
+  ExternalLink,
   Eye,
   EyeOff,
   Languages,
@@ -19,6 +22,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Send,
   Server,
   Sparkles,
   Subtitles,
@@ -28,7 +32,7 @@ import {
   UserCircle,
   X,
 } from "lucide-react";
-import { Component, useEffect, useState, type ReactNode } from "react";
+import { Component, CSSProperties, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { defaultCatalogs, mergeCatalogs } from "@/lib/catalogs";
 import {
@@ -37,6 +41,16 @@ import {
   hasTraktConfig,
   getAuthPortalUrl,
 } from "@/lib/config";
+import {
+  isLinux,
+  isMac,
+  isWindows,
+  setVlcProtocolReady,
+  triggerDownload,
+  vlcProtocolReady,
+  VLC_SETUP_SH_URL,
+  VLC_SETUP_URL,
+} from "@/lib/externalPlayers";
 import { defaultSettings, useApp } from "@/lib/store";
 import type {
   AppSettings,
@@ -48,10 +62,42 @@ import type {
 
 const settingsKey = "arvio.web.settings";
 
+function VlcIcon({
+  size = 18,
+  className = "",
+  style = {},
+}: {
+  size?: number;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      style={{ display: "inline-block", verticalAlign: "middle", ...style }}
+    >
+      {/* Cone tip */}
+      <path d="M10.8 4.2C11.1 3.4 11.5 3 12 3C12.5 3 12.9 3.4 13.2 4.2L14.2 6.5H9.8L10.8 4.2Z" />
+      {/* Upper cone band */}
+      <path d="M9.1 8H14.9L16.2 11H7.8L9.1 8Z" />
+      {/* Lower cone band */}
+      <path d="M7.1 12.5H16.9L18.4 16H5.6L7.1 12.5Z" />
+      {/* Base stand */}
+      <path d="M2.5 17.5L4.5 17H19.5L21.5 17.5L20.5 21C20.4 21.6 19.8 22 19.2 22H4.8C4.2 22 3.6 21.6 3.5 21L2.5 17.5Z" />
+    </svg>
+  );
+}
+
 const SECTIONS = [
   { id: "accounts", label: "Accounts", icon: Cloud },
   { id: "profiles", label: "Profiles", icon: User },
   { id: "playback", label: "Playback", icon: Play },
+  { id: "vlc", label: "VLC Integration", icon: VlcIcon },
   { id: "language", label: "Language & Audio", icon: Languages },
   { id: "subtitles", label: "Subtitles", icon: Subtitles },
   { id: "ai", label: "AI Subtitles", icon: Captions },
@@ -59,6 +105,7 @@ const SECTIONS = [
   { id: "network", label: "Network", icon: Network },
   { id: "tv", label: "TV (IPTV)", icon: Tv },
   { id: "homeserver", label: "Home Server", icon: Server },
+  { id: "telegram", label: "Telegram", icon: Send },
   { id: "catalogs", label: "Catalogs", icon: ListVideo },
   { id: "addons", label: "Addons", icon: Sparkles },
 ] as const;
@@ -556,6 +603,52 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
+          {isMac() ? (
+            <Row
+              label="VLC One-Click Setup"
+              hint="macOS self-registers the vlc:// protocol upon VLC installation — no setup script required"
+            >
+              <span className="muted" style={{ fontSize: "13px" }}>Natively supported</span>
+            </Row>
+          ) : isLinux() ? (
+            <Row
+              label="VLC One-Click Setup"
+              hint="Download vlc-setup.sh to enable direct vlc:// launching on Linux without saving .m3u playlist files"
+            >
+              <button
+                type="button"
+                className="secondary text-button"
+                onClick={() => {
+                  triggerDownload(VLC_SETUP_SH_URL, "vlc-setup.sh");
+                  setVlcProtocolReady(true);
+                  app.setToast(
+                    "Downloaded vlc-setup.sh — run `bash vlc-setup.sh` to enable direct VLC launching.",
+                  );
+                }}
+              >
+                <Download size={16} /> Download .sh
+              </button>
+            </Row>
+          ) : isWindows() ? (
+            <Row
+              label="VLC One-Click Setup"
+              hint="Download vlc-setup.bat to enable direct vlc:// launching on Windows without saving .m3u playlist files"
+            >
+              <button
+                type="button"
+                className="secondary text-button"
+                onClick={() => {
+                  triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
+                  setVlcProtocolReady(true);
+                  app.setToast(
+                    "Downloaded vlc-setup.bat — run it once on Windows to enable direct VLC launching.",
+                  );
+                }}
+              >
+                <Download size={16} /> Download .bat
+              </button>
+            </Row>
+          ) : null}
           <Row label="Auto play next episode">
             <Toggle
               value={settings.autoPlayNext}
@@ -1020,10 +1113,14 @@ function SectionBody({ section }: { section: SectionId }) {
       return <TvSettingsSection />;
     case "homeserver":
       return <HomeServerSection />;
+    case "telegram":
+      return <TelegramSection />;
     case "catalogs":
       return <CatalogsSection />;
     case "addons":
       return <AddonsSection />;
+    case "vlc":
+      return <VlcSection />;
     default:
       return null;
   }
@@ -1408,6 +1505,250 @@ function HomeServerSection() {
           <p className="empty">No home servers configured.</p>
         )}
       </div>
+    </Panel>
+  );
+}
+
+/* ---------- Telegram ---------- */
+
+// Lazily-loaded shape of @/lib/telegram. GramJS is a large browser-only bundle,
+// so the module (and its dynamic gramjs import) only load when this section is
+// first opened.
+type TgModule = typeof import("@/lib/telegram");
+type TgAuthState = import("@/lib/telegram").TgAuthState;
+
+function TelegramSection() {
+  const { settings, setToast } = useApp();
+  const [mod, setMod] = useState<TgModule | null>(null);
+  const [authState, setAuthState] = useState<TgAuthState>({ k: "idle" });
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [phone, setPhone] = useState("+");
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [usePhone, setUsePhone] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+
+  // Load the Telegram module and subscribe to its auth state.
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    let active = true;
+    void (async () => {
+      try {
+        const m = await import("@/lib/telegram");
+        if (!active) return;
+        setMod(m);
+        unsub = m.subscribe(setAuthState);
+      } catch {
+        setToast("Telegram module failed to load in this browser.");
+      }
+    })();
+    return () => {
+      active = false;
+      unsub?.();
+    };
+  }, [setToast]);
+
+  // Render the QR login link to an image whenever it (re)appears.
+  useEffect(() => {
+    if (authState.k !== "waitQr") {
+      setQrDataUrl(null);
+      return;
+    }
+    const url = authState.url;
+    let active = true;
+    void (async () => {
+      try {
+        const QRCode = await import("qrcode");
+        const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 320 });
+        if (active) setQrDataUrl(dataUrl);
+      } catch {
+        /* Fall back to showing the raw link below. */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [authState]);
+
+  if (!mod) {
+    return (
+      <Panel title="Telegram">
+        <p className="empty">Loading…</p>
+      </Panel>
+    );
+  }
+
+  const connect = () => {
+    setUsePhone(false);
+    void mod.startQrAuth();
+  };
+  const connectPhone = () => {
+    const digits = phone.replace(/\D/g, "");
+    if (!phone.startsWith("+") || digits.length < 7) {
+      setToast("Enter a valid phone number in international format (e.g. +1 650 555 1234).");
+      return;
+    }
+    void mod.startPhoneAuth(phone.trim());
+  };
+
+  return (
+    <Panel title="Telegram">
+      <p className="empty">
+        Connect your Telegram account to stream video files from your chats and
+        channels as sources — the same feature as the Android app. Everything
+        runs in your browser; nothing is sent to ARVIO servers.
+      </p>
+
+      {authState.k === "idle" && !usePhone && (
+        <div className="tg-center">
+          <p className="tg-lead">Scan a QR code with the Telegram app on your phone to sign in.</p>
+          <div className="tg-actions">
+            <button type="button" className="primary" onClick={connect}>
+              <Send size={18} /> Connect with QR
+            </button>
+            <button type="button" className="secondary" onClick={() => setUsePhone(true)}>
+              Use phone number instead
+            </button>
+          </div>
+        </div>
+      )}
+
+      {authState.k === "idle" && usePhone && (
+        <div className="tg-center">
+          <p className="tg-lead">Enter your phone number in international format.</p>
+          <div className="inline-form">
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+1 650 555 1234"
+              inputMode="tel"
+            />
+            <button type="button" className="primary" onClick={connectPhone}>
+              Send code
+            </button>
+            <button type="button" className="secondary" onClick={() => setUsePhone(false)}>
+              Back to QR
+            </button>
+          </div>
+        </div>
+      )}
+
+      {authState.k === "initializing" && <p className="empty">Connecting to Telegram…</p>}
+
+      {authState.k === "waitQr" && (
+        <div className="tg-center">
+          <p className="tg-lead">Open Telegram on your phone → Settings → Devices → Link Desktop Device, then scan:</p>
+          <div className="tg-qr">
+            {qrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={qrDataUrl} alt="Telegram login QR code" width={280} height={280} />
+            ) : (
+              <p className="empty">Generating QR…</p>
+            )}
+          </div>
+          <p className="empty tg-fineprint">The code refreshes automatically. Approving it on your phone signs you in here.</p>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              mod.resetToIdle();
+              setUsePhone(true);
+            }}
+          >
+            Use phone number instead
+          </button>
+        </div>
+      )}
+
+      {authState.k === "waitCode" && (
+        <div className="tg-center">
+          <p className="tg-lead">Enter the {authState.codeLength}-digit code Telegram just sent you.</p>
+          <div className="inline-form">
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, authState.codeLength))}
+              placeholder="Login code"
+              inputMode="numeric"
+            />
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                if (code) mod.submitCode(code);
+              }}
+            >
+              Confirm
+            </button>
+          </div>
+        </div>
+      )}
+
+      {authState.k === "waitPassword" && (
+        <div className="tg-center">
+          <p className="tg-lead">
+            Two-step verification is on. Enter your Telegram password
+            {authState.hint ? ` (hint: ${authState.hint})` : ""}.
+          </p>
+          <div className="inline-form">
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="2FA password"
+              type="password"
+            />
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                if (password) mod.submitPassword(password);
+                setPassword("");
+              }}
+            >
+              Confirm
+            </button>
+          </div>
+        </div>
+      )}
+
+      {authState.k === "ready" && (
+        <div className="tg-connected">
+          <div className="tg-badge">
+            <strong>Connected</strong>
+            <span>Signed in as {authState.firstName || "your account"}</span>
+          </div>
+          {!confirmDisconnect ? (
+            <button type="button" className="secondary" onClick={() => setConfirmDisconnect(true)}>
+              <LogOut size={18} /> Disconnect
+            </button>
+          ) : (
+            <div className="tg-actions">
+              <span className="empty">Disconnect and forget this session?</span>
+              <button
+                type="button"
+                className="danger-button"
+                onClick={() => {
+                  setConfirmDisconnect(false);
+                  void mod.disconnect();
+                }}
+              >
+                Disconnect
+              </button>
+              <button type="button" className="secondary" onClick={() => setConfirmDisconnect(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {authState.k === "error" && (
+        <div className="tg-center">
+          <p className="tg-lead tg-error">Connection failed: {authState.message}</p>
+          <button type="button" className="primary" onClick={connect}>
+            Try again
+          </button>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -1859,6 +2200,224 @@ function AddonsSection() {
       >
         <Trash2 size={18} /> Reset all web settings
       </button>
+    </Panel>
+  );
+}
+
+/* ---------- VLC Integration ---------- */
+
+function VlcSection() {
+  const { setToast } = useApp();
+  const [vlcReady, setVlcReady] = useState<boolean>(() => vlcProtocolReady());
+  const [checkStatus, setCheckStatus] = useState<
+    "idle" | "testing" | "working" | "not_installed"
+  >("idle");
+
+  const handleDownloadWindows = () => {
+    triggerDownload(VLC_SETUP_URL, "vlc-setup.bat");
+    setVlcProtocolReady(true);
+    setVlcReady(true);
+    setToast(
+      "Downloaded vlc-setup.bat — run it once on Windows to enable direct VLC launching.",
+    );
+  };
+
+  const handleDownloadLinux = () => {
+    triggerDownload(VLC_SETUP_SH_URL, "vlc-setup.sh");
+    setVlcProtocolReady(true);
+    setVlcReady(true);
+    setToast(
+      "Downloaded vlc-setup.sh — run `bash vlc-setup.sh` to enable direct VLC launching on Linux.",
+    );
+  };
+
+  const handleToggleReady = () => {
+    const next = !vlcReady;
+    setVlcProtocolReady(next);
+    setVlcReady(next);
+    setToast(
+      next
+        ? "VLC direct protocol handler marked as ready."
+        : "VLC direct protocol handler status reset.",
+    );
+  };
+
+  const handleCheckIntegration = () => {
+    setCheckStatus("testing");
+    let blurred = false;
+
+    const onBlur = () => {
+      blurred = true;
+    };
+
+    window.addEventListener("blur", onBlur);
+
+    const testUrl =
+      "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_5MB.mp4";
+    try {
+      const a = document.createElement("a");
+      a.href = `vlc://${testUrl}`;
+      a.rel = "noopener";
+      a.style.position = "fixed";
+      a.style.left = "-9999px";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 1000);
+    } catch {
+      /* ignore */
+    }
+
+    setTimeout(() => {
+      window.removeEventListener("blur", onBlur);
+      if (blurred) {
+        setCheckStatus("working");
+        setVlcProtocolReady(true);
+        setVlcReady(true);
+        setToast(
+          "✓ VLC Integration Confirmed! VLC launched directly via vlc:// protocol.",
+        );
+      } else {
+        setCheckStatus("not_installed");
+        setToast(
+          "✕ VLC handler not detected. Please run the setup script for your OS.",
+        );
+      }
+    }, 1500);
+  };
+
+  return (
+    <Panel title="VLC Integration">
+      <Row
+        label="Check VLC Integration"
+        hint="Automatically tests launching VLC via vlc:// and reports if integration is working"
+      >
+        <button
+          type="button"
+          className={
+            checkStatus === "working"
+              ? "secondary text-button"
+              : checkStatus === "not_installed"
+                ? "text-button danger"
+                : "secondary text-button"
+          }
+          disabled={checkStatus === "testing"}
+          onClick={handleCheckIntegration}
+        >
+          {checkStatus === "testing" ? (
+            <RefreshCw size={16} className="spin" />
+          ) : checkStatus === "working" ? (
+            <CheckCircle size={16} />
+          ) : (
+            <CheckCircle size={16} />
+          )}
+          {checkStatus === "testing"
+            ? "Testing VLC Launcher..."
+            : checkStatus === "working"
+              ? "Working (VLC Integration Verified)"
+              : checkStatus === "not_installed"
+                ? "Not Working — Run Setup"
+                : "Check Integration"}
+        </button>
+      </Row>
+
+      <Row
+        label="Protocol Handler Status"
+        hint="When enabled, ARVIO launches streams directly via vlc:// instead of saving .m3u playlist files"
+      >
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          {isMac() ? (
+            <span className="muted" style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}>
+              <Check size={16} style={{ color: "#4ade80" }} /> Natively Enabled on macOS (no setup script needed)
+            </span>
+          ) : (
+            <button
+              type="button"
+              className={vlcReady ? "secondary text-button" : "text-button"}
+              onClick={handleToggleReady}
+            >
+              {vlcReady ? <Check size={16} /> : null}
+              {vlcReady ? "Protocol Enabled (vlc://)" : "Mark Protocol Enabled"}
+            </button>
+          )}
+        </div>
+      </Row>
+
+      <Row
+        label="Download Setup Scripts Anytime"
+        hint="Re-download the installer script for your desktop OS"
+      >
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="secondary text-button"
+            onClick={handleDownloadWindows}
+          >
+            <Download size={15} /> vlc-setup.bat (Windows)
+          </button>
+          <button
+            type="button"
+            className="secondary text-button"
+            onClick={handleDownloadLinux}
+          >
+            <Download size={15} /> vlc-setup.sh (Linux)
+          </button>
+        </div>
+      </Row>
+
+      <div
+        style={{
+          marginTop: "24px",
+          padding: "16px",
+          background: "rgba(255, 255, 255, 0.03)",
+          borderRadius: "12px",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          fontSize: "13px",
+          lineHeight: "1.6",
+          color: "var(--muted)",
+        }}
+      >
+        <strong
+          style={{
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            marginBottom: "8px",
+          }}
+        >
+          <VlcIcon size={18} /> Platform Integration Guide:
+        </strong>
+        <ul style={{ paddingLeft: "20px", margin: 0 }}>
+          <li style={{ marginBottom: "6px" }}>
+            <strong style={{ color: "#fff" }}>Windows Desktop:</strong> Run{" "}
+            <code>vlc-setup.bat</code> once to register the <code>vlc://</code>{" "}
+            protocol handler for your user account (no administrator rights
+            needed).
+          </li>
+          <li style={{ marginBottom: "6px" }}>
+            <strong style={{ color: "#fff" }}>Linux Desktop:</strong> Download{" "}
+            <code>vlc-setup.sh</code> and run <code>bash vlc-setup.sh</code> in
+            your terminal. It creates a <code>.desktop</code> entry and registers{" "}
+            <code>x-scheme-handler/vlc</code> via <code>xdg-mime</code> for
+            GNOME, KDE, XFCE, etc.
+          </li>
+          <li style={{ marginBottom: "6px" }}>
+            <strong style={{ color: "#fff" }}>macOS Desktop:</strong> VLC
+            automatically self-registers the <code>vlc://</code> protocol
+            handler upon installation. No setup script required.
+          </li>
+          <li style={{ marginBottom: "6px" }}>
+            <strong style={{ color: "#fff" }}>Android:</strong> Uses native
+            Android intents to launch VLC directly or prompt with an app chooser
+            (MX Player, Just Player, VLC).
+          </li>
+          <li>
+            <strong style={{ color: "#fff" }}>iOS / iPadOS:</strong> Launches
+            VLC directly using the native <code>vlc-x-callback://</code>{" "}
+            protocol.
+          </li>
+        </ul>
+      </div>
     </Panel>
   );
 }

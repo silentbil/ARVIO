@@ -29,6 +29,8 @@ class PluginManager @Inject constructor() {
 
     suspend fun removeRepository(repoId: String) {}
 
+    suspend fun clearAllPlugins() {}
+
     suspend fun reconcileWithRemoteRepoUrls(
         remotePlugins: List<RemotePluginInfo>,
         removeMissingLocal: Boolean = true

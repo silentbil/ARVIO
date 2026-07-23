@@ -20,6 +20,7 @@ private const val TAG = "ExtExtractorRegistry"
 class ExternalExtractorRegistry @Inject constructor() {
 
     private val missingExtractorDomains = mutableSetOf<String>()
+    private val builtInExtractors = mutableSetOf<ExtractorApi>()
     private var installed = false
 
     fun registerExtractor(extractor: ExtractorApi) {
@@ -33,8 +34,21 @@ class ExternalExtractorRegistry @Inject constructor() {
         extractorList.forEach { registerExtractor(it) }
     }
 
+    fun unregisterExtractors(extractors: List<ExtractorApi>) {
+        val targets = extractors.filter { it !in builtInExtractors }
+        if (targets.isNotEmpty()) {
+            extractorApis.removeAll(targets.toSet())
+            Log.d(TAG, "Unregistered ${targets.size} extension extractors")
+        }
+    }
+
     fun clear() {
         missingExtractorDomains.clear()
+        val toRemove = extractorApis.filter { it !in builtInExtractors }
+        if (toRemove.isNotEmpty()) {
+            extractorApis.removeAll(toRemove.toSet())
+            Log.d(TAG, "Cleared ${toRemove.size} extension extractors from global registry")
+        }
     }
 
     /**
@@ -78,6 +92,7 @@ class ExternalExtractorRegistry @Inject constructor() {
     fun installGlobal() {
         if (installed) return
         installed = true
+        builtInExtractors.addAll(extractorApis)
         Log.d(TAG, "installGlobal: library extractorApis has ${extractorApis.size} built-in extractors")
     }
 
