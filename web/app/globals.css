@@ -2498,7 +2498,7 @@ a.login-submit {
 .settings-mobile-overlay {
   position: fixed;
   inset: 0;
-  z-index: 999;
+  z-index: 55;
   background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -2529,7 +2529,7 @@ a.login-submit {
   flex-direction: column;
   gap: 14px;
   padding: 16px;
-  z-index: 1000;
+  z-index: 56;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05);
   opacity: 0;
   overflow-y: auto;
@@ -3812,7 +3812,7 @@ select:focus {
     border-radius: 12px;
     color: #ffffff;
     cursor: pointer;
-    z-index: 1001 !important;
+    z-index: 57 !important;
     box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
     transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
   }
@@ -5780,6 +5780,16 @@ button,
     margin-left: 0 !important;
     width: 100% !important;
     transition: none !important;
+  }
+
+  .settings-mobile-overlay {
+    top: calc(56px + env(safe-area-inset-top, 0px)) !important;
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .settings-mobile-drawer {
+    top: calc(50% + (env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 6px) / 2) !important;
+    max-height: calc(100dvh - 56px - 62px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px) !important;
   }
 
   .settings-section-btn {
