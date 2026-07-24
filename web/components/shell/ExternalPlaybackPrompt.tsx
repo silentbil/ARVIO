@@ -3,7 +3,8 @@
 import { CheckCircle2, Clock3, Play, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { saveProgress } from "@/lib/cloud";
-import { authClient, traktClient, useApp } from "@/lib/store";
+import { authClient, useApp } from "@/lib/store";
+import { syncClient } from "@/lib/sync";
 import {
   clearPendingExternalPlayback,
   loadPendingExternalPlayback,
@@ -76,19 +77,19 @@ export function ExternalPlaybackPrompt() {
     }
     setToast(finished ? "Marking watched…" : "Syncing progress…");
     try {
-      if (traktClient.isConnected) {
+      if (syncClient().isConnected) {
         if (finished) {
-          // A completed watch must go into Trakt HISTORY (creates the watched
-          // badge) — a scrobble alone does not. Mirrors the details "Mark
-          // Watched" flow.
-          await traktClient.addToHistory({
+          // A completed watch must go into the provider's HISTORY (creates the
+          // watched badge) — a scrobble alone does not. Mirrors the details
+          // "Mark Watched" flow.
+          await syncClient().addToHistory({
             mediaType: active.mediaType,
             tmdbId: active.tmdbId,
             season: active.season,
             episode: active.episode
           }).catch(() => undefined);
         } else {
-          await traktClient.scrobble(action, {
+          await syncClient().scrobble(action, {
             mediaType: active.mediaType,
             tmdbId: active.tmdbId,
             season: active.season,

@@ -16,6 +16,8 @@ import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktP
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, loadCatalog, searchMedia } from "./tmdb";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
+import { mdblistClient } from "./mdblist";
+import { syncClient } from "./sync";
 import type {
   AppSettings,
   AuthSession,
@@ -450,6 +452,7 @@ export interface AppStore {
   updateSettings: (patch: Partial<AppSettings>) => void;
   auth: AuthSession | null;
   traktConnected: boolean;
+  mdblistConnected: boolean;
   deviceCode: TraktDeviceCode | null;
   busy: string;
   toast: string | null;
@@ -473,6 +476,8 @@ export interface AppStore {
   beginTrakt: () => Promise<void>;
   pollTrakt: () => Promise<void>;
   disconnectTrakt: () => void;
+  connectMdblist: (key: string) => Promise<void>;
+  disconnectMdblist: () => void;
   // Watchlist list-source switcher (Trakt custom lists / collection).
   loadTraktLists: () => Promise<Array<{ id: string; name: string }>>;
   loadTraktListItems: (source: string) => Promise<MediaItem[]>;
@@ -538,6 +543,7 @@ export function AppProvider({
   });
   const [auth, setAuth] = useState(() => authClient.session);
   const [traktConnected, setTraktConnected] = useState(() => traktClient.isConnected);
+  const [mdblistConnected, setMdblistConnected] = useState(() => mdblistClient.isConnected);
   const [deviceCode, setDeviceCode] = useState<TraktDeviceCode | null>(null);
   const [busy, setBusy] = useState("Loading ARVIO");
   const [toast, setToast] = useState<string | null>(null);
@@ -722,13 +728,14 @@ export function AppProvider({
 
       void loadHomeServerRows(effectiveSettings.homeServers).then(setHomeServerRows).catch(() => setHomeServerRows([]));
 
-      const traktReady = traktClient.isConnected;
+      const client = syncClient();
+      const traktReady = client.isConnected;
       const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows] = await Promise.all([
         authClient.session ? getContinueWatching(authClient, profileId).catch(() => []) : Promise.resolve([]),
-        traktReady ? traktClient.watchlist().catch(() => []) : Promise.resolve([]),
-        traktReady ? traktClient.playback().catch(() => []) : Promise.resolve([]),
-        traktReady ? traktClient.watched("movies").catch(() => []) : Promise.resolve([]),
-        traktReady ? traktClient.watched("shows").catch(() => []) : Promise.resolve([]),
+        traktReady ? client.watchlist().catch(() => []) : Promise.resolve([]),
+        traktReady ? client.playback().catch(() => []) : Promise.resolve([]),
+        traktReady ? client.watched("movies").catch(() => []) : Promise.resolve([]),
+        traktReady ? client.watched("shows").catch(() => []) : Promise.resolve([]),
         authClient.session ? pullCloudWatchlist(authClient, profileId).catch(() => []) : Promise.resolve([])
       ]);
 
@@ -1518,6 +1525,9 @@ export function AppProvider({
     await traktClient.pollDeviceToken(code.device_code);
     setTraktConnected(true);
     setDeviceCode(null);
+    // Mutual exclusion: connecting Trakt drops MDBList for this profile.
+    mdblistClient.disconnect();
+    setMdblistConnected(false);
     // Persist the token to cloud so other devices (and future sessions) see the
     // connection — parity with the Android app's traktTokens payload.
     if (traktClient.token && activeProfileId) {
@@ -1530,6 +1540,23 @@ export function AppProvider({
     traktClient.disconnect();
     setTraktConnected(false);
   }, []);
+
+  const connectMdblist = useCallback(async (key: string) => {
+    const ok = await mdblistClient.validateKey(key);
+    if (!ok) throw new Error("Invalid MDBList API key");
+    mdblistClient.setKey(key);
+    setMdblistConnected(true);
+    // Mutual exclusion: connecting MDBList drops Trakt for this profile.
+    traktClient.disconnect();
+    setTraktConnected(false);
+    await refreshData();
+  }, [refreshData]);
+
+  const disconnectMdblist = useCallback(() => {
+    mdblistClient.disconnect();
+    setMdblistConnected(false);
+    void refreshData();
+  }, [refreshData]);
 
   // Watchlist list-source switcher. Returns the user's custom Trakt lists to
   // populate the dropdown (built-in Watchlist/Collection are added by the UI).
@@ -1687,6 +1714,7 @@ export function AppProvider({
     updateSettings,
     auth,
     traktConnected,
+    mdblistConnected,
     deviceCode,
     busy,
     toast,
@@ -1709,16 +1737,19 @@ export function AppProvider({
     beginTrakt,
     pollTrakt,
     disconnectTrakt,
+    connectMdblist,
+    disconnectMdblist,
     loadTraktLists,
     loadTraktListItems
   }), [
     view, cloudLoginRequired, profiles, activeProfile, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
     section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
-    addons, iptvSnapshot, query, results, settings, auth, traktConnected, deviceCode, busy, toast,
+    addons, iptvSnapshot, query, results, settings, auth, traktConnected, mdblistConnected, deviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, playCatchup, closePlayer,
     refreshIptv, loadIptvGuide,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt,
+    connectMdblist, disconnectMdblist,
     loadTraktLists, loadTraktListItems
   ]);
 

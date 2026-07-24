@@ -1151,15 +1151,21 @@ function AccountsSection() {
   const {
     auth,
     traktConnected,
+    mdblistConnected,
     deviceCode,
     signOut,
     beginTrakt,
     pollTrakt,
     disconnectTrakt,
+    connectMdblist,
+    disconnectMdblist,
     refreshData,
   } = useApp();
   const [traktError, setTraktError] = useState<string | null>(null);
   const [traktBusy, setTraktBusy] = useState<"start" | "poll" | null>(null);
+  const [mdblistKey, setMdblistKey] = useState("");
+  const [mdblistError, setMdblistError] = useState<string | null>(null);
+  const [mdblistBusy, setMdblistBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const cloudConfigured = hasNetlifyBackendConfig() || hasSupabaseConfig();
 
@@ -1197,6 +1203,21 @@ function AccountsSection() {
       );
     } finally {
       setTraktBusy(null);
+    }
+  };
+
+  const connectMdblistLink = async () => {
+    setMdblistBusy(true);
+    setMdblistError(null);
+    try {
+      await connectMdblist(mdblistKey);
+      setMdblistKey("");
+    } catch (error) {
+      setMdblistError(
+        error instanceof Error ? error.message : "Could not connect MDBList.",
+      );
+    } finally {
+      setMdblistBusy(false);
     }
   };
 
@@ -1303,6 +1324,34 @@ function AccountsSection() {
               </div>
             )}
           </>
+        )}
+      </Panel>
+
+      <Panel title="MDBList">
+        {mdblistError && <p className="login-error">{mdblistError}</p>}
+        {mdblistConnected ? (
+          <button type="button" className="secondary" onClick={disconnectMdblist}>
+            Disconnect MDBList
+          </button>
+        ) : (
+          <div className="login-form">
+            <input
+              type="password"
+              placeholder="MDBList API key"
+              value={mdblistKey}
+              onChange={(event) => setMdblistKey(event.target.value)}
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="primary"
+              disabled={mdblistBusy || !mdblistKey.trim()}
+              onClick={() => void connectMdblistLink()}
+            >
+              {mdblistBusy ? "Connecting..." : "Connect"}
+            </button>
+            <p className="empty">Get your API key from mdblist.com/preferences</p>
+          </div>
         )}
       </Panel>
 

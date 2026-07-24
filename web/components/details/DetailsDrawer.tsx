@@ -14,7 +14,8 @@ import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefe
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { isBrowserPlayableStream, isDirectPlayableStream, streamPlayability } from "@/lib/streamCompatibility";
-import { authClient, traktClient, useApp } from "@/lib/store";
+import { authClient, useApp } from "@/lib/store";
+import { syncClient } from "@/lib/sync";
 import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
 import type { EpisodeInfo, InstalledAddon, MediaItem, PersonCredit, PersonDetails, ReviewInfo, StreamSource, SubtitleTrack } from "@/lib/types";
 
@@ -122,13 +123,13 @@ function DetailsView({ item }: { item: MediaItem }) {
   };
 
   const addToWatchlist = async () => {
-    if (!traktClient.isConnected) {
-      setToast("Connect Trakt in Settings to use Watchlist.");
+    if (!syncClient().isConnected) {
+      setToast("Connect Trakt or MDBList in Settings to use Watchlist.");
       return;
     }
     try {
-      await traktClient.addToWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
-      setToast("Added to Trakt watchlist.");
+      await syncClient().addToWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
+      setToast("Added to watchlist.");
       void refreshData();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Could not add to watchlist.");
@@ -136,13 +137,13 @@ function DetailsView({ item }: { item: MediaItem }) {
   };
 
   const removeFromWatchlist = async () => {
-    if (!traktClient.isConnected) {
-      setToast("Connect Trakt in Settings to remove watchlist items.");
+    if (!syncClient().isConnected) {
+      setToast("Connect Trakt or MDBList in Settings to remove watchlist items.");
       return;
     }
     try {
-      await traktClient.removeFromWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
-      setToast("Removed from Trakt watchlist.");
+      await syncClient().removeFromWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
+      setToast("Removed from watchlist.");
       void refreshData();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Could not remove watchlist item.");
@@ -174,15 +175,15 @@ function DetailsView({ item }: { item: MediaItem }) {
         }, activeProfile?.id ?? null);
         saved = true;
       }
-      if (traktClient.isConnected) {
-        // Register in Trakt history so the watched badge syncs everywhere (parity
-        // with the app). Toggle removes it from history.
+      if (syncClient().isConnected) {
+        // Register in the connected provider's history so the watched badge syncs
+        // everywhere (parity with the app). Toggle removes it from history.
         const ref = { mediaType: displayItem.mediaType, tmdbId: displayItem.id, season, episode };
-        if (alreadyWatched) await traktClient.removeFromHistory(ref);
-        else await traktClient.addToHistory(ref);
+        if (alreadyWatched) await syncClient().removeFromHistory(ref);
+        else await syncClient().addToHistory(ref);
         saved = true;
       }
-      setToast(saved ? (alreadyWatched ? "Removed from watched." : "Marked as watched.") : "Connect ARVIO Cloud or Trakt to sync watched state.");
+      setToast(saved ? (alreadyWatched ? "Removed from watched." : "Marked as watched.") : "Connect ARVIO Cloud, Trakt or MDBList to sync watched state.");
       if (saved) void refreshData();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Could not update watched state.");

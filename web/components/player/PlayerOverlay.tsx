@@ -33,7 +33,8 @@ import { attachPlayback } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
 import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
 import { streamPlayability } from "@/lib/streamCompatibility";
-import { authClient, traktClient, useApp } from "@/lib/store";
+import { authClient, useApp } from "@/lib/store";
+import { syncClient } from "@/lib/sync";
 import { SubtitleTranslator, subtitleLanguageName } from "@/lib/subtitleAi";
 import { getLogoUrl } from "@/lib/tmdb";
 import type { AppSettings, MediaItem, StreamSource } from "@/lib/types";
@@ -818,7 +819,7 @@ function VideoPlayer({
     if (!video || !item) return undefined;
     const season = selectedEpisode?.season ?? item.seasonNumber ?? null;
     const episode = selectedEpisode?.episode ?? item.episodeNumber ?? null;
-    void traktClient.scrobble("start", { mediaType: item.mediaType, tmdbId: item.id, season, episode, progress: item.progress ?? 0 }).catch(() => undefined);
+    void syncClient().scrobble("start", { mediaType: item.mediaType, tmdbId: item.id, season, episode, progress: item.progress ?? 0 }).catch(() => undefined);
     const save = () => {
       if (!authClient.session || !Number.isFinite(video.duration) || video.duration <= 0) return;
       const now = Date.now();
@@ -844,7 +845,7 @@ function VideoPlayer({
       }, activeProfileId).catch(() => undefined);
     };
     const onEnded = () => {
-      void traktClient.scrobble("stop", { mediaType: item.mediaType, tmdbId: item.id, season, episode, progress: 100 }).catch(() => undefined);
+      void syncClient().scrobble("stop", { mediaType: item.mediaType, tmdbId: item.id, season, episode, progress: 100 }).catch(() => undefined);
       if (settings.autoPlayNext && canAdvance) void onAdvance();
     };
     video.addEventListener("timeupdate", save);
