@@ -3657,6 +3657,12 @@ class TraktRepository @Inject constructor(
      * Mark entire season as watched
      */
     suspend fun markSeasonWatched(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>): Boolean {
+        // MDBList profiles mirror the batch to MDBList's /sync/watched.
+        if (syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST) {
+            val ok = mdbListRepository.markSeasonWatched(showTmdbId, seasonNumber, episodes)
+            episodes.forEach { ep -> updateWatchedCache(showTmdbId, seasonNumber, ep, true) }
+            return ok
+        }
         val auth = getAuthHeader() ?: return false
         return try {
             val episodeIds = episodes.map {

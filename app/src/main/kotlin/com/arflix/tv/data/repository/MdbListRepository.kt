@@ -207,6 +207,23 @@ class MdbListRepository @Inject constructor(
         api.removeWatched(it, episodeBody(showTmdbId, season, episode))
     }
 
+    /** Batch-mark a whole season's episodes watched in one /sync/watched call. */
+    suspend fun markSeasonWatched(showTmdbId: Int, season: Int, episodes: List<Int>): Boolean = watchedCall {
+        api.addWatched(
+            it,
+            MdbWatchedBody(
+                shows = listOf(
+                    MdbWatchedShowRef(
+                        ids = MdbIds(tmdb = showTmdbId),
+                        seasons = listOf(
+                            MdbWatchedSeasonRef(number = season, episodes = episodes.map { n -> MdbWatchedEpisodeRef(n) })
+                        )
+                    )
+                )
+            )
+        )
+    }
+
     private fun episodeBody(showTmdbId: Int, season: Int, episode: Int) = MdbWatchedBody(
         shows = listOf(
             MdbWatchedShowRef(
