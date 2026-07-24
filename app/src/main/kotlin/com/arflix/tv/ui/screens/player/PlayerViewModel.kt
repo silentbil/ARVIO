@@ -4397,7 +4397,7 @@ class PlayerViewModel @Inject constructor(
     private fun normalizeSourceTitle(value: String): String {
         return value
             .trim()
-            .replace(Regex("""\s+"""), " ")
+            .replace(PlayerRegexes.WHITESPACE, " ")
             .lowercase()
     }
 
