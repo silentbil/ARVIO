@@ -37,6 +37,10 @@ object Constants {
     // API base URLs.
     const val TMDB_BASE_URL = "https://api.themoviedb.org/3/"
     const val TRAKT_API_URL = "https://api.trakt.tv/"
+    // MDBList is an optional per-profile alternative to Trakt. Auth is a static
+    // API key passed as an `?apikey=` query parameter (no OAuth), so no client
+    // secret needs to ship in the APK.
+    const val MDBLIST_API_URL = "https://api.mdblist.com/"
 
     private fun usableSecret(value: String): String =
         value.takeUnless { candidate ->

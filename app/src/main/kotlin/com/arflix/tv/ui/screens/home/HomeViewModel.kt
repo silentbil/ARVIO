@@ -132,6 +132,7 @@ class HomeViewModel @Inject constructor(
     private val streamRepository: StreamRepository,
     private val sportsRepository: SportsRepository,
     private val traktRepository: TraktRepository,
+    private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val traktSyncService: TraktSyncService,
     private val iptvRepository: IptvRepository,
     private val homeServerRepository: HomeServerRepository,
@@ -4095,15 +4096,15 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val isInWatchlist = watchlistRepository.isInWatchlist(item.mediaType, item.id)
-                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
                 if (isInWatchlist) {
-                    if (traktConnected && !traktRepository.removeFromWatchlist(item.mediaType, item.id)) {
-                        throw IllegalStateException("Failed to remove from Trakt watchlist")
+                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(item.mediaType, item.id)) {
+                        throw IllegalStateException("Failed to remove from remote watchlist")
                     }
                     watchlistRepository.removeFromWatchlist(item.mediaType, item.id)
                 } else {
-                    if (traktConnected && !traktRepository.addToWatchlist(item.mediaType, item.id)) {
-                        throw IllegalStateException("Failed to add to Trakt watchlist")
+                    if (remoteConnected && !remoteSyncManager.addToWatchlist(item.mediaType, item.id)) {
+                        throw IllegalStateException("Failed to add to remote watchlist")
                     }
                     watchlistRepository.addToWatchlist(item.mediaType, item.id, item)
                 }
@@ -4115,7 +4116,7 @@ class HomeViewModel @Inject constructor(
                                 "error_area" to "Watchlist",
                                 "watchlist_phase" to "home_toggle_cloud_push",
                                 "media_type" to item.mediaType.name.lowercase(),
-                                "trakt_connected" to traktConnected.toString()
+                                "trakt_connected" to remoteConnected.toString()
                             )
                         )
                     }

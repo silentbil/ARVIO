@@ -453,7 +453,7 @@ fun SettingsScreen(
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
             "stremio" -> stremioAddons.size // rows + add button
             "plugins" -> pluginsMaxIndex
-            "accounts" -> 5 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data
+            "accounts" -> 6 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data + MDBList
             else -> 0
         }
     }
@@ -659,6 +659,8 @@ fun SettingsScreen(
 
     var showCloudDisconnectConfirm by remember { mutableStateOf(false) }
     var showTraktDisconnectConfirm by remember { mutableStateOf(false) }
+    var showMdbListConnect by remember { mutableStateOf(false) }
+    var showMdbListDisconnectConfirm by remember { mutableStateOf(false) }
     var cloudDialogEmail by remember { mutableStateOf("") }
     var cloudDialogPassword by remember { mutableStateOf("") }
 
@@ -701,6 +703,8 @@ fun SettingsScreen(
         uiState.showUnknownSourcesDialog ||
         showCloudDisconnectConfirm ||
         showTraktDisconnectConfirm ||
+        showMdbListConnect ||
+        showMdbListDisconnectConfirm ||
         showCatalogPackInput ||
         showDeletePackConfirm ||
         uiState.isPackLoading ||
@@ -1128,9 +1132,16 @@ fun SettingsScreen(
                                                         viewModel.startTraktAuth()
                                                     }
                                                 }
-                                                2 -> onNavigateToTelegramSettings()
-                                                3 -> viewModel.forceCloudSyncNow()
-                                                4 -> {
+                                                2 -> {
+                                                    if (uiState.isMdbListConnected) {
+                                                        showMdbListDisconnectConfirm = true
+                                                    } else {
+                                                        showMdbListConnect = true
+                                                    }
+                                                }
+                                                3 -> onNavigateToTelegramSettings()
+                                                4 -> viewModel.forceCloudSyncNow()
+                                                5 -> {
                                                     if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) {
                                                         viewModel.installAppUpdateOrRequestPermission()
                                                     } else {
@@ -1655,6 +1666,9 @@ fun SettingsScreen(
                             onConnectTrakt = { viewModel.startTraktAuth() },
                             onCancelTrakt = { viewModel.cancelTraktAuth() },
                             onDisconnectTrakt = { showTraktDisconnectConfirm = true },
+                            isMdbListConnected = uiState.isMdbListConnected,
+                            onConnectMdbList = { showMdbListConnect = true },
+                            onDisconnectMdbList = { showMdbListDisconnectConfirm = true },
                             onForceCloudSync = { viewModel.forceCloudSyncNow() },
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
@@ -2120,6 +2134,29 @@ fun SettingsScreen(
                     viewModel.disconnectTrakt()
                 },
                 onDismiss = { showTraktDisconnectConfirm = false }
+            )
+        }
+
+        if (showMdbListConnect) {
+            MdbListConnectDialog(
+                connecting = uiState.mdbListConnecting,
+                onConnect = { apiKey ->
+                    showMdbListConnect = false
+                    viewModel.connectMdbList(apiKey)
+                },
+                onDismiss = { showMdbListConnect = false }
+            )
+        }
+
+        if (showMdbListDisconnectConfirm) {
+            AccountDisconnectConfirmDialog(
+                title = stringResource(R.string.mdblist_disconnect_confirm_title),
+                description = stringResource(R.string.mdblist_disconnect_confirm_desc),
+                onConfirm = {
+                    showMdbListDisconnectConfirm = false
+                    viewModel.disconnectMdbList()
+                },
+                onDismiss = { showMdbListDisconnectConfirm = false }
             )
         }
 
@@ -3535,6 +3572,29 @@ private fun MobileSettingsMainPage(
     onNavigateToTelegram: () -> Unit = {},
     onDisconnectTrakt: () -> Unit = {}
 ) {
+    var showMdbListConnect by remember { mutableStateOf(false) }
+    var showMdbListDisconnectConfirm by remember { mutableStateOf(false) }
+    if (showMdbListConnect) {
+        MdbListConnectDialog(
+            connecting = uiState.mdbListConnecting,
+            onConnect = { key ->
+                showMdbListConnect = false
+                viewModel.connectMdbList(key)
+            },
+            onDismiss = { showMdbListConnect = false }
+        )
+    }
+    if (showMdbListDisconnectConfirm) {
+        AccountDisconnectConfirmDialog(
+            title = stringResource(R.string.mdblist_disconnect_confirm_title),
+            description = stringResource(R.string.mdblist_disconnect_confirm_desc),
+            onConfirm = {
+                showMdbListDisconnectConfirm = false
+                viewModel.disconnectMdbList()
+            },
+            onDismiss = { showMdbListDisconnectConfirm = false }
+        )
+    }
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
@@ -3667,6 +3727,13 @@ private fun MobileSettingsMainPage(
                     value = if (uiState.isTraktAuthenticated) stringResource(R.string.settings_disconnect) else stringResource(R.string.connect),
                     isFocused = false,
                     onClick = { if (uiState.isTraktAuthenticated) onDisconnectTrakt() else viewModel.startTraktAuth() }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Movie,
+                    title = stringResource(R.string.mdblist_account),
+                    value = if (uiState.isMdbListConnected) stringResource(R.string.settings_disconnect) else stringResource(R.string.connect),
+                    isFocused = false,
+                    onClick = { if (uiState.isMdbListConnected) showMdbListDisconnectConfirm = true else showMdbListConnect = true }
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.QrCode,
@@ -7769,6 +7836,9 @@ private fun AccountsSettings(
     traktUrl: String?,
     isTraktAuthStarting: Boolean,
     isTraktPolling: Boolean,
+    isMdbListConnected: Boolean,
+    onConnectMdbList: () -> Unit,
+    onDisconnectMdbList: () -> Unit,
     isForceCloudSyncing: Boolean,
     lastCloudSyncStatus: String?,
     isSelfUpdateSupported: Boolean,
@@ -7797,7 +7867,7 @@ private fun AccountsSettings(
         }
 
         AccountRow(
-            name = "ARVIO Cloud",
+            name = stringResource(R.string.settings_arvio_cloud),
             description = cloudEmail ?: stringResource(R.string.settings_cloud_account_desc),
             isConnected = isCloudAuthenticated,
             isWorking = false,
@@ -7831,14 +7901,31 @@ private fun AccountsSettings(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // MDBList (per-profile alternative to Trakt)
+        AccountRow(
+            name = stringResource(R.string.mdblist_account),
+            description = stringResource(R.string.mdblist_key_help),
+            isConnected = isMdbListConnected,
+            isWorking = false,
+            authCode = null,
+            authUrl = null,
+            isFocused = focusedIndex == 2,
+            onConnect = onConnectMdbList,
+            onDisconnect = onDisconnectMdbList,
+            modifier = Modifier.settingsFocusSlot(2),
+            expirationText = null
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // Telegram
         SettingsActionRow(
             title = "Telegram",
             description = stringResource(R.string.settings_telegram_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 2,
+            isFocused = focusedIndex == 3,
             onClick = onNavigateToTelegram,
-            modifier = Modifier.settingsFocusSlot(2)
+            modifier = Modifier.settingsFocusSlot(3)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -7855,9 +7942,9 @@ private fun AccountsSettings(
                 stringResource(R.string.settings_signin_to_force_sync)
             },
             actionLabel = if (isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else stringResource(R.string.settings_badge_sync),
-            isFocused = focusedIndex == 3,
+            isFocused = focusedIndex == 4,
             onClick = { if (!isForceCloudSyncing) onForceCloudSync() },
-            modifier = Modifier.settingsFocusSlot(3)
+            modifier = Modifier.settingsFocusSlot(4)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -7879,11 +7966,11 @@ private fun AccountsSettings(
                 updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable -> stringResource(R.string.settings_badge_update)
                 else -> stringResource(R.string.settings_badge_check)
             },
-            isFocused = focusedIndex == 4,
+            isFocused = focusedIndex == 5,
             onClick = {
                 if (updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) onInstallUpdate() else onCheckUpdates()
             },
-            modifier = Modifier.settingsFocusSlot(4)
+            modifier = Modifier.settingsFocusSlot(5)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -7892,11 +7979,54 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_privacy_data_deletion),
             description = stringResource(R.string.settings_privacy_data_deletion_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 5,
+            isFocused = focusedIndex == 6,
             onClick = onOpenDataDeletion,
-            modifier = Modifier.settingsFocusSlot(5)
+            modifier = Modifier.settingsFocusSlot(6)
         )
     }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun MdbListConnectDialog(
+    connecting: Boolean,
+    onConnect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var apiKey by remember { mutableStateOf("") }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.mdblist_connect_title)) },
+        text = {
+            Column {
+                androidx.compose.material3.TextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    singleLine = true,
+                    enabled = !connecting,
+                    label = { Text(stringResource(R.string.mdblist_key_hint)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.mdblist_key_help),
+                    style = ArflixTypography.caption,
+                    color = TextSecondary
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = { if (apiKey.isNotBlank()) onConnect(apiKey) },
+                enabled = !connecting && apiKey.isNotBlank()
+            ) { Text(stringResource(R.string.connect)) }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

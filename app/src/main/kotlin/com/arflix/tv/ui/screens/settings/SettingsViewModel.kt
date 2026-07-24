@@ -136,6 +136,9 @@ data class SettingsUiState(
     val isTraktAuthStarting: Boolean = false,
     val isTraktPolling: Boolean = false,
     val traktExpiration: String? = null,
+    // MDBList (alternative remote sync provider)
+    val isMdbListConnected: Boolean = false,
+    val mdbListConnecting: Boolean = false,
     // Trakt Sync
     val isSyncing: Boolean = false,
     val syncProgress: SyncProgress = SyncProgress(),
@@ -234,7 +237,9 @@ class SettingsViewModel @Inject constructor(
     private val appUpdateRepository: AppUpdateRepository,
     private val updatePreferences: UpdatePreferences,
     private val apkDownloader: ApkDownloader,
-    private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager
+    private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
+    private val mdbListRepository: com.arflix.tv.data.repository.MdbListRepository,
+    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore
 ) : ViewModel() {
     private fun visibleCatalogs(catalogs: List<CatalogConfig>): List<CatalogConfig> {
         return catalogs.filter { config ->
@@ -517,6 +522,7 @@ class SettingsViewModel @Inject constructor(
             val isLoggedIn = authState is AuthState.Authenticated
             val accountEmail = (authState as? AuthState.Authenticated)?.email
             val isTrakt = traktRepository.hasTrakt()
+            val isMdbList = mdbListRepository.isConnected()
 
             // Get Trakt expiration if authenticated
             var traktExpiration: String? = null
@@ -565,6 +571,7 @@ class SettingsViewModel @Inject constructor(
                 accountEmail = accountEmail,
                 isTraktAuthenticated = isTrakt,
                 traktExpiration = traktExpiration,
+                isMdbListConnected = isMdbList,
                 catalogs = existingCatalogs,
                 contentLanguage = contentLang,
                 deviceModeOverride = deviceModeOverride,
@@ -3167,8 +3174,12 @@ class SettingsViewModel @Inject constructor(
                     val expirationDate = traktRepository.getTokenExpirationDate()
 
                     // Success!
+                    // Mutual exclusion: selecting Trakt disconnects MDBList for this profile.
+                    syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT)
+                    syncProviderStore.setMdbListApiKey(null)
                     _uiState.value = _uiState.value.copy(
                         isTraktAuthenticated = true,
+                        isMdbListConnected = false,
                         traktCode = null,
                         isTraktAuthStarting = false,
                         isTraktPolling = false,
@@ -3228,10 +3239,64 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             cancelTraktAuth()
             traktRepository.logout()
+            syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.NONE)
             _uiState.value = _uiState.value.copy(
                 isTraktAuthenticated = false,
                 traktExpiration = null,
                 toastMessage = "Trakt disconnected",
+                toastType = ToastType.SUCCESS
+            )
+            syncLocalStateToCloud(silent = true, force = true)
+        }
+    }
+
+    // ========== MDBList Authentication (API key) ==========
+
+    /**
+     * Connect MDBList using a user API key from mdblist.com/preferences.
+     * MDBList and Trakt are mutually exclusive per profile, so connecting MDBList
+     * disconnects Trakt for the active profile.
+     */
+    fun connectMdbList(apiKey: String) {
+        val trimmed = apiKey.trim()
+        if (trimmed.isEmpty() || _uiState.value.mdbListConnecting) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(mdbListConnecting = true)
+            val valid = runCatching { mdbListRepository.validateKey(trimmed) }.getOrDefault(false)
+            if (!valid) {
+                _uiState.value = _uiState.value.copy(
+                    mdbListConnecting = false,
+                    toastMessage = context.getString(R.string.mdblist_invalid_key),
+                    toastType = ToastType.ERROR
+                )
+                return@launch
+            }
+            // Mutual exclusion: drop Trakt for this profile.
+            cancelTraktAuth()
+            runCatching { traktRepository.logout() }
+            syncProviderStore.setMdbListApiKey(trimmed)
+            syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
+            _uiState.value = _uiState.value.copy(
+                mdbListConnecting = false,
+                isMdbListConnected = true,
+                isTraktAuthenticated = false,
+                traktExpiration = null,
+                toastMessage = context.getString(R.string.mdblist_connected),
+                toastType = ToastType.SUCCESS
+            )
+            // The MDBList watchlist is pulled when the Watchlist screen next loads.
+            syncLocalStateToCloud(silent = true, force = true)
+            runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+        }
+    }
+
+    fun disconnectMdbList() {
+        viewModelScope.launch {
+            syncProviderStore.setMdbListApiKey(null)
+            syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.NONE)
+            _uiState.value = _uiState.value.copy(
+                isMdbListConnected = false,
+                toastMessage = context.getString(R.string.mdblist_disconnected),
                 toastType = ToastType.SUCCESS
             )
             syncLocalStateToCloud(silent = true, force = true)

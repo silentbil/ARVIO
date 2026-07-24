@@ -234,4 +234,10 @@
     <string name="plugin_prefix">Plugin: </string>
     <string name="plugins_loading">פלאגינים: %1$s</string>
     <string name="ratings">דירוגי פרקים</string>
+    <!-- Accounts settings descriptions -->
+    <string name="settings_arvio_cloud">חשבון ארביו</string>
+    <string name="settings_cloud_account_desc">חשבון אופציונלי לסנכרון פרופילים, תוספים, קטלוגים והגדרות IPTV</string>
+    <string name="settings_trakt_desc">סנכרון היסטוריית צפייה, התקדמות ורשימת צפייה</string>
+    <string name="mdblist_key_help">השג את מפתח ה-API שלך מ-mdblist.com/preferences</string>
+    <string name="settings_telegram_desc">חפש קובצי וידאו בערוצים ובקבוצות שלך</string>
 </resources>

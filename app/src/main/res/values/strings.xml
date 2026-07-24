@@ -431,6 +431,15 @@
     <string name="settings_cloud_off">Cloud off</string>
     <string name="settings_trakt_connected">Trakt connected</string>
     <string name="settings_trakt_off">Trakt off</string>
+    <string name="mdblist_account">MDBList</string>
+    <string name="mdblist_connected">MDBList connected</string>
+    <string name="mdblist_disconnected">MDBList disconnected</string>
+    <string name="mdblist_invalid_key">Invalid MDBList API key</string>
+    <string name="mdblist_key_hint">Paste your MDBList API key</string>
+    <string name="mdblist_key_help">Get your API key from mdblist.com/preferences</string>
+    <string name="mdblist_connect_title">Connect MDBList</string>
+    <string name="mdblist_disconnect_confirm_title">Disconnect MDBList?</string>
+    <string name="mdblist_disconnect_confirm_desc">Your watch history and lists will no longer sync.</string>
     <string name="settings_fact_app_language">App language</string>
     <string name="settings_fact_default">Default</string>
     <string name="settings_fact_secondary">Secondary</string>
@@ -598,6 +607,7 @@
     <string name="settings_section_stremio_addons">STREMIO ADDONS</string>
     <string name="settings_status_installed">Installed</string>
     <string name="settings_disabled">Disabled</string>
+    <string name="settings_arvio_cloud">ARVIO Cloud</string>
     <string name="settings_cloud_account_desc">Optional account for syncing profiles, addons, catalogs and IPTV settings</string>
     <string name="settings_trakt_desc">Sync watch history, progress, and watchlist</string>
     <string name="settings_telegram_desc">Search your channels and groups for video files</string>

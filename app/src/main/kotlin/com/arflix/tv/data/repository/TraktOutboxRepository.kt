@@ -28,6 +28,9 @@ enum class TraktOutboxAction {
 data class TraktOutboxItem(
     val id: String = UUID.randomUUID().toString(),
     val action: TraktOutboxAction,
+    // Which remote this queued write targets. Defaults to "trakt" so items
+    // queued before MDBList support decode unchanged.
+    val provider: String = "trakt",
     val tmdbId: Int? = null,
     val showTraktId: Int? = null,
     val traktEpisodeId: Int? = null,

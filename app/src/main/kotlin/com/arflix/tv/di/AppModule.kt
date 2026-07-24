@@ -75,6 +75,17 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideMdbListApi(okHttpClient: OkHttpClient): com.arflix.tv.data.api.MdbListApi {
+        return Retrofit.Builder()
+            .baseUrl(Constants.MDBLIST_API_URL)
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(com.arflix.tv.data.api.MdbListApi::class.java)
+    }
+
+    @Provides
+    @Singleton
     fun provideSupabaseApi(okHttpClient: OkHttpClient): SupabaseApi {
         // Supabase API client without disk cache to prevent OkHttp from returning
         // cached responses for POST/upsert operations (which silently drops writes)

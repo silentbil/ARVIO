@@ -43,6 +43,7 @@ class WatchlistViewModel @Inject constructor(
     private val watchlistRepository: WatchlistRepository,
     private val cloudSyncRepository: CloudSyncRepository,
     private val traktRepository: TraktRepository,
+    private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val mediaRepository: MediaRepository
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(WatchlistUiState())
@@ -143,8 +144,8 @@ class WatchlistViewModel @Inject constructor(
                 }
             }
 
-            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
-            if (!traktConnected) {
+            val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+            if (!remoteConnected) {
                 val items = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
                 _uiState.value = items.toSplitState(isLoading = false)
                 if (items.isNotEmpty()) fetchLogos(items)
@@ -214,13 +215,13 @@ class WatchlistViewModel @Inject constructor(
             val hadItems = _uiState.value.allItems.isNotEmpty()
             _uiState.value = _uiState.value.copy(isLoading = !hadItems)
             try {
-                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
-                val syncedFromTrakt = if (traktConnected) {
+                val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+                val syncedFromTrakt = if (remoteConnected) {
                     withTimeoutOrNull(15_000) { syncTraktWatchlistSuspend() } ?: false
                 } else {
                     false
                 }
-                if (!syncedFromTrakt && !traktConnected) {
+                if (!syncedFromTrakt && !remoteConnected) {
                     val items = watchlistRepository.refreshWatchlistItems().watchlistDisplayOrder()
                     _uiState.value = items.toSplitState(isLoading = false)
                 } else if (!syncedFromTrakt) {
@@ -247,8 +248,8 @@ class WatchlistViewModel @Inject constructor(
     fun refreshAfterResume() {
         if (!initialLoadComplete) return
         viewModelScope.launch {
-            val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
-            if (!traktConnected || traktSyncInFlight) return@launch
+            val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+            if (!remoteConnected || traktSyncInFlight) return@launch
             val syncedFromTrakt = withTimeoutOrNull(10_000) { syncTraktWatchlistSuspend() } ?: false
             if (!syncedFromTrakt && _uiState.value.isLoading) {
                 val fallbackItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
@@ -270,8 +271,8 @@ class WatchlistViewModel @Inject constructor(
     fun removeFromWatchlist(item: MediaItem) {
         viewModelScope.launch {
             try {
-                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
-                if (traktConnected && !traktRepository.removeFromWatchlist(item.mediaType, item.id)) {
+                val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
+                if (remoteConnected && !remoteSyncManager.removeFromWatchlist(item.mediaType, item.id)) {
                     throw IllegalStateException(context.getString(R.string.watchlist_failed_remove_trakt))
                 }
 
@@ -318,7 +319,8 @@ class WatchlistViewModel @Inject constructor(
         if (traktSyncInFlight) return true
         traktSyncInFlight = true
         return try {
-            val (hasTraktAuth, syncResult) = traktRepository.getWatchlistSyncResultWithAuthState()
+            val syncResult = remoteSyncManager.getWatchlist()
+            val hasTraktAuth = syncResult?.connected == true
             if (!hasTraktAuth) {
                 AppLogger.breadcrumb(
                     tag = "Watchlist",

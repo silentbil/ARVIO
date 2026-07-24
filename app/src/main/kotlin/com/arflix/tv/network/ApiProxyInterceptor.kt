@@ -39,6 +39,11 @@ class ApiProxyInterceptor : Interceptor {
                 // Trakt, which surfaces as token request failures in the app.
                 chain.proceed(originalRequest)
             }
+            "api.mdblist.com" -> {
+                // MDBList (per-profile Trakt alternative) authenticates with a
+                // user API key on the query string. Keep it direct, same as Trakt.
+                chain.proceed(originalRequest)
+            }
             else -> {
                 // Pass through other requests unchanged
                 chain.proceed(originalRequest)

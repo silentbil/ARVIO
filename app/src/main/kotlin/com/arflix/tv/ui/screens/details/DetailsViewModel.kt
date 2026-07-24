@@ -190,6 +190,7 @@ class DetailsViewModel @Inject constructor(
     private val pluginManager: PluginManager,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
+    private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val streamRepository: StreamRepository,
     private val tmdbApi: TmdbApi,
     private val watchHistoryRepository: WatchHistoryRepository,
@@ -1054,15 +1055,15 @@ class DetailsViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                val traktConnected = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+                val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
                 if (newInWatchlist) {
-                    if (traktConnected && !traktRepository.addToWatchlist(currentMediaType, currentMediaId)) {
+                    if (remoteConnected && !remoteSyncManager.addToWatchlist(currentMediaType, currentMediaId)) {
                         throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_add))
                     }
                     // Pass the full MediaItem so it appears instantly in watchlist
                     watchlistRepository.addToWatchlist(currentMediaType, currentMediaId, currentItem)
                 } else {
-                    if (traktConnected && !traktRepository.removeFromWatchlist(currentMediaType, currentMediaId)) {
+                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(currentMediaType, currentMediaId)) {
                         throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_remove))
                     }
                     watchlistRepository.removeFromWatchlist(currentMediaType, currentMediaId)

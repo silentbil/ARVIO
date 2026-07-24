@@ -186,6 +186,7 @@ class PlayerViewModel @Inject constructor(
     private val mediaRepository: MediaRepository,
     private val streamRepository: StreamRepository,
     private val traktRepository: TraktRepository,
+    private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val watchHistoryRepository: WatchHistoryRepository,
     private val cloudSyncRepository: CloudSyncRepository,
     private val launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
@@ -3864,7 +3865,7 @@ class PlayerViewModel @Inject constructor(
             // Scrobble start/pause/updates with debounce
             if (isPlaying && !lastIsPlaying) {
                 try {
-                    traktRepository.scrobbleStart(
+                    remoteSyncManager.scrobbleStart(
                         mediaType = currentMediaType,
                         tmdbId = currentMediaId,
                         progress = progressPercent.toFloat(),
@@ -3879,7 +3880,7 @@ class PlayerViewModel @Inject constructor(
                 lastScrobbleTime = currentTime
             } else if (!isPlaying && lastIsPlaying) {
                 try {
-                    traktRepository.scrobblePauseImmediate(
+                    remoteSyncManager.scrobblePause(
                         mediaType = currentMediaType,
                         tmdbId = currentMediaId,
                         progress = progressPercent.toFloat(),
@@ -3895,7 +3896,7 @@ class PlayerViewModel @Inject constructor(
             } else if (isPlaying && currentTime - lastScrobbleTime >= SCROBBLE_UPDATE_INTERVAL_MS) {
                 // Periodic scrobble update while playing (use scrobbleStart, not pause)
                 try {
-                    traktRepository.scrobbleStart(
+                    remoteSyncManager.scrobbleStart(
                         mediaType = currentMediaType,
                         tmdbId = currentMediaId,
                         progress = progressPercent.toFloat(),
@@ -3988,7 +3989,7 @@ class PlayerViewModel @Inject constructor(
             if (!hasMarkedWatched && (playbackState == Player.STATE_ENDED || progressPercent >= Constants.WATCHED_THRESHOLD)) {
                 hasMarkedWatched = true
                 try {
-                    traktRepository.scrobbleStop(
+                    remoteSyncManager.scrobbleStop(
                         mediaType = currentMediaType,
                         tmdbId = currentMediaId,
                         progress = progressPercent.toFloat(),

@@ -100,7 +100,8 @@ class CloudSyncRepository @Inject constructor(
     private val watchlistRepository: WatchlistRepository,
     private val profileAvatarImageManager: ProfileAvatarImageManager,
     private val invalidationBus: CloudSyncInvalidationBus,
-    private val pluginDataStore: com.arflix.tv.data.local.PluginDataStore
+    private val pluginDataStore: com.arflix.tv.data.local.PluginDataStore,
+    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore
 ) {
     private val TAG = "CloudSync"
     private val gson = Gson()
@@ -693,6 +694,10 @@ class CloudSyncRepository @Inject constructor(
         // Trakt tokens per profile
         val traktTokens = traktRepository.exportTokensForProfiles(profiles.map { it.id })
         root.put("traktTokens", JSONObject(gson.toJson(traktTokens)))
+
+        // MDBList selection (provider + API key) per profile
+        val mdbListSyncByProfile = syncProviderStore.exportForProfiles(profiles.map { it.id })
+        root.put("mdbListSyncByProfile", JSONObject(gson.toJson(mdbListSyncByProfile)))
 
         // Dismissed Continue Watching keys per profile (persist hide/remove state)
         val dismissedContinueWatchingByProfile =
@@ -1473,6 +1478,20 @@ class CloudSyncRepository @Inject constructor(
                 traktRepository.importTokensForProfiles(tokens)
             }
         }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_trakt_tokens")) }
+
+        // ── MDBList selection (provider + API key) ──
+        runCatching {
+            root.optJSONObject("mdbListSyncByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
+                val type = TypeToken.getParameterized(
+                    Map::class.java,
+                    String::class.java,
+                    com.arflix.tv.data.repository.sync.SyncProviderStore.ProfileSyncSelection::class.java
+                ).type
+                val map: Map<String, com.arflix.tv.data.repository.sync.SyncProviderStore.ProfileSyncSelection> =
+                    gson.fromJson(json, type) ?: emptyMap()
+                syncProviderStore.importForProfiles(map)
+            }
+        }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_mdblist_sync")) }
 
         // ── Addons ──
         runCatching {

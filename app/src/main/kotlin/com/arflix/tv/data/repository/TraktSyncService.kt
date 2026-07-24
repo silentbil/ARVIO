@@ -54,9 +54,15 @@ class TraktSyncService @Inject constructor(
     private val supabaseApi: SupabaseApi,
     private val authRepository: AuthRepository,
     private val outboxRepository: TraktOutboxRepository,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val mdbListRepository: MdbListRepository,
+    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore
 ) {
     private val TAG = "TraktSyncService"
+
+    /** True when the current profile mirrors watched state to MDBList, not Trakt. */
+    private suspend fun usesMdbList(): Boolean =
+        syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
     private val gson = Gson()
     private val clientId = Constants.TRAKT_CLIENT_ID
     private val clientSecret = Constants.TRAKT_CLIENT_SECRET
@@ -513,7 +519,8 @@ class TraktSyncService @Inject constructor(
         try {
             val userId = getUserId()
             val hasSupabase = userId != null && getSupabaseAuth() != null
-            val traktAuth = getAuthHeader()
+            val useMdbList = usesMdbList()
+            val traktAuth = if (useMdbList) null else getAuthHeader()
 
             val now = Instant.now().toString()
 
@@ -531,9 +538,21 @@ class TraktSyncService @Inject constructor(
                 }
             }
 
-            // 2. Sync to Trakt (queue on failure or if offline)
-            val traktSyncOk = if (traktAuth != null) {
-                try {
+            // 2. Mirror to the active remote (queue on failure or if offline)
+            val remoteSyncOk = if (useMdbList) {
+                val ok = mdbListRepository.markMovieWatched(tmdbId)
+                if (!ok) {
+                    outboxRepository.enqueue(
+                        TraktOutboxItem(
+                            action = TraktOutboxAction.MARK_MOVIE_WATCHED,
+                            provider = "mdblist",
+                            tmdbId = tmdbId
+                        )
+                    )
+                }
+                ok
+            } else if (traktAuth != null) {
+                val ok = try {
                     traktApi.addToHistory(
                         traktAuth, clientId, "2",
                         TraktHistoryBody(movies = listOf(TraktMovieId(TraktIds(tmdb = tmdbId))))
@@ -544,17 +563,17 @@ class TraktSyncService @Inject constructor(
 
                     false
                 }
+                if (!ok) {
+                    outboxRepository.enqueue(
+                        TraktOutboxItem(
+                            action = TraktOutboxAction.MARK_MOVIE_WATCHED,
+                            tmdbId = tmdbId
+                        )
+                    )
+                }
+                ok
             } else {
                 false
-            }
-
-            if (!traktSyncOk && traktAuth != null) {
-                outboxRepository.enqueue(
-                    TraktOutboxItem(
-                        action = TraktOutboxAction.MARK_MOVIE_WATCHED,
-                        tmdbId = tmdbId
-                    )
-                )
             }
 
             // 3. Remove from Supabase watch_history (no longer in-progress)
@@ -572,10 +591,14 @@ class TraktSyncService @Inject constructor(
                 } catch (_: Exception) {}
             }
 
-            // 4. Remove playback item from Trakt so it disappears from Continue Watching
-            removePlaybackForContent(traktAuth, tmdbId, MediaType.MOVIE)
+            // 4. Remove the paused session so it disappears from Continue Watching
+            if (useMdbList) {
+                mdbListRepository.clearPlayback(MediaType.MOVIE, tmdbId, null, null)
+            } else {
+                removePlaybackForContent(traktAuth, tmdbId, MediaType.MOVIE)
+            }
 
-            traktSyncOk || hasSupabase
+            remoteSyncOk || hasSupabase
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -594,7 +617,8 @@ class TraktSyncService @Inject constructor(
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val userId = getUserId()
-            val traktAuth = getAuthHeader()
+            val useMdbList = usesMdbList()
+            val traktAuth = if (useMdbList) null else getAuthHeader()
 
             // 1. Write to Supabase first (source of truth) when available
             //    Uses RPC function (direct SQL) instead of PostgREST table endpoint
@@ -624,10 +648,25 @@ class TraktSyncService @Inject constructor(
                 } catch (_: Exception) {}
             }
 
-            // 2. Sync to Trakt (queue on failure or if offline)
-            // Use shows format with nested seasons/episodes for proper episode identification
-            val traktSyncOk = if (traktAuth != null) {
-                try {
+            // 2. Mirror to the active remote (queue on failure or if offline)
+            // Trakt uses shows format with nested seasons/episodes for proper episode identification
+            val remoteSyncOk = if (useMdbList) {
+                val ok = mdbListRepository.markEpisodeWatched(showTmdbId, season, episode)
+                if (!ok) {
+                    outboxRepository.enqueue(
+                        TraktOutboxItem(
+                            action = TraktOutboxAction.MARK_EPISODE_WATCHED,
+                            provider = "mdblist",
+                            tmdbId = showTmdbId,
+                            showTraktId = showTraktId,
+                            season = season,
+                            episode = episode
+                        )
+                    )
+                }
+                ok
+            } else if (traktAuth != null) {
+                val ok = try {
                     traktApi.addToHistory(
                         traktAuth, clientId, "2",
                         TraktHistoryBody(
@@ -650,20 +689,20 @@ class TraktSyncService @Inject constructor(
 
                     false
                 }
+                if (!ok) {
+                    outboxRepository.enqueue(
+                        TraktOutboxItem(
+                            action = TraktOutboxAction.MARK_EPISODE_WATCHED,
+                            tmdbId = showTmdbId,
+                            showTraktId = showTraktId,
+                            season = season,
+                            episode = episode
+                        )
+                    )
+                }
+                ok
             } else {
                 false
-            }
-
-            if (!traktSyncOk && traktAuth != null) {
-                outboxRepository.enqueue(
-                    TraktOutboxItem(
-                        action = TraktOutboxAction.MARK_EPISODE_WATCHED,
-                        tmdbId = showTmdbId,
-                        showTraktId = showTraktId,
-                        season = season,
-                        episode = episode
-                    )
-                )
             }
 
             // 3. Remove from Supabase watch_history (no longer in-progress)
@@ -683,10 +722,14 @@ class TraktSyncService @Inject constructor(
                 } catch (_: Exception) {}
             }
 
-            // 4. Remove playback item from Trakt so it disappears from Continue Watching
-            removePlaybackForContent(traktAuth, showTmdbId, MediaType.TV)
+            // 4. Remove the paused session so it disappears from Continue Watching
+            if (useMdbList) {
+                mdbListRepository.clearPlayback(MediaType.TV, showTmdbId, season, episode)
+            } else {
+                removePlaybackForContent(traktAuth, showTmdbId, MediaType.TV)
+            }
 
-            traktSyncOk || userId != null
+            remoteSyncOk || userId != null
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -738,7 +781,8 @@ class TraktSyncService @Inject constructor(
         try {
             val userId = getUserId()
             val hasSupabase = userId != null && getSupabaseAuth() != null
-            val traktAuth = getAuthHeader()
+            val useMdbList = usesMdbList()
+            val traktAuth = if (useMdbList) null else getAuthHeader()
 
             // 1. Delete from Supabase
             if (hasSupabase) {
@@ -752,15 +796,20 @@ class TraktSyncService @Inject constructor(
                 }
             }
 
-            // 2. Remove from Trakt
-            if (traktAuth != null) {
+            // 2. Remove from the active remote
+            val remoteOk = if (useMdbList) {
+                mdbListRepository.markMovieUnwatched(tmdbId)
+            } else if (traktAuth != null) {
                 traktApi.removeFromHistory(
                     traktAuth, clientId, "2",
                     TraktHistoryBody(movies = listOf(TraktMovieId(TraktIds(tmdb = tmdbId))))
                 )
+                true
+            } else {
+                false
             }
 
-            traktAuth != null || hasSupabase
+            remoteOk || hasSupabase
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -775,7 +824,8 @@ class TraktSyncService @Inject constructor(
         try {
             val userId = getUserId()
             val hasSupabase = userId != null && getSupabaseAuth() != null
-            val traktAuth = getAuthHeader()
+            val useMdbList = usesMdbList()
+            val traktAuth = if (useMdbList) null else getAuthHeader()
 
             // 1. Delete from Supabase
             if (hasSupabase) {
@@ -791,8 +841,10 @@ class TraktSyncService @Inject constructor(
                 }
             }
 
-            // 2. Remove from Trakt
-            if (traktAuth != null) {
+            // 2. Remove from the active remote
+            val remoteOk = if (useMdbList) {
+                mdbListRepository.markEpisodeUnwatched(showTmdbId, season, episode)
+            } else if (traktAuth != null) {
                 traktApi.removeFromHistory(
                     traktAuth, clientId, "2",
                     TraktHistoryBody(
@@ -809,9 +861,12 @@ class TraktSyncService @Inject constructor(
                         )
                     )
                 )
+                true
+            } else {
+                false
             }
 
-            traktAuth != null || hasSupabase
+            remoteOk || hasSupabase
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -1703,7 +1758,21 @@ class TraktSyncService @Inject constructor(
 
         items.forEach { item ->
             val ok = try {
-                when (item.action) {
+                if (item.provider == "mdblist") {
+                    when (item.action) {
+                        TraktOutboxAction.MARK_MOVIE_WATCHED ->
+                            item.tmdbId?.let { mdbListRepository.markMovieWatched(it) } ?: false
+                        TraktOutboxAction.MARK_EPISODE_WATCHED -> {
+                            val t = item.tmdbId
+                            val s = item.season
+                            val e = item.episode
+                            if (t == null || s == null || e == null) false
+                            else mdbListRepository.markEpisodeWatched(t, s, e)
+                        }
+                        // Playback removal is best-effort for MDBList; nothing to replay.
+                        TraktOutboxAction.REMOVE_PLAYBACK_ITEM -> true
+                    }
+                } else when (item.action) {
                     TraktOutboxAction.MARK_MOVIE_WATCHED -> {
                         val tmdbId = item.tmdbId
                         if (tmdbId == null) {
